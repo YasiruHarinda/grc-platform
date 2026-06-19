@@ -28,7 +28,6 @@ dist-ssr
 .env.local
 .env.*.local
 
-# OS files
-.DS_Store
+# Runtime config (environment-specific, not committed)
 config.js
 FILES.md

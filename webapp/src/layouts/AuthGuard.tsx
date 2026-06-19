@@ -16,30 +16,17 @@
 
 import { type JSX } from "react";
 import { ProtectedRoute } from "@asgardeo/react-router";
-import { useLocation } from "react-router";
 import AppLayout from "@layouts/AppLayout";
 
-const POST_LOGIN_REDIRECT_KEY = "post_login_redirect";
 const isMockAuth = window.config?.GRC_PLATFORM_MOCK_AUTH === true;
 
 export default function AuthGuard(): JSX.Element {
-  const location = useLocation();
-
   if (isMockAuth) {
     return <AppLayout />;
   }
 
   return (
-    <ProtectedRoute
-      loader={<AppLayout />}
-      onSignIn={(defaultSignIn, signInOptions) => {
-        const intended = location.pathname + location.search;
-        if (intended !== "/") {
-          sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, intended);
-        }
-        defaultSignIn(signInOptions);
-      }}
-    >
+    <ProtectedRoute loader={<AppLayout />}>
       <AppLayout />
     </ProtectedRoute>
   );

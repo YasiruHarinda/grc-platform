@@ -34,7 +34,7 @@ import { authConfig } from "@config/authConfig";
  * @returns {boolean} True if the request should be retried, false otherwise.
  */
 function shouldRetry(failureCount: number, error: Error): boolean {
-  // Max 3 retries
+  // Max 2 retries (3 total attempts including the initial one)
   if (failureCount >= 2) {
     return false;
   }

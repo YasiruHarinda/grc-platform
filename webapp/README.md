@@ -46,7 +46,7 @@ Configuration is **not** read from `.env` files. The browser loads a runtime
 `public/config.js` (referenced in `index.html`) which sets `window.config`
 before the React bundle starts.
 
-A ready-to-run `public/config.js` is already present with **mock auth enabled**,
+Create a `public/config.js` (excluded from git) with **mock auth enabled**
 so you can start immediately without Asgardeo or a backend:
 
 ```javascript
