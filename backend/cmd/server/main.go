@@ -32,6 +32,7 @@ import (
 	"github.com/wso2-open-operations/grc-platform/backend/internal/middleware"
 	riskhandler "github.com/wso2-open-operations/grc-platform/backend/internal/risk/handler"
 	"github.com/wso2-open-operations/grc-platform/backend/internal/shared/privilege"
+	userhandler "github.com/wso2-open-operations/grc-platform/backend/internal/user/handler"
 )
 
 func main() {
@@ -51,7 +52,9 @@ func main() {
 	// When TokenValidatorEnabled=true (production), load is required — exit if it fails.
 	var privStore *privilege.Store
 	if cfg.Auth.TokenValidatorEnabled {
-		privStore, err = privilege.New(context.Background(), sqlDB)
+		loadCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		privStore, err = privilege.New(loadCtx, sqlDB)
 		if err != nil {
 			slog.Error("failed to load privilege mapping from database", "err", err)
 			os.Exit(1)
@@ -70,6 +73,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	userhandler.RegisterRoutes(mux)
 	riskhandler.RegisterRoutes(mux, riskhandler.Deps{})
 	audithandler.RegisterRoutes(mux, audithandler.Deps{})
 
