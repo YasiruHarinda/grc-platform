@@ -1,0 +1,28 @@
+# Binaries
+*.exe
+
+# Environment
+.env
+
+# Go toolchain
+vendor/
+
+# IDE
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
+__MACOSX
+Thumbs.db
+
+# Logs
+logs/
+
+# Test / build cache
+*.test
+*.out
+coverage.out
+
+# Go binaries
+/bin

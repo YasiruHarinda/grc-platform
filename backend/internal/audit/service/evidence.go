@@ -1,0 +1,58 @@
+// Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package service
+
+import (
+	"context"
+	"io"
+
+	"github.com/wso2-open-operations/grc-platform/backend/internal/audit/model"
+	"github.com/wso2-open-operations/grc-platform/backend/internal/audit/repository"
+	"github.com/wso2-open-operations/grc-platform/backend/internal/shared/file"
+)
+
+// EvidenceService defines business operations for audit evidence.
+type EvidenceService interface {
+	List(ctx context.Context, controlID int) ([]*model.AuditEvidence, error)
+	Upload(ctx context.Context, controlID int, fileName, contentType string, content io.Reader, createdBy string) (*model.AuditEvidence, error)
+	Delete(ctx context.Context, controlID, evidenceID int, byUserID string) error
+}
+
+type evidenceService struct {
+	repo    repository.EvidenceRepository
+	storage *file.Service
+}
+
+func NewEvidenceService(repo repository.EvidenceRepository, storage *file.Service) EvidenceService {
+	return &evidenceService{repo: repo, storage: storage}
+}
+
+func (s *evidenceService) List(ctx context.Context, controlID int) ([]*model.AuditEvidence, error) {
+	// TODO: delegate to repo
+	return nil, nil
+}
+
+func (s *evidenceService) Upload(ctx context.Context, controlID int, fileName, contentType string, content io.Reader, createdBy string) (*model.AuditEvidence, error) {
+	// TODO: upload file via storage.Upload, create evidence row + evidence_file row via repo,
+	//       trigger AI validation (write audit_ai_validation_log row with status AI_VALIDATING)
+	return nil, nil
+}
+
+func (s *evidenceService) Delete(ctx context.Context, controlID, evidenceID int, byUserID string) error {
+	// TODO: fetch evidence, delete blob via storage.Delete, delete rows via repo
+	return nil
+}
