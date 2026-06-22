@@ -38,7 +38,7 @@ export default function Footer(): JSX.Element {
       }}
     >
       <FooterUI.Copyright>
-        © {new Date().getFullYear()} {COMPANY_NAME}. All rights reserved.
+        © {new Date().getFullYear()} {COMPANY_NAME} All rights reserved.
       </FooterUI.Copyright>
       <FooterUI.Link href={TERMS_OF_SERVICE_URL}>
         Terms & Conditions

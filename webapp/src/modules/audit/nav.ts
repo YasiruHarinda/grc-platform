@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { LayoutDashboard, ShieldCheck } from "@wso2/oxygen-ui-icons-react";
+import { ClipboardList, LayoutDashboard, ShieldCheck } from "@wso2/oxygen-ui-icons-react";
 import type { NavSection } from "@components/side-nav-bar/types";
 
 // Audit Hub sidebar section. Owned by the Audit module — add Audit nav items
@@ -30,5 +30,12 @@ export const auditNav: NavSection = {
       path: "/audit/dashboard",
       icon: LayoutDashboard,
     },
+    {
+      id: "audit-audits",
+      label: "Audits",
+      path: "/audit/audits",
+      icon: ClipboardList,
+    },
+    
   ],
 };
