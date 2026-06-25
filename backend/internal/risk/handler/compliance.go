@@ -16,4 +16,23 @@
 
 package handler
 
-// TODO: implement compliance reference CRUD handlers
+import (
+	"net/http"
+
+	"github.com/wso2-open-operations/grc-platform/backend/internal/response"
+	"github.com/wso2-open-operations/grc-platform/backend/internal/risk/model"
+)
+
+// handleListComplianceReferences serves GET /api/v1/compliance-references.
+func (d *Deps) handleListComplianceReferences(w http.ResponseWriter, r *http.Request) {
+	refs, err := d.Compliance.List(r.Context())
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+
+	if refs == nil {
+		refs = []*model.ComplianceReference{}
+	}
+	response.WriteJSONValue(w, http.StatusOK, refs)
+}

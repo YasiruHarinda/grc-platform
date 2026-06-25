@@ -31,7 +31,8 @@ import (
 type RiskService interface {
 	List(ctx context.Context, filter model.ListRisksFilter) ([]*model.Risk, error)
 	GetByID(ctx context.Context, id int) (*model.Risk, error)
-	Create(ctx context.Context, req model.CreateRiskRequest, createdBy string) (*model.Risk, error)
+	Create(ctx context.Context, req model.CreateRiskRequest, createdBy string) (*model.CreateRiskResponse, error)
+	NextSequenceID(ctx context.Context, sourceRegisterID, year int, quarter string) (int, error)
 	Update(ctx context.Context, id int, req model.UpdateRiskRequest, updatedBy string) error
 
 	// Workflow transitions — each validates the current status before advancing.
@@ -64,9 +65,12 @@ func (s *riskService) GetByID(ctx context.Context, id int) (*model.Risk, error) 
 	return nil, nil
 }
 
-func (s *riskService) Create(ctx context.Context, req model.CreateRiskRequest, createdBy string) (*model.Risk, error) {
-	// TODO: validate fields, generate risk code (YEAR-TEAMCODE-QUARTER-NNN), call repo.Create
-	return nil, nil
+func (s *riskService) Create(ctx context.Context, req model.CreateRiskRequest, createdBy string) (*model.CreateRiskResponse, error) {
+	return s.repo.Create(ctx, req, createdBy)
+}
+
+func (s *riskService) NextSequenceID(ctx context.Context, sourceRegisterID, year int, quarter string) (int, error) {
+	return s.repo.NextSequenceID(ctx, sourceRegisterID, year, quarter)
 }
 
 func (s *riskService) Update(ctx context.Context, id int, req model.UpdateRiskRequest, updatedBy string) error {

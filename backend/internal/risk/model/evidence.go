@@ -16,6 +16,12 @@
 
 package model
 
-// RiskEvidence represents a file or link attached to a risk as supporting evidence.
-// TODO: add fields based on `risk_evidence` table in risk_schema.sql
-type RiskEvidence struct{}
+// RiskEvidence represents a file attached to a risk, mapping to `risk_evidence`.
+type RiskEvidence struct {
+	ID           int    `json:"id"`
+	RiskID       int    `json:"risk_id"`
+	FileName     string `json:"file_name"`
+	FilePath     string `json:"file_path"`
+	Note         string `json:"note"`
+	EvidenceType string `json:"evidence_type"`
+}

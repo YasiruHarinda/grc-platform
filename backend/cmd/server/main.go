@@ -32,8 +32,10 @@ import (
 	"github.com/wso2-open-operations/grc-platform/backend/internal/db"
 	"github.com/wso2-open-operations/grc-platform/backend/internal/middleware"
 	riskhandler "github.com/wso2-open-operations/grc-platform/backend/internal/risk/handler"
+	"github.com/wso2-open-operations/grc-platform/backend/internal/shared/file"
 	"github.com/wso2-open-operations/grc-platform/backend/internal/shared/privilege"
 	userhandler "github.com/wso2-open-operations/grc-platform/backend/internal/user/handler"
+	usermysql "github.com/wso2-open-operations/grc-platform/backend/internal/user/mysql"
 )
 
 func main() {
@@ -67,10 +69,15 @@ func main() {
 		slog.Info("privilege store loaded")
 	}
 
-	// TODO: wire up the three layers in order:
-	//   1. Repositories  → internal/risk/repository/mysql/  + internal/audit/repository/mysql/ + internal/user/mysql/
-	//   2. Services      → internal/risk/service/           + internal/audit/service/
-	//   3. Handler Deps  → pass services into riskhandler.Deps{} and audithandler.Deps{} below
+	fileSvc := file.NewService(file.StorageConfig{
+		AccountName:   cfg.Azure.StorageAccountName,
+		AccountKey:    cfg.Azure.StorageAccountKey,
+		ContainerName: cfg.Azure.ContainerName,
+	})
+
+	userDeps := userhandler.Deps{
+		Users: usermysql.NewRepository(sqlDB),
+	}
 
 	mux := http.NewServeMux()
 
@@ -78,20 +85,22 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	userhandler.RegisterRoutes(mux)
-	riskhandler.RegisterRoutes(mux, riskhandler.Deps{})
-	audithandler.RegisterRoutes(mux, audithandler.Deps{})
+	userhandler.RegisterRoutes(mux, userDeps)
+	riskhandler.RegisterRoutes(mux, buildRiskDeps(sqlDB, fileSvc))
+	audithandler.RegisterRoutes(mux, buildAuditDeps(sqlDB, fileSvc))
 
-	handler := middleware.CorrelationID(
-		middleware.Logger(
-			middleware.Auth(middleware.Config{
-				JWKSEndpoint:          cfg.Auth.JWKSEndpoint,
-				Issuer:                cfg.Auth.Issuer,
-				Audience:              cfg.Auth.Audience,
-				ClockSkew:             cfg.Auth.ClockSkew,
-				TokenValidatorEnabled: cfg.Auth.TokenValidatorEnabled,
-				PrivilegeStore:        privStore,
-			})(mux),
+	handler := middleware.CORS(cfg.CORSAllowedOrigin)(
+		middleware.CorrelationID(
+			middleware.Logger(
+				middleware.Auth(middleware.Config{
+					JWKSEndpoint:          cfg.Auth.JWKSEndpoint,
+					Issuer:                cfg.Auth.Issuer,
+					Audience:              cfg.Auth.Audience,
+					ClockSkew:             cfg.Auth.ClockSkew,
+					TokenValidatorEnabled: cfg.Auth.TokenValidatorEnabled,
+					PrivilegeStore:        privStore,
+				})(mux),
+			),
 		),
 	)
 

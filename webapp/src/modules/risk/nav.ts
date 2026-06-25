@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { LayoutDashboard, ShieldAlert } from "@wso2/oxygen-ui-icons-react";
+import { BarChart2, ClipboardList, LayoutDashboard, PlusCircle, ShieldAlert } from "@wso2/oxygen-ui-icons-react";
 import type { NavSection } from "@components/side-nav-bar/types";
 
 // Risk Hub sidebar section. Owned by the Risk module — add Risk nav items
@@ -29,6 +29,24 @@ export const riskNav: NavSection = {
       label: "Dashboard",
       path: "/risk/dashboard",
       icon: LayoutDashboard,
+    },
+    {
+      id: "risk-registers",
+      label: "Risk Registers",
+      path: "/risk/registers",
+      icon: ClipboardList,
+    },
+    {
+      id: "risk-add",
+      label: "Add Risk",
+      path: "/risk/add",
+      icon: PlusCircle,
+    },
+    {
+      id: "risk-analytics",
+      label: "Analytics",
+      path: "/risk/analytics",
+      icon: BarChart2,
     },
   ],
 };

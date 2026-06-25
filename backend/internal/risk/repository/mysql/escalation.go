@@ -17,8 +17,10 @@
 package mysql
 
 import (
+	"context"
 	"database/sql"
 
+	"github.com/wso2-open-operations/grc-platform/backend/internal/risk/model"
 	"github.com/wso2-open-operations/grc-platform/backend/internal/risk/repository"
 )
 
@@ -29,4 +31,7 @@ func NewEscalationRepository(db *sql.DB) repository.EscalationRepository {
 	return &escalationRepository{db: db}
 }
 
-// TODO: implement risk_escalation CRUD
+func (r *escalationRepository) List(ctx context.Context, riskID int) ([]*model.Escalation, error) {
+	// TODO: implement risk_escalation SELECT
+	return nil, nil
+}

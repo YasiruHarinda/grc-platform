@@ -38,8 +38,7 @@ func NewComplianceReferenceService(repo repository.ComplianceReferenceRepository
 }
 
 func (s *complianceReferenceService) List(ctx context.Context) ([]*model.ComplianceReference, error) {
-	// TODO: delegate to repo
-	return nil, nil
+	return s.repo.List(ctx)
 }
 
 func (s *complianceReferenceService) Create(ctx context.Context, req model.CreateComplianceRefRequest, createdBy string) (*model.ComplianceReference, error) {

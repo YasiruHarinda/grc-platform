@@ -17,8 +17,11 @@
 package mysql
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 
+	"github.com/wso2-open-operations/grc-platform/backend/internal/risk/model"
 	"github.com/wso2-open-operations/grc-platform/backend/internal/risk/repository"
 )
 
@@ -29,4 +32,33 @@ func NewRiskScoreRepository(db *sql.DB) repository.RiskScoreRepository {
 	return &riskScoreRepository{db: db}
 }
 
-// TODO: implement risk_score CRUD
+func (r *riskScoreRepository) List(ctx context.Context) ([]*model.RiskScore, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, likelihood, impact, risk_rating, risk_level, color_code
+		FROM risk_score
+		ORDER BY likelihood, impact`)
+	if err != nil {
+		return nil, fmt.Errorf("list risk scores: %w", err)
+	}
+	defer rows.Close()
+
+	var scores []*model.RiskScore
+	for rows.Next() {
+		s := &model.RiskScore{}
+		if err := rows.Scan(&s.ID, &s.Likelihood, &s.Impact, &s.RiskRating, &s.RiskLevel, &s.ColorCode); err != nil {
+			return nil, fmt.Errorf("scan risk score row: %w", err)
+		}
+		scores = append(scores, s)
+	}
+	return scores, rows.Err()
+}
+
+func (r *riskScoreRepository) Create(ctx context.Context, req model.CreateRiskScoreRequest, createdBy string) (*model.RiskScore, error) {
+	// TODO: implement risk_score INSERT
+	return nil, nil
+}
+
+func (r *riskScoreRepository) Update(ctx context.Context, id int, req model.UpdateRiskScoreRequest, updatedBy string) error {
+	// TODO: implement risk_score UPDATE
+	return nil
+}

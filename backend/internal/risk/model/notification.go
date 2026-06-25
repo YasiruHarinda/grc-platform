@@ -16,6 +16,13 @@
 
 package model
 
-// Notification represents an in-app notification for a Risk Hub user.
-// TODO: add fields based on `risk_notification` table in risk_schema.sql
-type Notification struct{}
+// Notification represents an in-app notification, mapping to `risk_notification`.
+type Notification struct {
+	ID          int64  `json:"id"`
+	RecipientID int    `json:"recipient_id"`
+	RiskID      *int   `json:"risk_id"`
+	Type        string `json:"type"`
+	Channel     string `json:"channel"`
+	Message     string `json:"message"`
+	IsRead      bool   `json:"is_read"`
+}

@@ -16,14 +16,28 @@
 
 package model
 
-// RiskScore represents a likelihood/impact scoring configuration.
-// TODO: add fields based on the `risk_score` table in risk_schema.sql
-type RiskScore struct{}
+// RiskScore represents one cell of the 3×3 likelihood × impact matrix,
+// mapping to the `risk_score` table.
+type RiskScore struct {
+	ID         int    `json:"id"`
+	Likelihood int    `json:"likelihood"`
+	Impact     int    `json:"impact"`
+	RiskRating int    `json:"risk_rating"`
+	RiskLevel  string `json:"risk_level"`
+	ColorCode  string `json:"color_code"`
+}
 
 // CreateRiskScoreRequest is the payload for POST /api/v1/risk-scores.
-// TODO: define fields
-type CreateRiskScoreRequest struct{}
+type CreateRiskScoreRequest struct {
+	Likelihood int    `json:"likelihood"`
+	Impact     int    `json:"impact"`
+	RiskRating int    `json:"risk_rating"`
+	RiskLevel  string `json:"risk_level"`
+	ColorCode  string `json:"color_code"`
+}
 
 // UpdateRiskScoreRequest is the payload for PUT /api/v1/risk-scores/{id}.
-// TODO: define fields
-type UpdateRiskScoreRequest struct{}
+type UpdateRiskScoreRequest struct {
+	RiskLevel string `json:"risk_level"`
+	ColorCode string `json:"color_code"`
+}

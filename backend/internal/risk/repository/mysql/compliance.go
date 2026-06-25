@@ -17,8 +17,11 @@
 package mysql
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 
+	"github.com/wso2-open-operations/grc-platform/backend/internal/risk/model"
 	"github.com/wso2-open-operations/grc-platform/backend/internal/risk/repository"
 )
 
@@ -29,4 +32,28 @@ func NewComplianceReferenceRepository(db *sql.DB) repository.ComplianceReference
 	return &complianceReferenceRepository{db: db}
 }
 
-// TODO: implement compliance_reference CRUD
+func (r *complianceReferenceRepository) List(ctx context.Context) ([]*model.ComplianceReference, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, name, description
+		FROM risk_security_compliance_reference
+		ORDER BY name`)
+	if err != nil {
+		return nil, fmt.Errorf("list compliance references: %w", err)
+	}
+	defer rows.Close()
+
+	var refs []*model.ComplianceReference
+	for rows.Next() {
+		ref := &model.ComplianceReference{}
+		if err := rows.Scan(&ref.ID, &ref.Name, &ref.Description); err != nil {
+			return nil, fmt.Errorf("scan compliance reference row: %w", err)
+		}
+		refs = append(refs, ref)
+	}
+	return refs, rows.Err()
+}
+
+func (r *complianceReferenceRepository) Create(ctx context.Context, req model.CreateComplianceRefRequest, createdBy string) (*model.ComplianceReference, error) {
+	// TODO: implement compliance reference INSERT
+	return nil, nil
+}

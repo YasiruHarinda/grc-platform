@@ -16,26 +16,51 @@
 
 package model
 
-// ActionPlan represents a remediation plan attached to a risk.
-// TODO: add fields based on `action_plan` table in risk_schema.sql
-type ActionPlan struct{}
+// ActionPlan represents a remediation plan attached to a risk,
+// mapping to the `risk_action_plan` table.
+type ActionPlan struct {
+	ID            int     `json:"id"`
+	RiskID        int     `json:"risk_id"`
+	ActionOwnerID *int    `json:"action_owner_id"`
+	Description   *string `json:"description"`
+	Status        string  `json:"status"`
+	CompletedDate *string `json:"completed_date"`
+	PlanType      string  `json:"plan_type"`
+}
 
-// ActionPlanStep represents an individual step within an action plan.
-// TODO: add fields based on `action_plan_step` table
-type ActionPlanStep struct{}
+// ActionPlanStep represents an individual step within an action plan,
+// mapping to the `risk_action_step` table.
+type ActionPlanStep struct {
+	ID            int     `json:"id"`
+	PlanID        int     `json:"plan_id"`
+	StepNo        int     `json:"step_no"`
+	Description   *string `json:"description"`
+	Status        string  `json:"status"`
+	CompletedDate *string `json:"completed_date"`
+}
 
 // CreateActionPlanRequest is the payload for POST /api/v1/risks/{id}/action-plans.
-// TODO: define fields
-type CreateActionPlanRequest struct{}
+type CreateActionPlanRequest struct {
+	Description   string `json:"description"`
+	ActionOwnerID *int   `json:"action_owner_id"`
+	PlanType      string `json:"plan_type"`
+}
 
 // UpdateActionPlanRequest is the payload for PUT /api/v1/risks/{id}/action-plans/{planId}.
-// TODO: define fields
-type UpdateActionPlanRequest struct{}
+type UpdateActionPlanRequest struct {
+	Description   string  `json:"description"`
+	Status        string  `json:"status"`
+	CompletedDate *string `json:"completed_date"`
+}
 
 // AddActionPlanStepRequest is the payload for POST .../steps.
-// TODO: define fields (description, assigned_to, due_date, etc.)
-type AddActionPlanStepRequest struct{}
+type AddActionPlanStepRequest struct {
+	Description string `json:"description"`
+}
 
 // UpdateActionPlanStepRequest is the payload for PUT .../steps/{stepId}.
-// TODO: define fields
-type UpdateActionPlanStepRequest struct{}
+type UpdateActionPlanStepRequest struct {
+	Description   string  `json:"description"`
+	Status        string  `json:"status"`
+	CompletedDate *string `json:"completed_date"`
+}

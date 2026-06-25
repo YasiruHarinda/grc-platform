@@ -17,9 +17,19 @@
 // Package handler contains HTTP handlers for shared user endpoints.
 package handler
 
-import "net/http"
+import (
+	"net/http"
+
+	userentity "github.com/wso2-open-operations/grc-platform/backend/internal/user"
+)
+
+// Deps holds dependencies for shared user handlers.
+type Deps struct {
+	Users userentity.Repository
+}
 
 // RegisterRoutes mounts shared user routes onto mux.
-func RegisterRoutes(mux *http.ServeMux) {
+func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/v1/me/permissions", handleGetMyPermissions)
+	mux.HandleFunc("GET /api/v1/users", handleListUsers(deps.Users))
 }

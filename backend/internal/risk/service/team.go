@@ -25,7 +25,7 @@ import (
 
 // TeamService defines business operations for risk teams.
 type TeamService interface {
-	List(ctx context.Context) ([]*model.Team, error)
+	List(ctx context.Context, filter model.ListTeamsFilter) ([]*model.Team, error)
 	Create(ctx context.Context, req model.CreateTeamRequest, createdBy string) (*model.Team, error)
 	Update(ctx context.Context, id int, req model.UpdateTeamRequest, updatedBy string) error
 }
@@ -38,9 +38,8 @@ func NewTeamService(repo repository.TeamRepository) TeamService {
 	return &teamService{repo: repo}
 }
 
-func (s *teamService) List(ctx context.Context) ([]*model.Team, error) {
-	// TODO: delegate to repo
-	return nil, nil
+func (s *teamService) List(ctx context.Context, filter model.ListTeamsFilter) ([]*model.Team, error) {
+	return s.repo.List(ctx, filter)
 }
 
 func (s *teamService) Create(ctx context.Context, req model.CreateTeamRequest, createdBy string) (*model.Team, error) {

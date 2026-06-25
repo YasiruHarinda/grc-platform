@@ -16,4 +16,29 @@
 
 package handler
 
-// TODO: implement risk team CRUD handlers
+import (
+	"net/http"
+
+	"github.com/wso2-open-operations/grc-platform/backend/internal/response"
+	"github.com/wso2-open-operations/grc-platform/backend/internal/risk/model"
+)
+
+// handleListTeams serves GET /api/v1/teams.
+// Optional ?type=SOURCE_REGISTER or ?type=ASSIGNMENT — semantic filter, BOTH teams
+// appear in both result sets.
+func (d *Deps) handleListTeams(w http.ResponseWriter, r *http.Request) {
+	filter := model.ListTeamsFilter{
+		Type: r.URL.Query().Get("type"),
+	}
+
+	teams, err := d.Team.List(r.Context(), filter)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+
+	if teams == nil {
+		teams = []*model.Team{}
+	}
+	response.WriteJSONValue(w, http.StatusOK, teams)
+}

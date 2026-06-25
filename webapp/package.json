@@ -16,8 +16,9 @@
     "@wso2/oxygen-ui": "0.6.0",
     "@wso2/oxygen-ui-charts-react": "0.6.0",
     "@wso2/oxygen-ui-icons-react": "0.6.0",
-    "react": "19.2.0",
-    "react-dom": "19.2.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "react-hook-form": "^7.80.0",
     "react-idle-timer": "5.7.2",
     "react-router": "7.1.5"
   },

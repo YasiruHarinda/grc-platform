@@ -15,7 +15,6 @@
 // under the License.
 
 // Package repository defines the data-access contracts for the Risk Hub module.
-// Add methods to each interface as handlers are implemented.
 package repository
 
 import (
@@ -25,47 +24,68 @@ import (
 )
 
 // RiskRepository is the data-access contract for risk records.
-// TODO: extend based on RISK_MODULE_DESIGN.md
 type RiskRepository interface {
 	List(ctx context.Context, filter model.ListRisksFilter) ([]*model.Risk, error)
 	GetByID(ctx context.Context, id int) (*model.Risk, error)
-	Create(ctx context.Context, req model.CreateRiskRequest, createdBy string) (*model.Risk, error)
+	Create(ctx context.Context, req model.CreateRiskRequest, createdBy string) (*model.CreateRiskResponse, error)
 	Update(ctx context.Context, id int, req model.UpdateRiskRequest, updatedBy string) error
 	UpdateStatus(ctx context.Context, id int, status, updatedBy string) error
+	NextSequenceID(ctx context.Context, sourceRegisterID, year int, quarter string) (int, error)
 }
 
 // TeamRepository is the data-access contract for risk teams.
-// TODO: add CRUD methods
-type TeamRepository interface{}
+type TeamRepository interface {
+	List(ctx context.Context, filter model.ListTeamsFilter) ([]*model.Team, error)
+	Create(ctx context.Context, req model.CreateTeamRequest, createdBy string) (*model.Team, error)
+	Update(ctx context.Context, id int, req model.UpdateTeamRequest, updatedBy string) error
+}
 
 // RiskScoreRepository is the data-access contract for risk score configurations.
-// TODO: add CRUD methods
-type RiskScoreRepository interface{}
+type RiskScoreRepository interface {
+	List(ctx context.Context) ([]*model.RiskScore, error)
+	Create(ctx context.Context, req model.CreateRiskScoreRequest, createdBy string) (*model.RiskScore, error)
+	Update(ctx context.Context, id int, req model.UpdateRiskScoreRequest, updatedBy string) error
+}
 
 // ActionPlanRepository is the data-access contract for action plans and steps.
-// TODO: add CRUD methods
-type ActionPlanRepository interface{}
+type ActionPlanRepository interface {
+	List(ctx context.Context, riskID int) ([]*model.ActionPlan, error)
+	GetByID(ctx context.Context, planID int) (*model.ActionPlan, error)
+	Create(ctx context.Context, riskID int, req model.CreateActionPlanRequest, createdBy string) (*model.ActionPlan, error)
+	Update(ctx context.Context, planID int, req model.UpdateActionPlanRequest, updatedBy string) error
+	ListSteps(ctx context.Context, planID int) ([]*model.ActionPlanStep, error)
+	AddStep(ctx context.Context, planID, stepNo int, req model.AddActionPlanStepRequest, createdBy string) (*model.ActionPlanStep, error)
+	UpdateStep(ctx context.Context, stepID int, req model.UpdateActionPlanStepRequest, updatedBy string) error
+}
 
 // RiskEvidenceRepository is the data-access contract for risk evidence files.
-// TODO: add CRUD methods
-type RiskEvidenceRepository interface{}
+type RiskEvidenceRepository interface {
+	List(ctx context.Context, riskID int) ([]*model.RiskEvidence, error)
+	Create(ctx context.Context, riskID int, fileName, filePath, note, evidenceType, createdBy string) (*model.RiskEvidence, error)
+	Delete(ctx context.Context, evidenceID int) error
+}
 
 // EscalationRepository is the data-access contract for risk escalations.
-// TODO: add CRUD methods
-type EscalationRepository interface{}
+type EscalationRepository interface {
+	List(ctx context.Context, riskID int) ([]*model.Escalation, error)
+}
 
 // ChangelogRepository is the data-access contract for the risk audit trail.
-// TODO: add insert and list methods
 type ChangelogRepository interface{}
 
 // NotificationRepository is the data-access contract for risk notifications.
-// TODO: add methods (list, mark-read)
-type NotificationRepository interface{}
+type NotificationRepository interface {
+	List(ctx context.Context, recipientID int) ([]*model.Notification, error)
+	MarkRead(ctx context.Context, id, recipientID int) error
+}
 
 // ComplianceReferenceRepository is the data-access contract for compliance references.
-// TODO: add CRUD methods
-type ComplianceReferenceRepository interface{}
+type ComplianceReferenceRepository interface {
+	List(ctx context.Context) ([]*model.ComplianceReference, error)
+	Create(ctx context.Context, req model.CreateComplianceRefRequest, createdBy string) (*model.ComplianceReference, error)
+}
 
 // AnalyticsRepository provides aggregated read queries for the analytics summary endpoint.
-// TODO: add Summary / count-by-status / count-by-level methods
-type AnalyticsRepository interface{}
+type AnalyticsRepository interface {
+	// TODO: add Summary / count-by-status / count-by-level methods
+}

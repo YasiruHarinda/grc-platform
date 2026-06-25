@@ -14,18 +14,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package model
+import { Box, Typography } from "@wso2/oxygen-ui";
+import type { JSX } from "react";
 
-// ComplianceReference represents a regulatory / framework reference,
-// mapping to the `risk_security_compliance_reference` table.
-type ComplianceReference struct {
-	ID          int     `json:"id"`
-	Name        string  `json:"name"`
-	Description *string `json:"description"`
-}
-
-// CreateComplianceRefRequest is the payload for POST /api/v1/compliance-references.
-type CreateComplianceRefRequest struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+export default function RiskRegisters(): JSX.Element {
+  return (
+    <Box sx={{ p: 3 }}>
+      <Typography variant="h4" gutterBottom>
+        Risk Registers
+      </Typography>
+      <Typography variant="body1" color="text.secondary">
+        Risk registers.
+      </Typography>
+    </Box>
+  );
 }

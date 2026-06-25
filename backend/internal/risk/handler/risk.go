@@ -16,4 +16,147 @@
 
 package handler
 
-// TODO: implement risk CRUD and workflow (submit/approve/reject/complete/owner-approve/close/escalate/assess) and changelog handlers
+import (
+	"net/http"
+	"strconv"
+
+	"github.com/wso2-open-operations/grc-platform/backend/internal/response"
+	"github.com/wso2-open-operations/grc-platform/backend/internal/risk/model"
+	"github.com/wso2-open-operations/grc-platform/backend/internal/shared/auth"
+)
+
+// handleNextSequenceID serves GET /api/v1/risks/next-sequence-id.
+// Required query params: source_register_id, year, quarter.
+// Returns a preview of the next available sequence number for the risk code.
+// This does not reserve the number — the actual code is assigned atomically on POST.
+func (d *Deps) handleNextSequenceID(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	sourceRegisterIDStr := q.Get("source_register_id")
+	yearStr := q.Get("year")
+	quarter := q.Get("quarter")
+
+	if sourceRegisterIDStr == "" || yearStr == "" || quarter == "" {
+		response.WriteError(w, http.StatusBadRequest, "source_register_id, year, and quarter are required")
+		return
+	}
+
+	sourceRegisterID, err := strconv.Atoi(sourceRegisterIDStr)
+	if err != nil || sourceRegisterID <= 0 {
+		response.WriteError(w, http.StatusBadRequest, "source_register_id must be a positive integer")
+		return
+	}
+
+	year, err := strconv.Atoi(yearStr)
+	if err != nil || year < 2000 {
+		response.WriteError(w, http.StatusBadRequest, "year must be a valid 4-digit year")
+		return
+	}
+
+	nextID, err := d.Risk.NextSequenceID(r.Context(), sourceRegisterID, year, quarter)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+
+	response.WriteJSONValue(w, http.StatusOK, model.NextSequenceIDResponse{NextSequenceID: nextID})
+}
+
+// handleCreateRisk serves POST /api/v1/risks.
+// Atomically generates a risk code, creates the risk, action plan, steps,
+// compliance references, and change log entry inside a single DB transaction.
+func (d *Deps) handleCreateRisk(w http.ResponseWriter, r *http.Request) {
+	user := auth.FromContext(r.Context())
+	if user == nil {
+		response.WriteError(w, http.StatusUnauthorized, response.ErrMsgUnauthorized)
+		return
+	}
+
+	var req model.CreateRiskRequest
+	if err := response.DecodeJSON(w, r, &req); err != nil {
+		return
+	}
+
+	if err := validateCreateRiskRequest(req); err != nil {
+		response.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	createdBy := user.Email
+	if createdBy == "" {
+		createdBy = user.Subject
+	}
+	result, err := d.Risk.Create(r.Context(), req, createdBy)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+
+	response.WriteJSONValue(w, http.StatusCreated, result)
+}
+
+// validateCreateRiskRequest performs business validation on the incoming payload.
+func validateCreateRiskRequest(req model.CreateRiskRequest) error {
+	if req.RiskTitle == "" {
+		return errorf("risk_title is required")
+	}
+	if req.RiskDescription == "" {
+		return errorf("risk_description is required")
+	}
+	if req.SourceRegisterID <= 0 {
+		return errorf("source_register_id is required")
+	}
+	if req.AssignmentTeamID <= 0 {
+		return errorf("assignment_team_id is required")
+	}
+	if req.AssignerID <= 0 {
+		return errorf("assigner_id is required")
+	}
+	if req.OwnerID <= 0 {
+		return errorf("owner_id is required")
+	}
+	if req.ActionOwnerID <= 0 {
+		return errorf("action_owner_id is required")
+	}
+	if req.Year < 2000 || req.Year > 2100 {
+		return errorf("year must be a 4-digit year between 2000 and 2100")
+	}
+	switch req.Quarter {
+	case "Q1", "Q2", "Q3", "Q4":
+	default:
+		return errorf("quarter must be Q1, Q2, Q3, or Q4")
+	}
+	if req.Likelihood < 1 || req.Likelihood > 3 {
+		return errorf("likelihood must be 1, 2, or 3")
+	}
+	if req.Impact < 1 || req.Impact > 3 {
+		return errorf("impact must be 1, 2, or 3")
+	}
+	if req.EmailSubject == "" {
+		return errorf("email_subject is required")
+	}
+	if req.TreatmentStrategy == "" {
+		return errorf("treatment_strategy is required")
+	}
+	if len(req.ActionSteps) == 0 {
+		return errorf("at least one action step is required")
+	}
+	for i, step := range req.ActionSteps {
+		if step.Description == "" {
+			return errorf("action step %d description is required", i+1)
+		}
+	}
+	switch req.IdentifiedByType {
+	case "EMPLOYEE":
+		if req.IdentifiedByUserID == nil {
+			return errorf("identified_by_user_id is required when identified_by_type is EMPLOYEE")
+		}
+	case "EXTERNAL_PERSON", "TOOL":
+		if req.IdentifiedByName == nil || *req.IdentifiedByName == "" {
+			return errorf("identified_by_name is required when identified_by_type is %s", req.IdentifiedByType)
+		}
+	default:
+		return errorf("identified_by_type must be EMPLOYEE, EXTERNAL_PERSON, or TOOL")
+	}
+	return nil
+}

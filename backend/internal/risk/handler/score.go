@@ -16,4 +16,24 @@
 
 package handler
 
-// TODO: implement risk score CRUD handlers
+import (
+	"net/http"
+
+	"github.com/wso2-open-operations/grc-platform/backend/internal/response"
+	"github.com/wso2-open-operations/grc-platform/backend/internal/risk/model"
+)
+
+// handleListRiskScores serves GET /api/v1/risk-scores.
+// Returns all 9 cells of the likelihood × impact matrix.
+func (d *Deps) handleListRiskScores(w http.ResponseWriter, r *http.Request) {
+	scores, err := d.Score.List(r.Context())
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+
+	if scores == nil {
+		scores = []*model.RiskScore{}
+	}
+	response.WriteJSONValue(w, http.StatusOK, scores)
+}

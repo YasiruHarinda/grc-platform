@@ -14,6 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import { useCallback } from "react";
 import { useAsgardeo } from "@asgardeo/react";
 
 // Asgardeo SDK error code raised when the access/ID token has expired.
@@ -76,7 +77,7 @@ export function useAuthApiClient() {
     });
   };
 
-  const authFetch = async (
+  const authFetch = useCallback(async (
     input: RequestInfo | URL,
     options?: RequestInit,
   ): Promise<Response> => {
@@ -96,7 +97,7 @@ export function useAuthApiClient() {
       }
       throw error;
     }
-  };
+  }, [getIdToken]);
 
   return authFetch;
 }

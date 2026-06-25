@@ -14,18 +14,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package model
+package main
 
-// ComplianceReference represents a regulatory / framework reference,
-// mapping to the `risk_security_compliance_reference` table.
-type ComplianceReference struct {
-	ID          int     `json:"id"`
-	Name        string  `json:"name"`
-	Description *string `json:"description"`
-}
+import (
+	"database/sql"
 
-// CreateComplianceRefRequest is the payload for POST /api/v1/compliance-references.
-type CreateComplianceRefRequest struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	audithandler "github.com/wso2-open-operations/grc-platform/backend/internal/audit/handler"
+	"github.com/wso2-open-operations/grc-platform/backend/internal/shared/file"
+)
+
+// buildAuditDeps wires the full Audit Hub dependency graph.
+// TODO (audit developer): instantiate audit MySQL repositories and services here,
+// following the same pattern as buildRiskDeps in risk_deps.go.
+func buildAuditDeps(db *sql.DB, fileSvc *file.Service) audithandler.Deps {
+	_ = db
+	_ = fileSvc
+	return audithandler.Deps{}
 }

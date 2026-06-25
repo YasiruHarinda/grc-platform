@@ -39,8 +39,7 @@ func NewRiskScoreService(repo repository.RiskScoreRepository) RiskScoreService {
 }
 
 func (s *riskScoreService) List(ctx context.Context) ([]*model.RiskScore, error) {
-	// TODO: delegate to repo
-	return nil, nil
+	return s.repo.List(ctx)
 }
 
 func (s *riskScoreService) Create(ctx context.Context, req model.CreateRiskScoreRequest, createdBy string) (*model.RiskScore, error) {

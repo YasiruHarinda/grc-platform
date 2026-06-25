@@ -68,7 +68,7 @@ func (s *actionPlanService) ListSteps(ctx context.Context, planID int) ([]*model
 }
 
 func (s *actionPlanService) AddStep(ctx context.Context, planID int, req model.AddActionPlanStepRequest, createdBy string) (*model.ActionPlanStep, error) {
-	// TODO: determine next step_no, delegate to repo
+	// TODO: determine next step_no, delegate to repo with stepNo
 	return nil, nil
 }
 

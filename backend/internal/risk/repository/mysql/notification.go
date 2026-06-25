@@ -17,8 +17,10 @@
 package mysql
 
 import (
+	"context"
 	"database/sql"
 
+	"github.com/wso2-open-operations/grc-platform/backend/internal/risk/model"
 	"github.com/wso2-open-operations/grc-platform/backend/internal/risk/repository"
 )
 
@@ -29,4 +31,12 @@ func NewNotificationRepository(db *sql.DB) repository.NotificationRepository {
 	return &riskNotificationRepository{db: db}
 }
 
-// TODO: implement risk_notification list and mark-read
+func (r *riskNotificationRepository) List(ctx context.Context, recipientID int) ([]*model.Notification, error) {
+	// TODO: implement risk_notification list filtered by recipient_id
+	return nil, nil
+}
+
+func (r *riskNotificationRepository) MarkRead(ctx context.Context, id, recipientID int) error {
+	// TODO: UPDATE risk_notification SET is_read = TRUE WHERE id = ? AND recipient_id = ?
+	return nil
+}

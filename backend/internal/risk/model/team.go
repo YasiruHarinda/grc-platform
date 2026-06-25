@@ -16,14 +16,36 @@
 
 package model
 
-// Team represents a risk team grouping of users.
-// TODO: add fields based on the `risk_team` table in risk_schema.sql
-type Team struct{}
+// Team represents a risk team, mapping to the `risk_team` table.
+type Team struct {
+	ID          int     `json:"id"`
+	Name        string  `json:"name"`
+	Code        *string `json:"code"`
+	Description *string `json:"description"`
+	TeamType    string  `json:"team_type"`
+	Status      string  `json:"status"`
+}
+
+// ListTeamsFilter controls which teams are returned by GET /api/v1/teams.
+// Type uses semantic values: "SOURCE_REGISTER" returns teams where team_type
+// IN ('SOURCE_REGISTER','BOTH'); "ASSIGNMENT" returns IN ('ASSIGNMENT','BOTH').
+// Empty Type returns all ACTIVE teams.
+type ListTeamsFilter struct {
+	Type string
+}
 
 // CreateTeamRequest is the payload for POST /api/v1/teams.
-// TODO: define fields
-type CreateTeamRequest struct{}
+type CreateTeamRequest struct {
+	Name        string  `json:"name"`
+	Code        *string `json:"code"`
+	Description string  `json:"description"`
+	TeamType    string  `json:"team_type"`
+}
 
 // UpdateTeamRequest is the payload for PUT /api/v1/teams/{id}.
-// TODO: define fields
-type UpdateTeamRequest struct{}
+type UpdateTeamRequest struct {
+	Name        string  `json:"name"`
+	Code        *string `json:"code"`
+	Description string  `json:"description"`
+	Status      string  `json:"status"`
+}

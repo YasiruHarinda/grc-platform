@@ -16,6 +16,14 @@
 
 package model
 
-// Escalation represents a risk escalation record.
-// TODO: add fields based on `risk_escalation` table in risk_schema.sql
-type Escalation struct{}
+// Escalation represents a risk escalation record, mapping to `risk_escalation`.
+type Escalation struct {
+	ID                   int     `json:"id"`
+	RiskID               int     `json:"risk_id"`
+	EscalatedTo          int     `json:"escalated_to"`
+	Reason               *string `json:"reason"`
+	NewTreatmentStrategy *string `json:"new_treatment_strategy"`
+	ActionPlanID         *int    `json:"action_plan_id"`
+	Decision             *string `json:"decision"`
+	Status               string  `json:"status"`
+}
