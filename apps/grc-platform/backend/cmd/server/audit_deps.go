@@ -25,11 +25,9 @@ import (
 	"github.com/wso2-open-operations/grc-platform/backend/internal/shared/file"
 )
 
-// buildAuditDeps wires the full Audit Hub dependency graph:
-//
-//	MySQL repositories → services → handler Deps
-//
-// Add new repositories and services here as they are implemented.
+// buildAuditDeps wires the currently implemented Audit Hub dependencies:
+// audit, control, framework, user. Evidence, Population, Comment, Review,
+// Assignment, Trail, and Notification are added here as they are implemented.
 func buildAuditDeps(db *sql.DB, fileSvc *file.Service) audithandler.Deps {
 	_ = fileSvc // reserved for evidence/population file upload (future)
 

@@ -33,10 +33,6 @@ export function useUpdateControlStatus() {
 
   return useMutation({
     mutationFn: async ({ auditId, controlId, status, comment }: UpdateStatusPayload) => {
-      if (!BACKEND_BASE_URL) {
-        // Mock mode: no-op — the drawer already optimistically updates local state
-        return;
-      }
       const res = await authFetch(
         `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}/status`,
         {

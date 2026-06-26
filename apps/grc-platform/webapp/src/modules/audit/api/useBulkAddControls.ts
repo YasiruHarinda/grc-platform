@@ -32,9 +32,6 @@ export function useBulkAddControls() {
 
   return useMutation({
     mutationFn: async ({ auditId, controls }: BulkAddPayload): Promise<ControlListResponse> => {
-      if (!BACKEND_BASE_URL) {
-        return { items: [], total: 0 };
-      }
       const res = await authFetch(
         `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/bulk`,
         {

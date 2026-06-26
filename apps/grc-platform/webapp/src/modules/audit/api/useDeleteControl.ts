@@ -32,9 +32,6 @@ export function useDeleteControl() {
 
   return useMutation({
     mutationFn: async ({ auditId, controlId }: DeleteControlPayload) => {
-      if (!BACKEND_BASE_URL) {
-        return; // mock mode: no-op
-      }
       const res = await authFetch(
         `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}`,
         { method: "DELETE" },

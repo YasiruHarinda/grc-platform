@@ -27,22 +27,6 @@ export function useCreateAudit() {
 
   return useMutation({
     mutationFn: async (req: CreateAuditRequest): Promise<Audit> => {
-      if (!BACKEND_BASE_URL) {
-        // Mock: return a fake created audit so the flow can continue
-        return {
-          id: Date.now(),
-          name: req.name,
-          framework: { id: req.frameworkId, name: "Framework", version: null },
-          product: { id: req.productId, name: "Product" },
-          periodStart: req.periodStart,
-          periodEnd: req.periodEnd,
-          status: "ACTIVE",
-          scopeDescription: req.scopeDescription ?? null,
-          controlCounts: { total: 0, approved: 0, overdue: 0 },
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-      }
       const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audits`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

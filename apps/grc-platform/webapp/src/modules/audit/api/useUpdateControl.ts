@@ -33,9 +33,6 @@ export function useUpdateControl() {
 
   return useMutation({
     mutationFn: async ({ auditId, controlId, req }: UpdateControlPayload) => {
-      if (!BACKEND_BASE_URL) {
-        return; // mock mode: no-op
-      }
       const res = await authFetch(
         `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}`,
         {

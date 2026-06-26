@@ -32,35 +32,6 @@ export function useAddControl() {
 
   return useMutation({
     mutationFn: async ({ auditId, req }: AddControlPayload): Promise<AuditControl> => {
-      if (!BACKEND_BASE_URL) {
-        // Mock: return a minimal control shape so callers don't crash
-        return {
-          id: Date.now(),
-          auditId,
-          ownerId: req.ownerId ?? null,
-          ownerName: null,
-          teamId: req.teamId ?? null,
-          teamName: null,
-          auditorId: req.auditorId ?? null,
-          auditorName: null,
-          controlNumber: req.controlNumber,
-          description: req.description,
-          evidenceRequirement: req.evidenceRequirement ?? null,
-          requirementType: req.requirementType,
-          controlType: req.controlType,
-          scope: req.scope,
-          dueDate: req.dueDate ?? null,
-          status: req.requirementType === "OE" ? "POPULATION_PENDING" : "EVIDENCE_PENDING",
-          sampleReference: null,
-          sampleFileUrl: null,
-          sampleFileName: null,
-          comments: null,
-          isManuallyAdded: req.isManuallyAdded,
-          isOverdue: false,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-      }
       const res = await authFetch(
         `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls`,
         {
