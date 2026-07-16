@@ -108,15 +108,24 @@ type NextSequenceIDResponse struct {
 	NextSequenceID int `json:"next_sequence_id"`
 }
 
-// ListRisksFilter holds query parameters for filtering and paginating the risk list.
+// ListRisksFilter holds query parameters for filtering and paginating the risk
+// list. Every multi-value field is OR-matched within itself and AND-matched
+// against the other fields (spreadsheet-style column filtering) — an empty
+// slice/string means "no restriction on this field".
 type ListRisksFilter struct {
-	Statuses []string // workflow_status values to include (empty = all)
-	TeamID   int      // source_register_id; 0 = all
-	Level    string   // LOW / MEDIUM / HIGH; empty = all
-	Search   string   // matched against risk_code and risk_title
-	RiskType string   // NEW / UPDATED; empty = all
-	Limit    int      // rows per page; handler enforces a sensible default and max
-	Offset   int      // zero-based row offset
+	Statuses       []string // workflow_status values to include (empty = all)
+	TeamIDs        []int    // source_register_id values to include (empty = all)
+	Levels         []string // LOW / MEDIUM / HIGH values to include (empty = all)
+	Search         string   // matched against risk_code and risk_title
+	RiskTypes      []string // NEW / UPDATED values to include (empty = all)
+	OwnerIDs       []int    // owner_id values to include (empty = all)
+	SubmittedFrom  string   // created_at >= this date (YYYY-MM-DD); empty = unbounded
+	SubmittedTo    string   // created_at <= this date (YYYY-MM-DD); empty = unbounded
+	DueFrom        string   // implementation_date >= this date (YYYY-MM-DD); empty = unbounded
+	DueTo          string   // implementation_date <= this date (YYYY-MM-DD); empty = unbounded
+	DueOverdueOnly bool     // implementation_date < today, regardless of the range above
+	Limit          int      // rows per page; handler enforces a sensible default and max
+	Offset         int      // zero-based row offset
 }
 
 // RiskListPage is the paginated response for GET /api/v1/risks.
@@ -188,8 +197,16 @@ type RiskDetail struct {
 	IdentifiedByUserName   *string `json:"identified_by_user_name"`
 	ComplianceApproverName *string `json:"compliance_approver_name"`
 
-	// Gross score (from risk_score join)
+	// Gross score (from risk_score join) — the original rating assigned at
+	// creation, immutable once a risk owner has approved the risk. Used by
+	// EditRiskDialog to pre-fill the edit form; do not repurpose for display
+	// of the risk's current standing, see EffectiveScore.
 	GrossScore *RiskScore `json:"gross_score"`
+	// EffectiveScore is the risk's current residual score: the latest
+	// reassessment's score when one exists, else the gross score — the same
+	// "effective residual score" convention used by the dashboard/analytics
+	// repositories. This is what tables and headers should display.
+	EffectiveScore *RiskScore `json:"effective_score"`
 
 	// Related entities
 	ComplianceReferences []ComplianceReference `json:"compliance_references"`

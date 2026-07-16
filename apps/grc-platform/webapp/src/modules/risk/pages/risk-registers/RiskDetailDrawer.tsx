@@ -285,13 +285,18 @@ export default function RiskDetailDrawer({
                 </Typography>
                 <Stack direction="row" gap={1} sx={{ mt: 1.5 }} flexWrap="wrap">
                   <Chip label={statusCfg.label} color={statusCfg.color} size="small" sx={statusCfg.sx} />
-                  {detail.gross_score && (
-                    <Chip
-                      label={`${detail.gross_score.risk_level} : Score ${detail.gross_score.risk_rating}`}
-                      size="small"
-                      sx={{ bgcolor: detail.gross_score.color_code, color: "#fff", fontWeight: 700 }}
-                    />
-                  )}
+                  {(() => {
+                    const current = detail.effective_score ?? detail.gross_score;
+                    return (
+                      current && (
+                        <Chip
+                          label={`${current.risk_level} : Score ${current.risk_rating}`}
+                          size="small"
+                          sx={{ bgcolor: current.color_code, color: "#fff", fontWeight: 700 }}
+                        />
+                      )
+                    );
+                  })()}
                   <Chip
                     label={`Age: ${calcAge(detail.created_at)} days`}
                     size="small"
@@ -447,7 +452,7 @@ export default function RiskDetailDrawer({
                 <Stack gap={2}>
                   {detail.assessments.map((a) => (
                     <Box
-                      key={a.id}
+                      key={a.is_initial ? "initial" : a.id}
                       sx={{
                         border: "1px solid",
                         borderColor: "divider",
@@ -465,12 +470,20 @@ export default function RiskDetailDrawer({
                           {formatDate(a.reassessment_date)}
                         </Typography>
                       </Stack>
-                      <Typography variant="body2" sx={{ mt: 1 }}>
-                        {a.progress}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Assessed by {a.assessed_by}
-                      </Typography>
+                      {a.is_initial ? (
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: "block" }}>
+                          Initial assessment (gross score)
+                        </Typography>
+                      ) : (
+                        <>
+                          <Typography variant="body2" sx={{ mt: 1 }}>
+                            {a.progress}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Assessed by {a.assessed_by}
+                          </Typography>
+                        </>
+                      )}
                     </Box>
                   ))}
                 </Stack>

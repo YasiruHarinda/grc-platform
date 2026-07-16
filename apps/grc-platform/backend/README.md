@@ -193,7 +193,7 @@ HTTP request
 | `PATCH` | `/api/v1/notifications/{id}/read` | Mark notification read |
 | `GET` | `/api/v1/compliance-references` | List compliance references |
 | `POST` | `/api/v1/compliance-references` | Create compliance reference |
-| `GET` | `/api/v1/analytics/summary` | Risk analytics summary |
+| `GET` | `/api/v1/risks/analytics/summary` | Risk analytics summary |
 
 ### Audit Hub
 

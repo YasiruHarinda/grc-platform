@@ -86,6 +86,8 @@ import RiskDetailDrawer from "./risk-registers/RiskDetailDrawer";
 import RejectDialog from "./risk-registers/RejectDialog";
 import ReassessmentDialog from "./risk-registers/ReassessmentDialog";
 import EditRiskDialog from "./risk-registers/EditRiskDialog";
+import ColumnFilter from "./risk-registers/ColumnFilter";
+import DateRangeFilter from "./risk-registers/DateRangeFilter";
 import {
   APPROVED_ALL_STATUSES,
   PENDING_COMPLIANCE_STATUSES,
@@ -117,6 +119,14 @@ const TABS: TabDef[] = [
 ];
 
 // ── Chips ──────────────────────────────────────────────────────────────────────
+
+// Matches OutlinedStatusChip's displayed text, so the Status column filter's
+// checkbox labels read the same as what's actually shown in that column.
+function statusLabel(status: string): string {
+  if (status === "IN_REMEDIATION") return "Open";
+  if (status === "CLOSED") return "Closed";
+  return STATUS_CONFIG[status]?.label ?? status;
+}
 
 function OutlinedStatusChip({ status }: { status: string }): JSX.Element {
   if (status === "IN_REMEDIATION") return <Chip label="Open" color="info" size="small" variant="outlined" />;
@@ -160,13 +170,38 @@ function RiskTypeChip({ riskType, workflowStatus, rejectionStage }: { riskType: 
 
 // ── Filters ────────────────────────────────────────────────────────────────────
 
+// Every multi-value field is shared between the top FilterBar (which writes
+// a single-element array through its classic single-select UI) and the new
+// per-column checkbox filters (which can add more values to the same array)
+// — matching the Audit module's FilterPanel + ColumnFilter precedent, where
+// both surfaces read/write one shared filter state.
 interface Filters {
   search: string;
-  teamId: number;
-  level: string;
-  status: string;
-  riskType: string;
+  teamId: number[];
+  level: string[];
+  status: string[];
+  riskType: string[];
+  ownerId: number[];
+  submittedFrom: string;
+  submittedTo: string;
+  dueFrom: string;
+  dueTo: string;
+  dueOverdueOnly: boolean;
 }
+
+const EMPTY_FILTERS: Filters = {
+  search: "",
+  teamId: [],
+  level: [],
+  status: [],
+  riskType: [],
+  ownerId: [],
+  submittedFrom: "",
+  submittedTo: "",
+  dueFrom: "",
+  dueTo: "",
+  dueOverdueOnly: false,
+};
 
 function FilterBar({
   filters,
@@ -215,8 +250,8 @@ function FilterBar({
         <InputLabel>Register</InputLabel>
         <Select
           label="Register"
-          value={filters.teamId || ""}
-          onChange={(e) => onChange({ ...filters, teamId: Number(e.target.value) || 0 })}
+          value={filters.teamId[0] ?? ""}
+          onChange={(e) => onChange({ ...filters, teamId: e.target.value ? [Number(e.target.value)] : [] })}
         >
           <MenuItem value="">All Registers</MenuItem>
           {teams.map((t) => (
@@ -231,8 +266,8 @@ function FilterBar({
         <InputLabel>Level</InputLabel>
         <Select
           label="Level"
-          value={filters.level}
-          onChange={(e) => onChange({ ...filters, level: e.target.value as string })}
+          value={filters.level[0] ?? ""}
+          onChange={(e) => onChange({ ...filters, level: e.target.value ? [e.target.value as string] : [] })}
         >
           <MenuItem value="">All Levels</MenuItem>
           <MenuItem value="LOW">Low</MenuItem>
@@ -246,8 +281,8 @@ function FilterBar({
           <InputLabel>Risk Type</InputLabel>
           <Select
             label="Risk Type"
-            value={filters.riskType}
-            onChange={(e) => onChange({ ...filters, riskType: e.target.value as string })}
+            value={filters.riskType[0] ?? ""}
+            onChange={(e) => onChange({ ...filters, riskType: e.target.value ? [e.target.value as string] : [] })}
           >
             <MenuItem value="">All Types</MenuItem>
             <MenuItem value="NEW">New Risk</MenuItem>
@@ -301,13 +336,7 @@ export default function RiskRegisters(): JSX.Element {
   const [users, setUsers] = useState<UserOption[]>([]);
   const [complianceRefs, setComplianceRefs] = useState<ComplianceReference[]>([]);
 
-  const [filters, setFilters] = useState<Filters>({
-    search: "",
-    teamId: 0,
-    level: "",
-    status: "",
-    riskType: "",
-  });
+  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerDetail, setDrawerDetail] = useState<RiskDetail | null>(null);
@@ -327,14 +356,43 @@ export default function RiskRegisters(): JSX.Element {
 
   const activeTabDef = TABS.find((t) => t.key === activeTab)!;
 
+  // The tab (and, within "Approved Risks", the approvedFilter select) already
+  // scope which statuses are in play; the Status column filter narrows that
+  // further (AND), same as every other column filter.
   const getStatuses = useCallback((): string[] => {
-    if (activeTab === "approved") {
-      if (approvedFilter === "open") return ["IN_REMEDIATION"];
-      if (approvedFilter === "closed") return ["CLOSED"];
-      return APPROVED_ALL_STATUSES;
-    }
-    return activeTabDef.statuses;
-  }, [activeTab, activeTabDef.statuses, approvedFilter]);
+    const tabStatuses = (() => {
+      if (activeTab === "approved") {
+        if (approvedFilter === "open") return ["IN_REMEDIATION"];
+        if (approvedFilter === "closed") return ["CLOSED"];
+        return APPROVED_ALL_STATUSES;
+      }
+      return activeTabDef.statuses;
+    })();
+    if (filters.status.length === 0) return tabStatuses;
+    return tabStatuses.filter((s) => filters.status.includes(s));
+  }, [activeTab, activeTabDef.statuses, approvedFilter, filters.status]);
+
+  // Full pool of statuses the Status column filter can offer, independent of
+  // approvedFilter's own narrowing — so e.g. "Closed" is always selectable
+  // even while approvedFilter is currently set to "Open".
+  const statusOptions = activeTab === "approved" ? APPROVED_ALL_STATUSES : activeTabDef.statuses;
+
+  function setColumnFilter<K extends keyof Filters>(key: K, value: Filters[K]) {
+    setFilters((prev) => ({ ...prev, [key]: value }));
+  }
+
+  const registerOptions = sourceTeams.map((t) => ({ label: t.name, value: String(t.id) }));
+  const ownerOptions = users.map((u) => ({ label: u.display_name, value: String(u.id) }));
+  const levelOptions = [
+    { label: "Low", value: "LOW" },
+    { label: "Medium", value: "MEDIUM" },
+    { label: "High", value: "HIGH" },
+  ];
+  const riskTypeOptions = [
+    { label: "New Risk", value: "NEW" },
+    { label: "Updated Risk", value: "UPDATED" },
+  ];
+  const statusColumnOptions = statusOptions.map((s) => ({ label: statusLabel(s), value: s }));
 
   useEffect(() => {
     fetchSourceRegisterTeams(authFetch).then(setSourceTeams).catch(console.error);
@@ -352,15 +410,36 @@ export default function RiskRegisters(): JSX.Element {
 
   const loadRisks = useCallback(async () => {
     const seq = ++loadSeqRef.current;
+    const statuses = getStatuses();
+    // getStatuses() returns [] both when no Status filter is selected (no
+    // restriction) and when the selected Status values are disjoint from the
+    // current tab/approvedFilter scope (genuinely zero matches). fetchRisks
+    // treats an empty array as "no filter" and omits the statuses param
+    // entirely, which the backend then reads as "no restriction" — silently
+    // returning risks from every workflow status instead of none. Short-
+    // circuit the disjoint case here rather than hitting the server.
+    if (statuses.length === 0 && filters.status.length > 0) {
+      setRisks([]);
+      setTotal(0);
+      setListError("");
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setListError("");
     try {
       const result = await fetchRisks(authFetch, {
-        statuses: getStatuses(),
-        team_id: filters.teamId || undefined,
-        level: filters.level || undefined,
+        statuses,
+        team_id: filters.teamId.length ? filters.teamId : undefined,
+        level: filters.level.length ? filters.level : undefined,
         search: filters.search || undefined,
-        risk_type: filters.riskType || undefined,
+        risk_type: filters.riskType.length ? filters.riskType : undefined,
+        owner_id: filters.ownerId.length ? filters.ownerId : undefined,
+        submitted_from: filters.submittedFrom || undefined,
+        submitted_to: filters.submittedTo || undefined,
+        due_from: filters.dueFrom || undefined,
+        due_to: filters.dueTo || undefined,
+        due_overdue: filters.dueOverdueOnly || undefined,
         offset: page * rowsPerPage,
         limit: rowsPerPage,
       });
@@ -500,7 +579,7 @@ export default function RiskRegisters(): JSX.Element {
 
   const handleTabChange = (_: React.SyntheticEvent, val: TabKey) => {
     setActiveTab(val);
-    setFilters({ search: "", teamId: 0, level: "", status: "", riskType: "" });
+    setFilters(EMPTY_FILTERS);
     setApprovedFilter("");
   };
 
@@ -553,13 +632,91 @@ export default function RiskRegisters(): JSX.Element {
               <TableRow>
                 <TableCell sx={{ fontWeight: 700 }}>Risk Code</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>Title</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Register</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Level</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Owner</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Submitted</TableCell>
-                {showStatusCol && <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>}
-                {showRiskTypeCol && <TableCell sx={{ fontWeight: 700 }}>Risk Type</TableCell>}
-                <TableCell sx={{ fontWeight: 700 }}>Due</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>
+                  <Box sx={{ display: "flex", alignItems: "center" }}>
+                    Register
+                    <ColumnFilter
+                      label="Register"
+                      options={registerOptions}
+                      selected={filters.teamId.map(String)}
+                      onChange={(v) => setColumnFilter("teamId", v.map(Number))}
+                      searchable
+                    />
+                  </Box>
+                </TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>
+                  <Box sx={{ display: "flex", alignItems: "center" }}>
+                    Level
+                    <ColumnFilter
+                      label="Level"
+                      options={levelOptions}
+                      selected={filters.level}
+                      onChange={(v) => setColumnFilter("level", v)}
+                    />
+                  </Box>
+                </TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>
+                  <Box sx={{ display: "flex", alignItems: "center" }}>
+                    Owner
+                    <ColumnFilter
+                      label="Owner"
+                      options={ownerOptions}
+                      selected={filters.ownerId.map(String)}
+                      onChange={(v) => setColumnFilter("ownerId", v.map(Number))}
+                      searchable
+                    />
+                  </Box>
+                </TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>
+                  <Box sx={{ display: "flex", alignItems: "center" }}>
+                    Submitted
+                    <DateRangeFilter
+                      label="Submitted"
+                      from={filters.submittedFrom}
+                      to={filters.submittedTo}
+                      onChange={(from, to) => setFilters((prev) => ({ ...prev, submittedFrom: from, submittedTo: to }))}
+                    />
+                  </Box>
+                </TableCell>
+                {showStatusCol && (
+                  <TableCell sx={{ fontWeight: 700 }}>
+                    <Box sx={{ display: "flex", alignItems: "center" }}>
+                      Status
+                      <ColumnFilter
+                        label="Status"
+                        options={statusColumnOptions}
+                        selected={filters.status}
+                        onChange={(v) => setColumnFilter("status", v)}
+                      />
+                    </Box>
+                  </TableCell>
+                )}
+                {showRiskTypeCol && (
+                  <TableCell sx={{ fontWeight: 700 }}>
+                    <Box sx={{ display: "flex", alignItems: "center" }}>
+                      Risk Type
+                      <ColumnFilter
+                        label="Risk Type"
+                        options={riskTypeOptions}
+                        selected={filters.riskType}
+                        onChange={(v) => setColumnFilter("riskType", v)}
+                      />
+                    </Box>
+                  </TableCell>
+                )}
+                <TableCell sx={{ fontWeight: 700 }}>
+                  <Box sx={{ display: "flex", alignItems: "center" }}>
+                    Due
+                    <DateRangeFilter
+                      label="Due"
+                      from={filters.dueFrom}
+                      to={filters.dueTo}
+                      onChange={(from, to) => setFilters((prev) => ({ ...prev, dueFrom: from, dueTo: to }))}
+                      overdueOnly={filters.dueOverdueOnly}
+                      onOverdueOnlyChange={(v) => setColumnFilter("dueOverdueOnly", v)}
+                    />
+                  </Box>
+                </TableCell>
                 <TableCell />
               </TableRow>
             </TableHead>

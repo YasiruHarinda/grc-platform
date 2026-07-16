@@ -105,9 +105,49 @@ type ComplianceReferenceRepository interface {
 	Create(ctx context.Context, req model.CreateComplianceRefRequest, createdBy string) (*model.ComplianceReference, error)
 }
 
-// AnalyticsRepository provides aggregated read queries for the analytics summary endpoint.
+// AnalyticsRepository provides the aggregated read queries behind
+// GET /api/v1/risks/analytics/summary. Every method accepts an optional
+// registerID (nil = all registers) to scope its result to the page's
+// register filter. All methods exclude CANCELLED risks.
 type AnalyticsRepository interface {
-	// TODO: add time-series trend queries for the Analytics page
+	// NewThisMonthCount returns the count of risks identified since monthStart.
+	NewThisMonthCount(ctx context.Context, registerID *int, monthStart string) (int, error)
+	// AvgDaysToClose returns the average identified→closed duration in days
+	// across CLOSED risks, or nil if there are none.
+	AvgDaysToClose(ctx context.Context, registerID *int) (*float64, error)
+	// AvgEffectiveScore returns the average effective residual score across
+	// open risks, or nil if there are none.
+	AvgEffectiveScore(ctx context.Context, registerID *int) (*float64, error)
+	// IdentifiedTrend returns, per month since `since`, the count of risks
+	// identified and their average effective score.
+	IdentifiedTrend(ctx context.Context, registerID *int, since string) ([]model.MonthScoreStat, error)
+	// ClosedTrend returns, per month since `since`, the count of risks closed
+	// (approximated by workflow_status=CLOSED and updated_at).
+	ClosedTrend(ctx context.Context, registerID *int, since string) ([]model.MonthCount, error)
+	// LevelDistribution returns, per month since `since` × effective level,
+	// the count of risks identified that month.
+	LevelDistribution(ctx context.Context, registerID *int, since string) ([]model.MonthLevelCount, error)
+	// LevelReference returns every distinct risk level defined in risk_score,
+	// ordered by severity (highest first), with its reference color.
+	LevelReference(ctx context.Context) ([]model.RiskLevelRef, error)
+	// IdentifiedTrendByRegister returns, per month since `since` × register,
+	// the count of risks identified that month.
+	IdentifiedTrendByRegister(ctx context.Context, registerID *int, since string) ([]model.MonthRegisterCount, error)
+	// ClosedTrendByRegister returns, per month since `since` × register, the
+	// count of risks closed that month.
+	ClosedTrendByRegister(ctx context.Context, registerID *int, since string) ([]model.MonthRegisterCount, error)
+	// RegisterTotals returns total risk count (all-time, all statuses except
+	// CANCELLED) per register, for the cross-register comparison donut.
+	RegisterTotals(ctx context.Context) ([]model.RegisterShare, error)
+	// ComplianceDistribution returns total risk count per compliance
+	// framework, all-time.
+	ComplianceDistribution(ctx context.Context, registerID *int) ([]model.ComplianceShare, error)
+	// TreatmentMix returns open risk count per treatment strategy.
+	TreatmentMix(ctx context.Context, registerID *int) ([]model.TreatmentShare, error)
+	// WorkflowFunnel returns risk count per workflow_status stage.
+	WorkflowFunnel(ctx context.Context, registerID *int) ([]model.WorkflowStageCount, error)
+	// AgingRisks returns open risks ordered oldest-identified-first.
+	AgingRisks(ctx context.Context, registerID *int, limit int) ([]model.AgingRiskItem, error)
 }
 
 // DashboardRepository provides the aggregated read queries behind GET /api/v1/risks/dashboard.

@@ -52,13 +52,43 @@ func parseRiskID(w http.ResponseWriter, r *http.Request) (int, bool) {
 	return id, true
 }
 
+// splitCSV splits a comma-separated query param into trimmed, non-empty parts.
+func splitCSV(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+// splitCSVInts is splitCSV for comma-separated integer IDs; non-numeric or
+// non-positive entries are silently dropped rather than erroring the request.
+func splitCSVInts(raw string) []int {
+	var out []int
+	for _, s := range splitCSV(raw) {
+		if id, err := strconv.Atoi(s); err == nil && id > 0 {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 // handleListRisks serves GET /api/v1/risks.
 // Query params:
-//   - statuses:   comma-separated workflow status values
-//   - team_id:    filter by source register (0 = all)
-//   - level:      LOW | MEDIUM | HIGH (empty = all)
-//   - search:     matched against risk_code and risk_title
-//   - risk_type:  NEW | UPDATED (empty = all)
+//   - statuses:        comma-separated workflow status values
+//   - team_id:          comma-separated source register IDs
+//   - level:            comma-separated LOW | MEDIUM | HIGH values
+//   - search:           matched against risk_code and risk_title
+//   - risk_type:        comma-separated NEW | UPDATED values
+//   - owner_id:          comma-separated owner user IDs
+//   - submitted_from/to: created_at date range (YYYY-MM-DD, inclusive)
+//   - due_from/to:       implementation_date range (YYYY-MM-DD, inclusive)
+//   - due_overdue:       "true" to additionally restrict to implementation_date < today
 func (d *Deps) handleListRisks(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewRisks) {
 		return
@@ -66,21 +96,17 @@ func (d *Deps) handleListRisks(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
 	var filter model.ListRisksFilter
-	if s := q.Get("statuses"); s != "" {
-		for _, st := range strings.Split(s, ",") {
-			if trimmed := strings.TrimSpace(st); trimmed != "" {
-				filter.Statuses = append(filter.Statuses, trimmed)
-			}
-		}
-	}
-	if tid := q.Get("team_id"); tid != "" {
-		if id, err := strconv.Atoi(tid); err == nil && id > 0 {
-			filter.TeamID = id
-		}
-	}
-	filter.Level = q.Get("level")
+	filter.Statuses = splitCSV(q.Get("statuses"))
+	filter.TeamIDs = splitCSVInts(q.Get("team_id"))
+	filter.Levels = splitCSV(q.Get("level"))
 	filter.Search = q.Get("search")
-	filter.RiskType = q.Get("risk_type")
+	filter.RiskTypes = splitCSV(q.Get("risk_type"))
+	filter.OwnerIDs = splitCSVInts(q.Get("owner_id"))
+	filter.SubmittedFrom = q.Get("submitted_from")
+	filter.SubmittedTo = q.Get("submitted_to")
+	filter.DueFrom = q.Get("due_from")
+	filter.DueTo = q.Get("due_to")
+	filter.DueOverdueOnly = q.Get("due_overdue") == "true"
 
 	filter.Limit = 50
 	if l := q.Get("limit"); l != "" {

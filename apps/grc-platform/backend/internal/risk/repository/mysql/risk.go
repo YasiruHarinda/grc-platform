@@ -238,6 +238,26 @@ func (r *riskRepository) Create(ctx context.Context, req model.CreateRiskRequest
 	return &model.CreateRiskResponse{ID: riskID, RiskCode: riskCode}, nil
 }
 
+// placeholders returns n comma-separated `?` marks for a SQL IN (...) clause.
+func placeholders(n int) string {
+	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
+}
+
+// effectiveScoreLeftJoin resolves each risk's effective residual score (latest
+// reassessment if one exists, else gross score) as `rs`, same convention as
+// effectiveScoreJoin (dashboard.go). Unlike that one, this is a LEFT JOIN: a
+// risk with neither a gross score nor any assessment must still appear in the
+// registers table / detail drawer, whereas dropping it from an aggregate
+// chart is acceptable.
+const effectiveScoreLeftJoin = `
+	LEFT JOIN risk_score rs ON rs.id = COALESCE(
+		(SELECT ra.score_id
+		   FROM risk_assessment ra
+		  WHERE ra.risk_id = r.id
+		  ORDER BY ra.created_at DESC, ra.id DESC
+		  LIMIT 1),
+		r.gross_score_id)`
+
 func (r *riskRepository) List(ctx context.Context, filter model.ListRisksFilter) (*model.RiskListPage, error) {
 	query := `
 		SELECT r.id, r.risk_code, r.risk_title,
@@ -255,37 +275,65 @@ func (r *riskRepository) List(ctx context.Context, filter model.ListRisksFilter)
 		       COUNT(*) OVER() AS total_count
 		FROM risk r
 		LEFT JOIN risk_team st ON st.id = r.source_register_id
-		LEFT JOIN risk_score rs ON rs.id = r.gross_score_id
 		LEFT JOIN ` + "`user`" + ` owner ON owner.id = r.owner_id
-		LEFT JOIN ` + "`user`" + ` asgn  ON asgn.id  = r.assigner_id`
+		LEFT JOIN ` + "`user`" + ` asgn  ON asgn.id  = r.assigner_id` + effectiveScoreLeftJoin
 
 	var args []any
 	var where []string
 
 	if len(filter.Statuses) > 0 {
-		placeholders := strings.Repeat("?,", len(filter.Statuses))
-		placeholders = placeholders[:len(placeholders)-1]
-		where = append(where, "r.workflow_status IN ("+placeholders+")")
+		where = append(where, "r.workflow_status IN ("+placeholders(len(filter.Statuses))+")")
 		for _, s := range filter.Statuses {
 			args = append(args, s)
 		}
 	}
-	if filter.TeamID > 0 {
-		where = append(where, "r.source_register_id = ?")
-		args = append(args, filter.TeamID)
+	if len(filter.TeamIDs) > 0 {
+		where = append(where, "r.source_register_id IN ("+placeholders(len(filter.TeamIDs))+")")
+		for _, id := range filter.TeamIDs {
+			args = append(args, id)
+		}
 	}
-	if filter.Level != "" {
-		where = append(where, "rs.risk_level = ?")
-		args = append(args, filter.Level)
+	if len(filter.Levels) > 0 {
+		where = append(where, "rs.risk_level IN ("+placeholders(len(filter.Levels))+")")
+		for _, l := range filter.Levels {
+			args = append(args, l)
+		}
 	}
 	if filter.Search != "" {
 		where = append(where, "(r.risk_code LIKE ? OR r.risk_title LIKE ?)")
 		like := "%" + filter.Search + "%"
 		args = append(args, like, like)
 	}
-	if filter.RiskType != "" {
-		where = append(where, "r.risk_type = ?")
-		args = append(args, filter.RiskType)
+	if len(filter.RiskTypes) > 0 {
+		where = append(where, "r.risk_type IN ("+placeholders(len(filter.RiskTypes))+")")
+		for _, t := range filter.RiskTypes {
+			args = append(args, t)
+		}
+	}
+	if len(filter.OwnerIDs) > 0 {
+		where = append(where, "r.owner_id IN ("+placeholders(len(filter.OwnerIDs))+")")
+		for _, id := range filter.OwnerIDs {
+			args = append(args, id)
+		}
+	}
+	if filter.SubmittedFrom != "" {
+		where = append(where, "r.created_at >= ?")
+		args = append(args, filter.SubmittedFrom+" 00:00:00")
+	}
+	if filter.SubmittedTo != "" {
+		where = append(where, "r.created_at <= ?")
+		args = append(args, filter.SubmittedTo+" 23:59:59")
+	}
+	if filter.DueFrom != "" {
+		where = append(where, "r.implementation_date >= ?")
+		args = append(args, filter.DueFrom)
+	}
+	if filter.DueTo != "" {
+		where = append(where, "r.implementation_date <= ?")
+		args = append(args, filter.DueTo)
+	}
+	if filter.DueOverdueOnly {
+		where = append(where, "r.implementation_date IS NOT NULL AND r.implementation_date < CURDATE()")
 	}
 
 	if len(where) > 0 {
@@ -330,6 +378,8 @@ func (r *riskRepository) GetByID(ctx context.Context, id int) (*model.RiskDetail
 	var complianceApprovalDate, ownerFirstApprovedAt []byte
 	var scoreID, scoreLikelihood, scoreImpact, scoreRating sql.NullInt64
 	var scoreLevel, scoreColor sql.NullString
+	var effScoreID, effScoreLikelihood, effScoreImpact, effScoreRating sql.NullInt64
+	var effScoreLevel, effScoreColor sql.NullString
 
 	err := r.db.QueryRowContext(ctx, `
 		SELECT r.id, r.risk_code, r.risk_year, r.risk_quarter,
@@ -348,7 +398,8 @@ func (r *riskRepository) GetByID(ctx context.Context, id int) (*model.RiskDetail
 		       COALESCE(asgn.display_name,'')  AS assigner_name,
 		       ibu.display_name                AS identified_by_user_name,
 		       ca.display_name                 AS compliance_approver_name,
-		       rs.id, rs.likelihood, rs.impact, rs.risk_rating, rs.risk_level, rs.color_code
+		       rs.id, rs.likelihood, rs.impact, rs.risk_rating, rs.risk_level, rs.color_code,
+		       ers.id, ers.likelihood, ers.impact, ers.risk_rating, ers.risk_level, ers.color_code
 		FROM risk r
 		LEFT JOIN risk_team st ON st.id = r.source_register_id
 		LEFT JOIN risk_team at ON at.id = r.assignment_team_id
@@ -357,6 +408,13 @@ func (r *riskRepository) GetByID(ctx context.Context, id int) (*model.RiskDetail
 		LEFT JOIN `+"`user`"+` ibu   ON ibu.id   = r.identified_by_user_id
 		LEFT JOIN `+"`user`"+` ca    ON ca.id    = r.compliance_approval_by
 		LEFT JOIN risk_score rs ON rs.id = r.gross_score_id
+		LEFT JOIN risk_score ers ON ers.id = COALESCE(
+			(SELECT ra.score_id
+			   FROM risk_assessment ra
+			  WHERE ra.risk_id = r.id
+			  ORDER BY ra.created_at DESC, ra.id DESC
+			  LIMIT 1),
+			r.gross_score_id)
 		WHERE r.id = ?`, id,
 	).Scan(
 		&d.ID, &d.RiskCode, &d.RiskYear, &d.RiskQuarter,
@@ -373,6 +431,7 @@ func (r *riskRepository) GetByID(ctx context.Context, id int) (*model.RiskDetail
 		&d.OwnerName, &d.AssignerName,
 		&d.IdentifiedByUserName, &d.ComplianceApproverName,
 		&scoreID, &scoreLikelihood, &scoreImpact, &scoreRating, &scoreLevel, &scoreColor,
+		&effScoreID, &effScoreLikelihood, &effScoreImpact, &effScoreRating, &effScoreLevel, &effScoreColor,
 	)
 	if err == sql.ErrNoRows {
 		return nil, &apierror.Error{StatusCode: http.StatusNotFound, Body: fmt.Sprintf("risk %d not found", id)}
@@ -400,6 +459,16 @@ func (r *riskRepository) GetByID(ctx context.Context, id int) (*model.RiskDetail
 			RiskRating: int(scoreRating.Int64),
 			RiskLevel:  scoreLevel.String,
 			ColorCode:  scoreColor.String,
+		}
+	}
+	if effScoreID.Valid {
+		d.EffectiveScore = &model.RiskScore{
+			ID:         int(effScoreID.Int64),
+			Likelihood: int(effScoreLikelihood.Int64),
+			Impact:     int(effScoreImpact.Int64),
+			RiskRating: int(effScoreRating.Int64),
+			RiskLevel:  effScoreLevel.String,
+			ColorCode:  effScoreColor.String,
 		}
 	}
 
@@ -476,6 +545,28 @@ func (r *riskRepository) GetByID(ctx context.Context, id int) (*model.RiskDetail
 		d.Assessments = []model.RiskAssessment{}
 	}
 
+	// Append the gross score as a synthetic, oldest entry so the log shows the
+	// full lineage (gross -> reassessment -> reassessment ...), not just the
+	// reassessments. Real assessments were appended above newest-first, so
+	// this lands last.
+	if d.GrossScore != nil {
+		baselineDate := d.CreatedAt
+		if d.RiskIdentifiedDate != nil && *d.RiskIdentifiedDate != "" {
+			baselineDate = *d.RiskIdentifiedDate
+		}
+		d.Assessments = append(d.Assessments, model.RiskAssessment{
+			RiskID:             d.ID,
+			ScoreID:            d.GrossScore.ID,
+			ReassessmentDate:   baselineDate,
+			ResidualLikelihood: d.GrossScore.Likelihood,
+			ResidualImpact:     d.GrossScore.Impact,
+			ResidualRating:     d.GrossScore.RiskRating,
+			ResidualLevel:      d.GrossScore.RiskLevel,
+			ResidualColorCode:  d.GrossScore.ColorCode,
+			IsInitial:          true,
+		})
+	}
+
 	return &d, nil
 }
 
@@ -502,6 +593,9 @@ func (r *riskRepository) Update(ctx context.Context, id int, req model.UpdateRis
 	).Scan(&curImplDate, &curEmailSubject, &ownerFirstApprovedAt, &curStatus)
 	if err != nil {
 		return fmt.Errorf("fetch current risk for update: %w", err)
+	}
+	if curStatus.String == model.StatusClosed {
+		return &apierror.Error{StatusCode: http.StatusConflict, Body: "risk is closed and can no longer be edited"}
 	}
 
 	// Gross score and reassessment date are full-edit-only: ignore them once a

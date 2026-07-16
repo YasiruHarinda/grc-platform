@@ -16,4 +16,36 @@
 
 package handler
 
-// TODO: implement risk analytics dashboard summary, distribution, and trends handlers
+import (
+	"net/http"
+	"strconv"
+
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
+)
+
+// handleAnalyticsSummary serves GET /api/v1/risks/analytics/summary.
+// Optional query param register_id scopes the payload to one register.
+func (d *Deps) handleAnalyticsSummary(w http.ResponseWriter, r *http.Request) {
+	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAnalytics) {
+		return
+	}
+
+	var registerID *int
+	if raw := r.URL.Query().Get("register_id"); raw != "" {
+		id, err := strconv.Atoi(raw)
+		if err != nil || id <= 0 {
+			response.WriteError(w, http.StatusBadRequest, "register_id must be a positive integer")
+			return
+		}
+		registerID = &id
+	}
+
+	summary, err := d.Analytics.Summary(r.Context(), registerID)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	response.WriteJSONValue(w, http.StatusOK, summary)
+}

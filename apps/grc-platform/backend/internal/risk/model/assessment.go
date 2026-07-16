@@ -34,6 +34,11 @@ type RiskAssessment struct {
 	ResidualRating     int    `json:"residual_rating"`
 	ResidualLevel      string `json:"residual_level"`
 	ResidualColorCode  string `json:"residual_color_code"`
+	// IsInitial marks a synthetic entry representing the risk's gross score,
+	// prepended by GetByID so the assessment log always shows the full lineage
+	// (gross → reassessment → reassessment ...) even though it isn't a real
+	// risk_assessment row.
+	IsInitial bool `json:"is_initial,omitempty"`
 }
 
 // CreateAssessmentRequest is the payload for POST /api/v1/risks/{id}/assess.
