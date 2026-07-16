@@ -1,0 +1,12 @@
+schemaVersion: 1.2
+
+endpoints:
+  - name: ai-validation-agent-api
+    displayName: AI Validation Agent
+    service:
+      basePath: /
+      port: 8090
+    type: REST
+
+    networkVisibilities:
+      - Project

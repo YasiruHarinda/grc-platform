@@ -1,0 +1,12 @@
+schemaVersion: 1.2
+
+endpoints:
+  - name: ai-validation-mcp-api
+    displayName: AI Validation MCP Server
+    service:
+      basePath: /
+      port: 8091
+    type: REST
+
+    networkVisibilities:
+      - Project
