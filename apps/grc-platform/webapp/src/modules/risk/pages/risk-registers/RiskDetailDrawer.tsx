@@ -51,10 +51,7 @@ import { STATUS_CONFIG, calcAge, calcDue, formatDate } from "./utils";
 // ActionPlan doesn't embed its steps (GET .../action-plans lists plans only;
 // steps come from a separate GET .../action-plans/{planId}/steps call) — the
 // parent page fetches both and merges them before passing down here.
-// action_owner_name is similarly resolved by the parent (from the users list
-// it already has, matched on action_owner_id) so this card can show who the
-// completion controls are gated to.
-export type ActionPlanWithSteps = ActionPlan & { steps: ActionPlanStep[]; action_owner_name: string | null };
+export type ActionPlanWithSteps = ActionPlan & { steps: ActionPlanStep[] };
 
 export interface DrawerActions {
   onOwnerApprove: () => void;
@@ -83,6 +80,10 @@ interface RiskDetailDrawerProps extends DrawerActions {
   // detail.action_plan, which only ever embeds the STANDARD one.
   actionPlans: ActionPlanWithSteps[];
   currentUserId: number | null;
+  // id → display_name, resolved at render time so the Action Owner label
+  // stays correct even when the drawer opens before the users list finishes
+  // loading (e.g. a dashboard deep-link).
+  userNames: Map<number, string>;
   onCompleteStep: (planId: number, stepId: number) => void;
   onCompletePlan: (planId: number) => void;
 }
@@ -229,6 +230,7 @@ function ActionPlanCard({
   currentUserId,
   disabled,
   riskStatus,
+  userNames,
   onCompleteStep,
   onCompletePlan,
 }: {
@@ -237,6 +239,7 @@ function ActionPlanCard({
   currentUserId: number | null;
   disabled: boolean;
   riskStatus: string;
+  userNames: Map<number, string>;
   onCompleteStep: (planId: number, stepId: number) => void;
   onCompletePlan: (planId: number) => void;
 }): JSX.Element {
@@ -247,6 +250,7 @@ function ActionPlanCard({
   const canComplete = can(RiskPrivilege.CompleteActionSteps) && isOwner && riskActive;
   const allStepsDone = plan.steps.length > 0 && plan.steps.every((s) => s.status === "COMPLETED");
   const isManagement = plan.plan_type === "MANAGEMENT";
+  const ownerName = plan.action_owner_id !== null ? (userNames.get(plan.action_owner_id) ?? null) : null;
 
   return (
     <SectionCard
@@ -259,7 +263,7 @@ function ActionPlanCard({
       <Stack gap={1.5}>
         {plan.description && <Typography variant="body2">{plan.description}</Typography>}
         <Typography variant="caption" color="text.secondary">
-          Action Owner: <strong>{plan.action_owner_name ?? "Unassigned"}</strong>
+          Action Owner: <strong>{ownerName ?? "Unassigned"}</strong>
         </Typography>
         {plan.steps.length > 0 && (
           <Stack gap={0.75}>
@@ -506,6 +510,7 @@ export default function RiskDetailDrawer({
   onClose,
   actionPlans,
   currentUserId,
+  userNames,
   onCompleteStep,
   onCompletePlan,
   ...actions
@@ -724,6 +729,7 @@ export default function RiskDetailDrawer({
                     currentUserId={currentUserId}
                     disabled={actionsDisabled}
                     riskStatus={status}
+                    userNames={userNames}
                     onCompleteStep={onCompleteStep}
                     onCompletePlan={onCompletePlan}
                   />

@@ -40,9 +40,7 @@ type ActionPlanService interface {
 	// part of risk registration, a separate path this deliberately doesn't
 	// touch (see repository/entity/stubs.go's note on the two paths).
 	Create(ctx context.Context, riskID int, req model.CreateActionPlanRequest, createdBy string) (*model.ActionPlan, error)
-	Update(ctx context.Context, riskID, planID int, req model.UpdateActionPlanRequest, updatedBy string) error
 	ListSteps(ctx context.Context, planID int) ([]*model.ActionPlanStep, error)
-	AddStep(ctx context.Context, riskID, planID int, req model.AddActionPlanStepRequest, createdBy string) (*model.ActionPlanStep, error)
 	// UpdateStep and Complete are ownership-gated in addition to the
 	// CompleteActionSteps privilege the handler already checks: callerEmail
 	// must resolve to the plan's action_owner_id, uniformly for STANDARD and
@@ -84,7 +82,7 @@ func (s *actionPlanService) getForRisk(ctx context.Context, riskID, planID int) 
 	if err != nil {
 		return nil, err
 	}
-	if plan.RiskID != riskID {
+	if plan == nil || plan.RiskID != riskID {
 		return nil, &apierror.Error{StatusCode: http.StatusNotFound, Body: fmt.Sprintf("action plan %d not found for risk %d", planID, riskID)}
 	}
 	return plan, nil
@@ -111,41 +109,11 @@ func (s *actionPlanService) Create(ctx context.Context, riskID int, req model.Cr
 	return s.repo.Create(ctx, riskID, req, createdBy)
 }
 
-func (s *actionPlanService) Update(ctx context.Context, riskID, planID int, req model.UpdateActionPlanRequest, updatedBy string) error {
-	if riskID <= 0 {
-		return badRequest("riskId must be a positive integer")
-	}
-	if updatedBy == "" {
-		return badRequest("updatedBy is required")
-	}
-	if _, err := s.getForRisk(ctx, riskID, planID); err != nil {
-		return err
-	}
-	return s.repo.Update(ctx, planID, req, updatedBy)
-}
-
 func (s *actionPlanService) ListSteps(ctx context.Context, planID int) ([]*model.ActionPlanStep, error) {
 	if planID <= 0 {
 		return nil, badRequest("planId must be a positive integer")
 	}
 	return s.repo.ListSteps(ctx, planID)
-}
-
-func (s *actionPlanService) AddStep(ctx context.Context, riskID, planID int, req model.AddActionPlanStepRequest, createdBy string) (*model.ActionPlanStep, error) {
-	if req.Description == "" {
-		return nil, badRequest("description is required")
-	}
-	if createdBy == "" {
-		return nil, badRequest("createdBy is required")
-	}
-	if _, err := s.getForRisk(ctx, riskID, planID); err != nil {
-		return nil, err
-	}
-	existing, err := s.repo.ListSteps(ctx, planID)
-	if err != nil {
-		return nil, err
-	}
-	return s.repo.AddStep(ctx, planID, len(existing)+1, req, createdBy)
 }
 
 // requireOwner reports whether callerEmail resolves to plan's action_owner_id.

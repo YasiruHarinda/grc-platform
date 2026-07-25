@@ -94,39 +94,6 @@ func (d *Deps) handleListActionPlanSteps(w http.ResponseWriter, r *http.Request)
 	response.WriteJSONValue(w, http.StatusOK, steps)
 }
 
-// handleAddActionPlanStep serves POST /api/v1/risks/{id}/action-plans/{planId}/steps.
-// Used when Management builds out a MANAGEMENT plan's steps at creation time.
-func (d *Deps) handleAddActionPlanStep(w http.ResponseWriter, r *http.Request) {
-	userInfo := auth.FromContext(r.Context())
-	if userInfo == nil {
-		response.WriteError(w, http.StatusUnauthorized, response.ErrMsgUnauthorized)
-		return
-	}
-	if !auth.RequirePrivilege(r.Context(), w, privilege.CreateManagementActionPlan) {
-		return
-	}
-	riskID, err := strconv.Atoi(r.PathValue("id"))
-	if err != nil || riskID <= 0 {
-		response.WriteError(w, http.StatusBadRequest, "id must be a positive integer")
-		return
-	}
-	planID, err := strconv.Atoi(r.PathValue("planId"))
-	if err != nil || planID <= 0 {
-		response.WriteError(w, http.StatusBadRequest, "planId must be a positive integer")
-		return
-	}
-	var req model.AddActionPlanStepRequest
-	if err := response.DecodeJSON(w, r, &req); err != nil {
-		return
-	}
-	step, err := d.ActionPlan.AddStep(r.Context(), riskID, planID, req, userInfo.Email)
-	if err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-		return
-	}
-	response.WriteJSONValue(w, http.StatusCreated, step)
-}
-
 // handleUpdateActionPlanStep serves
 // PATCH /api/v1/risks/{id}/action-plans/{planId}/steps/{stepId}. This is how
 // an Action Owner marks a step complete — applies uniformly to STANDARD and

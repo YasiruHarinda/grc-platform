@@ -90,25 +90,13 @@ func (r *actionPlanRepository) Create(ctx context.Context, riskID int, req model
 		"actionOwnerId": req.ActionOwnerID,
 		"planType":      req.PlanType,
 		"createdBy":     createdBy,
+		"steps":         req.Steps,
 	}
 	var e entActionPlan
 	if err := r.c.Post(ctx, fmt.Sprintf("/risks/%d/action-plans", riskID), body, &e); err != nil {
 		return nil, fmt.Errorf("create action plan for risk %d: %w", riskID, err)
 	}
 	return e.toModel(), nil
-}
-
-func (r *actionPlanRepository) Update(ctx context.Context, planID int, req model.UpdateActionPlanRequest, updatedBy string) error {
-	body := map[string]any{
-		"description":   nullableString(req.Description),
-		"status":        nullableString(req.Status),
-		"completedDate": req.CompletedDate,
-		"updatedBy":     updatedBy,
-	}
-	if err := r.c.Patch(ctx, fmt.Sprintf("/action-plans/%d", planID), body, nil); err != nil {
-		return fmt.Errorf("update action plan %d: %w", planID, err)
-	}
-	return nil
 }
 
 // entActionStep is the entity's camelCase action step.
@@ -144,19 +132,6 @@ func (r *actionPlanRepository) ListSteps(ctx context.Context, planID int) ([]*mo
 		steps = append(steps, s.toModel())
 	}
 	return steps, nil
-}
-
-func (r *actionPlanRepository) AddStep(ctx context.Context, planID, stepNo int, req model.AddActionPlanStepRequest, createdBy string) (*model.ActionPlanStep, error) {
-	body := map[string]any{
-		"stepNo":      stepNo,
-		"description": nullableString(req.Description),
-		"createdBy":   createdBy,
-	}
-	var e entActionStep
-	if err := r.c.Post(ctx, fmt.Sprintf("/action-plans/%d/steps", planID), body, &e); err != nil {
-		return nil, fmt.Errorf("add step to plan %d: %w", planID, err)
-	}
-	return e.toModel(), nil
 }
 
 func (r *actionPlanRepository) UpdateStep(ctx context.Context, planID, stepID int, req model.UpdateActionPlanStepRequest, updatedBy string) error {

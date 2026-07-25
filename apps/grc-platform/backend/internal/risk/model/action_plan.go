@@ -42,21 +42,10 @@ type ActionPlanStep struct {
 
 // CreateActionPlanRequest is the payload for POST /api/v1/risks/{id}/action-plans.
 type CreateActionPlanRequest struct {
-	Description   string `json:"description"`
-	ActionOwnerID *int   `json:"action_owner_id"`
-	PlanType      string `json:"plan_type"`
-}
-
-// UpdateActionPlanRequest is the payload for PUT /api/v1/risks/{id}/action-plans/{planId}.
-type UpdateActionPlanRequest struct {
-	Description   string  `json:"description"`
-	Status        string  `json:"status"`
-	CompletedDate *string `json:"completed_date"`
-}
-
-// AddActionPlanStepRequest is the payload for POST .../steps.
-type AddActionPlanStepRequest struct {
-	Description string `json:"description"`
+	Description   string   `json:"description"`
+	ActionOwnerID *int     `json:"action_owner_id"`
+	PlanType      string   `json:"plan_type"`
+	Steps         []string `json:"steps"`
 }
 
 // UpdateActionPlanStepRequest is the payload for PUT .../steps/{stepId}.

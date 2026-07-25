@@ -18,6 +18,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -253,6 +254,19 @@ func (s *riskService) CreateRisk(ctx context.Context, req domain.CreateRiskReque
 	}
 	if req.CreatedBy == "" {
 		return domain.Risk{}, &apierror.ValidationError{Msg: "createdBy is required"}
+	}
+	// Every risk must carry at least one non-empty action step. The backend
+	// enforces this too, but it's re-checked here (the last writer before the
+	// DB) so a direct caller can't create a stepless plan — which could never
+	// be marked COMPLETED, permanently blocking the risk from being submitted
+	// for completion approval.
+	if len(req.ActionSteps) == 0 {
+		return domain.Risk{}, &apierror.ValidationError{Msg: "at least one action step is required"}
+	}
+	for i, step := range req.ActionSteps {
+		if strings.TrimSpace(step.Description) == "" {
+			return domain.Risk{}, &apierror.ValidationError{Msg: fmt.Sprintf("action step %d description is required", i+1)}
+		}
 	}
 	r, err := s.repo.CreateRisk(ctx, req)
 	if err != nil {

@@ -42,6 +42,24 @@ var validStepStatuses = map[string]bool{
 	"PENDING": true, "IN_PROGRESS": true, "COMPLETED": true,
 }
 
+// assertStepsModifiable rejects any step create/update/delete unless the parent
+// risk is actively being remediated — enforced uniformly so a caller can't
+// sidestep the rule by choosing a different verb.
+func (s *riskActionStepService) assertStepsModifiable(ctx context.Context, planID int) error {
+	plan, err := s.planRepo.GetRiskActionPlanByID(ctx, planID)
+	if err != nil {
+		return err
+	}
+	risk, err := s.riskSvc.GetRiskByID(ctx, plan.RiskID)
+	if err != nil {
+		return err
+	}
+	if risk.WorkflowStatus != "IN_REMEDIATION" && risk.WorkflowStatus != "ESCALATED" {
+		return &apierror.ValidationError{Msg: "action steps can only be modified while the risk is IN_REMEDIATION or ESCALATED"}
+	}
+	return nil
+}
+
 func (s *riskActionStepService) CreateRiskActionStep(ctx context.Context, planID int, req domain.CreateRiskActionStepRequest) (domain.RiskActionStep, error) {
 	if planID <= 0 {
 		return domain.RiskActionStep{}, &apierror.ValidationError{Msg: "planId must be a positive integer"}
@@ -51,6 +69,9 @@ func (s *riskActionStepService) CreateRiskActionStep(ctx context.Context, planID
 	}
 	if req.CreatedBy == "" {
 		return domain.RiskActionStep{}, &apierror.ValidationError{Msg: "createdBy is required"}
+	}
+	if err := s.assertStepsModifiable(ctx, planID); err != nil {
+		return domain.RiskActionStep{}, err
 	}
 	step, err := s.repo.CreateRiskActionStep(ctx, planID, req)
 	if err != nil {
@@ -86,17 +107,8 @@ func (s *riskActionStepService) UpdateRiskActionStep(ctx context.Context, planID
 	if req.Status != nil && !validStepStatuses[strings.ToUpper(*req.Status)] {
 		return domain.RiskActionStep{}, &apierror.ValidationError{Msg: "invalid status: " + *req.Status}
 	}
-
-	plan, err := s.planRepo.GetRiskActionPlanByID(ctx, planID)
-	if err != nil {
+	if err := s.assertStepsModifiable(ctx, planID); err != nil {
 		return domain.RiskActionStep{}, err
-	}
-	risk, err := s.riskSvc.GetRiskByID(ctx, plan.RiskID)
-	if err != nil {
-		return domain.RiskActionStep{}, err
-	}
-	if risk.WorkflowStatus != "IN_REMEDIATION" && risk.WorkflowStatus != "ESCALATED" {
-		return domain.RiskActionStep{}, &apierror.ValidationError{Msg: "action steps can only be updated while the risk is IN_REMEDIATION or ESCALATED"}
 	}
 
 	step, err := s.repo.UpdateRiskActionStep(ctx, planID, stepID, req)
@@ -112,6 +124,9 @@ func (s *riskActionStepService) DeleteRiskActionStep(ctx context.Context, planID
 	}
 	if stepID <= 0 {
 		return &apierror.ValidationError{Msg: "stepId must be a positive integer"}
+	}
+	if err := s.assertStepsModifiable(ctx, planID); err != nil {
+		return err
 	}
 	return s.repo.DeleteRiskActionStep(ctx, planID, stepID)
 }

@@ -132,20 +132,6 @@ func (d *Deps) handleListRisks(w http.ResponseWriter, r *http.Request) {
 	filter.DueTo = q.Get("due_to")
 	filter.DueOverdueOnly = q.Get("due_overdue") == "true"
 
-	// Action Owner list scoping: a caller who can only complete action steps
-	// (not create/approve/escalate risks) sees just the risks where they own
-	// a plan — implementing what the grc-platform-risk-action-owner role's
-	// own seed-data description promises. Broader-privilege holders (Risk
-	// Assigner, Risk Owner, Compliance, Management, Admin) see everything,
-	// same as before; this never narrows their view.
-	if isActionOwnerOnly(r.Context()) {
-		if userInfo := auth.FromContext(r.Context()); userInfo != nil {
-			if caller, err := d.Users.GetByEmail(r.Context(), userInfo.Email); err == nil && caller != nil {
-				filter.ActionOwnerID = &caller.ID
-			}
-		}
-	}
-
 	filter.Limit = 50
 	if l := q.Get("limit"); l != "" {
 		if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 200 {
@@ -156,6 +142,42 @@ func (d *Deps) handleListRisks(w http.ResponseWriter, r *http.Request) {
 		if v, err := strconv.Atoi(o); err == nil && v >= 0 {
 			filter.Offset = v
 		}
+	}
+
+	// Action Owner list scoping: a caller who can only complete action steps
+	// (not create/approve/escalate risks) sees just the risks where they own
+	// a plan — implementing what the grc-platform-risk-action-owner role's
+	// own seed-data description promises. Broader-privilege holders (Risk
+	// Assigner, Risk Owner, Compliance, Management, Admin) see everything,
+	// same as before; this never narrows their view.
+	//
+	// Fails closed: leaving ActionOwnerID unset when the caller can't be
+	// resolved would hand them the entire register — the exact exposure this
+	// scoping exists to prevent — so an unresolvable caller gets an error or
+	// an empty page, never an unscoped one.
+	if isActionOwnerOnly(r.Context()) {
+		email, ok := requireUserEmail(w, r)
+		if !ok {
+			return
+		}
+		caller, err := d.Users.GetByEmail(r.Context(), email)
+		if err != nil {
+			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+			return
+		}
+		if caller == nil {
+			// Authenticated but with no platform user row: they cannot be any
+			// plan's action_owner_id, so an empty page is the truthful scoped
+			// result rather than an error.
+			response.WriteJSONValue(w, http.StatusOK, model.RiskListPage{
+				Items:  []*model.RiskListItem{},
+				Total:  0,
+				Offset: filter.Offset,
+				Limit:  filter.Limit,
+			})
+			return
+		}
+		filter.ActionOwnerID = &caller.ID
 	}
 
 	page, err := d.Risk.List(r.Context(), filter)

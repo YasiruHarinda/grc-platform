@@ -138,10 +138,11 @@ func (s *riskActionPlanService) ListRiskActionPlans(ctx context.Context, riskID 
 // risk to IN_REMEDIATION.
 //
 // Safely retryable: if a MANAGEMENT plan is already COMPLETED but a previous
-// call failed partway through the escalation/risk revert, calling this again
-// skips straight to finishing that part (resolveEscalation no-ops once the
-// escalation is already RESOLVED, since GetOpenByActionPlanID then finds
-// nothing to resolve).
+// call failed partway through the escalation resolution, calling this again
+// re-enters resolveEscalation while the escalation is still OPEN and converges
+// — reverting the risk (idempotently) and marking the escalation RESOLVED.
+// Only once that whole cascade has succeeded does the escalation become
+// RESOLVED, after which a further retry safely no-ops.
 func (s *riskActionPlanService) CompleteRiskActionPlan(ctx context.Context, planID int, req domain.CompleteRiskActionPlanRequest) (domain.RiskActionPlan, error) {
 	if planID <= 0 {
 		return domain.RiskActionPlan{}, &apierror.ValidationError{Msg: "planId must be a positive integer"}
@@ -222,6 +223,27 @@ func (s *riskActionPlanService) resolveEscalation(ctx context.Context, plan *dom
 		return fmt.Errorf("find open escalation: %w", err)
 	}
 
+	// Revert the risk BEFORE marking the escalation RESOLVED. The OPEN
+	// escalation is this cascade's retry signal (GetOpenByActionPlanID above),
+	// so it must stay OPEN until the revert is durable — otherwise a failure
+	// after RESOLVED lets a retry short-circuit at the NotFound branch while
+	// the risk is still ESCALATED. Skip the revert if a prior attempt already
+	// did it, so the CAS below doesn't 409 on a converging retry.
+	risk, err := s.riskSvc.GetRiskByID(ctx, plan.RiskID)
+	if err != nil {
+		return fmt.Errorf("load risk for revert: %w", err)
+	}
+	if risk.WorkflowStatus == "ESCALATED" {
+		revertStatus := "IN_REMEDIATION"
+		if _, err := s.riskSvc.UpdateRisk(ctx, plan.RiskID, domain.UpdateRiskRequest{
+			WorkflowStatus: &revertStatus,
+			ExpectedStatus: "ESCALATED",
+			UpdatedBy:      updatedBy,
+		}); err != nil {
+			return fmt.Errorf("revert risk to IN_REMEDIATION: %w", err)
+		}
+	}
+
 	resolvedStatus := "RESOLVED"
 	if _, err := s.escalationSvc.UpdateRiskEscalation(ctx, escalation.RiskID, escalation.ID, domain.UpdateRiskEscalationRequest{
 		Status:    &resolvedStatus,
@@ -230,29 +252,21 @@ func (s *riskActionPlanService) resolveEscalation(ctx context.Context, plan *dom
 		return fmt.Errorf("resolve escalation: %w", err)
 	}
 
+	// Best-effort: the risk is reverted and the escalation RESOLVED by this
+	// point, so a failed creator notification must not fail the cascade — a
+	// retry would NotFound-noop above and never send it anyway. Swallow rather
+	// than return. (Likewise skipped, harmlessly, if the creator can't be
+	// resolved by email.)
 	if plan.CreatedBy != nil {
 		if creator, err := s.userSvc.GetUserByEmail(ctx, *plan.CreatedBy); err == nil {
-			if _, err := s.notificationSvc.CreateRiskNotification(ctx, domain.CreateRiskNotificationRequest{
+			_, _ = s.notificationSvc.CreateRiskNotification(ctx, domain.CreateRiskNotificationRequest{
 				RecipientID: creator.ID,
 				RiskID:      &plan.RiskID,
 				Type:        "STATUS_CHANGE",
 				Message:     "The management action plan you created is now complete.",
 				CreatedBy:   updatedBy,
-			}); err != nil {
-				return fmt.Errorf("notify plan creator: %w", err)
-			}
+			})
 		}
-		// If the creator can't be resolved by email, don't fail the whole
-		// completion over a notification — reverting the risk below matters more.
-	}
-
-	revertStatus := "IN_REMEDIATION"
-	if _, err := s.riskSvc.UpdateRisk(ctx, plan.RiskID, domain.UpdateRiskRequest{
-		WorkflowStatus: &revertStatus,
-		ExpectedStatus: "ESCALATED",
-		UpdatedBy:      updatedBy,
-	}); err != nil {
-		return fmt.Errorf("revert risk to IN_REMEDIATION: %w", err)
 	}
 	return nil
 }

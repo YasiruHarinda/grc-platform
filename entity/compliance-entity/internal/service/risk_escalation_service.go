@@ -140,17 +140,20 @@ func (s *riskEscalationService) EscalateRisk(ctx context.Context, riskID int, re
 		return domain.RiskEscalation{}, &apierror.ValidationError{Msg: "risk is not overdue"}
 	}
 
-	e, err := s.repo.CreateRiskEscalation(ctx, riskID, domain.CreateRiskEscalationRequest{CreatedBy: req.CreatedBy})
-	if err != nil {
-		return domain.RiskEscalation{}, err
-	}
-
+	// Flip the status first — this is the CAS-guarded write (ExpectedStatus),
+	// so a losing concurrent caller (the daily job vs. a manual Escalate click)
+	// fails here instead of also inserting a duplicate escalation row below.
 	status := "ESCALATED"
 	if _, err := s.riskSvc.UpdateRisk(ctx, riskID, domain.UpdateRiskRequest{
 		WorkflowStatus: &status,
 		ExpectedStatus: "IN_REMEDIATION",
 		UpdatedBy:      req.CreatedBy,
 	}); err != nil {
+		return domain.RiskEscalation{}, err
+	}
+
+	e, err := s.repo.CreateRiskEscalation(ctx, riskID, domain.CreateRiskEscalationRequest{CreatedBy: req.CreatedBy})
+	if err != nil {
 		return domain.RiskEscalation{}, err
 	}
 	return *e, nil

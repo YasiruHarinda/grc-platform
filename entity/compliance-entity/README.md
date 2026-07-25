@@ -112,7 +112,7 @@ compliance-entity/
 ```
 
 **Request flow through the layers:**
-```
+```text
 HTTP request (from the GRC Backend)
     → middleware (CorrelationID → Recovery → Logger → Timeout)
     → handler    (decode request, call service, write response)

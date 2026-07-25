@@ -1050,6 +1050,11 @@ type CreateRiskActionPlanRequest struct {
 	ActionOwnerID *int    `json:"actionOwnerId"`
 	PlanType      string  `json:"planType"` // STANDARD | MANAGEMENT
 	CreatedBy     string  `json:"createdBy"`
+	// Steps are the plan's action-step descriptions, created atomically with
+	// the plan in the same transaction (see CreateRiskActionPlan) so a
+	// partially-populated plan can never be persisted. Ordered; step_no is
+	// assigned by position.
+	Steps []string `json:"steps"`
 }
 
 // UpdateRiskActionPlanRequest is the payload for PATCH /action-plans/{planId}.

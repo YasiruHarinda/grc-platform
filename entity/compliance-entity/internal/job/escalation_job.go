@@ -22,6 +22,7 @@ package job
 import (
 	"context"
 	"log"
+	"runtime/debug"
 	"time"
 
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/domain"
@@ -74,6 +75,16 @@ func (j *EscalationJob) Start(ctx context.Context) {
 // row shouldn't block the whole batch, and the next run will simply pick up
 // anything still IN_REMEDIATION and overdue.
 func (j *EscalationJob) runOnce(ctx context.Context) {
+	// runOnce executes in a bare goroutine (see Start, launched from main.go),
+	// where an unrecovered panic would crash the whole compliance-entity
+	// process. Recover so a bad run is logged with its stack and the 24h
+	// ticker keeps scheduling future runs.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("escalation job: recovered from panic: %v\n%s", r, debug.Stack())
+		}
+	}()
+
 	escalated := 0
 	offset := 0
 	for {
@@ -86,6 +97,7 @@ func (j *EscalationJob) runOnce(ctx context.Context) {
 			log.Printf("escalation job: search overdue risks (offset %d): %v", offset, err)
 			return
 		}
+		escalatedThisPage := 0
 		for _, r := range resp.Risks {
 			// EscalateRisk re-checks IN_REMEDIATION+overdue itself, so a risk
 			// that moved on between this search and the call (e.g. someone
@@ -97,11 +109,17 @@ func (j *EscalationJob) runOnce(ctx context.Context) {
 				continue
 			}
 			escalated++
+			escalatedThisPage++
 		}
 		if len(resp.Risks) < searchPageLimit {
 			break
 		}
-		offset += searchPageLimit
+		// Each successful escalation moves the risk to ESCALATED, dropping it
+		// out of the IN_REMEDIATION+overdue result set for the next query. Only
+		// the rows that stayed (failures) should advance the offset — advancing
+		// by the full page would step past rows that shifted into the gap the
+		// successes left, skipping them until the next scheduled run.
+		offset += len(resp.Risks) - escalatedThisPage
 	}
 	log.Printf("escalation job: escalated %d risk(s)", escalated)
 }

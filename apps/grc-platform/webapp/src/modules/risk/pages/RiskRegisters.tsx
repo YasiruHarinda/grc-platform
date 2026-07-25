@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -52,7 +52,6 @@ import type { JSX } from "react";
 import type * as React from "react";
 import { useSearchParams } from "react-router";
 import {
-  addActionPlanStep,
   approveRisk,
   cancelRisk,
   closeRisk,
@@ -377,6 +376,10 @@ export default function RiskRegisters(): JSX.Element {
   const idTokenClaims = useIdTokenClaims();
   const currentUserEmail = (idTokenClaims?.email as string | undefined) ?? "";
   const currentUserId = users.find((u) => u.email === currentUserEmail)?.id ?? null;
+  // id → display_name, passed to the drawer so it can resolve action-owner
+  // names at render time — reactive to `users` loading, unlike baking the name
+  // into fetched plan state (which froze "Unassigned" on a pre-load open).
+  const userNames = useMemo(() => new Map(users.map((u) => [u.id, u.display_name])), [users]);
 
   const [actionError, setActionError] = useState("");
   const [actionSuccess, setActionSuccess] = useState("");
@@ -504,7 +507,6 @@ export default function RiskRegisters(): JSX.Element {
       plans.map(async (plan) => ({
         ...plan,
         steps: await fetchActionPlanSteps(authFetch, riskId, plan.id),
-        action_owner_name: users.find((u) => u.id === plan.action_owner_id)?.display_name ?? null,
       })),
     );
     setActionPlans(withSteps);
@@ -628,13 +630,14 @@ export default function RiskRegisters(): JSX.Element {
 
   const handleCreateManagementPlan = async (payload: ManagementActionPlanPayload) => {
     if (!drawerDetail) return;
-    const plan = await createManagementActionPlan(authFetch, drawerDetail.id, {
+    // Plan and its steps are created in a single atomic backend call — a
+    // failure rolls back both, so a retry can never orphan a stepless plan or
+    // duplicate one.
+    await createManagementActionPlan(authFetch, drawerDetail.id, {
       description: payload.description,
       action_owner_id: payload.actionOwnerId,
+      steps: payload.steps,
     });
-    for (const step of payload.steps) {
-      await addActionPlanStep(authFetch, drawerDetail.id, plan.id, step);
-    }
     await loadActionPlans(drawerDetail.id);
     setActionSuccess("Management action plan created.");
   };
@@ -962,6 +965,7 @@ export default function RiskRegisters(): JSX.Element {
         onClose={closeDrawer}
         actionPlans={actionPlans}
         currentUserId={currentUserId}
+        userNames={userNames}
         onCompleteStep={handleCompleteStep}
         onCompletePlan={handleCompletePlan}
         {...drawerActions}

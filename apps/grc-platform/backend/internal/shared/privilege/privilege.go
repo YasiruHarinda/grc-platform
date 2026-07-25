@@ -108,15 +108,21 @@ func NewForTest(rolePrivileges map[string]map[string]bool) *Store {
 // The entity and the backend are usually started together, so a first attempt
 // can lose a race with the entity's own startup by a second or two; without a
 // retry that race is a hard failure needing an orchestrator restart.
+// initialLoadTimeout caps the whole retry loop, so it must outlast
+// attempts × backoff.
 const (
 	initialLoadAttempts = 5
 	initialLoadBackoff  = 2 * time.Second
+	initialLoadTimeout  = 30 * time.Second
 )
 
 // New loads the active role→privilege mapping from the Compliance Entity,
 // starts a background goroutine that reloads it every 15 minutes, and returns
 // the Store. The goroutine stops when ctx is cancelled (typically at server
-// shutdown).
+// shutdown), so callers must pass an application-lifetime context — the
+// initial load is bounded separately by initialLoadTimeout, derived from ctx
+// here rather than imposed by the caller. Passing a short-lived context would
+// otherwise kill the periodic refresh once its deadline elapsed.
 //
 // A failure to load is fatal, and deliberately so: with no mapping every
 // authorisation check is unanswerable, and a server that starts in that state
@@ -126,9 +132,12 @@ const (
 func New(ctx context.Context, client *entityclient.Client) (*Store, error) {
 	s := &Store{client: client}
 
+	loadCtx, cancelLoad := context.WithTimeout(ctx, initialLoadTimeout)
+	defer cancelLoad()
+
 	var err error
 	for attempt := 1; attempt <= initialLoadAttempts; attempt++ {
-		if err = s.reload(ctx); err == nil {
+		if err = s.reload(loadCtx); err == nil {
 			break
 		}
 		if attempt == initialLoadAttempts {
@@ -137,8 +146,8 @@ func New(ctx context.Context, client *entityclient.Client) (*Store, error) {
 		slog.Warn("privilege: initial load failed, retrying",
 			"attempt", attempt, "of", initialLoadAttempts, "err", err)
 		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
+		case <-loadCtx.Done():
+			return nil, loadCtx.Err()
 		case <-time.After(initialLoadBackoff):
 		}
 	}

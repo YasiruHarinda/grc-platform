@@ -79,9 +79,7 @@ type ActionPlanRepository interface {
 	List(ctx context.Context, riskID int) ([]*model.ActionPlan, error)
 	GetByID(ctx context.Context, planID int) (*model.ActionPlan, error)
 	Create(ctx context.Context, riskID int, req model.CreateActionPlanRequest, createdBy string) (*model.ActionPlan, error)
-	Update(ctx context.Context, planID int, req model.UpdateActionPlanRequest, updatedBy string) error
 	ListSteps(ctx context.Context, planID int) ([]*model.ActionPlanStep, error)
-	AddStep(ctx context.Context, planID, stepNo int, req model.AddActionPlanStepRequest, createdBy string) (*model.ActionPlanStep, error)
 	UpdateStep(ctx context.Context, planID, stepID int, req model.UpdateActionPlanStepRequest, updatedBy string) error
 	// Complete marks a plan COMPLETED once every step is done; for a
 	// MANAGEMENT plan the entity also resolves its escalation and reverts the

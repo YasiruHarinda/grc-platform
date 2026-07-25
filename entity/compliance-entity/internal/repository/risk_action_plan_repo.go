@@ -65,18 +65,35 @@ func (r *riskActionPlanRepo) CreateRiskActionPlan(ctx context.Context, riskID in
 	}
 	id, _ := res.LastInsertId()
 
+	// Insert the plan's steps in the same transaction, so a plan is never
+	// persisted without the steps it was created with (the caller sends both
+	// together). step_no is 1-based by position.
+	for i, desc := range req.Steps {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO risk_action_step (plan_id, step_no, description, status, created_by, updated_by)
+			 VALUES (?, ?, ?, 'PENDING', ?, ?)`,
+			id, i+1, desc, req.CreatedBy, req.CreatedBy); err != nil {
+			return nil, fmt.Errorf("risk_action_plan.Create: insert step %d: %w", i+1, err)
+		}
+	}
+
 	// A MANAGEMENT plan is always the response to an escalation — link it to
 	// the risk's currently OPEN escalation so the plan-completion cascade can
 	// find its way back to resolve it. See risk_action_plan_service.go.
+	//
+	// action_plan_id IS NULL guards against a second MANAGEMENT plan stealing
+	// an already-linked escalation: without it the re-link would silently
+	// orphan the first plan's connection, and completing that first plan would
+	// then find no OPEN escalation to resolve, leaving the risk stuck ESCALATED.
 	if req.PlanType == "MANAGEMENT" {
 		linkRes, err := tx.ExecContext(ctx,
-			`UPDATE risk_escalation SET action_plan_id = ? WHERE risk_id = ? AND status = 'OPEN'`,
+			`UPDATE risk_escalation SET action_plan_id = ? WHERE risk_id = ? AND status = 'OPEN' AND action_plan_id IS NULL`,
 			id, riskID)
 		if err != nil {
 			return nil, fmt.Errorf("risk_action_plan.Create: link escalation: %w", err)
 		}
 		if n, _ := linkRes.RowsAffected(); n == 0 {
-			return nil, &apierror.ValidationError{Msg: fmt.Sprintf("risk %d has no open escalation to link a MANAGEMENT plan to", riskID)}
+			return nil, &apierror.ValidationError{Msg: fmt.Sprintf("risk %d has no unlinked open escalation to attach a MANAGEMENT plan to", riskID)}
 		}
 	}
 

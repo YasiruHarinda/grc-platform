@@ -95,7 +95,6 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /api/v1/risks/{id}/action-plans", d.handleCreateManagementActionPlan)
 	mux.HandleFunc("GET /api/v1/risks/{id}/action-plans", d.handleListActionPlans)
 	mux.HandleFunc("GET /api/v1/risks/{id}/action-plans/{planId}/steps", d.handleListActionPlanSteps)
-	mux.HandleFunc("POST /api/v1/risks/{id}/action-plans/{planId}/steps", d.handleAddActionPlanStep)
 	mux.HandleFunc("PATCH /api/v1/risks/{id}/action-plans/{planId}/steps/{stepId}", d.handleUpdateActionPlanStep)
 	mux.HandleFunc("POST /api/v1/risks/{id}/action-plans/{planId}/complete", d.handleCompleteActionPlan)
 

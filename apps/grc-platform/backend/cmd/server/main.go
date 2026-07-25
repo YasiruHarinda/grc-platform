@@ -56,17 +56,21 @@ func main() {
 	// backend off direct MySQL, stage by stage).
 	entityCli := entityclient.New(cfg.ComplianceEntityBaseURL)
 
+	// Cancelled on SIGINT/SIGTERM. Established before the privilege store so
+	// that store's periodic reload goroutine lives for the whole process and
+	// stops only at shutdown.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	// Load the role→privilege mapping from the Compliance Entity. Built after
 	// entityCli because it needs it.
 	// When TokenValidatorEnabled=false (local dev), skip loading — HasPrivilege returns true for all checks.
 	// When TokenValidatorEnabled=true (production), load is required — exit if it fails.
-	// The timeout covers the bounded retry inside privilege.New, not a single
-	// attempt, so it must outlast attempts × backoff.
+	// privilege.New bounds the initial load itself; ctx here governs only the
+	// lifetime of its background refresh.
 	var privStore *privilege.Store
 	if cfg.Auth.TokenValidatorEnabled {
-		loadCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		privStore, err = privilege.New(loadCtx, entityCli)
+		privStore, err = privilege.New(ctx, entityCli)
 		if err != nil {
 			slog.Error("failed to load privilege mapping from the Compliance Entity", "err", err)
 			os.Exit(1)
@@ -124,9 +128,6 @@ func main() {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {

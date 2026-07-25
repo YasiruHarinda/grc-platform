@@ -691,7 +691,7 @@ export async function fetchActionPlans(authFetch: AuthFetch, riskId: number): Pr
 export async function createManagementActionPlan(
   authFetch: AuthFetch,
   riskId: number,
-  payload: { description: string; action_owner_id: number | null },
+  payload: { description: string; action_owner_id: number | null; steps: string[] },
 ): Promise<ActionPlan> {
   const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/action-plans`, {
     method: "POST",
@@ -699,6 +699,9 @@ export async function createManagementActionPlan(
       description: payload.description,
       action_owner_id: payload.action_owner_id,
       plan_type: "MANAGEMENT",
+      // Steps are created atomically with the plan on the backend, so a
+      // failure can't leave an orphaned, stepless plan behind.
+      steps: payload.steps,
     }),
   });
   return handleResponse<ActionPlan>(res);
@@ -711,19 +714,6 @@ export async function fetchActionPlanSteps(
 ): Promise<ActionPlanStep[]> {
   const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/action-plans/${planId}/steps`);
   return handleResponse<ActionPlanStep[]>(res);
-}
-
-export async function addActionPlanStep(
-  authFetch: AuthFetch,
-  riskId: number,
-  planId: number,
-  description: string,
-): Promise<ActionPlanStep> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/action-plans/${planId}/steps`, {
-    method: "POST",
-    body: JSON.stringify({ description }),
-  });
-  return handleResponse<ActionPlanStep>(res);
 }
 
 // completeActionStep marks one step done. Gated server-side by
