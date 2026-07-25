@@ -107,10 +107,11 @@ func (s *riskActionStepService) UpdateRiskActionStep(ctx context.Context, planID
 	if req.Status != nil && !validStepStatuses[strings.ToUpper(*req.Status)] {
 		return domain.RiskActionStep{}, &apierror.ValidationError{Msg: "invalid status: " + *req.Status}
 	}
-	if err := s.assertStepsModifiable(ctx, planID); err != nil {
-		return domain.RiskActionStep{}, err
-	}
 
+	// The IN_REMEDIATION/ESCALATED guard is enforced atomically inside
+	// repo.UpdateRiskActionStep (it locks the risk row in the same transaction
+	// as the write), so it isn't repeated here — a separate service-level check
+	// would be a TOCTOU that a concurrent transition could race past.
 	step, err := s.repo.UpdateRiskActionStep(ctx, planID, stepID, req)
 	if err != nil {
 		return domain.RiskActionStep{}, err
