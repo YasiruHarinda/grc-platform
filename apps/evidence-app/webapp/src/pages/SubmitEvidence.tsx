@@ -23,6 +23,7 @@ export default function SubmitEvidence() {
   const [description, setDescription] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [success, setSuccess] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   const mutation = useMutation({
     mutationFn: evidenceApi.create,
@@ -46,7 +47,15 @@ export default function SubmitEvidence() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file || !controlId) return;
+    if (!file) {
+      setValidationError("Please choose a file to upload.");
+      return;
+    }
+    if (!controlId) {
+      setValidationError("Please select a control.");
+      return;
+    }
+    setValidationError(null);
     setSuccess(false);
     const formData = new FormData();
     formData.append("title", title);
@@ -80,6 +89,12 @@ export default function SubmitEvidence() {
       {uploadError && (
         <Alert severity="error" sx={{ mb: 3 }}>
           {uploadError}
+        </Alert>
+      )}
+
+      {validationError && (
+        <Alert severity="error" sx={{ mb: 3 }}>
+          {validationError}
         </Alert>
       )}
 
@@ -156,7 +171,6 @@ export default function SubmitEvidence() {
                 <input
                   type="file"
                   hidden
-                  required
                   onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                 />
               </Button>
