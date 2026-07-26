@@ -45,6 +45,16 @@ const PORTAL_PRESETS: { label: string; url: string }[] = [
 
 const SS_PREFIX = "compliance.agent.v2.";
 
+// REST poll only acts as a fallback once the SSE stream has been silent this long.
+const SSE_SILENCE_THRESHOLD_MS = 15_000;
+
+// Max consecutive failed SSE reconnect attempts before giving up on the stream
+// (REST polling fallback continues to cover the UI after this point).
+const SSE_MAX_CONSECUTIVE_FAILURES = 5;
+
+// Give up waiting for the local runner to open the browser after this long.
+const LOGIN_POLL_TIMEOUT_MS = 60_000;
+
 function useSessionState<T>(key: string, initial: T): [T, React.Dispatch<React.SetStateAction<T>>] {
   const fullKey = SS_PREFIX + key;
   const [value, setValue] = useState<T>(() => {
@@ -209,6 +219,7 @@ export default function AgentRunner() {
   const [queueing, setQueueing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lastInvalidatedRef = useRef(0);
+  const lastSseAtRef = useRef(0);
 
   // Runner status
   const [runnerOnline, setRunnerOnline] = useState(false);
@@ -237,8 +248,10 @@ export default function AgentRunner() {
     return () => { cancel = true; clearInterval(iv); };
   }, []);
 
-  // REST polling fallback — polls task status every 8s while task is active.
-  // Catches cases where the Choreo gateway buffers or drops the SSE stream.
+  // REST polling fallback — checks in every 8s while task is active, but only
+  // actually fetches (and applies) a snapshot once the SSE stream has gone
+  // quiet for a while. This avoids a slow REST response racing a fresher SSE
+  // frame and making progress appear to jump backwards.
   useEffect(() => {
     if (!taskId || isDone) return;
     let cancel = false;
@@ -246,6 +259,11 @@ export default function AgentRunner() {
       // Start after 8s so SSE has a chance to deliver first
       await new Promise<void>((r) => setTimeout(r, 8_000));
       while (!cancel) {
+        if (Date.now() - lastSseAtRef.current < SSE_SILENCE_THRESHOLD_MS) {
+          // SSE is fresh — the poll stays dormant so it can't race SSE state.
+          if (!cancel) await new Promise<void>((r) => setTimeout(r, 8_000));
+          continue;
+        }
         try {
           const data: TaskOut = await agentApi.getTask(taskId);
           if (!cancel) {
@@ -268,8 +286,15 @@ export default function AgentRunner() {
   useEffect(() => {
     if (!loginTaskId) return;
     let cancel = false;
+    const startedAt = Date.now();
     const poll = async () => {
       while (!cancel) {
+        if (Date.now() - startedAt > LOGIN_POLL_TIMEOUT_MS) {
+          if (!cancel) setPortalError("Timed out opening the browser. Is the local runner running?");
+          setOpeningPortal(false);
+          setLoginTaskId(null);
+          break;
+        }
         try {
           const data: TaskOut = await agentApi.getTask(loginTaskId);
           if (cancel) break;
@@ -304,6 +329,10 @@ export default function AgentRunner() {
     const ctrl = new AbortController();
 
     const listen = async () => {
+      // Consecutive failed reconnect attempts — capped so a permanently-down
+      // backend doesn't get hammered forever (REST polling covers the UI once
+      // we give up here).
+      let consecutiveFailures = 0;
       while (!ctrl.signal.aborted) {
         let streamEnded = false;
         try {
@@ -314,7 +343,13 @@ export default function AgentRunner() {
             },
             signal: ctrl.signal,
           });
-          if (!resp.ok || !resp.body) break;
+          if (!resp.ok || !resp.body) {
+            // treat as a transient failure (e.g. 401 after token expiry, 502
+            // gateway) — fall into the same catch/backoff path below instead
+            // of permanently ending the stream.
+            throw new Error(`SSE stream request failed with status ${resp.status}`);
+          }
+          consecutiveFailures = 0;
 
           const reader = resp.body.getReader();
           const dec = new TextDecoder();
@@ -332,6 +367,7 @@ export default function AgentRunner() {
               try {
                 const data: TaskOut = JSON.parse(line.slice(6));
                 setTaskOut(data);
+                lastSseAtRef.current = Date.now();
                 const completed = (data.progress?.subtasks ?? [])
                   .filter((s: any) => s.evidence_id).length;
                 if (completed > lastInvalidatedRef.current) {
@@ -359,7 +395,8 @@ export default function AgentRunner() {
           }
         } catch (err: any) {
           if (err.name === "AbortError") return;
-          // on network error: fall back to a single fetch so UI stays up to date
+          consecutiveFailures += 1;
+          // on network/transient error: fall back to a single fetch so UI stays up to date
           try {
             const data: TaskOut = await agentApi.getTask(taskId!);
             setTaskOut(data);
@@ -367,6 +404,11 @@ export default function AgentRunner() {
               streamEnded = true;
             }
           } catch { /* ignore */ }
+          if (!streamEnded && consecutiveFailures >= SSE_MAX_CONSECUTIVE_FAILURES) {
+            // Give up reconnecting after repeated back-to-back failures; the
+            // REST polling fallback effect keeps the UI in sync from here.
+            break;
+          }
         }
         if (streamEnded) break;
         // wait 2s before reconnecting after an unexpected stream drop
