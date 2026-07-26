@@ -7,6 +7,8 @@ import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
+import Alert from "@mui/material/Alert";
+import Button from "@mui/material/Button";
 import Tooltip from "@mui/material/Tooltip";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
@@ -50,6 +52,17 @@ type ByModel = {
   input_tokens: number;
   output_tokens: number;
   total_tokens: number;
+  cost_usd: number;
+};
+
+type RecentRun = {
+  id: number;
+  created_at: string;
+  model: string;
+  subtask_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  llm_calls: number;
   cost_usd: number;
 };
 
@@ -222,28 +235,56 @@ export default function Cost() {
   const [chartMode, setChartMode] = useState<"cost" | "tokens">("cost");
   const [days, setDays] = useState<number>(30);
 
-  const { data: summary, isLoading: l1 } = useQuery<Summary>({
+  const {
+    data: summary,
+    isLoading: l1,
+    isError: e1,
+    refetch: refetchSummary,
+  } = useQuery<Summary>({
     queryKey: ["usage-summary"],
     queryFn: usageApi.summary,
     refetchInterval: 15000,
   });
-  const { data: ts = [], isLoading: l2 } = useQuery<DayPoint[]>({
+  const {
+    data: ts = [],
+    isLoading: l2,
+    isError: e2,
+    refetch: refetchTimeseries,
+  } = useQuery<DayPoint[]>({
     queryKey: ["usage-timeseries", days],
     queryFn: () => usageApi.timeseries(days),
     refetchInterval: 30000,
   });
-  const { data: byModel = [], isLoading: l3 } = useQuery<ByModel[]>({
+  const {
+    data: byModel = [],
+    isLoading: l3,
+    isError: e3,
+    refetch: refetchByModel,
+  } = useQuery<ByModel[]>({
     queryKey: ["usage-by-model"],
     queryFn: usageApi.byModel,
     refetchInterval: 30000,
   });
-  const { data: recent = [] } = useQuery<any[]>({
+  const {
+    data: recent = [],
+    isError: e4,
+    refetch: refetchRecent,
+  } = useQuery<RecentRun[]>({
     queryKey: ["usage-recent"],
     queryFn: () => usageApi.recent(10),
     refetchInterval: 15000,
   });
 
   const isLoading = l1 || l2 || l3;
+  // Any of these failing would otherwise render as a genuinely-empty
+  // (zero-cost) tenant, so surface an explicit error state instead.
+  const isError = e1 || e2 || e3 || e4;
+  const handleRetry = () => {
+    refetchSummary();
+    refetchTimeseries();
+    refetchByModel();
+    refetchRecent();
+  };
 
   const inOutRatio = useMemo(() => {
     if (!summary || summary.total_tokens === 0) return null;
@@ -262,7 +303,18 @@ export default function Cost() {
         no Azure billing delay, no separate dashboard to log into.
       </Typography>
 
-      {isLoading ? (
+      {isError ? (
+        <Alert
+          severity="error"
+          action={
+            <Button color="inherit" size="small" onClick={handleRetry}>
+              Retry
+            </Button>
+          }
+        >
+          Couldn't load usage data.
+        </Alert>
+      ) : isLoading ? (
         <Box display="flex" justifyContent="center" py={6}>
           <CircularProgress />
         </Box>

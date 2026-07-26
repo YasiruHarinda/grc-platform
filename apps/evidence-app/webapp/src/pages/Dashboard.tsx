@@ -21,6 +21,8 @@ import Select from "@mui/material/Select";
 import MenuItem from "@mui/material/MenuItem";
 import Tooltip from "@mui/material/Tooltip";
 import Link from "@mui/material/Link";
+import Alert from "@mui/material/Alert";
+import Button from "@mui/material/Button";
 import { DocumentIcon, EnvelopeIcon, HierarchyIcon, ClockAsteriskIcon, BoltIcon, CircleUserIcon } from "@oxygen-ui/react-icons";
 import { evidenceApi, submissionsApi, frameworksApi, productsApi, controlsApi } from "../api/client";
 
@@ -54,11 +56,42 @@ function relativeTime(iso: string): string {
 export default function Dashboard() {
   const [productId, setProductId] = useState<number | "">("");
 
-  const { data: products = [] } = useQuery<Product[]>({ queryKey: ["products"], queryFn: productsApi.list });
-  const { data: allFrameworks = [] } = useQuery<Framework[]>({ queryKey: ["frameworks"], queryFn: () => frameworksApi.list() });
-  const { data: allControls = [] } = useQuery<Control[]>({ queryKey: ["controls"], queryFn: () => controlsApi.list() });
-  const { data: allEvidence = [] } = useQuery<Evidence[]>({ queryKey: ["evidence"], queryFn: evidenceApi.list });
-  const { data: allSubmissions = [] } = useQuery<Submission[]>({ queryKey: ["submissions"], queryFn: submissionsApi.list });
+  const {
+    data: products = [],
+    isError: productsError,
+    refetch: refetchProducts,
+  } = useQuery<Product[]>({ queryKey: ["products"], queryFn: productsApi.list });
+  const {
+    data: allFrameworks = [],
+    isError: frameworksError,
+    refetch: refetchFrameworks,
+  } = useQuery<Framework[]>({ queryKey: ["frameworks"], queryFn: () => frameworksApi.list() });
+  const {
+    data: allControls = [],
+    isError: controlsError,
+    refetch: refetchControls,
+  } = useQuery<Control[]>({ queryKey: ["controls"], queryFn: () => controlsApi.list() });
+  const {
+    data: allEvidence = [],
+    isError: evidenceError,
+    refetch: refetchEvidence,
+  } = useQuery<Evidence[]>({ queryKey: ["evidence"], queryFn: evidenceApi.list });
+  const {
+    data: allSubmissions = [],
+    isError: submissionsError,
+    refetch: refetchSubmissions,
+  } = useQuery<Submission[]>({ queryKey: ["submissions"], queryFn: submissionsApi.list });
+
+  // Any of these failing means the stats/table below would render misleading
+  // zero-valued data, so surface an explicit error state instead.
+  const isError = productsError || frameworksError || controlsError || evidenceError || submissionsError;
+  const handleRetry = () => {
+    refetchProducts();
+    refetchFrameworks();
+    refetchControls();
+    refetchEvidence();
+    refetchSubmissions();
+  };
 
   const { frameworks, evidence, submissions } = useMemo(() => {
     if (productId === "") {
@@ -146,153 +179,169 @@ export default function Dashboard() {
         </FormControl>
       </Stack>
 
-      <Grid container spacing={2.5} sx={{ mt: 2, mb: 5 }}>
-        {stats.map(({ label, value, icon, bg, iconColor }) => (
-          <Grid item xs={12} sm={6} md={3} key={label}>
-            <Card>
-              <CardContent sx={{ py: 2.5 }}>
-                <Stack direction="row" alignItems="center" spacing={2}>
-                  <Box
-                    sx={{
-                      width: 48,
-                      height: 48,
-                      borderRadius: 2,
-                      backgroundColor: bg,
-                      color: iconColor,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    {icon}
-                  </Box>
-                  <Box>
-                    <Typography variant="h4" fontWeight={700} sx={{ lineHeight: 1.1 }}>
-                      {value}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" mt={0.25}>
-                      {label}
-                    </Typography>
-                  </Box>
-                </Stack>
-              </CardContent>
-            </Card>
-          </Grid>
-        ))}
-      </Grid>
-
-      <Stack direction="row" alignItems="baseline" justifyContent="space-between" sx={{ mb: 1.5 }}>
-        <Typography variant="h6">Recent Submissions</Typography>
-        <Link component={RouterLink} to="/evidence" underline="hover" sx={{ fontSize: "0.875rem", fontWeight: 500 }}>
-          View all →
-        </Link>
-      </Stack>
-
-      {/* Desktop table — hidden on mobile */}
-      <Box sx={{ display: { xs: "none", md: "block" } }}>
-        <TableContainer component={Paper} variant="outlined">
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableCell sx={{ fontWeight: 600 }}>Evidence</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Submitted By</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
-                <TableCell sx={{ fontWeight: 600 }} align="right">When</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {recentSubmissions.map((s) => {
-                const ev = evidenceById.get(s.evidence_id);
-                const evidenceLabel =
-                  ev?.title?.trim() ||
-                  ev?.description?.trim() ||
-                  `Evidence #${s.evidence_id}`;
-                return (
-                  <TableRow key={s.id} hover>
-                    <TableCell sx={{ maxWidth: 360 }}>
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          display: "-webkit-box",
-                          WebkitLineClamp: 2,
-                          WebkitBoxOrient: "vertical",
-                          overflow: "hidden",
-                          lineHeight: 1.4,
-                        }}
-                      >
-                        {evidenceLabel.replace(/^AI Agent:\s*/, "")}
+      {isError ? (
+        <Alert
+          severity="error"
+          sx={{ mt: 2, mb: 5 }}
+          action={
+            <Button color="inherit" size="small" onClick={handleRetry}>
+              Retry
+            </Button>
+          }
+        >
+          Couldn't load dashboard data.
+        </Alert>
+      ) : (
+        <>
+        <Grid container spacing={2.5} sx={{ mt: 2, mb: 5 }}>
+          {stats.map(({ label, value, icon, bg, iconColor }) => (
+            <Grid item xs={12} sm={6} md={3} key={label}>
+              <Card>
+                <CardContent sx={{ py: 2.5 }}>
+                  <Stack direction="row" alignItems="center" spacing={2}>
+                    <Box
+                      sx={{
+                        width: 48,
+                        height: 48,
+                        borderRadius: 2,
+                        backgroundColor: bg,
+                        color: iconColor,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      {icon}
+                    </Box>
+                    <Box>
+                      <Typography variant="h4" fontWeight={700} sx={{ lineHeight: 1.1 }}>
+                        {value}
                       </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Chip
-                        icon={s.submitted_by === "ai-agent" ? <BoltIcon size={12} /> : <CircleUserIcon size={12} />}
-                        label={s.submitted_by === "ai-agent" ? "AI Agent" : "Manual"}
-                        size="small"
-                        color={s.submitted_by === "ai-agent" ? "primary" : "default"}
-                        variant={s.submitted_by === "ai-agent" ? "filled" : "outlined"}
-                        sx={{ fontWeight: 600, fontSize: "0.72rem" }}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Chip label={s.status} color={statusColor(s.status)} size="small" />
-                    </TableCell>
-                    <TableCell align="right" sx={{ color: "text.secondary", whiteSpace: "nowrap" }}>
-                      <Tooltip title={new Date(s.submitted_at).toLocaleString()} arrow>
-                        <span>{relativeTime(s.submitted_at)}</span>
-                      </Tooltip>
+                      <Typography variant="body2" color="text.secondary" mt={0.25}>
+                        {label}
+                      </Typography>
+                    </Box>
+                  </Stack>
+                </CardContent>
+              </Card>
+            </Grid>
+          ))}
+        </Grid>
+  
+        <Stack direction="row" alignItems="baseline" justifyContent="space-between" sx={{ mb: 1.5 }}>
+          <Typography variant="h6">Recent Submissions</Typography>
+          <Link component={RouterLink} to="/evidence" underline="hover" sx={{ fontSize: "0.875rem", fontWeight: 500 }}>
+            View all →
+          </Link>
+        </Stack>
+  
+        {/* Desktop table — hidden on mobile */}
+        <Box sx={{ display: { xs: "none", md: "block" } }}>
+          <TableContainer component={Paper} variant="outlined">
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={{ fontWeight: 600 }}>Evidence</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>Submitted By</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }} align="right">When</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {recentSubmissions.map((s) => {
+                  const ev = evidenceById.get(s.evidence_id);
+                  const evidenceLabel =
+                    ev?.title?.trim() ||
+                    ev?.description?.trim() ||
+                    `Evidence #${s.evidence_id}`;
+                  return (
+                    <TableRow key={s.id} hover>
+                      <TableCell sx={{ maxWidth: 360 }}>
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            display: "-webkit-box",
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: "vertical",
+                            overflow: "hidden",
+                            lineHeight: 1.4,
+                          }}
+                        >
+                          {evidenceLabel.replace(/^AI Agent:\s*/, "")}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Chip
+                          icon={s.submitted_by === "ai-agent" ? <BoltIcon size={12} /> : <CircleUserIcon size={12} />}
+                          label={s.submitted_by === "ai-agent" ? "AI Agent" : "Manual"}
+                          size="small"
+                          color={s.submitted_by === "ai-agent" ? "primary" : "default"}
+                          variant={s.submitted_by === "ai-agent" ? "filled" : "outlined"}
+                          sx={{ fontWeight: 600, fontSize: "0.72rem" }}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Chip label={s.status} color={statusColor(s.status)} size="small" />
+                      </TableCell>
+                      <TableCell align="right" sx={{ color: "text.secondary", whiteSpace: "nowrap" }}>
+                        <Tooltip title={new Date(s.submitted_at).toLocaleString()} arrow>
+                          <span>{relativeTime(s.submitted_at)}</span>
+                        </Tooltip>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+                {recentSubmissions.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={4} align="center" sx={{ color: "text.disabled", py: 5 }}>
+                      No submissions yet{productId !== "" ? " for this product" : ""}
                     </TableCell>
                   </TableRow>
-                );
-              })}
-              {recentSubmissions.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={4} align="center" sx={{ color: "text.disabled", py: 5 }}>
-                    No submissions yet{productId !== "" ? " for this product" : ""}
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </Box>
-
-      {/* Mobile cards — hidden on desktop */}
-      <Stack spacing={1.5} sx={{ display: { xs: "flex", md: "none" } }}>
-        {recentSubmissions.length === 0 && (
-          <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
-            <Typography color="text.disabled">No submissions yet{productId !== "" ? " for this product" : ""}</Typography>
-          </Paper>
-        )}
-        {recentSubmissions.map((s) => {
-          const ev = evidenceById.get(s.evidence_id);
-          const evidenceLabel = (ev?.title?.trim() || ev?.description?.trim() || `Evidence #${s.evidence_id}`).replace(/^AI Agent:\s*/, "");
-          return (
-            <Paper key={s.id} variant="outlined" sx={{ p: 2 }}>
-              <Stack spacing={0.75}>
-                <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
-                  <Typography variant="body2" fontWeight={500} sx={{ flex: 1, pr: 1, lineHeight: 1.4 }}>
-                    {evidenceLabel}
-                  </Typography>
-                  <Chip label={s.status} color={statusColor(s.status)} size="small" sx={{ flexShrink: 0 }} />
-                </Stack>
-                <Stack direction="row" justifyContent="space-between" alignItems="center">
-                  <Chip
-                    icon={s.submitted_by === "ai-agent" ? <BoltIcon size={11} /> : <CircleUserIcon size={11} />}
-                    label={s.submitted_by === "ai-agent" ? "AI Agent" : "Manual"}
-                    size="small"
-                    color={s.submitted_by === "ai-agent" ? "primary" : "default"}
-                    variant={s.submitted_by === "ai-agent" ? "filled" : "outlined"}
-                    sx={{ fontWeight: 600, fontSize: "0.68rem", height: 20 }}
-                  />
-                  <Tooltip title={new Date(s.submitted_at).toLocaleString()} arrow>
-                    <Typography variant="caption" color="text.secondary">{relativeTime(s.submitted_at)}</Typography>
-                  </Tooltip>
-                </Stack>
-              </Stack>
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Box>
+  
+        {/* Mobile cards — hidden on desktop */}
+        <Stack spacing={1.5} sx={{ display: { xs: "flex", md: "none" } }}>
+          {recentSubmissions.length === 0 && (
+            <Paper variant="outlined" sx={{ p: 3, textAlign: "center" }}>
+              <Typography color="text.disabled">No submissions yet{productId !== "" ? " for this product" : ""}</Typography>
             </Paper>
-          );
-        })}
-      </Stack>
+          )}
+          {recentSubmissions.map((s) => {
+            const ev = evidenceById.get(s.evidence_id);
+            const evidenceLabel = (ev?.title?.trim() || ev?.description?.trim() || `Evidence #${s.evidence_id}`).replace(/^AI Agent:\s*/, "");
+            return (
+              <Paper key={s.id} variant="outlined" sx={{ p: 2 }}>
+                <Stack spacing={0.75}>
+                  <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
+                    <Typography variant="body2" fontWeight={500} sx={{ flex: 1, pr: 1, lineHeight: 1.4 }}>
+                      {evidenceLabel}
+                    </Typography>
+                    <Chip label={s.status} color={statusColor(s.status)} size="small" sx={{ flexShrink: 0 }} />
+                  </Stack>
+                  <Stack direction="row" justifyContent="space-between" alignItems="center">
+                    <Chip
+                      icon={s.submitted_by === "ai-agent" ? <BoltIcon size={11} /> : <CircleUserIcon size={11} />}
+                      label={s.submitted_by === "ai-agent" ? "AI Agent" : "Manual"}
+                      size="small"
+                      color={s.submitted_by === "ai-agent" ? "primary" : "default"}
+                      variant={s.submitted_by === "ai-agent" ? "filled" : "outlined"}
+                      sx={{ fontWeight: 600, fontSize: "0.68rem", height: 20 }}
+                    />
+                    <Tooltip title={new Date(s.submitted_at).toLocaleString()} arrow>
+                      <Typography variant="caption" color="text.secondary">{relativeTime(s.submitted_at)}</Typography>
+                    </Tooltip>
+                  </Stack>
+                </Stack>
+              </Paper>
+            );
+          })}
+        </Stack>
+        </>
+      )}
     </Box>
   );
 }
