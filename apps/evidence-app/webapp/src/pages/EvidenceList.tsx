@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { getFileUrl } from "../api/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { AxiosError } from "axios";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import FormControl from "@mui/material/FormControl";
@@ -28,6 +29,8 @@ import DialogTitle from "@mui/material/DialogTitle";
 import DialogContent from "@mui/material/DialogContent";
 import DialogActions from "@mui/material/DialogActions";
 import TextField from "@mui/material/TextField";
+import Snackbar from "@mui/material/Snackbar";
+import Alert from "@mui/material/Alert";
 import {
   DocumentIcon,
   TrashIcon,
@@ -135,6 +138,7 @@ export default function EvidenceList() {
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Gallery modal state
   const [galleryEvidenceId, setGalleryEvidenceId] = useState<number | null>(null);
@@ -171,6 +175,10 @@ export default function EvidenceList() {
       queryClient.invalidateQueries({ queryKey: ["submissions"] });
       setPendingDeleteId(null);
     },
+    onError: (err: AxiosError<{ detail?: string }>) => {
+      setActionError(err?.response?.data?.detail || "Failed to delete evidence.");
+      setPendingDeleteId(null);
+    },
   });
 
   const renameMutation = useMutation({
@@ -178,6 +186,10 @@ export default function EvidenceList() {
       evidenceApi.rename(id, description),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["evidence"] });
+      setRenameTarget(null);
+    },
+    onError: (err: AxiosError<{ detail?: string }>) => {
+      setActionError(err?.response?.data?.detail || "Failed to rename evidence.");
       setRenameTarget(null);
     },
   });
@@ -189,12 +201,19 @@ export default function EvidenceList() {
       queryClient.invalidateQueries({ queryKey: ["submissions"] });
       setPendingDeleteFileId(null);
     },
+    onError: (err: AxiosError<{ detail?: string }>) => {
+      setActionError(err?.response?.data?.detail || "Failed to delete screenshot.");
+      setPendingDeleteFileId(null);
+    },
   });
 
   const updateStatusMutation = useMutation({
     mutationFn: ({ id, status }: { id: number; status: string }) => submissionsApi.updateStatus(id, status),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["submissions"] });
+    },
+    onError: (err: AxiosError<{ detail?: string }>) => {
+      setActionError(err?.response?.data?.detail || "Failed to update status.");
     },
   });
 
@@ -464,6 +483,7 @@ export default function EvidenceList() {
                           <Tooltip title={`View all ${files.length} screenshots`}>
                             <IconButton
                               size="small"
+                              aria-label="View all screenshots"
                               sx={{
                                 position: "absolute",
                                 bottom: -6,
@@ -568,6 +588,7 @@ export default function EvidenceList() {
                           <Tooltip title="Rename">
                             <IconButton
                               size="small"
+                              aria-label="Rename evidence"
                               onClick={() => {
                                 setRenameTarget({ id: e.id, currentText: displayText });
                                 setRenameValue(displayText);
@@ -581,6 +602,7 @@ export default function EvidenceList() {
                               <IconButton
                                 size="small"
                                 color="error"
+                                aria-label="Delete evidence"
                                 onClick={() => setPendingDeleteId(e.id)}
                               >
                                 <TrashIcon size={16} />
@@ -645,7 +667,7 @@ export default function EvidenceList() {
                   <Typography variant="caption" color="text.disabled">Upload via Submit or run the AI agent.</Typography>
                 ) : (
                   <Link component="button" type="button" underline="hover" sx={{ fontSize: "0.85rem" }}
-                    onClick={() => { setProductId(""); setFrameworkId(""); setSourceFilter("all"); }}>
+                    onClick={() => { setProductId(""); setFrameworkId(""); setSourceFilter("all"); setStatusFilter("all"); }}>
                     Clear filters
                   </Link>
                 )}
@@ -715,13 +737,13 @@ export default function EvidenceList() {
                   ) : (
                     <Stack direction="row" spacing={0.5}>
                       <Tooltip title="Rename">
-                        <IconButton size="small" onClick={() => { setRenameTarget({ id: e.id, currentText: displayText }); setRenameValue(displayText); }}>
+                        <IconButton size="small" aria-label="Rename evidence" onClick={() => { setRenameTarget({ id: e.id, currentText: displayText }); setRenameValue(displayText); }}>
                           <DrawingPencilIcon size={16} />
                         </IconButton>
                       </Tooltip>
                       {(isAdmin || e.created_by === user?.email) && (
                         <Tooltip title="Delete evidence">
-                          <IconButton size="small" color="error" onClick={() => setPendingDeleteId(e.id)}>
+                          <IconButton size="small" color="error" aria-label="Delete evidence" onClick={() => setPendingDeleteId(e.id)}>
                             <TrashIcon size={16} />
                           </IconButton>
                         </Tooltip>
@@ -755,7 +777,7 @@ export default function EvidenceList() {
               {galleryFiles.length} screenshot{galleryFiles.length !== 1 ? "s" : ""}
             </Typography>
           </Box>
-          <IconButton onClick={() => { setGalleryEvidenceId(null); setPendingDeleteFileId(null); }} size="small">
+          <IconButton onClick={() => { setGalleryEvidenceId(null); setPendingDeleteFileId(null); }} size="small" aria-label="Close">
             <XMarkIcon size={20} />
           </IconButton>
         </DialogTitle>
@@ -826,6 +848,7 @@ export default function EvidenceList() {
                         <Tooltip title="Delete this screenshot">
                           <IconButton
                             size="small"
+                            aria-label="Delete screenshot"
                             onClick={() => setPendingDeleteFileId(f.id)}
                             sx={{ backgroundColor: "rgba(0,0,0,0.5)", color: "#fff", "&:hover": { backgroundColor: "rgba(200,0,0,0.8)" }, width: 28, height: 28 }}
                           >
@@ -888,6 +911,17 @@ export default function EvidenceList() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <Snackbar
+        open={actionError != null}
+        autoHideDuration={6000}
+        onClose={() => setActionError(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert onClose={() => setActionError(null)} severity="error" variant="filled" sx={{ width: "100%" }}>
+          {actionError}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }
