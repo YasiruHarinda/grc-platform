@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Autocomplete,
@@ -34,6 +34,7 @@ import type { JSX } from "react";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { resolveUserByEmail, searchEmployees } from "../../api/riskApi";
 import type { EmployeeOption } from "../../api/riskApi";
+import { dialogPaperSx } from "../cardStyles";
 
 // Matches the floor used by the Standard action plan's own Action Owner
 // picker (ActionPlanStep.tsx) — same live HR-entity search, so "any user"
@@ -53,6 +54,12 @@ interface ManagementActionPlanDialogProps {
   onConfirm: (payload: ManagementActionPlanPayload) => Promise<void>;
 }
 
+// A step row, keyed by a stable local id — see the note by its useState call.
+interface StepRow {
+  id: number;
+  text: string;
+}
+
 // Mirrors the Standard action plan form (ActionPlanStep.tsx) — description +
 // a repeatable step list + an unrestricted Action Owner picker — but as a
 // standalone dialog rather than a wizard step, since Management creates this
@@ -65,7 +72,13 @@ export default function ManagementActionPlanDialog({
   const authFetch = useAuthApiClient();
 
   const [description, setDescription] = useState("");
-  const [steps, setSteps] = useState<string[]>([""]);
+  // Rows are keyed by a stable id (not array index): removing a row shifts
+  // every later index, and an index key would make React reconcile the
+  // reused DOM node by position rather than by which step it semantically
+  // was — losing focus out of whatever field the user was typing in.
+  const nextStepID = useRef(0);
+  const newStepRow = (): StepRow => ({ id: nextStepID.current++, text: "" });
+  const [steps, setSteps] = useState<StepRow[]>(() => [newStepRow()]);
   const [stepsError, setStepsError] = useState("");
 
   const [ownerOptions, setOwnerOptions] = useState<EmployeeOption[]>([]);
@@ -100,14 +113,29 @@ export default function ManagementActionPlanDialog({
   }
 
   function resetState(): void {
+    // The dialog stays mounted between opens (the parent renders it
+    // unconditionally, toggling only MUI's `open` prop), so a debounced
+    // search left pending across a close/reopen would fire mid-way through
+    // the next session and overwrite ownerOptions with stale results.
+    if (ownerDebounce.current) clearTimeout(ownerDebounce.current);
     setDescription("");
-    setSteps([""]);
+    setSteps([newStepRow()]);
     setStepsError("");
     setOwnerSelected(null);
     setOwnerId(null);
     setOwnerError(null);
     setApiError("");
   }
+
+  // Belt-and-suspenders: this dialog doesn't currently unmount in practice
+  // (see resetState's comment), but clear the timer on unmount too in case
+  // that ever changes — e.g. a future refactor to conditionally render this
+  // dialog only while open.
+  useEffect(() => {
+    return () => {
+      if (ownerDebounce.current) clearTimeout(ownerDebounce.current);
+    };
+  }, []);
 
   function handleClose(): void {
     if (submitting) return;
@@ -116,7 +144,7 @@ export default function ManagementActionPlanDialog({
   }
 
   async function handleSubmit(): Promise<void> {
-    const trimmedSteps = steps.map((s) => s.trim()).filter(Boolean);
+    const trimmedSteps = steps.map((s) => s.text.trim()).filter(Boolean);
     if (trimmedSteps.length === 0) {
       setStepsError("At least one action step is required.");
       return;
@@ -141,14 +169,7 @@ export default function ManagementActionPlanDialog({
       onClose={handleClose}
       maxWidth="sm"
       fullWidth
-      PaperProps={{
-        sx: {
-          backdropFilter: "none",
-          backgroundImage: "none",
-          backgroundColor: "#ffffff",
-          "[data-color-scheme='dark'] &": { backgroundColor: "#1a1a24" },
-        },
-      }}
+      PaperProps={{ sx: dialogPaperSx }}
     >
       <DialogTitle>
         {/* component="span": DialogTitle already renders an <h2>; a nested
@@ -230,7 +251,7 @@ export default function ManagementActionPlanDialog({
             </Typography>
             <Stack gap={1.5}>
               {steps.map((step, index) => (
-                <Stack key={index} direction="row" gap={1} alignItems="flex-start">
+                <Stack key={step.id} direction="row" gap={1} alignItems="flex-start">
                   <Typography
                     variant="body2"
                     fontWeight={600}
@@ -243,18 +264,18 @@ export default function ManagementActionPlanDialog({
                     fullWidth
                     size="small"
                     placeholder={`Describe action step ${index + 1}…`}
-                    value={step}
+                    value={step.text}
                     disabled={submitting}
                     onChange={(e) => {
                       const next = [...steps];
-                      next[index] = e.target.value;
+                      next[index] = { ...next[index], text: e.target.value };
                       setSteps(next);
                       if (e.target.value && stepsError) setStepsError("");
                     }}
                     error={!!stepsError}
                   />
                   <IconButton
-                    onClick={() => setSteps(steps.filter((_, i) => i !== index))}
+                    onClick={() => setSteps(steps.filter((s) => s.id !== step.id))}
                     disabled={submitting || steps.length === 1}
                     size="small"
                     sx={{ mt: 0.5, flexShrink: 0, color: "error.main" }}
@@ -274,7 +295,7 @@ export default function ManagementActionPlanDialog({
               variant="outlined"
               size="small"
               startIcon={<Plus size={15} />}
-              onClick={() => setSteps([...steps, ""])}
+              onClick={() => setSteps([...steps, newStepRow()])}
               disabled={submitting}
               sx={{ mt: 2 }}
             >

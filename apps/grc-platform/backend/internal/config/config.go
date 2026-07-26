@@ -104,6 +104,11 @@ func Load() (Config, error) {
 		authCfg.IdPs = idps
 	}
 
+	complianceEntityBaseURL, err := mustEnv("COMPLIANCE_ENTITY_BASE_URL")
+	if err != nil {
+		return Config{}, err
+	}
+
 	hrEntityGraphQLURL, err := mustEnv("HR_ENTITY_GRAPHQL_URL")
 	if err != nil {
 		return Config{}, err
@@ -124,7 +129,7 @@ func Load() (Config, error) {
 	return Config{
 		Port:                    envOrDefault("PORT", ":8080"),
 		Auth:                    authCfg,
-		ComplianceEntityBaseURL: envOrDefault("COMPLIANCE_ENTITY_BASE_URL", "http://localhost:8081"),
+		ComplianceEntityBaseURL: complianceEntityBaseURL,
 		HREntity: HREntityConfig{
 			GraphQLURL:   hrEntityGraphQLURL,
 			TokenURL:     hrEntityTokenURL,

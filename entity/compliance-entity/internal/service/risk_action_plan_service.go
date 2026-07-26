@@ -190,15 +190,18 @@ func (s *riskActionPlanService) CompleteRiskActionPlan(ctx context.Context, plan
 		}
 		plan = updated
 
-		if _, err := s.notificationSvc.CreateRiskNotification(ctx, domain.CreateRiskNotificationRequest{
+		// Best-effort: the plan is already COMPLETED at this point, so a failed
+		// notification must not fail the whole request — a retry would skip this
+		// block entirely (plan.Status is now COMPLETED) and never send it, making
+		// a hard failure here permanently silence the assigner. Swallow rather
+		// than return, matching resolveEscalation's notification below.
+		_, _ = s.notificationSvc.CreateRiskNotification(ctx, domain.CreateRiskNotificationRequest{
 			RecipientID: risk.AssignerID,
 			RiskID:      &plan.RiskID,
 			Type:        "REASSESSMENT",
 			Message:     fmt.Sprintf("The action plan for risk %s is complete — please reassess and resubmit for approval.", risk.RiskCode),
 			CreatedBy:   req.UpdatedBy,
-		}); err != nil {
-			return domain.RiskActionPlan{}, fmt.Errorf("notify risk assigner: %w", err)
-		}
+		})
 	}
 
 	if plan.PlanType == "MANAGEMENT" {

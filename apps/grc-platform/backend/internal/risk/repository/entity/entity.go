@@ -31,9 +31,6 @@ package entity
 
 import (
 	"errors"
-	"net/http"
-
-	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/apierror"
 )
 
 // pageLimit is the entity's maximum page size; List methods page through all
@@ -44,10 +41,3 @@ const pageLimit = 100
 // unimplemented there stay unimplemented here — migrating a repository must not
 // quietly add behaviour the module did not have.
 var errNotImplemented = errors.New("not implemented")
-
-// notFound reports whether err is the entity's 404. Repository methods that
-// promise a (nil, nil) not-found contract use it to swallow the error.
-func notFound(err error) bool {
-	var apiErr *apierror.Error
-	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
-}

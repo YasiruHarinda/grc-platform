@@ -83,16 +83,38 @@ func splitCSVInts(raw string) []int {
 // none of the broader viewer privileges — the privilege-driven equivalent of
 // "this is an Action Owner, not a Risk Assigner/Owner/Compliance/Management/
 // Admin user," without checking a role name (this module never does).
+//
+// broader is a hand-maintained allowlist, not derived from the full privilege
+// set — a future write/approve privilege that isn't added here would silently
+// mis-classify a broad holder as action-owner-only, over-scoping them (see
+// riskVisibleToCaller and its handleListRisks / by-id read callers). When you
+// add a new Risk-module write or approval privilege, add it to this list too.
 func isActionOwnerOnly(ctx context.Context) bool {
 	if !auth.HasPrivilege(ctx, privilege.CompleteActionSteps) {
 		return false
 	}
+	// Keep in sync with every write/approval privilege in
+	// internal/shared/privilege/privilege.go's Risk Hub block.
 	broader := []string{
 		privilege.CreateRisk,
+		privilege.UpdateRisk,
+		privilege.SubmitRisk,
+		privilege.CancelRisk,
 		privilege.OwnerApproveRisk,
-		privilege.ComplianceApproveRisk,
 		privilege.ManagementApproveRisk,
+		privilege.ComplianceApproveRisk,
+		privilege.OwnerRejectRisk,
+		privilege.ManagementRejectRisk,
+		privilege.ComplianceRejectRisk,
+		privilege.CompleteRisk,
+		privilege.CloseRisk,
 		privilege.EscalateRisk,
+		privilege.AssessRisk,
+		privilege.ManageTeams,
+		privilege.ManageRiskScores,
+		privilege.ManageActionPlans,
+		privilege.ManageComplianceRefs,
+		privilege.CreateManagementActionPlan,
 	}
 	for _, p := range broader {
 		if auth.HasPrivilege(ctx, p) {
@@ -100,6 +122,57 @@ func isActionOwnerOnly(ctx context.Context) bool {
 		}
 	}
 	return true
+}
+
+// callerUserID resolves the authenticated caller to their internal user id,
+// the same email/subject lookup handleListRisks' Action Owner list scoping
+// uses. Returns (nil, nil) — not an error — when the caller has no platform
+// user row, so callers can fail closed on that case themselves.
+func (d *Deps) callerUserID(ctx context.Context) (*int, error) {
+	userInfo := auth.FromContext(ctx)
+	if userInfo == nil {
+		return nil, nil
+	}
+	email := userInfo.Email
+	if email == "" {
+		email = userInfo.Subject
+	}
+	caller, err := d.Users.GetByEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	if caller == nil {
+		return nil, nil
+	}
+	return &caller.ID, nil
+}
+
+// riskVisibleToCaller reports whether the caller may view riskID's data — the
+// by-id counterpart to handleListRisks' Action Owner list scoping, closing the
+// gap where that scoping was otherwise cosmetic (a caller restricted in the
+// list could still read any risk directly by id). Any caller holding a
+// broader-than-Action-Owner privilege always passes; their access is already
+// governed by the ViewRisks check callers perform before this. An
+// Action-Owner-only caller passes only if they're the action_owner_id of one
+// of the risk's action plans (STANDARD or MANAGEMENT).
+func (d *Deps) riskVisibleToCaller(ctx context.Context, riskID int) (bool, error) {
+	if !isActionOwnerOnly(ctx) {
+		return true, nil
+	}
+	callerID, err := d.callerUserID(ctx)
+	if err != nil || callerID == nil {
+		return false, err
+	}
+	plans, err := d.ActionPlan.List(ctx, riskID)
+	if err != nil {
+		return false, err
+	}
+	for _, p := range plans {
+		if p.ActionOwnerID != nil && *p.ActionOwnerID == *callerID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // handleListRisks serves GET /api/v1/risks.
@@ -195,6 +268,15 @@ func (d *Deps) handleGetRisk(w http.ResponseWriter, r *http.Request) {
 	}
 	id, ok := parseRiskID(w, r)
 	if !ok {
+		return
+	}
+	visible, err := d.riskVisibleToCaller(r.Context(), id)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	if !visible {
+		response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
 		return
 	}
 

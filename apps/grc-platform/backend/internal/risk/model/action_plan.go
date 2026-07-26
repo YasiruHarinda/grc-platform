@@ -48,7 +48,7 @@ type CreateActionPlanRequest struct {
 	Steps         []string `json:"steps"`
 }
 
-// UpdateActionPlanStepRequest is the payload for PUT .../steps/{stepId}.
+// UpdateActionPlanStepRequest is the payload for PATCH .../steps/{stepId}.
 type UpdateActionPlanStepRequest struct {
 	Description   string  `json:"description"`
 	Status        string  `json:"status"`

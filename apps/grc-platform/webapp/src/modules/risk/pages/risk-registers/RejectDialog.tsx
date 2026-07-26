@@ -27,6 +27,7 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
+import { dialogPaperSx } from "../cardStyles";
 
 interface RejectDialogProps {
   open: boolean;
@@ -81,14 +82,7 @@ export default function RejectDialog({
       onClose={handleClose}
       maxWidth="sm"
       fullWidth
-      PaperProps={{
-        sx: {
-          backdropFilter: "none",
-          backgroundImage: "none",
-          backgroundColor: "#ffffff",
-          "[data-color-scheme='dark'] &": { backgroundColor: "#1a1a24" },
-        },
-      }}
+      PaperProps={{ sx: dialogPaperSx }}
     >
       <DialogTitle>
         <Typography variant="h6" fontWeight={700}>

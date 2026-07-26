@@ -30,24 +30,22 @@ import (
 // MANAGEMENT-only — see ActionPlanService.Create's comment for why STANDARD
 // plans don't go through this endpoint.
 func (d *Deps) handleCreateManagementActionPlan(w http.ResponseWriter, r *http.Request) {
-	userInfo := auth.FromContext(r.Context())
-	if userInfo == nil {
-		response.WriteError(w, http.StatusUnauthorized, response.ErrMsgUnauthorized)
+	by, ok := requireUserEmail(w, r)
+	if !ok {
 		return
 	}
 	if !auth.RequirePrivilege(r.Context(), w, privilege.CreateManagementActionPlan) {
 		return
 	}
-	riskID, err := strconv.Atoi(r.PathValue("id"))
-	if err != nil || riskID <= 0 {
-		response.WriteError(w, http.StatusBadRequest, "id must be a positive integer")
+	riskID, ok := parseRiskID(w, r)
+	if !ok {
 		return
 	}
 	var req model.CreateActionPlanRequest
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
-	plan, err := d.ActionPlan.Create(r.Context(), riskID, req, userInfo.Email)
+	plan, err := d.ActionPlan.Create(r.Context(), riskID, req, by)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
@@ -56,16 +54,25 @@ func (d *Deps) handleCreateManagementActionPlan(w http.ResponseWriter, r *http.R
 }
 
 // handleListActionPlans serves GET /api/v1/risks/{id}/action-plans. Visible to
-// anyone who can view the risk — no extra gating on plan content, including
-// MANAGEMENT plans (see the design decision that walked back an earlier
-// team-only view restriction).
+// anyone who can view the risk, including MANAGEMENT plans (see the design
+// decision that walked back an earlier team-only view restriction) — except
+// an Action-Owner-only caller, who is further scoped to risks where they own
+// a plan (riskVisibleToCaller), matching handleListRisks' list scoping.
 func (d *Deps) handleListActionPlans(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewRisks) {
 		return
 	}
-	riskID, err := strconv.Atoi(r.PathValue("id"))
-	if err != nil || riskID <= 0 {
-		response.WriteError(w, http.StatusBadRequest, "id must be a positive integer")
+	riskID, ok := parseRiskID(w, r)
+	if !ok {
+		return
+	}
+	visible, err := d.riskVisibleToCaller(r.Context(), riskID)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	if !visible {
+		response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
 		return
 	}
 	plans, err := d.ActionPlan.List(r.Context(), riskID)
@@ -77,14 +84,38 @@ func (d *Deps) handleListActionPlans(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleListActionPlanSteps serves GET /api/v1/risks/{id}/action-plans/{planId}/steps.
+// For an Action-Owner-only caller, scoping is on the plan itself (not just "do
+// they own some plan under this risk") — otherwise an owner of one plan under
+// a risk could substitute a different plan id under the same risk to read
+// steps that aren't theirs.
 func (d *Deps) handleListActionPlanSteps(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewRisks) {
+		return
+	}
+	riskID, ok := parseRiskID(w, r)
+	if !ok {
 		return
 	}
 	planID, err := strconv.Atoi(r.PathValue("planId"))
 	if err != nil || planID <= 0 {
 		response.WriteError(w, http.StatusBadRequest, "planId must be a positive integer")
 		return
+	}
+	if isActionOwnerOnly(r.Context()) {
+		plan, err := d.ActionPlan.GetByID(r.Context(), riskID, planID)
+		if err != nil {
+			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+			return
+		}
+		callerID, err := d.callerUserID(r.Context())
+		if err != nil {
+			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+			return
+		}
+		if callerID == nil || plan.ActionOwnerID == nil || *plan.ActionOwnerID != *callerID {
+			response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
+			return
+		}
 	}
 	steps, err := d.ActionPlan.ListSteps(r.Context(), planID)
 	if err != nil {
@@ -100,17 +131,15 @@ func (d *Deps) handleListActionPlanSteps(w http.ResponseWriter, r *http.Request)
 // MANAGEMENT plans. Gated by CompleteActionSteps plus the service-layer
 // ownership check (caller must be the plan's action_owner_id).
 func (d *Deps) handleUpdateActionPlanStep(w http.ResponseWriter, r *http.Request) {
-	userInfo := auth.FromContext(r.Context())
-	if userInfo == nil {
-		response.WriteError(w, http.StatusUnauthorized, response.ErrMsgUnauthorized)
+	by, ok := requireUserEmail(w, r)
+	if !ok {
 		return
 	}
 	if !auth.RequirePrivilege(r.Context(), w, privilege.CompleteActionSteps) {
 		return
 	}
-	riskID, err := strconv.Atoi(r.PathValue("id"))
-	if err != nil || riskID <= 0 {
-		response.WriteError(w, http.StatusBadRequest, "id must be a positive integer")
+	riskID, ok := parseRiskID(w, r)
+	if !ok {
 		return
 	}
 	planID, err := strconv.Atoi(r.PathValue("planId"))
@@ -127,11 +156,11 @@ func (d *Deps) handleUpdateActionPlanStep(w http.ResponseWriter, r *http.Request
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
-	if err := d.ActionPlan.UpdateStep(r.Context(), riskID, planID, stepID, req, userInfo.Email); err != nil {
+	if err := d.ActionPlan.UpdateStep(r.Context(), riskID, planID, stepID, req, by); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
-	response.WriteJSONValue(w, http.StatusOK, map[string]bool{"success": true})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleCompleteActionPlan serves
@@ -139,17 +168,15 @@ func (d *Deps) handleUpdateActionPlanStep(w http.ResponseWriter, r *http.Request
 // already COMPLETED (enforced entity-side); for a MANAGEMENT plan this also
 // resolves its escalation and reverts the risk to IN_REMEDIATION.
 func (d *Deps) handleCompleteActionPlan(w http.ResponseWriter, r *http.Request) {
-	userInfo := auth.FromContext(r.Context())
-	if userInfo == nil {
-		response.WriteError(w, http.StatusUnauthorized, response.ErrMsgUnauthorized)
+	by, ok := requireUserEmail(w, r)
+	if !ok {
 		return
 	}
 	if !auth.RequirePrivilege(r.Context(), w, privilege.CompleteActionSteps) {
 		return
 	}
-	riskID, err := strconv.Atoi(r.PathValue("id"))
-	if err != nil || riskID <= 0 {
-		response.WriteError(w, http.StatusBadRequest, "id must be a positive integer")
+	riskID, ok := parseRiskID(w, r)
+	if !ok {
 		return
 	}
 	planID, err := strconv.Atoi(r.PathValue("planId"))
@@ -157,7 +184,7 @@ func (d *Deps) handleCompleteActionPlan(w http.ResponseWriter, r *http.Request) 
 		response.WriteError(w, http.StatusBadRequest, "planId must be a positive integer")
 		return
 	}
-	plan, err := d.ActionPlan.Complete(r.Context(), riskID, planID, userInfo.Email)
+	plan, err := d.ActionPlan.Complete(r.Context(), riskID, planID, by)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return

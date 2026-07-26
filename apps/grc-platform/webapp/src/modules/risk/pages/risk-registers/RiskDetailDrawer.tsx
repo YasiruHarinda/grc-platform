@@ -46,6 +46,7 @@ import {
 import type { JSX, ReactNode } from "react";
 import type { ActionPlan, ActionPlanStep, RiskDetail } from "../../api/riskApi";
 import { RiskPrivilege } from "../../privileges";
+import { dialogPaperSx } from "../cardStyles";
 import { STATUS_CONFIG, calcAge, calcDue, formatDate } from "./utils";
 
 // ActionPlan doesn't embed its steps (GET .../action-plans lists plans only;
@@ -79,6 +80,10 @@ interface RiskDetailDrawerProps extends DrawerActions {
   // Full action-plan list (STANDARD + MANAGEMENT) — separate from
   // detail.action_plan, which only ever embeds the STANDARD one.
   actionPlans: ActionPlanWithSteps[];
+  // Fetched independently of `detail`/`error` above, so a failure loading
+  // action plans doesn't blank out the rest of the drawer — only the Action
+  // Plans tab shows this.
+  actionPlansError: string;
   currentUserId: number | null;
   // id → display_name, resolved at render time so the Action Owner label
   // stays correct even when the drawer opens before the users list finishes
@@ -509,6 +514,7 @@ export default function RiskDetailDrawer({
   can,
   onClose,
   actionPlans,
+  actionPlansError,
   currentUserId,
   userNames,
   onCompleteStep,
@@ -538,12 +544,7 @@ export default function RiskDetailDrawer({
           display: "flex",
           flexDirection: "column",
           p: 0,
-          backdropFilter: "none",
-          backgroundImage: "none",
-          backgroundColor: "#ffffff",
-          "[data-color-scheme='dark'] &": {
-            backgroundColor: "#1a1a24",
-          },
+          ...dialogPaperSx,
         },
       }}
     >
@@ -720,7 +721,9 @@ export default function RiskDetailDrawer({
             </TabPanel>
 
             <TabPanel value={tab} index={2}>
-              {actionPlans.length > 0 ? (
+              {actionPlansError ? (
+                <Alert severity="error">{actionPlansError}</Alert>
+              ) : actionPlans.length > 0 ? (
                 actionPlans.map((plan) => (
                   <ActionPlanCard
                     key={plan.id}

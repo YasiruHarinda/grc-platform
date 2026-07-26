@@ -18,7 +18,6 @@ package handler
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
@@ -33,20 +32,18 @@ import (
 // risk that's already moved on (e.g. someone just closed it, or the job beat
 // this click to it) returns a clear 4xx rather than being escalated wrongly.
 func (d *Deps) handleEscalateRisk(w http.ResponseWriter, r *http.Request) {
-	userInfo := auth.FromContext(r.Context())
-	if userInfo == nil {
-		response.WriteError(w, http.StatusUnauthorized, response.ErrMsgUnauthorized)
+	by, ok := requireUserEmail(w, r)
+	if !ok {
 		return
 	}
 	if !auth.RequirePrivilege(r.Context(), w, privilege.EscalateRisk) {
 		return
 	}
-	riskID, err := strconv.Atoi(r.PathValue("id"))
-	if err != nil || riskID <= 0 {
-		response.WriteError(w, http.StatusBadRequest, "id must be a positive integer")
+	riskID, ok := parseRiskID(w, r)
+	if !ok {
 		return
 	}
-	escalation, err := d.Escalation.Escalate(r.Context(), riskID, userInfo.Email)
+	escalation, err := d.Escalation.Escalate(r.Context(), riskID, by)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
@@ -56,14 +53,24 @@ func (d *Deps) handleEscalateRisk(w http.ResponseWriter, r *http.Request) {
 
 // handleListEscalations serves GET /api/v1/risks/{id}/escalations. Visible to
 // anyone who can view the risk — escalation history is system-generated (see
-// model.Escalation) and shown the same as any other risk field.
+// model.Escalation) and shown the same as any other risk field — except an
+// Action-Owner-only caller, who is further scoped to risks where they own a
+// plan (riskVisibleToCaller), matching handleListRisks' list scoping.
 func (d *Deps) handleListEscalations(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewRisks) {
 		return
 	}
-	riskID, err := strconv.Atoi(r.PathValue("id"))
-	if err != nil || riskID <= 0 {
-		response.WriteError(w, http.StatusBadRequest, "id must be a positive integer")
+	riskID, ok := parseRiskID(w, r)
+	if !ok {
+		return
+	}
+	visible, err := d.riskVisibleToCaller(r.Context(), riskID)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	if !visible {
+		response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
 		return
 	}
 	escalations, err := d.Escalation.List(r.Context(), riskID)

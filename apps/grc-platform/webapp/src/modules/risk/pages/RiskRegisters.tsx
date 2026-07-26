@@ -362,6 +362,7 @@ export default function RiskRegisters(): JSX.Element {
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [drawerError, setDrawerError] = useState("");
   const [actionPlans, setActionPlans] = useState<ActionPlanWithSteps[]>([]);
+  const [actionPlansError, setActionPlansError] = useState("");
 
   const [editDetail, setEditDetail] = useState<RiskDetail | null>(null);
   const [assessOpen, setAssessOpen] = useState(false);
@@ -374,7 +375,7 @@ export default function RiskRegisters(): JSX.Element {
   // owner/assigner column filters, so this just matches the signed-in email
   // against it rather than adding a new identity-resolution round trip.
   const idTokenClaims = useIdTokenClaims();
-  const currentUserEmail = (idTokenClaims?.email as string | undefined) ?? "";
+  const currentUserEmail = typeof idTokenClaims?.email === "string" ? idTokenClaims.email : "";
   const currentUserId = users.find((u) => u.email === currentUserEmail)?.id ?? null;
   // id → display_name, passed to the drawer so it can resolve action-owner
   // names at render time — reactive to `users` loading, unlike baking the name
@@ -512,19 +513,29 @@ export default function RiskRegisters(): JSX.Element {
     setActionPlans(withSteps);
   };
 
+  // The risk detail and its action plans are fetched independently (not
+  // Promise.all'd together) so a failure in one doesn't hide the other — a
+  // transient error fetching one plan's steps used to blank out the entire
+  // drawer, discarding a risk detail that had already loaded fine.
   const openDrawer = async (id: number) => {
     setDrawerOpen(true);
     setDrawerDetail(null);
     setActionPlans([]);
     setDrawerError("");
+    setActionPlansError("");
     setDrawerLoading(true);
     try {
-      const [detail] = await Promise.all([fetchRiskDetail(authFetch, id), loadActionPlans(id)]);
+      const detail = await fetchRiskDetail(authFetch, id);
       setDrawerDetail(detail);
     } catch (e: unknown) {
       setDrawerError(e instanceof Error ? e.message : "Failed to load risk details.");
     } finally {
       setDrawerLoading(false);
+    }
+    try {
+      await loadActionPlans(id);
+    } catch (e: unknown) {
+      setActionPlansError(e instanceof Error ? e.message : "Failed to load action plans.");
     }
   };
 
@@ -533,6 +544,7 @@ export default function RiskRegisters(): JSX.Element {
     setDrawerDetail(null);
     setActionPlans([]);
     setDrawerError("");
+    setActionPlansError("");
   };
 
   // Deep link from the dashboard's High Severity Open Risks table
@@ -964,6 +976,7 @@ export default function RiskRegisters(): JSX.Element {
         can={can}
         onClose={closeDrawer}
         actionPlans={actionPlans}
+        actionPlansError={actionPlansError}
         currentUserId={currentUserId}
         userNames={userNames}
         onCompleteStep={handleCompleteStep}
