@@ -49,6 +49,21 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
+// Concurrent 401s must share a single in-flight refresh instead of each
+// triggering their own — with refresh-token rotation, only the first of a
+// batch of parallel refreshes succeeds and the rest would otherwise fall
+// into onAuthLost() and needlessly sign the user out.
+let _refreshPromise: Promise<unknown> | null = null;
+
+function refreshAccessTokenOnce(): Promise<unknown> {
+  if (!_refreshPromise) {
+    _refreshPromise = Promise.resolve(_auth!.refreshAccessToken()).finally(() => {
+      _refreshPromise = null;
+    });
+  }
+  return _refreshPromise;
+}
+
 // On a 401, force one silent refresh via the SDK and retry the request once.
 // If the refresh itself fails (refresh token expired), hand back to sign-in.
 api.interceptors.response.use(
@@ -65,12 +80,7 @@ api.interceptors.response.use(
     ) {
       original._retried = true;
       try {
-        await _auth.refreshAccessToken();
-        const token = await getAuthToken();
-        if (token) {
-          original.headers = original.headers ?? {};
-          (original.headers as Record<string, string>).Authorization = `Bearer ${token}`;
-        }
+        await refreshAccessTokenOnce();
         return api(original);
       } catch {
         _auth.onAuthLost?.();
