@@ -19,6 +19,7 @@ type Props = {
   onClose: () => void;
   onConfirm: () => void;
   isPending?: boolean;
+  impactLoading?: boolean;
   entityType: string;
   entityName: string;
   impact?: CascadeImpact[];
@@ -30,6 +31,7 @@ export default function ConfirmDeleteDialog({
   onClose,
   onConfirm,
   isPending = false,
+  impactLoading = false,
   entityType,
   entityName,
   impact = [],
@@ -64,21 +66,27 @@ export default function ConfirmDeleteDialog({
             .
           </Typography>
 
-          {totalImpact > 0 && (
-            <Alert severity="warning" sx={{ "& .MuiAlert-message": { width: "100%" } }}>
-              <Typography variant="body2" fontWeight={700} sx={{ mb: 0.5 }}>
-                This will also permanently delete:
-              </Typography>
-              <Stack spacing={0.25} sx={{ pl: 1 }}>
-                {impact
-                  .filter((i) => i.count > 0)
-                  .map((i) => (
-                    <Typography key={i.label} variant="body2">
-                      • <strong>{i.count}</strong> {i.label}
-                    </Typography>
-                  ))}
-              </Stack>
-            </Alert>
+          {impactLoading ? (
+            <Typography variant="caption" color="text.secondary">
+              Checking for related records…
+            </Typography>
+          ) : (
+            totalImpact > 0 && (
+              <Alert severity="warning" sx={{ "& .MuiAlert-message": { width: "100%" } }}>
+                <Typography variant="body2" fontWeight={700} sx={{ mb: 0.5 }}>
+                  This will also permanently delete:
+                </Typography>
+                <Stack spacing={0.25} sx={{ pl: 1 }}>
+                  {impact
+                    .filter((i) => i.count > 0)
+                    .map((i) => (
+                      <Typography key={i.label} variant="body2">
+                        • <strong>{i.count}</strong> {i.label}
+                      </Typography>
+                    ))}
+                </Stack>
+              </Alert>
+            )
           )}
 
           {error && <Alert severity="error">{error}</Alert>}
@@ -88,7 +96,12 @@ export default function ConfirmDeleteDialog({
         <Button onClick={onClose} disabled={isPending}>
           Cancel
         </Button>
-        <Button onClick={onConfirm} color="error" variant="contained" disabled={isPending}>
+        <Button
+          onClick={onConfirm}
+          color="error"
+          variant="contained"
+          disabled={isPending || impactLoading}
+        >
           {isPending ? "Deleting..." : `Delete ${entityType}`}
         </Button>
       </DialogActions>

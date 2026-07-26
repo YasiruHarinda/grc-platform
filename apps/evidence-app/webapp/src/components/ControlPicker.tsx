@@ -76,12 +76,12 @@ export default function ControlPicker({
     enabled: !!frameworkId,
   });
 
-  const { data: allEvidence = [] } = useQuery<Evidence[]>({
+  const { data: allEvidence = [], isLoading: isEvidenceLoading } = useQuery<Evidence[]>({
     queryKey: ["evidence"],
     queryFn: evidenceApi.list,
     enabled: !!deleteTarget,
   });
-  const { data: allSubmissions = [] } = useQuery<Submission[]>({
+  const { data: allSubmissions = [], isLoading: isSubmissionsLoading } = useQuery<Submission[]>({
     queryKey: ["submissions"],
     queryFn: submissionsApi.list,
     enabled: !!deleteTarget,
@@ -213,6 +213,7 @@ export default function ControlPicker({
                   <Tooltip title="Edit">
                     <IconButton
                       size="small"
+                      aria-label="Edit control"
                       onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -229,6 +230,7 @@ export default function ControlPicker({
                     <IconButton
                       size="small"
                       color="error"
+                      aria-label="Delete control"
                       onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -251,11 +253,18 @@ export default function ControlPicker({
             label={label}
             required={required}
             placeholder={
-              effectivelyDisabled ? "Pick a framework first" : "Type to search or create new..."
+              effectivelyDisabled
+                ? "Pick a framework first"
+                : isAdmin
+                  ? "Type to search or create new..."
+                  : "Search controls..."
             }
             helperText={
               helperText ??
-              (!effectivelyDisabled && "Don't see your control? Just type it — you can create it on the fly.")
+              (!effectivelyDisabled &&
+                (isAdmin
+                  ? "Don't see your control? Just type it — you can create it on the fly."
+                  : "Search by control reference or title."))
             }
           />
         )}
@@ -291,6 +300,7 @@ export default function ControlPicker({
         }}
         onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
         isPending={deleteMutation.isPending}
+        impactLoading={isEvidenceLoading || isSubmissionsLoading}
         entityType="control"
         entityName={
           deleteTarget ? `${deleteTarget.control_ref} — ${deleteTarget.title}` : ""

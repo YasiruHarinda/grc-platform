@@ -64,17 +64,17 @@ export default function FrameworkPicker({
   });
 
   // Lazy-loaded for cascade-impact display
-  const { data: allControls = [] } = useQuery<Control[]>({
+  const { data: allControls = [], isLoading: isControlsLoading } = useQuery<Control[]>({
     queryKey: ["controls"],
     queryFn: () => controlsApi.list(),
     enabled: !!deleteTarget,
   });
-  const { data: allEvidence = [] } = useQuery<Evidence[]>({
+  const { data: allEvidence = [], isLoading: isEvidenceLoading } = useQuery<Evidence[]>({
     queryKey: ["evidence"],
     queryFn: evidenceApi.list,
     enabled: !!deleteTarget,
   });
-  const { data: allSubmissions = [] } = useQuery<Submission[]>({
+  const { data: allSubmissions = [], isLoading: isSubmissionsLoading } = useQuery<Submission[]>({
     queryKey: ["submissions"],
     queryFn: submissionsApi.list,
     enabled: !!deleteTarget,
@@ -140,6 +140,7 @@ export default function FrameworkPicker({
                   <Tooltip title="Edit">
                     <IconButton
                       size="small"
+                      aria-label="Edit framework"
                       onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -155,6 +156,7 @@ export default function FrameworkPicker({
                     <IconButton
                       size="small"
                       color="error"
+                      aria-label="Delete framework"
                       onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -216,6 +218,7 @@ export default function FrameworkPicker({
         }}
         onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
         isPending={deleteMutation.isPending}
+        impactLoading={isControlsLoading || isEvidenceLoading || isSubmissionsLoading}
         entityType="framework"
         entityName={deleteTarget?.name ?? ""}
         impact={deleteTarget ? cascadeImpact(deleteTarget.id) : []}

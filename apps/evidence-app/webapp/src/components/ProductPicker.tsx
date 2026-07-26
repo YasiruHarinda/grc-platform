@@ -69,22 +69,22 @@ export default function ProductPicker({
 
   // Load dependent data only when delete is being considered, so we can show
   // accurate cascade impact in the confirm dialog.
-  const { data: allFrameworks = [] } = useQuery<Framework[]>({
+  const { data: allFrameworks = [], isLoading: isFrameworksLoading } = useQuery<Framework[]>({
     queryKey: ["frameworks"],
     queryFn: () => frameworksApi.list(),
     enabled: !!deleteTarget,
   });
-  const { data: allControls = [] } = useQuery<Control[]>({
+  const { data: allControls = [], isLoading: isControlsLoading } = useQuery<Control[]>({
     queryKey: ["controls"],
     queryFn: () => controlsApi.list(),
     enabled: !!deleteTarget,
   });
-  const { data: allEvidence = [] } = useQuery<Evidence[]>({
+  const { data: allEvidence = [], isLoading: isEvidenceLoading } = useQuery<Evidence[]>({
     queryKey: ["evidence"],
     queryFn: evidenceApi.list,
     enabled: !!deleteTarget,
   });
-  const { data: allSubmissions = [] } = useQuery<Submission[]>({
+  const { data: allSubmissions = [], isLoading: isSubmissionsLoading } = useQuery<Submission[]>({
     queryKey: ["submissions"],
     queryFn: submissionsApi.list,
     enabled: !!deleteTarget,
@@ -156,6 +156,7 @@ export default function ProductPicker({
                   <Tooltip title="Edit">
                     <IconButton
                       size="small"
+                      aria-label="Edit product"
                       onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -171,6 +172,7 @@ export default function ProductPicker({
                     <IconButton
                       size="small"
                       color="error"
+                      aria-label="Delete product"
                       onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -230,6 +232,9 @@ export default function ProductPicker({
         }}
         onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
         isPending={deleteMutation.isPending}
+        impactLoading={
+          isFrameworksLoading || isControlsLoading || isEvidenceLoading || isSubmissionsLoading
+        }
         entityType="product"
         entityName={deleteTarget?.name ?? ""}
         impact={deleteTarget ? cascadeImpact(deleteTarget.id) : []}
