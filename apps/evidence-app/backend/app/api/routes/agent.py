@@ -255,7 +255,7 @@ def cancel_task(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    task = db.query(AgentTask).filter(AgentTask.id == task_id).first()
+    task = db.query(AgentTask).filter(AgentTask.id == task_id).with_for_update().first()
     if not task:
         raise HTTPException(404)
     _authorize_task_access(task, user)
@@ -339,13 +339,35 @@ def runner_result(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    task = db.query(AgentTask).filter(
-        AgentTask.id == task_id, AgentTask.user_email == user.email
-    ).first()
+    task = (
+        db.query(AgentTask)
+        .filter(AgentTask.id == task_id, AgentTask.user_email == user.email)
+        .with_for_update()
+        .first()
+    )
     if not task:
         raise HTTPException(404)
 
+    # The runner reached us, so it is alive — record that before deciding
+    # whether the payload itself is worth applying. A replayed post is still
+    # proof of life, and dropping it here would make the runner look offline
+    # for no reason.
     _last_poll[user.email] = datetime.now(timezone.utc)
+
+    # A result was already recorded for this task (`completed_at` is set in
+    # exactly one place: below). This happens when the Runner posts a result,
+    # the response is lost before the Runner sees it (timeout, dropped
+    # connection, pod restart), and the Runner's generic error handler posts
+    # a second, contradicting result (e.g. status="failed") as it winds down
+    # — see runner/wso2_runner/loop.py's exception handler around post_result.
+    # The first result already committed Evidence/Evidence Files/Submission
+    # and the usage log correctly; a second post must be a no-op that looks,
+    # to the caller, exactly like the original success — never overwrite a
+    # good result with a stale/contradicting one. The row lock above also
+    # makes this check safe against a `cancel_task` racing in between our
+    # read and our commit (see that handler's matching lock).
+    if task.completed_at is not None:
+        return {"ok": True}
 
     # If the user cancelled from the UI, that decision wins over a normal
     # completion that the runner may post as it winds down.
