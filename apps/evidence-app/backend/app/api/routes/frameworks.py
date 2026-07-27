@@ -7,7 +7,7 @@ from app.models.framework import Framework
 from app.models.product import Product
 from app.rbac import require_admin
 from app.schemas.framework import FrameworkCreate, FrameworkResponse, FrameworkUpdate
-from app.storage.blob_storage import delete_file
+from app.storage.blob_storage import delete_files
 
 router = APIRouter(prefix="/frameworks", tags=["Frameworks"])
 
@@ -88,7 +88,7 @@ def delete_framework(framework_id: int, db: Session = Depends(get_db), user: Use
     db.delete(framework)
     try:
         db.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         # Deleting a Framework cascades to its Controls, and an Agent Task
         # may still point at one of them (agent_tasks.control_id is a plain FK
         # with no ON DELETE rule, so Postgres refuses). Nothing clears that
@@ -98,7 +98,6 @@ def delete_framework(framework_id: int, db: Session = Depends(get_db), user: Use
         raise HTTPException(
             status_code=409,
             detail="A control under this framework is still referenced by one or more agent tasks, so it cannot be deleted.",
-        )
-    for name in file_names:
-        delete_file(name)
+        ) from exc
+    delete_files(file_names)
     return Response(status_code=204)

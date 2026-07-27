@@ -7,7 +7,7 @@ from app.models.evidence import Evidence
 from app.models.evidence_file import EvidenceFile
 from app.models.submission import Submission
 from app.schemas.evidence import EvidenceResponse, EvidenceUpdate
-from app.storage.blob_storage import save_file, delete_file
+from app.storage.blob_storage import save_file, delete_file, delete_files
 
 router = APIRouter(prefix="/evidence", tags=["Evidence"])
 
@@ -149,9 +149,10 @@ def delete_evidence_file(file_id: int, db: Session = Depends(get_db), user: User
         evidence.file_url = survivor.file_url
     db.commit()
 
-    delete_file(deleted_file_name)
+    names_to_delete = [deleted_file_name]
     if parent_deleted:
-        delete_file(legacy_blob_name)
+        names_to_delete.append(legacy_blob_name)
+    delete_files(names_to_delete)
 
 
 @router.get("/{evidence_id}", response_model=EvidenceResponse)
@@ -187,5 +188,4 @@ def delete_evidence(evidence_id: int, db: Session = Depends(get_db), user: User 
     # Delete blobs only after the row is gone, matching delete_control/
     # delete_framework/delete_product. A failed commit must not strand
     # Evidence rows pointing at blobs that were already removed.
-    for fn in file_names:
-        delete_file(fn)
+    delete_files(file_names)

@@ -7,7 +7,7 @@ from app.models.control import Control
 from app.models.framework import Framework
 from app.rbac import require_admin
 from app.schemas.control import ControlCreate, ControlResponse, ControlUpdate
-from app.storage.blob_storage import delete_file
+from app.storage.blob_storage import delete_files
 
 router = APIRouter(prefix="/controls", tags=["Controls"])
 
@@ -78,7 +78,7 @@ def delete_control(control_id: int, db: Session = Depends(get_db), user: User = 
     db.delete(control)
     try:
         db.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         # An Agent Task still points at this Control (agent_tasks.control_id
         # is a plain FK with no ON DELETE rule, so Postgres refuses). Nothing
         # clears that reference once a task finishes, so this holds even for
@@ -88,7 +88,6 @@ def delete_control(control_id: int, db: Session = Depends(get_db), user: User = 
         raise HTTPException(
             status_code=409,
             detail="This control is still referenced by one or more agent tasks and cannot be deleted.",
-        )
-    for name in file_names:
-        delete_file(name)
+        ) from exc
+    delete_files(file_names)
     return Response(status_code=204)
