@@ -155,6 +155,76 @@ def test_agent_task_screenshot_payload_is_signed(engineer_client, db_session):
     assert screenshots[0]["subtask"] == "step 1"
 
 
+def test_agent_task_progress_screenshot_payload_is_signed(engineer_client, db_session):
+    """Live PROGRESS screenshots (posted by the runner after each subtask,
+    streamed over SSE) must be signed exactly like the final result's
+    screenshots — otherwise the Agent page's live view can't load them
+    while the run is still in flight."""
+    task = AgentTask(
+        user_email="engineer@example.com",
+        prompt="capture the dashboard",
+        status="running",
+        progress={
+            "subtasks": [
+                {
+                    "description": "step 1",
+                    "screenshots": [
+                        {"file_name": "p1.png", "file_url": "/uploads/p1.png"},
+                    ],
+                },
+                {
+                    "description": "step 2",
+                    "screenshots": [
+                        {"file_name": "p2.png", "file_url": "/uploads/p2.png"},
+                    ],
+                },
+            ],
+            "current_index": 1,
+        },
+    )
+    db_session.add(task)
+    db_session.commit()
+
+    response = engineer_client.get(f"/api/agent/tasks/{task.id}")
+
+    assert response.status_code == 200
+    subtasks = response.json()["progress"]["subtasks"]
+    assert len(subtasks) == 2
+    _assert_signed(subtasks[0]["screenshots"][0]["file_url"])
+    _assert_signed(subtasks[1]["screenshots"][0]["file_url"])
+    assert subtasks[0]["screenshots"][0]["file_url"] != subtasks[1]["screenshots"][0]["file_url"]
+    # Non-file_url fields pass through untouched.
+    assert subtasks[0]["description"] == "step 1"
+
+
+def test_agent_task_progress_without_screenshots_is_unaffected(engineer_client, db_session):
+    """Defensive cases: no progress at all, and subtasks that carry no
+    screenshots (or aren't even dicts) — none of these should blow up the
+    signing validator."""
+    task = AgentTask(user_email="engineer@example.com", prompt="do something", status="queued")
+    db_session.add(task)
+    db_session.commit()
+
+    response = engineer_client.get(f"/api/agent/tasks/{task.id}")
+
+    assert response.status_code == 200
+    assert response.json()["progress"] is None
+
+    task2 = AgentTask(
+        user_email="engineer@example.com",
+        prompt="do something else",
+        status="running",
+        progress={"subtasks": [{"description": "no screenshots yet"}], "current_index": 0},
+    )
+    db_session.add(task2)
+    db_session.commit()
+
+    response2 = engineer_client.get(f"/api/agent/tasks/{task2.id}")
+
+    assert response2.status_code == 200
+    assert response2.json()["progress"]["subtasks"][0].get("screenshots") is None
+
+
 def test_agent_task_list_signs_screenshots_too(engineer_client, db_session):
     task = AgentTask(
         user_email="engineer@example.com",

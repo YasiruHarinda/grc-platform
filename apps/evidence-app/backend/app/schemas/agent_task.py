@@ -57,6 +57,30 @@ class TaskOut(BaseModel):
                     for shot in screenshots
                 ],
             }
+
+        # Live PROGRESS screenshots (posted by the runner via POST
+        # .../progress after each subtask, streamed over SSE) carry the same
+        # raw stored references and need the same treatment — otherwise the
+        # Agent page's live view can't load them while the run is in flight.
+        subtasks = self.progress.get("subtasks") if self.progress else None
+        if subtasks:
+            self.progress = {
+                **self.progress,
+                "subtasks": [
+                    {
+                        **subtask,
+                        "screenshots": [
+                            {**shot, "file_url": get_signed_url(shot["file_url"])}
+                            if isinstance(shot, dict) and shot.get("file_url")
+                            else shot
+                            for shot in subtask["screenshots"]
+                        ],
+                    }
+                    if isinstance(subtask, dict) and subtask.get("screenshots")
+                    else subtask
+                    for subtask in subtasks
+                ],
+            }
         return self
 
 

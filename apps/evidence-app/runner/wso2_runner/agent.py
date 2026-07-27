@@ -510,8 +510,6 @@ def _capture_os_screenshot() -> bytes:
                     return raw
                 m = sct.monitors[idx]
                 box = (m["left"], m["top"], m["left"] + m["width"], m["top"] + m["height"])
-                if box == (0, 0, m["width"], m["height"]):
-                    return raw  # monitor starts at origin — no crop needed
                 img = Image.open(io.BytesIO(raw)).convert("RGB")
                 img = img.crop(box)
                 buf = io.BytesIO()
