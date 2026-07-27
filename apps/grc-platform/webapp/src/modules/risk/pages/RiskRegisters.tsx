@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -55,8 +55,14 @@ import {
   approveRisk,
   cancelRisk,
   closeRisk,
+  completeActionPlan,
+  completeActionStep,
   completeRisk,
   createAssessment,
+  createManagementActionPlan,
+  escalateRisk,
+  fetchActionPlanSteps,
+  fetchActionPlans,
   fetchAssignmentTeams,
   fetchComplianceReferences,
   fetchRiskDetail,
@@ -80,16 +86,21 @@ import type {
   UserOption,
 } from "../api/riskApi";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
+import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
 import { useRiskPrivileges } from "../hooks/useRiskPrivileges";
 import { darkCardSx } from "./cardStyles";
 import RiskDetailDrawer from "./risk-registers/RiskDetailDrawer";
+import type { ActionPlanWithSteps } from "./risk-registers/RiskDetailDrawer";
 import RejectDialog from "./risk-registers/RejectDialog";
 import ReassessmentDialog from "./risk-registers/ReassessmentDialog";
 import EditRiskDialog from "./risk-registers/EditRiskDialog";
+import ManagementActionPlanDialog from "./risk-registers/ManagementActionPlanDialog";
+import type { ManagementActionPlanPayload } from "./risk-registers/ManagementActionPlanDialog";
 import ColumnFilter from "./risk-registers/ColumnFilter";
 import DateRangeFilter from "./risk-registers/DateRangeFilter";
 import {
   APPROVED_ALL_STATUSES,
+  OVERDUE_STATUSES,
   PENDING_COMPLIANCE_STATUSES,
   PENDING_MANAGEMENT_STATUSES,
   PENDING_OWNER_STATUSES,
@@ -101,7 +112,7 @@ import {
 
 // ── Tab definitions ────────────────────────────────────────────────────────────
 
-type TabKey = "approved" | "pending-owner" | "pending-management" | "pending-compliance" | "pending-revision";
+type TabKey = "approved" | "pending-owner" | "pending-management" | "pending-compliance" | "pending-revision" | "overdue";
 
 interface TabDef {
   key: TabKey;
@@ -116,21 +127,29 @@ const TABS: TabDef[] = [
   { key: "pending-management",  label: "Pending Management Approval", statuses: PENDING_MANAGEMENT_STATUSES,  showRiskType: true },
   { key: "pending-compliance",  label: "Pending Compliance Approval", statuses: PENDING_COMPLIANCE_STATUSES,  showRiskType: true },
   { key: "pending-revision",    label: "Pending Revision",            statuses: PENDING_REVISION_STATUSES,    showRiskType: true },
+  { key: "overdue",             label: "Overdue Risks",               statuses: OVERDUE_STATUSES,             showRiskType: false },
 ];
 
 // ── Chips ──────────────────────────────────────────────────────────────────────
 
 // Matches OutlinedStatusChip's displayed text, so the Status column filter's
 // checkbox labels read the same as what's actually shown in that column.
-function statusLabel(status: string): string {
+// activeTab matters only for ESCALATED: in the Approved Risks tab it reads
+// "Open" (an escalated risk is still just an open remediation to the
+// assigner); the Overdue Risks tab is the only place it shows as "Escalated".
+function statusLabel(status: string, activeTab?: TabKey): string {
   if (status === "IN_REMEDIATION") return "Open";
   if (status === "CLOSED") return "Closed";
+  if (status === "ESCALATED" && activeTab === "approved") return "Open";
   return STATUS_CONFIG[status]?.label ?? status;
 }
 
-function OutlinedStatusChip({ status }: { status: string }): JSX.Element {
+function OutlinedStatusChip({ status, activeTab }: { status: string; activeTab?: TabKey }): JSX.Element {
   if (status === "IN_REMEDIATION") return <Chip label="Open" color="info" size="small" variant="outlined" />;
   if (status === "CLOSED") return <Chip label="Closed" color="success" size="small" variant="outlined" />;
+  if (status === "ESCALATED" && activeTab === "approved") {
+    return <Chip label="Open" color="info" size="small" variant="outlined" />;
+  }
   const cfg = STATUS_CONFIG[status] ?? { label: status, color: "default" as const };
   return <Chip label={cfg.label} color={cfg.color} size="small" variant="outlined" />;
 }
@@ -342,11 +361,26 @@ export default function RiskRegisters(): JSX.Element {
   const [drawerDetail, setDrawerDetail] = useState<RiskDetail | null>(null);
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [drawerError, setDrawerError] = useState("");
+  const [actionPlans, setActionPlans] = useState<ActionPlanWithSteps[]>([]);
+  const [actionPlansError, setActionPlansError] = useState("");
 
   const [editDetail, setEditDetail] = useState<RiskDetail | null>(null);
   const [assessOpen, setAssessOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
+  const [managementPlanOpen, setManagementPlanOpen] = useState(false);
+
+  // Resolves "am I this plan's action_owner_id" for the Action Plan section's
+  // step-completion controls — the users list is already fetched for the
+  // owner/assigner column filters, so this just matches the signed-in email
+  // against it rather than adding a new identity-resolution round trip.
+  const idTokenClaims = useIdTokenClaims();
+  const currentUserEmail = typeof idTokenClaims?.email === "string" ? idTokenClaims.email : "";
+  const currentUserId = users.find((u) => u.email === currentUserEmail)?.id ?? null;
+  // id → display_name, passed to the drawer so it can resolve action-owner
+  // names at render time — reactive to `users` loading, unlike baking the name
+  // into fetched plan state (which froze "Unassigned" on a pre-load open).
+  const userNames = useMemo(() => new Map(users.map((u) => [u.id, u.display_name])), [users]);
 
   const [actionError, setActionError] = useState("");
   const [actionSuccess, setActionSuccess] = useState("");
@@ -362,7 +396,7 @@ export default function RiskRegisters(): JSX.Element {
   const getStatuses = useCallback((): string[] => {
     const tabStatuses = (() => {
       if (activeTab === "approved") {
-        if (approvedFilter === "open") return ["IN_REMEDIATION"];
+        if (approvedFilter === "open") return ["IN_REMEDIATION", "ESCALATED"];
         if (approvedFilter === "closed") return ["CLOSED"];
         return APPROVED_ALL_STATUSES;
       }
@@ -392,6 +426,12 @@ export default function RiskRegisters(): JSX.Element {
     { label: "New Risk", value: "NEW" },
     { label: "Updated Risk", value: "UPDATED" },
   ];
+  // Deliberately not passing activeTab here: in the Approved tab this would
+  // otherwise render two checkboxes both labeled "Open" (IN_REMEDIATION and
+  // ESCALATED as separate filter values) — confusing for a secondary,
+  // power-user filter. ESCALATED keeps its own "Escalated" checkbox label;
+  // only the primary table chip and the Open/Closed/All dropdown get the
+  // "looks like Open" treatment.
   const statusColumnOptions = statusOptions.map((s) => ({ label: statusLabel(s), value: s }));
 
   useEffect(() => {
@@ -458,10 +498,31 @@ export default function RiskRegisters(): JSX.Element {
     loadRisks();
   }, [loadRisks]);
 
+  // Action plans (STANDARD + MANAGEMENT) aren't embedded in RiskDetail — and
+  // steps aren't embedded in the plan list either — so this is its own
+  // fetch-then-fan-out, reused both on drawer open and after any action-plan
+  // action so the drawer reflects the latest state without closing.
+  const loadActionPlans = async (riskId: number) => {
+    const plans = await fetchActionPlans(authFetch, riskId);
+    const withSteps = await Promise.all(
+      plans.map(async (plan) => ({
+        ...plan,
+        steps: await fetchActionPlanSteps(authFetch, riskId, plan.id),
+      })),
+    );
+    setActionPlans(withSteps);
+  };
+
+  // The risk detail and its action plans are fetched independently (not
+  // Promise.all'd together) so a failure in one doesn't hide the other — a
+  // transient error fetching one plan's steps used to blank out the entire
+  // drawer, discarding a risk detail that had already loaded fine.
   const openDrawer = async (id: number) => {
     setDrawerOpen(true);
     setDrawerDetail(null);
+    setActionPlans([]);
     setDrawerError("");
+    setActionPlansError("");
     setDrawerLoading(true);
     try {
       const detail = await fetchRiskDetail(authFetch, id);
@@ -471,12 +532,19 @@ export default function RiskRegisters(): JSX.Element {
     } finally {
       setDrawerLoading(false);
     }
+    try {
+      await loadActionPlans(id);
+    } catch (e: unknown) {
+      setActionPlansError(e instanceof Error ? e.message : "Failed to load action plans.");
+    }
   };
 
   const closeDrawer = () => {
     setDrawerOpen(false);
     setDrawerDetail(null);
+    setActionPlans([]);
     setDrawerError("");
+    setActionPlansError("");
   };
 
   // Deep link from the dashboard's High Severity Open Risks table
@@ -560,7 +628,56 @@ export default function RiskRegisters(): JSX.Element {
     onEdit: () => setEditDetail(drawerDetail),
     onAssess: () => setAssessOpen(true),
     onCancel: () => setCancelConfirmOpen(true),
+    onCreateManagementActionPlan: () => setManagementPlanOpen(true),
+
+    // Manual jump-the-queue trigger — same outcome as the daily job, just
+    // immediate. Closes the drawer and reloads like any other
+    // workflow-changing action, since the risk moves to the Overdue tab.
+    onEscalate: () =>
+      runAction(
+        () => escalateRisk(authFetch, drawerDetail!.id).then(() => undefined),
+        "Risk escalated.",
+      ),
   };
+
+  const handleCreateManagementPlan = async (payload: ManagementActionPlanPayload) => {
+    if (!drawerDetail) return;
+    // Plan and its steps are created in a single atomic backend call — a
+    // failure rolls back both, so a retry can never orphan a stepless plan or
+    // duplicate one.
+    await createManagementActionPlan(authFetch, drawerDetail.id, {
+      description: payload.description,
+      action_owner_id: payload.actionOwnerId,
+      steps: payload.steps,
+    });
+    await loadActionPlans(drawerDetail.id);
+    setActionSuccess("Management action plan created.");
+  };
+
+  // Step completion keeps the drawer open — the user very likely has more
+  // steps to mark, or is about to click "Complete Action Plan" next.
+  const handleCompleteStep = async (planId: number, stepId: number) => {
+    if (!drawerDetail || actionInFlight) return;
+    setActionInFlight(true);
+    setActionError("");
+    try {
+      await completeActionStep(authFetch, drawerDetail.id, planId, stepId, new Date().toISOString().slice(0, 10));
+      await loadActionPlans(drawerDetail.id);
+    } catch (e: unknown) {
+      setActionError(e instanceof Error ? e.message : "Unable to mark the step complete.");
+    } finally {
+      setActionInFlight(false);
+    }
+  };
+
+  // Completing a MANAGEMENT plan reverts the risk to IN_REMEDIATION
+  // server-side, moving it out of the Overdue tab — so, unlike step
+  // completion, this closes the drawer and reloads the list like any other
+  // workflow-changing action.
+  const handleCompletePlan = (planId: number) =>
+    runAction(async () => {
+      await completeActionPlan(authFetch, drawerDetail!.id, planId);
+    }, "Action plan completed.");
 
   const handleRejectConfirm = async (comment: string) => {
     if (!drawerDetail) return;
@@ -605,7 +722,7 @@ export default function RiskRegisters(): JSX.Element {
     setApprovedFilter("");
   };
 
-  const showStatusCol = activeTab === "approved";
+  const showStatusCol = activeTab === "approved" || activeTab === "overdue";
   const showRiskTypeCol = activeTabDef.showRiskType;
   const colSpan = 8 + (showStatusCol ? 1 : 0) + (showRiskTypeCol ? 1 : 0);
 
@@ -796,7 +913,7 @@ export default function RiskRegisters(): JSX.Element {
                     </TableCell>
                     {showStatusCol && (
                       <TableCell>
-                        <OutlinedStatusChip status={risk.workflow_status} />
+                        <OutlinedStatusChip status={risk.workflow_status} activeTab={activeTab} />
                       </TableCell>
                     )}
                     {showRiskTypeCol && (
@@ -805,14 +922,23 @@ export default function RiskRegisters(): JSX.Element {
                       </TableCell>
                     )}
                     <TableCell>
-                      {(() => {
-                        const due = calcDue(risk.implementation_date);
-                        return (
-                          <Typography variant="body2" fontWeight={600} sx={{ color: due.color }}>
-                            {due.label}
-                          </Typography>
-                        );
-                      })()}
+                      {/* Nothing is "due" on a closed risk — showing an ever-growing
+                          "Overdue Nd" against today's date would be misleading.
+                          "—" matches calcDue's own no-date fallback. */}
+                      {risk.workflow_status === "CLOSED" ? (
+                        <Typography variant="body2" fontWeight={600} color="text.secondary">
+                          —
+                        </Typography>
+                      ) : (
+                        (() => {
+                          const due = calcDue(risk.implementation_date);
+                          return (
+                            <Typography variant="body2" fontWeight={600} sx={{ color: due.color }}>
+                              {due.label}
+                            </Typography>
+                          );
+                        })()
+                      )}
                     </TableCell>
                     <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                       <Tooltip title="View Details">
@@ -849,7 +975,19 @@ export default function RiskRegisters(): JSX.Element {
         actionsDisabled={actionInFlight}
         can={can}
         onClose={closeDrawer}
+        actionPlans={actionPlans}
+        actionPlansError={actionPlansError}
+        currentUserId={currentUserId}
+        userNames={userNames}
+        onCompleteStep={handleCompleteStep}
+        onCompletePlan={handleCompletePlan}
         {...drawerActions}
+      />
+
+      <ManagementActionPlanDialog
+        open={managementPlanOpen}
+        onClose={() => setManagementPlanOpen(false)}
+        onConfirm={handleCreateManagementPlan}
       />
 
       <RejectDialog

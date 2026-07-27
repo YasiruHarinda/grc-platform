@@ -15,6 +15,11 @@
 // under the License.
 
 // Package repository defines the data-access contracts for the Risk Hub module.
+//
+// Every contract here is implemented against the Compliance Entity; the module
+// holds no database handle. The dashboard and analytics payloads have no
+// contract here at all — the entity assembles them and the services pass them
+// through, so there is nothing for this package to describe.
 package repository
 
 import (
@@ -61,10 +66,12 @@ type TeamRepository interface {
 }
 
 // RiskScoreRepository is the data-access contract for risk score configurations.
+// Read-only: the score matrix is reference data, seeded and edited out of band.
+// Create and Update were declared here but never routed and never implemented —
+// the service stubs returned nil without calling them — so they were dropped
+// rather than migrated. The Compliance Entity likewise exposes only a read.
 type RiskScoreRepository interface {
 	List(ctx context.Context) ([]*model.RiskScore, error)
-	Create(ctx context.Context, req model.CreateRiskScoreRequest, createdBy string) (*model.RiskScore, error)
-	Update(ctx context.Context, id int, req model.UpdateRiskScoreRequest, updatedBy string) error
 }
 
 // ActionPlanRepository is the data-access contract for action plans and steps.
@@ -72,10 +79,12 @@ type ActionPlanRepository interface {
 	List(ctx context.Context, riskID int) ([]*model.ActionPlan, error)
 	GetByID(ctx context.Context, planID int) (*model.ActionPlan, error)
 	Create(ctx context.Context, riskID int, req model.CreateActionPlanRequest, createdBy string) (*model.ActionPlan, error)
-	Update(ctx context.Context, planID int, req model.UpdateActionPlanRequest, updatedBy string) error
 	ListSteps(ctx context.Context, planID int) ([]*model.ActionPlanStep, error)
-	AddStep(ctx context.Context, planID, stepNo int, req model.AddActionPlanStepRequest, createdBy string) (*model.ActionPlanStep, error)
-	UpdateStep(ctx context.Context, stepID int, req model.UpdateActionPlanStepRequest, updatedBy string) error
+	UpdateStep(ctx context.Context, planID, stepID int, req model.UpdateActionPlanStepRequest, updatedBy string) error
+	// Complete marks a plan COMPLETED once every step is done; for a
+	// MANAGEMENT plan the entity also resolves its escalation and reverts the
+	// risk ESCALATED -> IN_REMEDIATION as part of the same call.
+	Complete(ctx context.Context, planID int, updatedBy string) (*model.ActionPlan, error)
 }
 
 // RiskEvidenceRepository is the data-access contract for risk evidence files.
@@ -88,6 +97,9 @@ type RiskEvidenceRepository interface {
 // EscalationRepository is the data-access contract for risk escalations.
 type EscalationRepository interface {
 	List(ctx context.Context, riskID int) ([]*model.Escalation, error)
+	// Escalate is the manual trigger — Compliance/Admin escalating an overdue
+	// IN_REMEDIATION risk on demand instead of waiting for the daily job.
+	Escalate(ctx context.Context, riskID int, createdBy string) (*model.Escalation, error)
 }
 
 // ChangelogRepository is the data-access contract for the risk audit trail.
@@ -100,79 +112,9 @@ type NotificationRepository interface {
 }
 
 // ComplianceReferenceRepository is the data-access contract for compliance references.
+// Read-only, for the same reason as RiskScoreRepository: Create was declared but
+// never routed and never implemented — the service stub returned nil without
+// calling it — so it was dropped rather than migrated.
 type ComplianceReferenceRepository interface {
 	List(ctx context.Context) ([]*model.ComplianceReference, error)
-	Create(ctx context.Context, req model.CreateComplianceRefRequest, createdBy string) (*model.ComplianceReference, error)
-}
-
-// AnalyticsRepository provides the aggregated read queries behind
-// GET /api/v1/risks/analytics/summary. Every method accepts an optional
-// registerID (nil = all registers) to scope its result to the page's
-// register filter. All methods exclude CANCELLED risks.
-type AnalyticsRepository interface {
-	// NewThisMonthCount returns the count of risks identified since monthStart.
-	NewThisMonthCount(ctx context.Context, registerID *int, monthStart string) (int, error)
-	// AvgDaysToClose returns the average identified→closed duration in days
-	// across CLOSED risks, or nil if there are none.
-	AvgDaysToClose(ctx context.Context, registerID *int) (*float64, error)
-	// AvgEffectiveScore returns the average effective residual score across
-	// open risks, or nil if there are none.
-	AvgEffectiveScore(ctx context.Context, registerID *int) (*float64, error)
-	// IdentifiedTrend returns, per month since `since`, the count of risks
-	// identified and their average effective score.
-	IdentifiedTrend(ctx context.Context, registerID *int, since string) ([]model.MonthScoreStat, error)
-	// ClosedTrend returns, per month since `since`, the count of risks closed
-	// (approximated by workflow_status=CLOSED and updated_at).
-	ClosedTrend(ctx context.Context, registerID *int, since string) ([]model.MonthCount, error)
-	// LevelDistribution returns, per month since `since` × effective level,
-	// the count of risks identified that month.
-	LevelDistribution(ctx context.Context, registerID *int, since string) ([]model.MonthLevelCount, error)
-	// LevelReference returns every distinct risk level defined in risk_score,
-	// ordered by severity (highest first), with its reference color.
-	LevelReference(ctx context.Context) ([]model.RiskLevelRef, error)
-	// IdentifiedTrendByRegister returns, per month since `since` × register,
-	// the count of risks identified that month.
-	IdentifiedTrendByRegister(ctx context.Context, registerID *int, since string) ([]model.MonthRegisterCount, error)
-	// ClosedTrendByRegister returns, per month since `since` × register, the
-	// count of risks closed that month.
-	ClosedTrendByRegister(ctx context.Context, registerID *int, since string) ([]model.MonthRegisterCount, error)
-	// RegisterTotals returns total risk count (all-time, all statuses except
-	// CANCELLED) per register, for the cross-register comparison donut.
-	RegisterTotals(ctx context.Context) ([]model.RegisterShare, error)
-	// ComplianceDistribution returns total risk count per compliance
-	// framework, all-time.
-	ComplianceDistribution(ctx context.Context, registerID *int) ([]model.ComplianceShare, error)
-	// TreatmentMix returns open risk count per treatment strategy.
-	TreatmentMix(ctx context.Context, registerID *int) ([]model.TreatmentShare, error)
-	// WorkflowFunnel returns risk count per workflow_status stage.
-	WorkflowFunnel(ctx context.Context, registerID *int) ([]model.WorkflowStageCount, error)
-	// AgingRisks returns open risks ordered oldest-identified-first.
-	AgingRisks(ctx context.Context, registerID *int, limit int) ([]model.AgingRiskItem, error)
-}
-
-// DashboardRepository provides the aggregated read queries behind GET /api/v1/risks/dashboard.
-// All methods exclude CANCELLED risks; "open" means any status other than CLOSED.
-// Every method takes an optional registerID (nil = all registers) to scope
-// its result to the page's register filter, mirroring AnalyticsRepository.
-type DashboardRepository interface {
-	// StatusCounts returns total / open / closed risk counts.
-	StatusCounts(ctx context.Context, registerID *int) (*model.RiskStatusSummary, error)
-	// OpenRiskFacts returns open risks grouped by register × effective residual
-	// score cell × treatment strategy; the service derives all open-risk charts from it.
-	OpenRiskFacts(ctx context.Context, registerID *int) ([]model.OpenRiskFact, error)
-	// RegisterStatusFacts returns every non-cancelled risk (open and closed)
-	// grouped by register × effective residual level × status bucket; the
-	// service derives each register's status chart from it.
-	RegisterStatusFacts(ctx context.Context, registerID *int) ([]model.RegisterStatusFact, error)
-	// CertTagCounts returns open cert-tag occurrences per register × certification.
-	CertTagCounts(ctx context.Context, registerID *int) ([]model.RegisterCertCount, error)
-	// RepeatedComplianceRisks returns per-register occurrences of cert-tagged risk
-	// titles that appear in two or more source registers.
-	RepeatedComplianceRisks(ctx context.Context, registerID *int) ([]model.RepeatedRiskRow, error)
-	// HighRisks returns open risks whose effective residual level is HIGH,
-	// oldest identified first.
-	HighRisks(ctx context.Context, registerID *int) ([]model.HighRiskItem, error)
-	// LevelOrder returns every distinct risk level defined in risk_score,
-	// ordered by severity (highest first).
-	LevelOrder(ctx context.Context) ([]string, error)
 }

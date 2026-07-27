@@ -114,6 +114,34 @@ export interface ActionPlanDetail {
   steps: ActionPlanStep[];
 }
 
+// ActionPlan is the standalone shape returned by GET/POST .../action-plans —
+// unlike RiskDetail.action_plan (always the STANDARD plan embedded at risk
+// creation), this is how the MANAGEMENT plan created on an escalated risk is
+// fetched, and how both plans are listed together.
+export interface ActionPlan {
+  id: number;
+  risk_id: number;
+  action_owner_id: number | null;
+  description: string | null;
+  status: string; // PENDING | IN_PROGRESS | COMPLETED
+  completed_date: string | null;
+  plan_type: string; // STANDARD | MANAGEMENT
+  created_by: string | null;
+}
+
+// Escalation is created automatically by the compliance-entity's daily
+// overdue-risk job — no escalated_to/reason, since it's system-driven, not a
+// human decision. created_at is what "escalated on" shows in the UI.
+export interface Escalation {
+  id: number;
+  risk_id: number;
+  new_treatment_strategy: string | null;
+  action_plan_id: number | null;
+  decision: string | null;
+  status: string; // OPEN | RESOLVED
+  created_at: string;
+}
+
 export interface RiskAssessmentRecord {
   id: number;
   risk_id: number;
@@ -648,4 +676,87 @@ export async function createAssessment(
     body: JSON.stringify(payload),
   });
   return handleResponse<RiskAssessmentRecord>(res);
+}
+
+// ── Action plans (Overdue Risks / escalation feature) ──────────────────────────
+
+export async function fetchActionPlans(authFetch: AuthFetch, riskId: number): Promise<ActionPlan[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/action-plans`);
+  return handleResponse<ActionPlan[]>(res);
+}
+
+// createManagementActionPlan is MANAGEMENT-only — the backend rejects any
+// other plan_type here, since STANDARD plans are still created inline as
+// part of risk registration (Add Risk's own flow).
+export async function createManagementActionPlan(
+  authFetch: AuthFetch,
+  riskId: number,
+  payload: { description: string; action_owner_id: number | null; steps: string[] },
+): Promise<ActionPlan> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/action-plans`, {
+    method: "POST",
+    body: JSON.stringify({
+      description: payload.description,
+      action_owner_id: payload.action_owner_id,
+      plan_type: "MANAGEMENT",
+      // Steps are created atomically with the plan on the backend, so a
+      // failure can't leave an orphaned, stepless plan behind.
+      steps: payload.steps,
+    }),
+  });
+  return handleResponse<ActionPlan>(res);
+}
+
+export async function fetchActionPlanSteps(
+  authFetch: AuthFetch,
+  riskId: number,
+  planId: number,
+): Promise<ActionPlanStep[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/action-plans/${planId}/steps`);
+  return handleResponse<ActionPlanStep[]>(res);
+}
+
+// completeActionStep marks one step done. Gated server-side by
+// COMPLETE_ACTION_STEPS_RISK plus an ownership check (caller must be the plan's
+// action_owner_id) — applies uniformly to STANDARD and MANAGEMENT plans.
+export async function completeActionStep(
+  authFetch: AuthFetch,
+  riskId: number,
+  planId: number,
+  stepId: number,
+  completedDate: string,
+): Promise<void> {
+  const res = await authFetch(
+    `${BACKEND_BASE_URL}/api/v1/risks/${riskId}/action-plans/${planId}/steps/${stepId}`,
+    { method: "PATCH", body: JSON.stringify({ status: "COMPLETED", completed_date: completedDate }) },
+  );
+  return handleResponse<void>(res);
+}
+
+// completeActionPlan requires every step already COMPLETED (enforced
+// server-side); for a MANAGEMENT plan this also resolves its escalation and
+// reverts the risk to IN_REMEDIATION.
+export async function completeActionPlan(
+  authFetch: AuthFetch,
+  riskId: number,
+  planId: number,
+): Promise<ActionPlan> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/action-plans/${planId}/complete`, {
+    method: "POST",
+  });
+  return handleResponse<ActionPlan>(res);
+}
+
+export async function fetchEscalations(authFetch: AuthFetch, riskId: number): Promise<Escalation[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/escalations`);
+  return handleResponse<Escalation[]>(res);
+}
+
+// escalateRisk is the manual trigger — Compliance/Admin escalating an
+// overdue IN_REMEDIATION risk on demand instead of waiting for the daily job
+// (up to 24h) to reach it. Same outcome either way: the risk moves to
+// ESCALATED and shows up in the Overdue Risks tab.
+export async function escalateRisk(authFetch: AuthFetch, riskId: number): Promise<Escalation> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/escalate`, { method: "POST" });
+  return handleResponse<Escalation>(res);
 }

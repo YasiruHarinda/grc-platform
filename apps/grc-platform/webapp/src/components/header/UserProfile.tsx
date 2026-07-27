@@ -67,11 +67,11 @@ export default function UserProfile(): JSX.Element {
   const logger = useLogger();
   const [email, setEmail] = useState("");
   // Real name/picture from Asgardeo's own given_name/family_name/picture
-  // claims — empty today because this org's application isn't configured
-  // to release them (confirmed by decoding the raw ID token), but once
-  // that's fixed in the Asgardeo Console, these take priority automatically
-  // with no further code changes, matching how e.g. the leave app gets its
-  // real Google-sourced photo through the same claims.
+  // claims. Historically empty because this org's application isn't
+  // configured to release them; the claims may also arrive partially (a
+  // given_name with no family_name), which is why the name below is chosen by
+  // completeness rather than by whether this is merely non-empty. The picture
+  // still takes priority whenever Asgardeo supplies one.
   const [asgardeoName, setAsgardeoName] = useState("");
   const [asgardeoPicture, setAsgardeoPicture] = useState<string | null>(null);
   // Decent guess derived from the email prefix (e.g. "asel.fernando" ->
@@ -167,12 +167,23 @@ export default function UserProfile(): JSX.Element {
 
   if (isLoading || !isSignedIn) return <></>;
 
-  // Priority: Asgardeo's own claims (real name/photo, once the org enables
-  // them for this app) > hr_entity lookup > a decent guess from the email
-  // prefix > raw username/subject as a last resort so something is always
-  // shown rather than a blank menu.
+  // Name priority: hr_entity first, then Asgardeo's claims, then a guess from
+  // the email prefix, then the raw username/subject so the menu is never blank.
+  //
+  // Both sources can be partially populated — Asgardeo may release given_name
+  // without family_name, and hr_entity may hold a first name with no last name
+  // — so neither is trusted just for being non-empty. Whichever supplies more
+  // name parts wins, with hr_entity taking ties as the more reliable source of
+  // a person's full name. A plain `asgardeoName || profileName` chain got this
+  // wrong: a one-word Asgardeo name is truthy, so it shadowed a complete
+  // hr_entity name and the account menu showed only a first name.
   const profileName = [profile?.first_name, profile?.last_name].filter(Boolean).join(" ");
-  const displayName = asgardeoName || profileName || emailDerivedName || desperateFallbackName || "User";
+  const fullerName = (a: string, b: string): string => {
+    const parts = (s: string) => (s.trim() === "" ? 0 : s.trim().split(/\s+/).length);
+    return parts(a) >= parts(b) ? a : b;
+  };
+  const resolvedName = fullerName(profileName, asgardeoName);
+  const displayName = resolvedName || emailDerivedName || desperateFallbackName || "User";
   const displayEmail = email || " ";
   const picture = asgardeoPicture || profile?.thumbnail_url || null;
 

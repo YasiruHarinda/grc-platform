@@ -128,8 +128,12 @@ type ListRisksFilter struct {
 	DueFrom        string   // implementation_date >= this date (YYYY-MM-DD); empty = unbounded
 	DueTo          string   // implementation_date <= this date (YYYY-MM-DD); empty = unbounded
 	DueOverdueOnly bool     // implementation_date < today, regardless of the range above
-	Limit          int      // rows per page; handler enforces a sensible default and max
-	Offset         int      // zero-based row offset
+	// ActionOwnerID restricts to risks with an action plan owned by this user.
+	// Set automatically by the handler for callers who only hold
+	// COMPLETE_ACTION_STEPS_RISK (Action Owners) — never client-supplied.
+	ActionOwnerID *int
+	Limit         int // rows per page; handler enforces a sensible default and max
+	Offset        int // zero-based row offset
 }
 
 // RiskListPage is the paginated response for GET /api/v1/risks.

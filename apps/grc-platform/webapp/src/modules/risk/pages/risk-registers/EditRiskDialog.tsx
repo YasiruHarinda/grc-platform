@@ -55,6 +55,7 @@ import type {
 } from "../../api/riskApi";
 import { TREATMENT_STRATEGIES } from "../add-risk/constants";
 import { LEVEL_FALLBACK_COLORS } from "../dashboard/constants";
+import { dialogPaperSx } from "../cardStyles";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 
 // Minimum characters before searching — matches the backend's own floor.
@@ -436,14 +437,7 @@ export default function EditRiskDialog({
       onClose={() => !submitting && onClose()}
       maxWidth="md"
       fullWidth
-      PaperProps={{
-        sx: {
-          backdropFilter: "none",
-          backgroundImage: "none",
-          backgroundColor: "#ffffff",
-          "[data-color-scheme='dark'] &": { backgroundColor: "#1a1a24" },
-        },
-      }}
+      PaperProps={{ sx: dialogPaperSx }}
     >
       <DialogTitle>
         <Typography variant="h6" fontWeight={700}>

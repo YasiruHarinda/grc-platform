@@ -10,32 +10,53 @@
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
 // "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-// KIND, either express or implied.  See the License for the
+// KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations
 // under the License.
 
-package mysql
+package repository
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
 
-	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
-	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/repository"
+	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/domain"
 )
 
-type dashboardRepository struct{ db *sql.DB }
+// Risk workflow statuses this file filters on. Declared here rather than
+// imported so the SQL below reads as SQL.
+const (
+	statusClosed    = "CLOSED"
+	statusCancelled = "CANCELLED"
+)
 
-// NewDashboardRepository creates a MySQL-backed repository.DashboardRepository.
-func NewDashboardRepository(db *sql.DB) repository.DashboardRepository {
-	return &dashboardRepository{db: db}
+// RiskDashboardRepository provides the aggregated reads behind the risk
+// dashboard. Every method excludes CANCELLED risks; "open" means any status
+// other than CLOSED. registerID nil means every register.
+type RiskDashboardRepository interface {
+	StatusCounts(ctx context.Context, registerID *int) (*domain.RiskStatusSummary, error)
+	OpenRiskFacts(ctx context.Context, registerID *int) ([]domain.OpenRiskFact, error)
+	RegisterStatusFacts(ctx context.Context, registerID *int) ([]domain.RegisterStatusFact, error)
+	CertTagCounts(ctx context.Context, registerID *int) ([]domain.RegisterCertCount, error)
+	RepeatedComplianceRisks(ctx context.Context, registerID *int) ([]domain.RepeatedRiskRow, error)
+	HighRisks(ctx context.Context, registerID *int) ([]domain.HighRiskItem, error)
+	LevelOrder(ctx context.Context) ([]string, error)
 }
 
-// effectiveScoreJoin resolves each risk's effective residual score: the score
-// of its latest reassessment when one exists, else its gross score. Risks with
-// neither (no gross score and never assessed) drop out of score-based charts.
-const effectiveScoreJoin = `
+type riskDashboardRepo struct{ db *sql.DB }
+
+// NewRiskDashboardRepository constructs a RiskDashboardRepository.
+func NewRiskDashboardRepository(db *sql.DB) RiskDashboardRepository {
+	return &riskDashboardRepo{db: db}
+}
+
+// dashboardScoreJoin resolves each risk's effective residual score: the score
+// of its latest reassessment when one exists, else its gross score. This is an
+// inner join — a risk with neither drops out of score-based charts, which is
+// acceptable for an aggregate but not for a list, where the risk read path uses
+// a LEFT JOIN instead.
+const dashboardScoreJoin = `
 	JOIN risk_score rs ON rs.id = COALESCE(
 		(SELECT ra.score_id
 		   FROM risk_assessment ra
@@ -44,11 +65,20 @@ const effectiveScoreJoin = `
 		  LIMIT 1),
 		r.gross_score_id)`
 
-func (d *dashboardRepository) StatusCounts(ctx context.Context, registerID *int) (*model.RiskStatusSummary, error) {
-	clause, filterArgs := registerFilter(registerID)
-	args := append([]any{model.StatusClosed, model.StatusClosed, model.StatusClosed, model.StatusCancelled}, filterArgs...)
+// registerFilter returns an optional " AND r.source_register_id = ?" clause and
+// its argument, so every query scopes the same way.
+func registerFilter(registerID *int) (string, []any) {
+	if registerID == nil {
+		return "", nil
+	}
+	return " AND r.source_register_id = ?", []any{*registerID}
+}
 
-	var s model.RiskStatusSummary
+func (d *riskDashboardRepo) StatusCounts(ctx context.Context, registerID *int) (*domain.RiskStatusSummary, error) {
+	clause, filterArgs := registerFilter(registerID)
+	args := append([]any{statusClosed, statusClosed, statusClosed, statusCancelled}, filterArgs...)
+
+	var s domain.RiskStatusSummary
 	err := d.db.QueryRowContext(ctx, `
 		SELECT COUNT(*),
 		       COALESCE(SUM(CASE WHEN r.workflow_status <> ? THEN 1 ELSE 0 END), 0),
@@ -61,20 +91,20 @@ func (d *dashboardRepository) StatusCounts(ctx context.Context, registerID *int)
 		args...,
 	).Scan(&s.Total, &s.Open, &s.Closed, &s.Overdue)
 	if err != nil {
-		return nil, fmt.Errorf("dashboard status counts: %w", err)
+		return nil, fmt.Errorf("risk dashboard status counts: %w", err)
 	}
 	return &s, nil
 }
 
-func (d *dashboardRepository) OpenRiskFacts(ctx context.Context, registerID *int) ([]model.OpenRiskFact, error) {
+func (d *riskDashboardRepo) OpenRiskFacts(ctx context.Context, registerID *int) ([]domain.OpenRiskFact, error) {
 	clause, filterArgs := registerFilter(registerID)
-	args := append([]any{model.StatusClosed, model.StatusCancelled}, filterArgs...)
+	args := append([]any{statusClosed, statusCancelled}, filterArgs...)
 
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT st.id, st.name, rs.likelihood, rs.impact, rs.risk_level, rs.color_code,
 		       COALESCE(r.treatment_strategy, 'UNSPECIFIED'), COUNT(*)
 		FROM risk r
-		JOIN risk_team st ON st.id = r.source_register_id`+effectiveScoreJoin+`
+		JOIN risk_team st ON st.id = r.source_register_id`+dashboardScoreJoin+`
 		WHERE r.workflow_status NOT IN (?, ?)`+clause+`
 		GROUP BY st.id, st.name, rs.likelihood, rs.impact, rs.risk_level, rs.color_code,
 		         r.treatment_strategy
@@ -82,13 +112,13 @@ func (d *dashboardRepository) OpenRiskFacts(ctx context.Context, registerID *int
 		args...,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("dashboard open risk facts: %w", err)
+		return nil, fmt.Errorf("risk dashboard open risk facts: %w", err)
 	}
 	defer rows.Close()
 
-	var out []model.OpenRiskFact
+	var out []domain.OpenRiskFact
 	for rows.Next() {
-		var f model.OpenRiskFact
+		var f domain.OpenRiskFact
 		if err := rows.Scan(
 			&f.RegisterID, &f.RegisterName, &f.Likelihood, &f.Impact,
 			&f.RiskLevel, &f.ColorCode, &f.TreatmentStrategy, &f.Count,
@@ -102,38 +132,37 @@ func (d *dashboardRepository) OpenRiskFacts(ctx context.Context, registerID *int
 
 // registerStatusBucketCase is shared verbatim between RegisterStatusFacts'
 // SELECT and GROUP BY clauses. It must be the exact same text in both places
-// (not two separately-parameterized copies): under sql_mode=ONLY_FULL_GROUP_BY,
+// (not two separately-parameterised copies): under sql_mode=ONLY_FULL_GROUP_BY,
 // MySQL treats each `?` placeholder as a distinct, value-unknown parameter, so
-// two textually-identical CASE expressions built from separate placeholders
-// aren't recognized as the same expression and the query is rejected. The
-// status constants are trusted Go literals (not user input), so inlining them
-// is safe — the same pattern HighRisks already uses for `rs.risk_level = 'HIGH'`.
-const registerStatusBucketCase = `CASE WHEN r.workflow_status = '` + model.StatusClosed + `' THEN 'CLOSED'
+// two textually-identical CASE expressions built from separate placeholders are
+// not recognised as the same expression and the query is rejected. The status
+// constants are trusted Go literals, not user input, so inlining them is safe.
+const registerStatusBucketCase = `CASE WHEN r.workflow_status = '` + statusClosed + `' THEN 'CLOSED'
 	                ELSE COALESCE(r.treatment_strategy, 'UNSPECIFIED') END`
 
-func (d *dashboardRepository) RegisterStatusFacts(ctx context.Context, registerID *int) ([]model.RegisterStatusFact, error) {
+func (d *riskDashboardRepo) RegisterStatusFacts(ctx context.Context, registerID *int) ([]domain.RegisterStatusFact, error) {
 	clause, filterArgs := registerFilter(registerID)
-	args := append([]any{model.StatusCancelled}, filterArgs...)
+	args := append([]any{statusCancelled}, filterArgs...)
 
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT st.id, st.name, rs.risk_level, rs.color_code,
 		       `+registerStatusBucketCase+`,
 		       COUNT(*)
 		FROM risk r
-		JOIN risk_team st ON st.id = r.source_register_id`+effectiveScoreJoin+`
+		JOIN risk_team st ON st.id = r.source_register_id`+dashboardScoreJoin+`
 		WHERE r.workflow_status <> ?`+clause+`
 		GROUP BY st.id, st.name, rs.risk_level, rs.color_code, `+registerStatusBucketCase+`
 		ORDER BY st.name`,
 		args...,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("dashboard register status facts: %w", err)
+		return nil, fmt.Errorf("risk dashboard register status facts: %w", err)
 	}
 	defer rows.Close()
 
-	var out []model.RegisterStatusFact
+	var out []domain.RegisterStatusFact
 	for rows.Next() {
-		var f model.RegisterStatusFact
+		var f domain.RegisterStatusFact
 		if err := rows.Scan(
 			&f.RegisterID, &f.RegisterName, &f.RiskLevel, &f.ColorCode, &f.Bucket, &f.Count,
 		); err != nil {
@@ -144,9 +173,9 @@ func (d *dashboardRepository) RegisterStatusFacts(ctx context.Context, registerI
 	return out, rows.Err()
 }
 
-func (d *dashboardRepository) CertTagCounts(ctx context.Context, registerID *int) ([]model.RegisterCertCount, error) {
+func (d *riskDashboardRepo) CertTagCounts(ctx context.Context, registerID *int) ([]domain.RegisterCertCount, error) {
 	clause, filterArgs := registerFilter(registerID)
-	args := append([]any{model.StatusClosed, model.StatusCancelled}, filterArgs...)
+	args := append([]any{statusClosed, statusCancelled}, filterArgs...)
 
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT st.name, ref.name, COUNT(*)
@@ -160,13 +189,13 @@ func (d *dashboardRepository) CertTagCounts(ctx context.Context, registerID *int
 		args...,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("dashboard cert tag counts: %w", err)
+		return nil, fmt.Errorf("risk dashboard cert tag counts: %w", err)
 	}
 	defer rows.Close()
 
-	var out []model.RegisterCertCount
+	var out []domain.RegisterCertCount
 	for rows.Next() {
-		var c model.RegisterCertCount
+		var c domain.RegisterCertCount
 		if err := rows.Scan(&c.RegisterName, &c.CertName, &c.Count); err != nil {
 			return nil, fmt.Errorf("scan cert tag count: %w", err)
 		}
@@ -175,15 +204,15 @@ func (d *dashboardRepository) CertTagCounts(ctx context.Context, registerID *int
 	return out, rows.Err()
 }
 
-func (d *dashboardRepository) RepeatedComplianceRisks(ctx context.Context, registerID *int) ([]model.RepeatedRiskRow, error) {
+func (d *riskDashboardRepo) RepeatedComplianceRisks(ctx context.Context, registerID *int) ([]domain.RepeatedRiskRow, error) {
 	clause, filterArgs := registerFilter(registerID)
 	r2Clause := ""
 	if registerID != nil {
 		r2Clause = " AND r2.source_register_id = ?"
 	}
-	args := []any{model.StatusClosed, model.StatusCancelled}
+	args := []any{statusClosed, statusCancelled}
 	args = append(args, filterArgs...)
-	args = append(args, model.StatusCancelled)
+	args = append(args, statusCancelled)
 	args = append(args, filterArgs...)
 
 	rows, err := d.db.QueryContext(ctx, `
@@ -191,7 +220,7 @@ func (d *dashboardRepository) RepeatedComplianceRisks(ctx context.Context, regis
 		       CASE WHEN r.workflow_status = ? THEN 'CLOSED' ELSE 'OPEN' END,
 		       rs.risk_level, rs.color_code
 		FROM risk r
-		JOIN risk_team st ON st.id = r.source_register_id`+effectiveScoreJoin+`
+		JOIN risk_team st ON st.id = r.source_register_id`+dashboardScoreJoin+`
 		WHERE r.workflow_status <> ?`+clause+`
 		  AND EXISTS (SELECT 1 FROM risk_compliance_reference rc WHERE rc.risk_id = r.id)
 		  AND r.risk_title IN (
@@ -205,13 +234,13 @@ func (d *dashboardRepository) RepeatedComplianceRisks(ctx context.Context, regis
 		args...,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("dashboard repeated compliance risks: %w", err)
+		return nil, fmt.Errorf("risk dashboard repeated compliance risks: %w", err)
 	}
 	defer rows.Close()
 
-	var out []model.RepeatedRiskRow
+	var out []domain.RepeatedRiskRow
 	for rows.Next() {
-		var r model.RepeatedRiskRow
+		var r domain.RepeatedRiskRow
 		if err := rows.Scan(&r.RiskTitle, &r.RegisterName, &r.Status, &r.RiskLevel, &r.ColorCode); err != nil {
 			return nil, fmt.Errorf("scan repeated risk row: %w", err)
 		}
@@ -220,16 +249,18 @@ func (d *dashboardRepository) RepeatedComplianceRisks(ctx context.Context, regis
 	return out, rows.Err()
 }
 
-func (d *dashboardRepository) HighRisks(ctx context.Context, registerID *int) ([]model.HighRiskItem, error) {
+func (d *riskDashboardRepo) HighRisks(ctx context.Context, registerID *int) ([]domain.HighRiskItem, error) {
 	clause, filterArgs := registerFilter(registerID)
-	args := append([]any{model.StatusClosed, model.StatusCancelled}, filterArgs...)
+	args := append([]any{statusClosed, statusCancelled}, filterArgs...)
 
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT r.id, r.risk_code, r.risk_title, st.name,
 		       COALESCE(owner.display_name, ''),
-		       r.risk_identified_date, r.treatment_strategy, r.implementation_date
+		       DATE_FORMAT(r.risk_identified_date, '%Y-%m-%d'),
+		       r.treatment_strategy,
+		       DATE_FORMAT(r.implementation_date, '%Y-%m-%d')
 		FROM risk r
-		JOIN risk_team st ON st.id = r.source_register_id`+effectiveScoreJoin+`
+		JOIN risk_team st ON st.id = r.source_register_id`+dashboardScoreJoin+`
 		LEFT JOIN `+"`user`"+` owner ON owner.id = r.owner_id
 		WHERE r.workflow_status NOT IN (?, ?)`+clause+`
 		  AND rs.risk_level = 'HIGH'
@@ -237,13 +268,13 @@ func (d *dashboardRepository) HighRisks(ctx context.Context, registerID *int) ([
 		args...,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("dashboard high risks: %w", err)
+		return nil, fmt.Errorf("risk dashboard high risks: %w", err)
 	}
 	defer rows.Close()
 
-	var out []model.HighRiskItem
+	var out []domain.HighRiskItem
 	for rows.Next() {
-		var h model.HighRiskItem
+		var h domain.HighRiskItem
 		if err := rows.Scan(
 			&h.ID, &h.RiskCode, &h.RiskTitle, &h.RegisterName, &h.OwnerName,
 			&h.IdentifiedDate, &h.TreatmentStrategy, &h.ImplementationDate,
@@ -255,7 +286,7 @@ func (d *dashboardRepository) HighRisks(ctx context.Context, registerID *int) ([
 	return out, rows.Err()
 }
 
-func (d *dashboardRepository) LevelOrder(ctx context.Context) ([]string, error) {
+func (d *riskDashboardRepo) LevelOrder(ctx context.Context) ([]string, error) {
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT risk_level
 		FROM risk_score
@@ -263,7 +294,7 @@ func (d *dashboardRepository) LevelOrder(ctx context.Context) ([]string, error) 
 		ORDER BY MAX(risk_rating) DESC`,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("dashboard level order: %w", err)
+		return nil, fmt.Errorf("risk dashboard level order: %w", err)
 	}
 	defer rows.Close()
 

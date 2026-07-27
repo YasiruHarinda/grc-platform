@@ -50,12 +50,15 @@ type RiskService interface {
 }
 
 type riskService struct {
-	repo repository.RiskRepository
+	repo           repository.RiskRepository
+	actionPlanRepo repository.ActionPlanRepository
 }
 
 // NewRiskService creates a RiskService backed by the given repository.
-func NewRiskService(repo repository.RiskRepository) RiskService {
-	return &riskService{repo: repo}
+// actionPlanRepo backs Complete's check that remediation work is actually
+// finished before a risk can be submitted for completion approval.
+func NewRiskService(repo repository.RiskRepository, actionPlanRepo repository.ActionPlanRepository) RiskService {
+	return &riskService{repo: repo, actionPlanRepo: actionPlanRepo}
 }
 
 func (s *riskService) List(ctx context.Context, filter model.ListRisksFilter) (*model.RiskListPage, error) {
@@ -163,7 +166,11 @@ func (s *riskService) Reject(ctx context.Context, id int, req model.RejectRiskRe
 	return s.repo.RejectTransition(ctx, id, req.RejectionComment, stage, fromStatus, byUserEmail)
 }
 
-// Complete moves IN_REMEDIATION → PENDING_OWNER_COMPLETION_APPROVAL.
+// Complete moves IN_REMEDIATION → PENDING_OWNER_COMPLETION_APPROVAL. At least
+// one of the risk's action plans must be COMPLETED first — not necessarily
+// all of them, since an escalation cycle can leave the original STANDARD
+// plan permanently abandoned once a MANAGEMENT plan supersedes and completes
+// it (that completion is exactly what reverts ESCALATED -> IN_REMEDIATION).
 func (s *riskService) Complete(ctx context.Context, id int, byUserEmail string) error {
 	status, err := s.repo.GetWorkflowStatus(ctx, id)
 	if err != nil {
@@ -172,6 +179,22 @@ func (s *riskService) Complete(ctx context.Context, id int, byUserEmail string) 
 	if status != model.StatusInRemediation {
 		return &apierror.Error{StatusCode: http.StatusConflict, Body: fmt.Sprintf("cannot be completed from status: %s", status)}
 	}
+
+	plans, err := s.actionPlanRepo.List(ctx, id)
+	if err != nil {
+		return err
+	}
+	hasCompletedPlan := false
+	for _, p := range plans {
+		if p.Status == "COMPLETED" {
+			hasCompletedPlan = true
+			break
+		}
+	}
+	if !hasCompletedPlan {
+		return &apierror.Error{StatusCode: http.StatusConflict, Body: "cannot submit for approval: the action plan must be completed first"}
+	}
+
 	return s.repo.TransitionStatus(ctx, id, model.StatusInRemediation, model.StatusPendingOwnerCompletion, byUserEmail)
 }
 

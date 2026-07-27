@@ -33,6 +33,7 @@ import {
 } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
 import type { CreateAssessmentPayload, RiskScore } from "../../api/riskApi";
+import { dialogPaperSx } from "../cardStyles";
 import RiskScoreGrid from "./RiskScoreGrid";
 
 const { DatePicker, LocalizationProvider } = DatePickers;
@@ -111,16 +112,7 @@ export default function ReassessmentDialog({
       onClose={handleClose}
       maxWidth="sm"
       fullWidth
-      PaperProps={{
-        sx: {
-          backdropFilter: "none",
-          backgroundImage: "none",
-          backgroundColor: "#ffffff",
-          "[data-color-scheme='dark'] &": {
-            backgroundColor: "#1a1a24",
-          },
-        },
-      }}
+      PaperProps={{ sx: dialogPaperSx }}
     >
       <DialogTitle>
         <Typography variant="h6" fontWeight={700}>

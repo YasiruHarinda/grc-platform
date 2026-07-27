@@ -19,10 +19,17 @@ package user
 import "context"
 
 // Repository defines the data-access contract for the shared user entity.
+// Implementations talk to the Compliance Entity over HTTP — the GRC backend
+// never queries the `user` table directly.
+//
+// GetByEmail and GetByID return (nil, nil) when no such user exists, so callers
+// can treat "not found" as a domain condition rather than an error.
 // TODO: extend as user-related endpoints are implemented
 type Repository interface {
 	GetByEmail(ctx context.Context, email string) (*User, error)
 	GetByID(ctx context.Context, id int) (*User, error)
-	Upsert(ctx context.Context, email, displayName string) (*User, error)
+	// Upsert creates the user if their email is unknown, or refreshes their
+	// display name if it isn't. actorEmail is recorded as created_by/updated_by.
+	Upsert(ctx context.Context, email, displayName, actorEmail string) (*User, error)
 	List(ctx context.Context) ([]*User, error)
 }

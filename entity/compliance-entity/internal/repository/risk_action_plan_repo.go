@@ -43,7 +43,13 @@ func NewRiskActionPlanRepository(db *sql.DB) RiskActionPlanRepository {
 }
 
 func (r *riskActionPlanRepo) CreateRiskActionPlan(ctx context.Context, riskID int, req domain.CreateRiskActionPlanRequest) (*domain.RiskActionPlan, error) {
-	res, err := r.db.ExecContext(ctx,
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("risk_action_plan.Create: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	res, err := tx.ExecContext(ctx,
 		`INSERT INTO risk_action_plan (risk_id, description, action_owner_id, plan_type, status, created_by, updated_by)
 		 VALUES (?, ?, ?, ?, 'PENDING', ?, ?)`,
 		riskID,
@@ -58,12 +64,48 @@ func (r *riskActionPlanRepo) CreateRiskActionPlan(ctx context.Context, riskID in
 		return nil, fmt.Errorf("risk_action_plan.Create: %w", err)
 	}
 	id, _ := res.LastInsertId()
+
+	// Insert the plan's steps in the same transaction, so a plan is never
+	// persisted without the steps it was created with (the caller sends both
+	// together). step_no is 1-based by position.
+	for i, desc := range req.Steps {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO risk_action_step (plan_id, step_no, description, status, created_by, updated_by)
+			 VALUES (?, ?, ?, 'PENDING', ?, ?)`,
+			id, i+1, desc, req.CreatedBy, req.CreatedBy); err != nil {
+			return nil, fmt.Errorf("risk_action_plan.Create: insert step %d: %w", i+1, err)
+		}
+	}
+
+	// A MANAGEMENT plan is always the response to an escalation — link it to
+	// the risk's currently OPEN escalation so the plan-completion cascade can
+	// find its way back to resolve it. See risk_action_plan_service.go.
+	//
+	// action_plan_id IS NULL guards against a second MANAGEMENT plan stealing
+	// an already-linked escalation: without it the re-link would silently
+	// orphan the first plan's connection, and completing that first plan would
+	// then find no OPEN escalation to resolve, leaving the risk stuck ESCALATED.
+	if req.PlanType == "MANAGEMENT" {
+		linkRes, err := tx.ExecContext(ctx,
+			`UPDATE risk_escalation SET action_plan_id = ? WHERE risk_id = ? AND status = 'OPEN' AND action_plan_id IS NULL`,
+			id, riskID)
+		if err != nil {
+			return nil, fmt.Errorf("risk_action_plan.Create: link escalation: %w", err)
+		}
+		if n, _ := linkRes.RowsAffected(); n == 0 {
+			return nil, &apierror.ValidationError{Msg: fmt.Sprintf("risk %d has no unlinked open escalation to attach a MANAGEMENT plan to", riskID)}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("risk_action_plan.Create: commit: %w", err)
+	}
 	return r.GetRiskActionPlanByID(ctx, int(id))
 }
 
 func (r *riskActionPlanRepo) GetRiskActionPlanByID(ctx context.Context, planID int) (*domain.RiskActionPlan, error) {
 	plan, err := scanRiskActionPlan(r.db.QueryRowContext(ctx,
-		`SELECT id, risk_id, action_owner_id, description, status, DATE_FORMAT(completed_date,'%Y-%m-%d'), plan_type, created_at, updated_at
+		`SELECT id, risk_id, action_owner_id, description, status, DATE_FORMAT(completed_date,'%Y-%m-%d'), plan_type, created_by, created_at, updated_at
 		 FROM risk_action_plan WHERE id = ?`, planID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, &apierror.NotFoundError{Msg: fmt.Sprintf("action plan %d not found", planID)}
@@ -107,7 +149,7 @@ func (r *riskActionPlanRepo) UpdateRiskActionPlan(ctx context.Context, planID in
 
 func (r *riskActionPlanRepo) ListRiskActionPlans(ctx context.Context, riskID int) (*domain.ListRiskActionPlansResponse, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, risk_id, action_owner_id, description, status, DATE_FORMAT(completed_date,'%Y-%m-%d'), plan_type, created_at, updated_at
+		`SELECT id, risk_id, action_owner_id, description, status, DATE_FORMAT(completed_date,'%Y-%m-%d'), plan_type, created_by, created_at, updated_at
 		 FROM risk_action_plan WHERE risk_id = ? ORDER BY created_at DESC`,
 		riskID)
 	if err != nil {
@@ -132,12 +174,12 @@ func (r *riskActionPlanRepo) ListRiskActionPlans(ctx context.Context, riskID int
 func scanRiskActionPlan(s scanner) (*domain.RiskActionPlan, error) {
 	var p domain.RiskActionPlan
 	var ownerID sql.NullInt64
-	var desc, completedDate sql.NullString
+	var desc, completedDate, createdBy sql.NullString
 	err := s.Scan(
 		&p.ID, &p.RiskID,
 		&ownerID, &desc,
 		&p.Status, &completedDate,
-		&p.PlanType,
+		&p.PlanType, &createdBy,
 		&p.CreatedOn, &p.UpdatedOn,
 	)
 	if err != nil {
@@ -152,6 +194,9 @@ func scanRiskActionPlan(s scanner) (*domain.RiskActionPlan, error) {
 	}
 	if completedDate.Valid {
 		p.CompletedDate = &completedDate.String
+	}
+	if createdBy.Valid {
+		p.CreatedBy = &createdBy.String
 	}
 	return &p, nil
 }

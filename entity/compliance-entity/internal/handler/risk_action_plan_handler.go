@@ -106,3 +106,23 @@ func (h *RiskActionPlanHandler) UpdateRiskActionPlan(w http.ResponseWriter, r *h
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(p)
 }
+
+// CompleteRiskActionPlan handles POST /action-plans/{planId}/complete.
+func (h *RiskActionPlanHandler) CompleteRiskActionPlan(w http.ResponseWriter, r *http.Request) {
+	planID, err := strconv.Atoi(r.PathValue("planId"))
+	if err != nil || planID <= 0 {
+		writeServiceError(w, r, &apierror.ValidationError{Msg: "planId must be a positive integer"})
+		return
+	}
+	var req domain.CompleteRiskActionPlanRequest
+	if !decodeRequest(w, r, &req) {
+		return
+	}
+	p, err := h.svc.CompleteRiskActionPlan(r.Context(), planID, req)
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(p)
+}

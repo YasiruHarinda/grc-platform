@@ -22,6 +22,7 @@ import (
 	"net/http"
 
 	riskservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/service"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
 
 // Deps holds all service dependencies for Risk Hub handlers.
@@ -38,6 +39,10 @@ type Deps struct {
 	Analytics    riskservice.AnalyticsService
 	Dashboard    riskservice.DashboardService
 	Employee     riskservice.EmployeeSearchService
+	// Users resolves an authenticated caller's email to their internal
+	// user.id — used by handleListRisks (Action Owner list scoping) and the
+	// action-plan handlers (ownership checks).
+	Users user.Repository
 }
 
 // RegisterRoutes mounts all Risk Hub routes onto mux under /api/v1.
@@ -85,11 +90,23 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	// Analytics
 	mux.HandleFunc("GET /api/v1/risks/analytics/summary", d.handleAnalyticsSummary)
 
+	// Action plans (MANAGEMENT plans on escalated risks; step completion by
+	// the Action Owner, uniformly for STANDARD and MANAGEMENT plans)
+	mux.HandleFunc("POST /api/v1/risks/{id}/action-plans", d.handleCreateManagementActionPlan)
+	mux.HandleFunc("GET /api/v1/risks/{id}/action-plans", d.handleListActionPlans)
+	mux.HandleFunc("GET /api/v1/risks/{id}/action-plans/{planId}/steps", d.handleListActionPlanSteps)
+	mux.HandleFunc("PATCH /api/v1/risks/{id}/action-plans/{planId}/steps/{stepId}", d.handleUpdateActionPlanStep)
+	mux.HandleFunc("POST /api/v1/risks/{id}/action-plans/{planId}/complete", d.handleCompleteActionPlan)
+
+	// Escalations (automatic by default — see internal/job in the
+	// compliance-entity — plus a manual trigger for Compliance/Admin, and
+	// resolved automatically by risk_action_plan_service.go's completion cascade)
+	mux.HandleFunc("POST /api/v1/risks/{id}/escalate", d.handleEscalateRisk)
+	mux.HandleFunc("GET /api/v1/risks/{id}/escalations", d.handleListEscalations)
+
 	// TODO: remaining routes
-	// POST   /api/v1/risks/{id}/escalate  ← MEDIUM/HIGH past implementation_date escalation (deferred)
 	// GET    /api/v1/risks/{id}/changelog
 	// GET/POST/DELETE /api/v1/risks/{id}/evidence
-	// GET    /api/v1/risks/{id}/escalations
 	// GET/PATCH /api/v1/notifications
 	// POST/PUT /api/v1/teams
 	// POST/PUT /api/v1/risk-scores

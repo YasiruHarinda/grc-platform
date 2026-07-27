@@ -37,8 +37,11 @@ func (s *riskAssessmentService) CreateRiskAssessment(ctx context.Context, riskID
 	if riskID <= 0 {
 		return domain.RiskAssessment{}, &apierror.ValidationError{Msg: "riskId must be a positive integer"}
 	}
-	if req.ScoreID <= 0 {
-		return domain.RiskAssessment{}, &apierror.ValidationError{Msg: "scoreId is required"}
+	if req.Likelihood < 1 || req.Likelihood > 3 {
+		return domain.RiskAssessment{}, &apierror.ValidationError{Msg: "likelihood must be 1, 2, or 3"}
+	}
+	if req.Impact < 1 || req.Impact > 3 {
+		return domain.RiskAssessment{}, &apierror.ValidationError{Msg: "impact must be 1, 2, or 3"}
 	}
 	if req.Progress == "" {
 		return domain.RiskAssessment{}, &apierror.ValidationError{Msg: "progress is required"}

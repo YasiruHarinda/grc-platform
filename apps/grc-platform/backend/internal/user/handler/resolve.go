@@ -82,7 +82,15 @@ func handleResolveUser(repo userentity.Repository, hrClient *hrentity.Client) ht
 			return
 		}
 
-		u, err := repo.Upsert(r.Context(), req.Email, displayName)
+		// Attribution for the provisioned row: the Compliance Entity records
+		// this as created_by/updated_by (see auth.FromContext — nil only when
+		// the Auth middleware didn't run).
+		var actorEmail string
+		if info := auth.FromContext(r.Context()); info != nil {
+			actorEmail = info.Email
+		}
+
+		u, err := repo.Upsert(r.Context(), req.Email, displayName, actorEmail)
 		if err != nil {
 			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 			return

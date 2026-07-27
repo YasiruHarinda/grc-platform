@@ -17,45 +17,46 @@
 package main
 
 import (
-	"database/sql"
-
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
 	riskhandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/handler"
-	riskmysql "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/repository/mysql"
+	riskentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/repository/entity"
 	riskservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/service"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/file"
+	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user/entity"
 )
 
 // buildRiskDeps wires the full Risk Hub dependency graph:
-// MySQL repositories → services → handler Deps struct.
-// file is the shared Azure Blob service used by evidence uploads.
-// hrClient talks to the HR entity GraphQL service for employee lookups —
-// it is never backed by the GRC platform's own database.
-func buildRiskDeps(db *sql.DB, fileSvc *file.Service, hrClient *hrentity.Client) riskhandler.Deps {
-	riskRepo := riskmysql.NewRiskRepository(db)
-	assessmentRepo := riskmysql.NewAssessmentRepository(db)
-	teamRepo := riskmysql.NewTeamRepository(db)
-	scoreRepo := riskmysql.NewRiskScoreRepository(db)
-	actionPlanRepo := riskmysql.NewActionPlanRepository(db)
-	evidenceRepo := riskmysql.NewRiskEvidenceRepository(db)
-	escalationRepo := riskmysql.NewEscalationRepository(db)
-	notifRepo := riskmysql.NewNotificationRepository(db)
-	complianceRepo := riskmysql.NewComplianceReferenceRepository(db)
-	analyticsRepo := riskmysql.NewAnalyticsRepository(db)
-	dashboardRepo := riskmysql.NewDashboardRepository(db)
-
+// repositories → services → handler Deps struct.
+//
+// Every repository is served by the Compliance Entity; the Risk Hub holds no
+// database handle. fileSvc is the shared Azure Blob service used by evidence
+// uploads, and hrClient talks to the HR entity's GraphQL service for employee
+// lookups — neither is backed by the GRC platform's own database either.
+//
+// Dashboard and analytics take their payload already assembled: the entity runs
+// the aggregate queries and the pivots, so these services pass it through,
+// mirroring the audit module.
+func buildRiskDeps(
+	ec *entityclient.Client,
+	fileSvc *file.Service,
+	hrClient *hrentity.Client,
+) riskhandler.Deps {
+	userRepo := userentity.NewRepository(ec)
+	actionPlanRepo := riskentity.NewActionPlanRepository(ec)
 	return riskhandler.Deps{
-		Risk:         riskservice.NewRiskService(riskRepo),
-		Assessment:   riskservice.NewRiskAssessmentService(assessmentRepo),
-		Team:         riskservice.NewTeamService(teamRepo),
-		Score:        riskservice.NewRiskScoreService(scoreRepo),
-		ActionPlan:   riskservice.NewActionPlanService(actionPlanRepo),
-		Evidence:     riskservice.NewEvidenceService(evidenceRepo, fileSvc),
-		Escalation:   riskservice.NewEscalationService(escalationRepo),
-		Notification: riskservice.NewNotificationService(notifRepo),
-		Compliance:   riskservice.NewComplianceReferenceService(complianceRepo),
-		Analytics:    riskservice.NewAnalyticsService(analyticsRepo),
-		Dashboard:    riskservice.NewDashboardService(dashboardRepo),
+		Risk:         riskservice.NewRiskService(riskentity.NewRiskRepository(ec), actionPlanRepo),
+		Assessment:   riskservice.NewRiskAssessmentService(riskentity.NewAssessmentRepository(ec)),
+		Team:         riskservice.NewTeamService(riskentity.NewTeamRepository(ec)),
+		Score:        riskservice.NewRiskScoreService(riskentity.NewRiskScoreRepository(ec)),
+		ActionPlan:   riskservice.NewActionPlanService(actionPlanRepo, userRepo),
+		Evidence:     riskservice.NewEvidenceService(riskentity.NewRiskEvidenceRepository(ec), fileSvc),
+		Escalation:   riskservice.NewEscalationService(riskentity.NewEscalationRepository(ec)),
+		Notification: riskservice.NewNotificationService(riskentity.NewNotificationRepository(ec)),
+		Compliance:   riskservice.NewComplianceReferenceService(riskentity.NewComplianceReferenceRepository(ec)),
+		Analytics:    riskservice.NewAssembledAnalyticsService(riskentity.NewAnalyticsRepository(ec)),
+		Dashboard:    riskservice.NewAssembledDashboardService(riskentity.NewDashboardRepository(ec)),
 		Employee:     riskservice.NewEmployeeSearchService(hrClient),
+		Users:        userRepo,
 	}
 }

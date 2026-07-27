@@ -20,11 +20,11 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
+	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/domain"
 )
 
 func TestBuildLevelCounts(t *testing.T) {
-	facts := []model.OpenRiskFact{
+	facts := []domain.OpenRiskFact{
 		{RiskLevel: "LOW", ColorCode: "#00B050", Count: 2},
 		{RiskLevel: "HIGH", ColorCode: "#FF0000", Count: 1},
 		{RiskLevel: "LOW", ColorCode: "#00B050", Count: 3},
@@ -32,7 +32,7 @@ func TestBuildLevelCounts(t *testing.T) {
 	}
 
 	got := buildLevelCounts(facts, []string{"HIGH", "MEDIUM", "LOW"})
-	want := []model.RiskLevelCount{
+	want := []domain.RiskLevelCount{
 		{RiskLevel: "HIGH", ColorCode: "#FF0000", Count: 1},
 		{RiskLevel: "MEDIUM", ColorCode: "#FF9900", Count: 4},
 		{RiskLevel: "LOW", ColorCode: "#00B050", Count: 5},
@@ -50,14 +50,14 @@ func TestBuildLevelCountsEmpty(t *testing.T) {
 }
 
 func TestBuildHeatmap(t *testing.T) {
-	facts := []model.OpenRiskFact{
+	facts := []domain.OpenRiskFact{
 		{Likelihood: 3, Impact: 3, RiskLevel: "HIGH", ColorCode: "#FF0000", Count: 2},
 		{Likelihood: 1, Impact: 1, RiskLevel: "LOW", ColorCode: "#00B050", Count: 1},
 		{Likelihood: 3, Impact: 3, RiskLevel: "HIGH", ColorCode: "#FF0000", Count: 3},
 	}
 
 	got := buildHeatmap(facts)
-	want := []model.HeatmapCell{
+	want := []domain.HeatmapCell{
 		{Likelihood: 3, Impact: 3, RiskLevel: "HIGH", ColorCode: "#FF0000", Count: 5},
 		{Likelihood: 1, Impact: 1, RiskLevel: "LOW", ColorCode: "#00B050", Count: 1},
 	}
@@ -67,14 +67,14 @@ func TestBuildHeatmap(t *testing.T) {
 }
 
 func TestBuildCertDistribution(t *testing.T) {
-	counts := []model.RegisterCertCount{
+	counts := []domain.RegisterCertCount{
 		{RegisterName: "Choreo", CertName: "SOC2", Count: 3},
 		{RegisterName: "Choreo", CertName: "ISO27001", Count: 1},
 		{RegisterName: "Business", CertName: "SOC2", Count: 1},
 	}
 
 	got := buildCertDistribution(counts)
-	want := []model.RegisterCertShare{
+	want := []domain.RegisterCertShare{
 		{RegisterName: "Choreo", CertName: "SOC2", Count: 3, Percentage: 75},
 		{RegisterName: "Choreo", CertName: "ISO27001", Count: 1, Percentage: 25},
 		{RegisterName: "Business", CertName: "SOC2", Count: 1, Percentage: 100},
@@ -85,14 +85,14 @@ func TestBuildCertDistribution(t *testing.T) {
 }
 
 func TestBuildTreatmentByRegister(t *testing.T) {
-	facts := []model.OpenRiskFact{
+	facts := []domain.OpenRiskFact{
 		{RegisterName: "Choreo", TreatmentStrategy: "REMEDIATE", Count: 2},
 		{RegisterName: "Choreo", TreatmentStrategy: "ACCEPT", Count: 1},
 		{RegisterName: "Choreo", TreatmentStrategy: "REMEDIATE", Count: 1},
 	}
 
 	got := buildTreatmentByRegister(facts)
-	want := []model.RegisterTreatmentCount{
+	want := []domain.RegisterTreatmentCount{
 		{RegisterName: "Choreo", TreatmentStrategy: "REMEDIATE", Count: 3},
 		{RegisterName: "Choreo", TreatmentStrategy: "ACCEPT", Count: 1},
 	}
@@ -102,12 +102,12 @@ func TestBuildTreatmentByRegister(t *testing.T) {
 }
 
 func TestBuildRegisterBlocks(t *testing.T) {
-	facts := []model.OpenRiskFact{
+	facts := []domain.OpenRiskFact{
 		{RegisterID: 1, RegisterName: "Choreo", Likelihood: 3, Impact: 3, RiskLevel: "HIGH", ColorCode: "#FF0000", TreatmentStrategy: "REMEDIATE", Count: 2},
 		{RegisterID: 1, RegisterName: "Choreo", Likelihood: 1, Impact: 1, RiskLevel: "LOW", ColorCode: "#00B050", TreatmentStrategy: "ACCEPT", Count: 1},
 		{RegisterID: 2, RegisterName: "Business", Likelihood: 2, Impact: 2, RiskLevel: "MEDIUM", ColorCode: "#FF9900", TreatmentStrategy: "TRANSFER", Count: 4},
 	}
-	statusFacts := []model.RegisterStatusFact{
+	statusFacts := []domain.RegisterStatusFact{
 		{RegisterID: 1, RegisterName: "Choreo", RiskLevel: "HIGH", ColorCode: "#FF0000", Bucket: "REMEDIATE", Count: 2},
 		{RegisterID: 1, RegisterName: "Choreo", RiskLevel: "LOW", ColorCode: "#00B050", Bucket: "ACCEPT", Count: 1},
 		{RegisterID: 1, RegisterName: "Choreo", RiskLevel: "MEDIUM", ColorCode: "#FF9900", Bucket: "CLOSED", Count: 5},
@@ -154,7 +154,7 @@ func TestBuildRegisterBlocks(t *testing.T) {
 }
 
 func TestBuildStatusLevels(t *testing.T) {
-	facts := []model.RegisterStatusFact{
+	facts := []domain.RegisterStatusFact{
 		{RiskLevel: "LOW", ColorCode: "#00B050", Bucket: "CLOSED", Count: 2},
 		{RiskLevel: "HIGH", ColorCode: "#FF0000", Bucket: "REMEDIATE", Count: 1},
 		{RiskLevel: "LOW", ColorCode: "#00B050", Bucket: "CLOSED", Count: 3},
@@ -162,7 +162,7 @@ func TestBuildStatusLevels(t *testing.T) {
 	}
 
 	got := buildStatusLevels(facts, []string{"HIGH", "MEDIUM", "LOW"})
-	want := []model.RegisterStatusLevelCount{
+	want := []domain.RegisterStatusLevelCount{
 		{Bucket: "CLOSED", RiskLevel: "LOW", ColorCode: "#00B050", Count: 5},
 		{Bucket: "REMEDIATE", RiskLevel: "HIGH", ColorCode: "#FF0000", Count: 1},
 		{Bucket: "ACCEPT", RiskLevel: "MEDIUM", ColorCode: "#FF9900", Count: 4},
@@ -180,24 +180,24 @@ func TestBuildStatusLevelsEmpty(t *testing.T) {
 }
 
 func TestBuildRepeatedRisks(t *testing.T) {
-	rows := []model.RepeatedRiskRow{
+	rows := []domain.RepeatedRiskRow{
 		{RiskTitle: "Weak password policy", RegisterName: "Choreo", Status: "OPEN", RiskLevel: "HIGH", ColorCode: "#FF0000"},
 		{RiskTitle: "Weak password policy", RegisterName: "Business", Status: "CLOSED", RiskLevel: "MEDIUM", ColorCode: "#FF9900"},
 		{RiskTitle: "Missing MFA", RegisterName: "Choreo", Status: "OPEN", RiskLevel: "HIGH", ColorCode: "#FF0000"},
 	}
 
 	got := buildRepeatedRisks(rows)
-	want := []model.RepeatedComplianceRisk{
+	want := []domain.RepeatedComplianceRisk{
 		{
 			RiskTitle: "Weak password policy",
-			Occurrences: []model.RepeatedRiskOccurrence{
+			Occurrences: []domain.RepeatedRiskOccurrence{
 				{RegisterName: "Choreo", Status: "OPEN", RiskLevel: "HIGH", ColorCode: "#FF0000"},
 				{RegisterName: "Business", Status: "CLOSED", RiskLevel: "MEDIUM", ColorCode: "#FF9900"},
 			},
 		},
 		{
 			RiskTitle: "Missing MFA",
-			Occurrences: []model.RepeatedRiskOccurrence{
+			Occurrences: []domain.RepeatedRiskOccurrence{
 				{RegisterName: "Choreo", Status: "OPEN", RiskLevel: "HIGH", ColorCode: "#FF0000"},
 			},
 		},

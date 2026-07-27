@@ -25,3 +25,17 @@ export const darkCardSx = {
     borderColor: "rgba(255, 255, 255, 0.16)",
   },
 };
+
+// The active theme (AcrylicOrangeTheme) gives every Dialog/Drawer a blurred,
+// translucent Paper background by default (glassmorphism) — readable for
+// some surfaces, but washes out form dialogs. Spread this into a Dialog's
+// PaperProps.sx (or a Drawer's, alongside its own layout sx) to opt out.
+// Distinct from the datepicker/Autocomplete popover fix (#fff / #1e1e1e,
+// no backgroundImage) used elsewhere — that's a different surface with
+// deliberately different values, not the same duplication.
+export const dialogPaperSx = {
+  backdropFilter: "none",
+  backgroundImage: "none",
+  backgroundColor: "#ffffff",
+  "[data-color-scheme='dark'] &": { backgroundColor: "#1a1a24" },
+};

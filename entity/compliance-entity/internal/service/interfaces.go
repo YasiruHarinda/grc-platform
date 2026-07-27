@@ -142,6 +142,8 @@ type RiskService interface {
 	GetRiskByID(ctx context.Context, id int) (domain.Risk, error)
 	CreateRisk(ctx context.Context, req domain.CreateRiskRequest) (domain.Risk, error)
 	UpdateRisk(ctx context.Context, id int, req domain.UpdateRiskRequest) (domain.Risk, error)
+	NextSequenceNumber(ctx context.Context, sourceRegisterID int) (domain.NextSequenceResponse, error)
+	GetRiskDetail(ctx context.Context, id int) (domain.RiskDetail, error)
 }
 
 // RiskActionPlanService defines operations on risk_action_plan.
@@ -150,6 +152,10 @@ type RiskActionPlanService interface {
 	GetRiskActionPlanByID(ctx context.Context, planID int) (domain.RiskActionPlan, error)
 	UpdateRiskActionPlan(ctx context.Context, planID int, req domain.UpdateRiskActionPlanRequest) (domain.RiskActionPlan, error)
 	ListRiskActionPlans(ctx context.Context, riskID int) (domain.ListRiskActionPlansResponse, error)
+	// CompleteRiskActionPlan marks a plan COMPLETED once every step is done.
+	// For a MANAGEMENT plan this also resolves the linked escalation and
+	// reverts the risk ESCALATED -> IN_REMEDIATION.
+	CompleteRiskActionPlan(ctx context.Context, planID int, req domain.CompleteRiskActionPlanRequest) (domain.RiskActionPlan, error)
 }
 
 // RiskEvidenceService defines operations on risk_evidence_file.
@@ -206,12 +212,26 @@ type RiskEscalationService interface {
 	GetRiskEscalationByID(ctx context.Context, riskID, escalationID int) (domain.RiskEscalation, error)
 	UpdateRiskEscalation(ctx context.Context, riskID, escalationID int, req domain.UpdateRiskEscalationRequest) (domain.RiskEscalation, error)
 	ListRiskEscalations(ctx context.Context, riskID int) (domain.ListRiskEscalationsResponse, error)
+	// EscalateRisk is the single "escalate one risk" operation shared by the
+	// daily job (internal/job) and a manual trigger (Compliance clicking
+	// Escalate on an overdue IN_REMEDIATION risk they've spotted before the
+	// job gets to it): validates IN_REMEDIATION + overdue, creates the
+	// OPEN escalation, and flips workflow_status -> ESCALATED. actorEmail is
+	// "system" for the job, the caller's email for a manual trigger.
+	EscalateRisk(ctx context.Context, riskID int, req domain.EscalateRiskRequest) (domain.RiskEscalation, error)
 }
 
 // RiskChangeLogService defines operations on risk_change_log (append-only).
 type RiskChangeLogService interface {
 	CreateRiskChangeLog(ctx context.Context, riskID int, req domain.CreateRiskChangeLogRequest) (domain.RiskChangeLog, error)
 	ListRiskChangeLog(ctx context.Context, riskID int, limit, offset int) (domain.ListRiskChangeLogResponse, error)
+}
+
+// RiskNotificationService defines operations on risk_notification.
+type RiskNotificationService interface {
+	CreateRiskNotification(ctx context.Context, req domain.CreateRiskNotificationRequest) (domain.RiskNotification, error)
+	ListRiskNotifications(ctx context.Context, recipientID int) (domain.ListRiskNotificationsResponse, error)
+	MarkRiskNotificationRead(ctx context.Context, id int64, req domain.MarkRiskNotificationReadRequest) (domain.RiskNotification, error)
 }
 
 // DashboardService defines the read query for the audit dashboard.

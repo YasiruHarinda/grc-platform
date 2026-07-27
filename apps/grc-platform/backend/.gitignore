@@ -26,3 +26,8 @@ coverage.out
 
 # Go binaries
 /bin
+
+# Compliance Entity migration: golden API captures produced by scripts/capture.sh.
+# Local, machine-specific and data-dependent — never committed. Removed with the
+# script once the risk module is fully migrated.
+/golden

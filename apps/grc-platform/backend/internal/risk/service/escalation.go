@@ -26,6 +26,7 @@ import (
 // EscalationService defines business operations for risk escalations.
 type EscalationService interface {
 	List(ctx context.Context, riskID int) ([]*model.Escalation, error)
+	Escalate(ctx context.Context, riskID int, createdBy string) (*model.Escalation, error)
 }
 
 type escalationService struct {
@@ -37,6 +38,18 @@ func NewEscalationService(repo repository.EscalationRepository) EscalationServic
 }
 
 func (s *escalationService) List(ctx context.Context, riskID int) ([]*model.Escalation, error) {
-	// TODO: delegate to repo
-	return nil, nil
+	if riskID <= 0 {
+		return nil, badRequest("riskId must be a positive integer")
+	}
+	return s.repo.List(ctx, riskID)
+}
+
+func (s *escalationService) Escalate(ctx context.Context, riskID int, createdBy string) (*model.Escalation, error) {
+	if riskID <= 0 {
+		return nil, badRequest("riskId must be a positive integer")
+	}
+	if createdBy == "" {
+		return nil, badRequest("createdBy is required")
+	}
+	return s.repo.Escalate(ctx, riskID, createdBy)
 }
