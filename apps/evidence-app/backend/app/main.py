@@ -34,6 +34,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# Checklist 4.6 mandatory security headers, on every API response. These are
+# the safe, additive baseline — none of them restrict where content may load
+# from, so nothing the app does is affected. The restrictive CSP directives
+# (default-src etc.) and Permissions-Policy are a separate, deferred piece of
+# work (see issue #75) — not added here.
+#
+# The web app's own Strict-Transport-Security value (webapp/index.js) also
+# carries `preload`; the API's deliberately does not — see issue #72.
+@app.middleware("http")
+async def security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Content-Security-Policy"] = "upgrade-insecure-requests"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
 # The unauthenticated GET /uploads/{filename} route that used to stream blobs
 # straight out of private storage has been removed — evidence files are now
 # served via short-lived signed Azure URLs generated at read time

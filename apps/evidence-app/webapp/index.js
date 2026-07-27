@@ -30,6 +30,28 @@ const MIME_TYPES = {
   '.woff2': 'font/woff2',
 };
 
+// Checklist 3.1 mandatory security headers. Applied only to static-file
+// responses (serveStatic below) — never to the /api/* proxy path. Proxied
+// responses forward the backend's headers through unchanged
+// (`res.writeHead(proxyRes.statusCode, proxyRes.headers)` in
+// proxyToBackend), including its own Content-Security-Policy and
+// Strict-Transport-Security. Attaching these here too would put two CSP
+// headers on the same response; browsers intersect multiple CSPs into the
+// most restrictive combination, silently producing a policy nobody wrote.
+//
+// The restrictive CSP directives (default-src 'self' etc.) and
+// Permissions-Policy are a separate, deferred piece of work (see issue #75)
+// — not added here. `preload` on HSTS is a deliberate inclusion for the web
+// app only; see issue #72.
+const STATIC_SECURITY_HEADERS = {
+  'X-Frame-Options': 'deny',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Permitted-Cross-Domain-Policies': 'None',
+  'Content-Security-Policy': "upgrade-insecure-requests; frame-ancestors 'none'",
+  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload',
+  'Referrer-Policy': 'no-referrer',
+};
+
 function proxyToBackend(req, res) {
   const target = new URL(BACKEND_URL + req.url);
   const isHttps = target.protocol === 'https:';
@@ -136,11 +158,11 @@ function serveStatic(req, res) {
   const contentType = MIME_TYPES[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
   fs.readFile(filePath, (err, data) => {
     if (err) {
-      res.writeHead(404);
+      res.writeHead(404, STATIC_SECURITY_HEADERS);
       res.end('Not found');
       return;
     }
-    res.writeHead(200, { 'Content-Type': contentType });
+    res.writeHead(200, { ...STATIC_SECURITY_HEADERS, 'Content-Type': contentType });
     res.end(data);
   });
 }
