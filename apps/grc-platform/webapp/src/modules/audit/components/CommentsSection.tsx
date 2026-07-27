@@ -102,7 +102,7 @@ export default function CommentsSection({
                 pl: 2, py: 0.75,
                 borderRadius: "0 4px 4px 0",
                 bgcolor: c.isInternal
-                  ? "rgba(234,88,12,0.06)"
+                  ? theme.palette.mode === "dark" ? "rgba(249,115,22,0.12)" : "rgba(234,88,12,0.06)"
                   : theme.palette.mode === "dark" ? "rgba(29,78,216,0.08)" : "#eff6ff",
               })}
             >

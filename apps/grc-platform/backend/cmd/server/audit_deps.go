@@ -48,14 +48,15 @@ func buildAuditDeps(fileSvc *file.Service, ec *entityclient.Client, aiCfg config
 
 	// ── Services ──────────────────────────────────────────────────────────────
 	auditSvc := auditservice.NewAuditService(auditRepo, frameworkRepo, productRepo)
-	controlSvc := auditservice.NewControlService(controlRepo)
+	// trailSvc is built first: the control service records lifecycle events through it.
+	trailSvc := auditservice.NewTrailService(trailRepo)
+	controlSvc := auditservice.NewControlService(controlRepo, trailSvc)
 	frameworkSvc := auditservice.NewFrameworkService(frameworkRepo, productRepo, frameworkControlRepo)
 	userSvc := auditservice.NewUserService(userRepo)
 	teamSvc := auditservice.NewTeamService(teamRepo)
 	dashboardSvc := auditservice.NewDashboardService(dashboardRepo)
-	evidenceSvc := auditservice.NewEvidenceService(evidenceRepo, fileSvc)
+	evidenceSvc := auditservice.NewEvidenceService(evidenceRepo, auditRepo, controlRepo, fileSvc)
 	populationSvc := auditservice.NewPopulationService(populationRepo, fileSvc)
-	trailSvc := auditservice.NewTrailService(trailRepo)
 	commentSvc := auditservice.NewCommentService(commentRepo)
 	aiValidationSvc := auditservice.NewAIValidationService(aiValidationRepo)
 

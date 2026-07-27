@@ -17,9 +17,50 @@
 // Package model defines the domain types for the Audit Hub module.
 package model
 
-// AuditPopulation represents a data population sample for a control.
-// TODO: add fields based on `audit_population` in audit_schema.sql
-type AuditPopulation struct{}
+import "time"
+
+// AuditPopulation represents one audit_population row (a population round) for
+// an OE control. A control normally has exactly one round for its whole
+// lifecycle — both internal-review and auditor rejections reuse the same round
+// (see OE-Sample-Evidence-Flow-Design.md §3.2/§8) rather than starting a new one.
+type AuditPopulation struct {
+	ID              int       `json:"id"`
+	ControlID       int       `json:"controlId"`
+	Status          string    `json:"status"` // PENDING|SUBMITTED|COMPLIANCE_APPROVED|COMPLIANCE_REJECTED|APPROVED|AUDITOR_REJECTED
+	ReferenceNumber *int      `json:"referenceNumber"`
+	Description     *string   `json:"description"`
+	DueDate         *string   `json:"dueDate"`
+	Comments        *string   `json:"comments"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+}
+
+// PopulationFile is one file on a population round, tagged POPULATION
+// (team-submitted) or SAMPLE (auditor-selected). Shares the audit_evidence_file
+// table with evidence files, distinguished by population_id/file_kind.
+type PopulationFile struct {
+	ID           int       `json:"id"`
+	PopulationID int       `json:"populationId"`
+	FileKind     string    `json:"fileKind"` // POPULATION | SAMPLE
+	FileName     string    `json:"fileName"`
+	FilePath     string    `json:"filePath"`
+	FileType     *string   `json:"fileType"`
+	FileSize     *int64    `json:"fileSize"`
+	CreatedAt    time.Time `json:"createdAt"`
+	// ReadURL is the backend proxy download URL (GET .../population/files/{id}/download).
+	// Computed at list time (not persisted); nil if the file has no DB id.
+	ReadURL *string `json:"readUrl"`
+}
+
+// PopulationView is the response for GET .../population: the control's current
+// round plus its files split by kind, and the auditor's sample note (which lives
+// on audit_control, not the population row).
+type PopulationView struct {
+	Round           *AuditPopulation  `json:"round"`
+	PopulationFiles []*PopulationFile `json:"populationFiles"`
+	SampleFiles     []*PopulationFile `json:"sampleFiles"`
+	SampleReference *string           `json:"sampleReference"`
+}
 
 // PopulationSubmitResult is returned by the Evidence Portal population submit
 // endpoint (§3.5.3) once uploaded blobs are recorded and the round advances.
@@ -29,4 +70,17 @@ type PopulationSubmitResult struct {
 	Status       string `json:"status"`
 	FolderPath   string `json:"folderPath"`
 	FileCount    int    `json:"fileCount"`
+}
+
+// ReviewDecisionRequest is the payload for the population/sample/evidence
+// review & validate decision endpoints: {"decision":"APPROVE"|"REJECT","comment":"..."}.
+type ReviewDecisionRequest struct {
+	Decision string  `json:"decision"`
+	Comment  *string `json:"comment"`
+}
+
+// SampleSubmitRequest is the payload for POST .../sample/submit.
+type SampleSubmitRequest struct {
+	FolderPath string `json:"folderPath"`
+	Note       string `json:"note"`
 }

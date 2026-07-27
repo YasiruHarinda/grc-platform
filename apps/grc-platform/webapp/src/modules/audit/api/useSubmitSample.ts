@@ -20,10 +20,11 @@ import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { controlsQueryKey } from "@modules/audit/api/useGetControls";
 import { populationQueryKey } from "@modules/audit/api/useGetPopulation";
 
-interface SubmitPopulationPayload {
+interface SubmitSamplePayload {
   auditId: number;
   controlId: number;
   files: File[];
+  note: string;
 }
 
 async function errText(res: Response, action: string): Promise<string> {
@@ -32,28 +33,30 @@ async function errText(res: Response, action: string): Promise<string> {
 }
 
 /**
- * Submits a population file set for an OE control via the same backend-proxied
- * flow as evidence (see useSubmitEvidence):
- *   1. GET  .../population/upload-link            -> folderPath for the active round
- *   2. per file: POST .../population/upload        -> multipart; backend proxies to Azure
- *   3. POST .../population/submit { folderPath }   -> backend records files + advances
- *                                                     the control to POPULATION_INTERNAL_REVIEW
+ * The auditor selects and submits the sample: files and/or a note (at least one
+ * is required — neither is individually mandatory), via the same
+ * backend-proxied flow as evidence/population (see useSubmitEvidence):
+ *   1. GET  .../sample/upload-link             -> folderPath (a "sample/" subfolder
+ *                                                  of the population round)
+ *   2. per file: POST .../sample/upload         -> multipart; backend proxies to Azure
+ *   3. POST .../sample/submit { folderPath, note } -> backend records files, sets the
+ *                                                     sample note, advances to SUBMITTED_SAMPLE
  */
-export function useSubmitPopulation() {
+export function useSubmitSample() {
   const authFetch = useAuthApiClient();
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ auditId, controlId, files }: SubmitPopulationPayload): Promise<void> => {
-      if (files.length === 0) throw new Error("Select at least one file to submit.");
-      const base = `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}/population`;
+    mutationFn: async ({ auditId, controlId, files, note }: SubmitSamplePayload): Promise<void> => {
+      if (files.length === 0 && note.trim() === "") {
+        throw new Error("Provide sample files, a note, or both.");
+      }
+      const base = `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}/sample`;
 
-      // 1. Folder path for the active population round.
       const linkRes = await authFetch(`${base}/upload-link`);
-      if (!linkRes.ok) throw new Error(await errText(linkRes, "start population upload"));
+      if (!linkRes.ok) throw new Error(await errText(linkRes, "start sample upload"));
       const { folderPath } = (await linkRes.json()) as { folderPath: string };
 
-      // 2. Proxy each file through the backend (multipart).
       for (const file of files) {
         const form = new FormData();
         form.append("folderPath", folderPath);
@@ -63,13 +66,12 @@ export function useSubmitPopulation() {
         if (!upRes.ok) throw new Error(await errText(upRes, `upload ${file.name}`));
       }
 
-      // 3. Record the submission — the backend lists the blobs and advances status.
       const submitRes = await authFetch(`${base}/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folderPath }),
+        body: JSON.stringify({ folderPath, note }),
       });
-      if (!submitRes.ok) throw new Error(await errText(submitRes, "submit population"));
+      if (!submitRes.ok) throw new Error(await errText(submitRes, "submit sample"));
     },
 
     onSuccess: (_data, { auditId, controlId }) => {

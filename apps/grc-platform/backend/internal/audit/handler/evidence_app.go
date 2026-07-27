@@ -49,13 +49,16 @@ func phaseFor(status string) string {
 }
 
 // baseFolderPathFor returns the phase-aware control-level Azure Blob prefix,
-// computed server-side (never trusted from a client).
-func baseFolderPathFor(phase string, auditID, controlID int) string {
+// built from the audit name and control number (never trusted from a client —
+// both come from the server-side control lookup). Matches the layout
+// EvidenceService.GetUploadLink/PopulationUploadLink derive for the same
+// control, so the Evidence Portal's displayed path always agrees with reality.
+func baseFolderPathFor(phase, auditName, controlNumber string) string {
 	sub := "evidence"
 	if phase == "POPULATION" {
 		sub = "population"
 	}
-	return fmt.Sprintf("audits/%d/controls/%d/%s/", auditID, controlID, sub)
+	return fmt.Sprintf("%s/%s/%s/", service.SanitizeSegment(auditName), service.SanitizeSegment(controlNumber), sub)
 }
 
 // recordEvidenceTrail appends a best-effort attribution entry. Failures are logged
@@ -150,7 +153,7 @@ func (h *evidenceAppHandler) listControls(w http.ResponseWriter, r *http.Request
 				Phase:               phase,
 				DueDate:             c.DueDate,
 			},
-			BaseFolderPath: baseFolderPathFor(phase, c.AuditID, c.ControlID),
+			BaseFolderPath: baseFolderPathFor(phase, c.AuditName, c.ControlNumber),
 		})
 	}
 	response.WriteJSONValue(w, http.StatusOK, out)
@@ -194,15 +197,16 @@ func (h *evidenceAppHandler) upload(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := service.ValidateEvidenceFolderPath(folderPath, auditID, controlID); err != nil {
+	if err := h.svc.ValidateEvidenceFolderPath(r.Context(), auditID, controlID, folderPath); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
-	if err := h.svc.UploadFile(r.Context(), folderPath, fileName, contentType, data); err != nil {
+	blobName, err := h.svc.UploadFile(r.Context(), folderPath, fileName, contentType, data)
+	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
-	response.WriteJSONValue(w, http.StatusCreated, map[string]any{"fileName": fileName, "size": len(data)})
+	response.WriteJSONValue(w, http.StatusCreated, map[string]any{"fileName": fileName, "blobName": blobName, "size": len(data)})
 }
 
 // submit handles POST /api/v1/evidence-app/controls/{controlId}/submit (§3.4).
@@ -222,15 +226,11 @@ func (h *evidenceAppHandler) submit(w http.ResponseWriter, r *http.Request) {
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
-	if err := service.ValidateEvidenceFolderPath(req.FolderPath, auditID, controlID); err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-		return
-	}
 
 	user := auth.FromContext(r.Context())
 	actor := user.Email
 
-	evidence, err := h.svc.Submit(r.Context(), auditID, controlID, req.FolderPath, actor)
+	evidence, err := h.svc.Submit(r.Context(), auditID, controlID, req.Files, actor)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
@@ -261,11 +261,14 @@ func (h *evidenceAppHandler) populationUploadLink(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
-	populationID, ok := h.activePopulationID(w, r, controlID)
-	if !ok {
+	if _, ok := h.activePopulationID(w, r, controlID); !ok {
 		return
 	}
-	link := h.svc.PopulationUploadLink(auditID, controlID, populationID)
+	link, err := h.svc.PopulationUploadLink(r.Context(), auditID, controlID)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
 	response.WriteJSONValue(w, http.StatusOK, link)
 }
 
@@ -283,23 +286,23 @@ func (h *evidenceAppHandler) populationUpload(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	populationID, ok := h.activePopulationID(w, r, controlID)
-	if !ok {
+	if _, ok := h.activePopulationID(w, r, controlID); !ok {
 		return
 	}
 	folderPath, fileName, contentType, data, ok := readUpload(w, r)
 	if !ok {
 		return
 	}
-	if err := service.ValidatePopulationFolderPath(folderPath, auditID, controlID, populationID); err != nil {
+	if err := h.svc.ValidatePopulationFolderPath(r.Context(), auditID, controlID, folderPath); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
-	if err := h.svc.UploadFile(r.Context(), folderPath, fileName, contentType, data); err != nil {
+	blobName, err := h.svc.UploadFile(r.Context(), folderPath, fileName, contentType, data)
+	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
-	response.WriteJSONValue(w, http.StatusCreated, map[string]any{"fileName": fileName, "size": len(data)})
+	response.WriteJSONValue(w, http.StatusCreated, map[string]any{"fileName": fileName, "blobName": blobName, "size": len(data)})
 }
 
 // populationSubmit handles
@@ -320,11 +323,11 @@ func (h *evidenceAppHandler) populationSubmit(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	var req model.SubmitEvidenceRequest
+	var req model.PopulationSubmitRequest
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
-	if err := service.ValidatePopulationFolderPath(req.FolderPath, auditID, controlID, populationID); err != nil {
+	if err := h.svc.ValidatePopulationFolderPath(r.Context(), auditID, controlID, req.FolderPath); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
@@ -375,5 +378,9 @@ func readUpload(w http.ResponseWriter, r *http.Request) (folderPath, fileName, c
 		contentType = http.DetectContentType(data)
 	}
 	fileName = filepath.Base(header.Filename)
+	if err := validateUploadFileType(fileName, contentType); err != nil {
+		response.WriteError(w, http.StatusBadRequest, err.Error())
+		return "", "", "", nil, false
+	}
 	return folderPath, fileName, contentType, data, true
 }

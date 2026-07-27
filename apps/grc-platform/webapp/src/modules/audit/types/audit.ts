@@ -62,6 +62,15 @@ export interface FrameworkControlListResponse {
   total: number;
 }
 
+export interface CreateFrameworkControlRequest {
+  controlNumber: string;
+  description: string;
+  evidenceRequirement?: string | null;
+  requirementType: RequirementType;
+  controlType: ControlType;
+  scope: ControlScope;
+}
+
 export interface AuditProduct {
   id: number;
   name: string;
@@ -107,6 +116,9 @@ export interface AuditControl {
   teamName: string | null;
   auditorId: number | null;
   auditorName: string | null;
+  // Backs the assigned-auditor gate: population validation, sample selection, and
+  // evidence validation are shown only when this matches the signed-in user's email.
+  auditorEmail: string | null;
   controlNumber: string;
   description: string;
   evidenceRequirement: string | null;

@@ -102,7 +102,7 @@ func New(ctx context.Context, db *sql.DB) (*Store, error) {
 		return nil, err
 	}
 	go func() {
-		t := time.NewTicker(15 * time.Minute)
+		t := time.NewTicker(1 * time.Minute)
 		defer t.Stop()
 		for {
 			select {

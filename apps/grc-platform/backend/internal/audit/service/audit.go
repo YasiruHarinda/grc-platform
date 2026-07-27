@@ -22,6 +22,7 @@ package service
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/apierror"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
@@ -68,9 +69,6 @@ func (s *auditService) GetByID(ctx context.Context, id int) (*model.Audit, error
 }
 
 func (s *auditService) Create(ctx context.Context, req model.CreateAuditRequest, createdBy string) (*model.Audit, error) {
-	if req.Name == "" {
-		return nil, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "name is required"}
-	}
 	if req.FrameworkID <= 0 || req.ProductID <= 0 {
 		return nil, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "frameworkId and productId are required"}
 	}
@@ -97,7 +95,53 @@ func (s *auditService) Create(ctx context.Context, req model.CreateAuditRequest,
 		return nil, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "product not found"}
 	}
 
+	// The audit name is also the top-level Azure folder for its evidence (see
+	// Human-Readable-Evidence-Blob-Paths design), so it is composed here rather
+	// than left to a free-text field: auto-filled from framework/product/year
+	// when blank, always run through the same path-safe charset, and — once
+	// this audit exists — locked (see Update below).
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = composeAuditName(fw.Name, pr.Name, req.PeriodStart)
+	}
+	name = sanitizeSegment(name)
+	if name == "" {
+		return nil, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "name is required"}
+	}
+	if err := s.checkNameAvailable(ctx, name, 0); err != nil {
+		return nil, err
+	}
+	req.Name = name
+
 	return s.repo.Create(ctx, req, createdBy)
+}
+
+// composeAuditName builds the default audit name "{Framework} {Product} {Year}"
+// (e.g. "SOC 2 Asgardeo 2026") from the period start's year.
+func composeAuditName(frameworkName, productName, periodStart string) string {
+	year := periodStart
+	if len(periodStart) >= 4 {
+		year = periodStart[:4]
+	}
+	return frameworkName + " " + productName + " " + year
+}
+
+// checkNameAvailable enforces case-insensitive uniqueness across all audits,
+// excluding excludeID (used by Update to allow an audit to keep its own name).
+// This is an app-level check only — it cannot close a create/create race, but a
+// concurrent duplicate is vanishingly unlikely for a human-driven creation flow
+// and the entity is out of scope for a DB-level constraint here.
+func (s *auditService) checkNameAvailable(ctx context.Context, name string, excludeID int) error {
+	existing, err := s.repo.List(ctx)
+	if err != nil {
+		return err
+	}
+	for _, a := range existing {
+		if a.ID != excludeID && strings.EqualFold(a.Name, name) {
+			return &apierror.Error{StatusCode: http.StatusConflict, Body: "an audit named \"" + name + "\" already exists"}
+		}
+	}
+	return nil
 }
 
 func (s *auditService) Update(ctx context.Context, id int, req model.UpdateAuditRequest, updatedBy string) error {
@@ -107,6 +151,13 @@ func (s *auditService) Update(ctx context.Context, id int, req model.UpdateAudit
 	}
 	if a == nil {
 		return &apierror.Error{StatusCode: http.StatusNotFound, Body: "audit not found"}
+	}
+	// The name is a storage identifier once the audit exists (it is the audit's
+	// Azure folder) — reject any attempt to change it. A no-op resubmission of
+	// the same value is allowed so a broader "save all fields" update doesn't
+	// have to special-case the name field.
+	if req.Name != nil && !strings.EqualFold(strings.TrimSpace(*req.Name), a.Name) {
+		return &apierror.Error{StatusCode: http.StatusConflict, Body: "audit name is locked once created — it is used as the evidence storage path"}
 	}
 	return s.repo.Update(ctx, id, req, updatedBy)
 }

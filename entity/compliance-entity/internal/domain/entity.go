@@ -273,6 +273,10 @@ type AuditControl struct {
 	TeamName            *string   `json:"teamName"`
 	AuditorID           *int      `json:"auditorId"`
 	AuditorName         *string   `json:"auditorName"`
+	// AuditorEmail identifies the assigned auditor for the assigned-auditor gate
+	// (population validation, sample selection, evidence validation): the caller
+	// is authorized when their token email matches this value.
+	AuditorEmail        *string   `json:"auditorEmail"`
 	DueDate             *string   `json:"dueDate"` // YYYY-MM-DD
 	Status              string    `json:"status"`
 	ControlSource       string    `json:"controlSource"` // MANUAL | COPIED | CSV

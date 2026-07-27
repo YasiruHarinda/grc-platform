@@ -159,6 +159,7 @@ function ControlFormDialog({
   const isValid =
     form.controlNumber.trim().length > 0 &&
     form.description.trim().length > 0 &&
+    form.dueDate.length > 0 &&
     (!isOE || editMode || (form.populationDescription.trim().length > 0 && form.populationDueDate.length > 0));
 
   return (
@@ -261,6 +262,7 @@ function ControlFormDialog({
           <TextField
             label="Due Date"
             type="date"
+            required
             value={form.dueDate}
             onChange={(e) => set("dueDate", e.target.value)}
             size="small"
@@ -385,7 +387,7 @@ function DeleteDialog({
       <DialogContent>
         {error && <Alert severity="error" sx={{ mb: 1 }}>{error}</Alert>}
         <Typography variant="body2">
-          Remove <strong>{control?.controlNumber}</strong> — {control?.description}?
+          Remove <strong>{control?.controlNumber}</strong>  {control?.description}?
           This cannot be undone.
         </Typography>
       </DialogContent>

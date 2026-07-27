@@ -26,14 +26,14 @@ import (
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/service"
 )
 
-// TrailHandler handles /audits/{auditId}/trail routes.
-type TrailHandler struct{ svc service.TrailService }
+// AuditTrailHandler handles /audits/{auditId}/trail routes.
+type AuditTrailHandler struct{ svc service.AuditTrailService }
 
-// NewTrailHandler constructs a TrailHandler.
-func NewTrailHandler(svc service.TrailService) *TrailHandler { return &TrailHandler{svc: svc} }
+// NewAuditTrailHandler constructs a AuditTrailHandler.
+func NewAuditTrailHandler(svc service.AuditTrailService) *AuditTrailHandler { return &AuditTrailHandler{svc: svc} }
 
-// CreateTrail handles POST /audits/{auditId}/trail.
-func (h *TrailHandler) CreateTrail(w http.ResponseWriter, r *http.Request) {
+// CreateAuditTrail handles POST /audits/{auditId}/trail.
+func (h *AuditTrailHandler) CreateAuditTrail(w http.ResponseWriter, r *http.Request) {
 	auditID, err := strconv.Atoi(r.PathValue("auditId"))
 	if err != nil {
 		writeServiceError(w, r, &apierror.ValidationError{Msg: "auditId must be a positive integer"})
@@ -43,7 +43,7 @@ func (h *TrailHandler) CreateTrail(w http.ResponseWriter, r *http.Request) {
 	if !decodeRequest(w, r, &req) {
 		return
 	}
-	e, err := h.svc.CreateTrail(r.Context(), auditID, req)
+	e, err := h.svc.CreateAuditTrail(r.Context(), auditID, req)
 	if err != nil {
 		writeServiceError(w, r, err)
 		return
@@ -53,8 +53,8 @@ func (h *TrailHandler) CreateTrail(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(e)
 }
 
-// ListTrail handles GET /audits/{auditId}/trail.
-func (h *TrailHandler) ListTrail(w http.ResponseWriter, r *http.Request) {
+// ListAuditTrail handles GET /audits/{auditId}/trail.
+func (h *AuditTrailHandler) ListAuditTrail(w http.ResponseWriter, r *http.Request) {
 	auditID, err := strconv.Atoi(r.PathValue("auditId"))
 	if err != nil {
 		writeServiceError(w, r, &apierror.ValidationError{Msg: "auditId must be a positive integer"})
@@ -64,7 +64,17 @@ func (h *TrailHandler) ListTrail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	resp, err := h.svc.ListTrail(r.Context(), auditID, limit, offset)
+	// Optional ?controlId=<n> narrows the trail to a single control.
+	var controlID *int
+	if raw := r.URL.Query().Get("controlId"); raw != "" {
+		cid, err := strconv.Atoi(raw)
+		if err != nil {
+			writeServiceError(w, r, &apierror.ValidationError{Msg: "controlId must be a positive integer"})
+			return
+		}
+		controlID = &cid
+	}
+	resp, err := h.svc.ListAuditTrail(r.Context(), auditID, controlID, limit, offset)
 	if err != nil {
 		writeServiceError(w, r, err)
 		return

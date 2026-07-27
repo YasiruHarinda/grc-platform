@@ -154,6 +154,22 @@ func (h *PopulationHandler) ListPopulationFiles(w http.ResponseWriter, r *http.R
 	_ = json.NewEncoder(w).Encode(files)
 }
 
+// GetPopulationFileByID handles GET /populations/files/{fileId}.
+func (h *PopulationHandler) GetPopulationFileByID(w http.ResponseWriter, r *http.Request) {
+	fileID, err := strconv.Atoi(r.PathValue("fileId"))
+	if err != nil {
+		writeServiceError(w, r, &apierror.ValidationError{Msg: "fileId must be a positive integer"})
+		return
+	}
+	f, err := h.svc.GetPopulationFileByID(r.Context(), fileID)
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(f)
+}
+
 // DeletePopulationFile handles DELETE /populations/files/{fileId}.
 func (h *PopulationHandler) DeletePopulationFile(w http.ResponseWriter, r *http.Request) {
 	fileID, err := strconv.Atoi(r.PathValue("fileId"))

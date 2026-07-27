@@ -20,6 +20,23 @@ import { useRef, useState, type JSX } from "react";
 import { useSubmitEvidence } from "@modules/audit/api/useSubmitEvidence";
 import { useSubmitPopulation } from "@modules/audit/api/useSubmitPopulation";
 
+/**
+ * Largest file the backend accepts per upload request. Must stay in sync with
+ * maxEvidenceUploadBytes in internal/audit/handler/evidence.go — checking here
+ * turns a late 413 into an immediate, nameable error. The cap is per file, not
+ * per submission: each file is uploaded in its own request.
+ */
+const MAX_FILE_BYTES = 25 * 1024 * 1024;
+
+/**
+ * UX hint only — narrows the file picker to expected evidence formats. The
+ * backend is the actual security boundary: it rejects HTML/SVG/XML/JS
+ * uploads outright (see validateUploadFileType), since those can execute as
+ * script if ever rendered instead of downloaded.
+ */
+const ACCEPTED_FILE_TYPES =
+  ".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt,.png,.jpg,.jpeg,.gif,.webp,.zip,.msg,.eml";
+
 interface EvidenceUploadBoxProps {
   auditId: number;
   controlId: number;
@@ -47,6 +64,7 @@ export default function EvidenceUploadBox({
   phase = "evidence",
 }: EvidenceUploadBoxProps): JSX.Element {
   const [files, setFiles] = useState<File[]>([]);
+  const [sizeError, setSizeError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const submitEvidence = useSubmitEvidence();
@@ -57,9 +75,18 @@ export default function EvidenceUploadBox({
   function addFiles(list: FileList | null) {
     if (!list) return;
     const incoming = Array.from(list);
+
+    const tooBig = incoming.filter((f) => f.size > MAX_FILE_BYTES);
+    setSizeError(
+      tooBig.length === 0
+        ? null
+        : `${tooBig.map((f) => f.name).join(", ")} — each file must be 25 MB or smaller.`,
+    );
+
+    const accepted = incoming.filter((f) => f.size <= MAX_FILE_BYTES);
     setFiles((prev) => {
       const seen = new Set(prev.map((f) => f.name + f.size));
-      return [...prev, ...incoming.filter((f) => !seen.has(f.name + f.size))];
+      return [...prev, ...accepted.filter((f) => !seen.has(f.name + f.size))];
     });
   }
 
@@ -70,7 +97,7 @@ export default function EvidenceUploadBox({
   function handleSubmit() {
     submit.mutate(
       { auditId, controlId, files },
-      { onSuccess: () => { setFiles([]); onSubmitted(); } },
+      { onSuccess: () => { setFiles([]); setSizeError(null); onSubmitted(); } },
     );
   }
 
@@ -81,6 +108,7 @@ export default function EvidenceUploadBox({
         type="file"
         multiple
         hidden
+        accept={ACCEPTED_FILE_TYPES}
         onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }}
       />
 
@@ -132,6 +160,12 @@ export default function EvidenceUploadBox({
             </Box>
           ))}
         </Box>
+      )}
+
+      {sizeError && (
+        <Alert severity="warning" onClose={() => setSizeError(null)} sx={{ mb: 1.5, fontSize: "0.8rem" }}>
+          {sizeError}
+        </Alert>
       )}
 
       {submit.isError && (

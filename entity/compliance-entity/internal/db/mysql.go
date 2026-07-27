@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/config"
 )
 
@@ -33,10 +33,37 @@ const (
 	connMaxIdleTime = 5 * time.Minute
 )
 
+// normalizeDSN pins the connection to UTC so timestamps are consistent end to end.
+//
+// The DATETIME columns (created_at etc.) default to CURRENT_TIMESTAMP, which is
+// evaluated in the session time zone. The go-sql-driver reads DATETIME back in
+// its `loc` (UTC by default). If the two disagree — e.g. a server running in a
+// local zone — every timestamp is written in local wall-clock but read (and then
+// JSON-serialized) as if it were UTC, shifting it by the server's offset. That is
+// what makes the UI show wrong times and "just now" for everything.
+//
+// Forcing session time_zone='+00:00' and loc=UTC makes writes and reads agree on
+// UTC regardless of the server's zone. Applied in code so it holds no matter what
+// DB_DSN the deployment provides. On a malformed DSN we fall back to the raw value
+// and let sql.Open surface the error.
+func normalizeDSN(dsn string) string {
+	cfg, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return dsn
+	}
+	cfg.ParseTime = true
+	cfg.Loc = time.UTC
+	if cfg.Params == nil {
+		cfg.Params = map[string]string{}
+	}
+	cfg.Params["time_zone"] = "'+00:00'"
+	return cfg.FormatDSN()
+}
+
 // New opens a MySQL connection pool, pings the database to confirm connectivity,
 // and returns the pool ready for use. The caller is responsible for calling db.Close.
 func New(cfg *config.Config) (*sql.DB, error) {
-	db, err := sql.Open("mysql", cfg.DBDSN)
+	db, err := sql.Open("mysql", normalizeDSN(cfg.DBDSN))
 	if err != nil {
 		return nil, fmt.Errorf("open mysql: %w", err)
 	}

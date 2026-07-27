@@ -235,6 +235,23 @@ func (s *controlService) CreateControl(ctx context.Context, auditID int, req dom
 	if req.CreatedBy == "" {
 		return domain.AuditControl{}, &apierror.ValidationError{Msg: "createdBy is required"}
 	}
+	// dueDate is required for every control (framework-linked controls resolve it
+	// from the template instead, same carve-out as controlNumber/description
+	// above). OE controls additionally need a population due date — this was
+	// previously only enforced by the standalone population-create endpoint,
+	// which the webapp never calls; the inline Population block on control
+	// creation went completely unvalidated, letting an OE control end up with no
+	// due date anywhere.
+	if req.DueDate == nil || strings.TrimSpace(*req.DueDate) == "" {
+		if req.FrameworkControlID == nil {
+			return domain.AuditControl{}, &apierror.ValidationError{Msg: "dueDate is required"}
+		}
+	}
+	if strings.EqualFold(req.RequirementType, "OE") {
+		if req.Population == nil || req.Population.DueDate == nil || strings.TrimSpace(*req.Population.DueDate) == "" {
+			return domain.AuditControl{}, &apierror.ValidationError{Msg: "population.dueDate is required for OE controls"}
+		}
+	}
 	req.RequirementType = strings.ToUpper(req.RequirementType)
 	req.ControlType = strings.ToUpper(req.ControlType)
 	req.Scope = strings.ToUpper(req.Scope)
@@ -313,6 +330,12 @@ func (s *controlService) UpdateControl(ctx context.Context, auditID, controlID i
 			return domain.AuditControl{}, &apierror.ValidationError{Msg: "invalid scope: " + *req.Scope}
 		}
 		req.Scope = &upper
+	}
+	// DueDate is optional on update (nil means "leave unchanged" — e.g. a
+	// status-transition PATCH never sends it), but a caller that does send the
+	// field may not clear a control's due date to empty.
+	if req.DueDate != nil && strings.TrimSpace(*req.DueDate) == "" {
+		return domain.AuditControl{}, &apierror.ValidationError{Msg: "dueDate cannot be cleared"}
 	}
 	if req.Status != nil {
 		if !validControlStatuses[strings.ToUpper(*req.Status)] {

@@ -101,8 +101,9 @@ type EvidenceAppControlInfo struct {
 // It gives the agent the folder path to use as a prefix when requesting
 // per-file upload URLs and when calling the submit endpoint.
 type UploadLinkResponse struct {
-	// FolderPath is the Azure Blob prefix for this upload session.
-	// e.g. "audits/5/controls/12/evidence/1751500000/"
+	// FolderPath is the Azure Blob prefix for this upload session — a
+	// human-readable, deterministic path built from the audit name and control
+	// number (e.g. "soc2 asgardeo 2026/CA-01/evidence/"), not a per-session folder.
 	FolderPath string    `json:"folderPath"`
 	ExpiresAt  time.Time `json:"expiresAt"`
 }
@@ -122,8 +123,28 @@ type FileUploadURLResponse struct {
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 
-// SubmitEvidenceRequest is the body for POST .../evidence/submit.
+// EvidenceFileRef identifies one already-uploaded evidence blob by its stored
+// (sanitized) blob name plus the original, human-readable file name — the
+// upload endpoint returns one of these per file (see FileUploadResponse), and
+// the client accumulates them to submit an explicit batch.
+type EvidenceFileRef struct {
+	BlobName string `json:"blobName"`
+	FileName string `json:"fileName"`
+}
+
+// SubmitEvidenceRequest is the body for POST .../evidence/submit. There is no
+// folder re-listing in the flat evidence layout (see design doc §3.3): the
+// client accumulates the blobName returned by each upload call and submits the
+// exact list of files that make up this round.
 type SubmitEvidenceRequest struct {
-	// FolderPath must match exactly what was returned by the upload-link endpoint.
+	Files []EvidenceFileRef `json:"files"`
+}
+
+// PopulationSubmitRequest is the body for POST .../population/submit and
+// .../population/{controlId}/submit. Unlike evidence, population/sample keep
+// the folder-listing contract (their subfolders already fence their files —
+// see design doc §3.3), so the client only echoes back the folder path handed
+// out by the upload-link endpoint.
+type PopulationSubmitRequest struct {
 	FolderPath string `json:"folderPath"`
 }

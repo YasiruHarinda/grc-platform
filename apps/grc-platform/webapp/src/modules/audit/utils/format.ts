@@ -41,6 +41,30 @@ export function daysLeft(dateStr: string | null | undefined): number | null {
   return Math.round((target.getTime() - today.getTime()) / 86_400_000);
 }
 
+/**
+ * Compact relative time from an ISO timestamp → "just now", "5m ago", "3h ago",
+ * "2d ago", falling back to "Jun 22" for anything older than a week. Returns ""
+ * for invalid input.
+ */
+export function relativeTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const secs = Math.round((Date.now() - d.getTime()) / 1000);
+  // A timestamp meaningfully in the future is a data problem (usually a server
+  // time-zone mismatch), not a real event. Show the absolute time so it reads as
+  // odd rather than silently collapsing every such row to "just now". A minute of
+  // clock skew is tolerated as "just now".
+  if (secs < -60) return formatTimestamp(iso);
+  if (secs < 45) return "just now";
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
 /** Formats a full ISO timestamp → "Jun 22, 2026 02:30 PM". Returns "" for invalid input. */
 export function formatTimestamp(iso: string): string {
   const d = new Date(iso);

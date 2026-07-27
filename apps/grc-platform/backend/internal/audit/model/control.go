@@ -31,6 +31,11 @@ type AuditControl struct {
 	TeamName            *string   `json:"teamName"`
 	AuditorID           *int      `json:"auditorId"`
 	AuditorName         *string   `json:"auditorName"`
+	// AuditorEmail backs the assigned-auditor gate: the backend compares it
+	// against the caller's token email to authorize population/sample/evidence
+	// validation, and the frontend compares it against the signed-in user's email
+	// to decide whether to show auditor-only cards and actions.
+	AuditorEmail        *string   `json:"auditorEmail"`
 	ControlNumber       string    `json:"controlNumber"`
 	Description         string    `json:"description"`
 	EvidenceRequirement *string   `json:"evidenceRequirement"`

@@ -18,8 +18,11 @@ package entity
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"time"
 
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/repository"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
 )
@@ -42,4 +45,46 @@ func (r *trailRepo) Create(ctx context.Context, auditID int, controlID, evidence
 		body["details"] = details
 	}
 	return r.c.Post(ctx, fmt.Sprintf("/audits/%d/trail", auditID), body, nil)
+}
+
+// entTrail mirrors the entity's AuditTrail JSON. Details is a raw JSON string on
+// the wire (the column is MySQL JSON); we hand it back to the client verbatim.
+type entTrail struct {
+	ID         int64     `json:"id"`
+	ControlID  *int      `json:"controlId"`
+	EvidenceID *int      `json:"evidenceId"`
+	Action     string    `json:"action"`
+	Details    *string   `json:"details"`
+	CreatedBy  *string   `json:"createdBy"`
+	CreatedOn  time.Time `json:"createdOn"`
+}
+
+func (r *trailRepo) ListByControl(ctx context.Context, auditID, controlID, limit int) ([]*model.AuditTrailEntry, int, error) {
+	var resp struct {
+		Trail []entTrail `json:"trail"`
+		Total int        `json:"total"`
+	}
+	path := fmt.Sprintf("/audits/%d/trail?controlId=%d&limit=%d", auditID, controlID, limit)
+	if err := r.c.Get(ctx, path, &resp); err != nil {
+		return nil, 0, err
+	}
+
+	out := make([]*model.AuditTrailEntry, 0, len(resp.Trail))
+	for _, e := range resp.Trail {
+		entry := &model.AuditTrailEntry{
+			ID:         e.ID,
+			Action:     e.Action,
+			ControlID:  e.ControlID,
+			EvidenceID: e.EvidenceID,
+			CreatedAt:  e.CreatedOn,
+		}
+		if e.CreatedBy != nil {
+			entry.CreatedBy = *e.CreatedBy
+		}
+		if e.Details != nil && *e.Details != "" {
+			entry.Details = json.RawMessage(*e.Details)
+		}
+		out = append(out, entry)
+	}
+	return out, resp.Total, nil
 }

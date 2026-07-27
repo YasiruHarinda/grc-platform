@@ -53,6 +53,7 @@ import {
   Copy,
   FileUp,
   Library,
+  Pencil,
   Plus,
   Trash2,
 } from "@wso2/oxygen-ui-icons-react";
@@ -68,6 +69,7 @@ import { useGetTeams } from "@modules/audit/api/useGetTeams";
 import { useCreateAudit } from "@modules/audit/api/useCreateAudit";
 import { useCreateFramework } from "@modules/audit/api/useCreateFramework";
 import { useCreateProduct } from "@modules/audit/api/useCreateProduct";
+import { useCreateFrameworkControl } from "@modules/audit/api/useCreateFrameworkControl";
 import { useBulkAddControls } from "@modules/audit/api/useBulkAddControls";
 import type {
   AddControlRequest,
@@ -86,6 +88,31 @@ import type { AuditUser } from "@modules/audit/types/user";
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type ControlSourceMode = "empty" | "copy" | "csv" | "template";
+
+// The app's default theme (AcrylicOrangeTheme) makes `background.paper` an
+// intentionally translucent color (~77% opacity: #ffffffc5 / #000000c5) and
+// layers a backdrop blur on top, for its "frosted glass" look. That's fine
+// for panels sitting over page content, but unreadable for a dropdown menu
+// floating over a dense form or table — stripping just the blur isn't enough
+// since the color underneath is still see-through. Force a fully opaque
+// surface instead, matching the same fix already used for the DatePicker's
+// popover elsewhere in the app (see BasicInformationStep.tsx).
+const OPAQUE_DROPDOWN_PAPER_SX = {
+  backdropFilter: "none",
+  WebkitBackdropFilter: "none",
+  backgroundColor: "#fff",
+  backgroundImage: "none",
+  "[data-color-scheme='dark'] &": { backgroundColor: "#1e1e1e" },
+} as const;
+
+// Autocomplete's dropdown Paper — pass as `slotProps={{ paper: DROPDOWN_PAPER_PROPS }}`.
+const DROPDOWN_PAPER_PROPS = { sx: OPAQUE_DROPDOWN_PAPER_SX };
+
+// Plain <Select> menus need the same override via MenuProps — the Menu's Paper
+// is a separate slot from the field itself, so Autocomplete's fix doesn't cover it.
+const SELECT_MENU_PROPS = {
+  slotProps: { paper: DROPDOWN_PAPER_PROPS },
+};
 
 let _localIdCounter = 0;
 const nextLocalId = () => String(++_localIdCounter);
@@ -144,6 +171,7 @@ function blankDraft(): DraftControl {
 function controlToDraft(c: AuditControl): DraftControl {
   return {
     localId: nextLocalId(),
+    frameworkControlId: c.frameworkControlId ?? undefined,
     controlSource: "COPIED",
     controlNumber: c.controlNumber,
     description: c.description,
@@ -293,7 +321,7 @@ function PopulationDialog({
   open, controlDraft, onClose, onChangePopulation, onChangeAuditor, users, teams,
 }: PopulationDialogProps): JSX.Element {
   const pop = controlDraft.population ?? blankPopulation();
-  const paperProps = { sx: { backdropFilter: "none", backgroundColor: "background.paper" } };
+  const paperProps = DROPDOWN_PAPER_PROPS;
 
   return (
     <Dialog
@@ -380,6 +408,7 @@ function PopulationDialog({
           <Select
             fullWidth
             displayEmpty
+            MenuProps={SELECT_MENU_PROPS}
             inputProps={{ "aria-label": "Team (Population)" }}
             value={pop.teamId !== null ? String(pop.teamId) : ""}
             onChange={(e) => {
@@ -441,7 +470,13 @@ function EditableControlsTable({ drafts, onChange, users, teams }: EditableContr
     onChange(drafts.filter((d) => d.localId !== localId));
   }
 
-  const paperProps = { sx: { backdropFilter: "none", backgroundColor: "background.paper" } };
+  function unlinkFromTemplate(localId: string) {
+    onChange(drafts.map((d) =>
+      d.localId === localId ? { ...d, frameworkControlId: undefined } : d,
+    ));
+  }
+
+  const paperProps = DROPDOWN_PAPER_PROPS;
 
   return (
     <>
@@ -533,6 +568,7 @@ function EditableControlsTable({ drafts, onChange, users, teams }: EditableContr
                     onChange={(e) => handleReqTypeChange(d.localId, e.target.value as RequirementType)}
                     size="small"
                     variant="standard"
+                    MenuProps={SELECT_MENU_PROPS}
                     sx={{ ...FS }}
                   >
                     <MenuItem value="DESIGN">Design</MenuItem>
@@ -574,6 +610,7 @@ function EditableControlsTable({ drafts, onChange, users, teams }: EditableContr
                     onChange={(e) => update(d.localId, "controlType", e.target.value as ControlType)}
                     size="small"
                     variant="standard"
+                    MenuProps={SELECT_MENU_PROPS}
                     sx={{ ...FS }}
                   >
                     <MenuItem value="CONFIG">Config</MenuItem>
@@ -591,6 +628,7 @@ function EditableControlsTable({ drafts, onChange, users, teams }: EditableContr
                     onChange={(e) => update(d.localId, "scope", e.target.value as ControlScope)}
                     size="small"
                     variant="standard"
+                    MenuProps={SELECT_MENU_PROPS}
                     sx={{ ...FS }}
                   >
                     <MenuItem value="COMMON">Common</MenuItem>
@@ -655,6 +693,7 @@ function EditableControlsTable({ drafts, onChange, users, teams }: EditableContr
                   size="small"
                   variant="standard"
                   displayEmpty
+                  MenuProps={SELECT_MENU_PROPS}
                   sx={{ ...FS, minWidth: 110 }}
                 >
                   <MenuItem value=""><em style={{ color: "#9e9e9e" }}>None</em></MenuItem>
@@ -678,11 +717,20 @@ function EditableControlsTable({ drafts, onChange, users, teams }: EditableContr
                 />
               </TableCell>
               <TableCell>
-                <Tooltip title="Remove row">
-                  <IconButton size="small" color="error" onClick={() => remove(d.localId)}>
-                    <Trash2 size={14} />
-                  </IconButton>
-                </Tooltip>
+                <Box sx={{ display: "flex" }}>
+                  {d.frameworkControlId && (
+                    <Tooltip title="Edit definition (unlinks from library template)">
+                      <IconButton size="small" onClick={() => unlinkFromTemplate(d.localId)}>
+                        <Pencil size={14} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  <Tooltip title="Remove row">
+                    <IconButton size="small" color="error" onClick={() => remove(d.localId)}>
+                      <Trash2 size={14} />
+                    </IconButton>
+                  </Tooltip>
+                </Box>
               </TableCell>
             </TableRow>
           ))}
@@ -754,11 +802,19 @@ function SourceCard({ icon, title, description, selected, onClick }: SourceCardP
               width: 44,
               height: 44,
               borderRadius: 2,
-              bgcolor: selected ? "primary.50" : "grey.100",
+              // Fixed literal colors on purpose, not theme tokens: "primary.50" isn't
+              // even a real shade in this app's palettes (only main/light/dark are
+              // defined, so it silently rendered no background at all), and
+              // "text.secondary" lightens in dark mode — paired with a light box,
+              // that's a white icon on a white box. The icon should just always read
+              // as a dark glyph on a light chip, in every theme and mode; selection is
+              // already shown by the card's border/glow, so this box doesn't need to
+              // change with it.
+              bgcolor: "#f0f0f0",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              color: selected ? "primary.main" : "text.secondary",
+              color: "#1a1a1a",
               flexShrink: 0,
             }}
           >
@@ -782,6 +838,7 @@ function SourceCard({ icon, title, description, selected, onClick }: SourceCardP
 
 interface Step1Props {
   name: string;
+  nameConflict: boolean;
   framework: AuditFramework | null;
   product: AuditProduct | null;
   periodStart: string;
@@ -808,6 +865,7 @@ const CREATE_PRODUCT_SENTINEL: AuditProduct = { id: -1, name: "＋ Create new pr
 
 function Step1Form({
   name,
+  nameConflict,
   framework,
   product,
   periodStart,
@@ -874,8 +932,15 @@ function Step1Form({
         onChange={(e) => onNameChange(e.target.value)}
         fullWidth
         placeholder="e.g. SOC 2 Asgardeo 2026"
+        error={nameConflict}
+        helperText={
+          nameConflict
+            ? `An audit named "${name.trim()}" already exists, choose a different name.`
+            : "This name is used to identify the audit in the system and reports."
+        }
       />
 
+      <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
       <Box>
         <Autocomplete
           options={[...frameworks, CREATE_FW_SENTINEL]}
@@ -900,7 +965,7 @@ function Step1Form({
             }
             onFrameworkChange(val);
           }}
-          slotProps={{ paper: { sx: { backdropFilter: "none", backgroundColor: "background.paper" } } }}
+          slotProps={{ paper: DROPDOWN_PAPER_PROPS }}
           renderOption={(props, option) => {
             const { key, ...rest } = props as React.HTMLAttributes<HTMLLIElement> & { key?: React.Key };
             if (option.id === -1) {
@@ -951,7 +1016,7 @@ function Step1Form({
             }
             onProductChange(val);
           }}
-          slotProps={{ paper: { sx: { backdropFilter: "none", backgroundColor: "background.paper" } } }}
+          slotProps={{ paper: DROPDOWN_PAPER_PROPS }}
           renderOption={(props, option) => {
             const { key, ...rest } = props as React.HTMLAttributes<HTMLLIElement> & { key?: React.Key };
             if (option.id === -1) {
@@ -975,6 +1040,7 @@ function Step1Form({
           </Box>
         )}
       </Box>
+      </Box>
 
       <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
         <TextField
@@ -992,6 +1058,13 @@ function Step1Form({
           value={periodEnd}
           onChange={(e) => onPeriodEndChange(e.target.value)}
           InputLabelProps={{ shrink: true }}
+          inputProps={{ min: periodStart || undefined }}
+          error={Boolean(periodStart && periodEnd && periodEnd < periodStart)}
+          helperText={
+            periodStart && periodEnd && periodEnd < periodStart
+              ? "Period End cannot be before Period Start."
+              : undefined
+          }
         />
       </Box>
 
@@ -1109,11 +1182,61 @@ function Step2Controls({
   const users = usersData ?? [];
   const teams = teamsData ?? [];
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const createFrameworkControl = useCreateFrameworkControl(framework?.id ?? 0);
+  const [savingAll, setSavingAll] = useState(false);
+  const [saveToLibraryError, setSaveToLibraryError] = useState<string | null>(null);
   // Tracks which auditId we've already seeded into drafts, so that a
   // background refetch of sourceControlsData never overwrites user edits.
   const seededForAuditId = useRef<number | null>(null);
   // Set of selected framework control IDs for the template source.
   const selectedFwCtlIds = new Set(drafts.filter((d) => d.frameworkControlId).map((d) => d.frameworkControlId!));
+  // Manually-added rows with enough filled in to be saved to the library.
+  const pendingLibraryCount = drafts.filter(
+    (d) => !d.frameworkControlId && d.controlNumber.trim() && d.description.trim(),
+  ).length;
+
+  // Manually-added rows (template source) are plain drafts until this runs.
+  // It persists every complete, not-yet-linked row as a real framework
+  // control in one batch, then re-links each to its new control — same
+  // fate as picking one from the library checklist.
+  async function saveAllToLibrary() {
+    if (!framework) return;
+    const pending = drafts.filter((d) => !d.frameworkControlId && d.controlNumber.trim() && d.description.trim());
+    if (pending.length === 0) return;
+    setSaveToLibraryError(null);
+    setSavingAll(true);
+    const results = await Promise.allSettled(pending.map((d) => createFrameworkControl.mutateAsync({
+      controlNumber: d.controlNumber.trim(),
+      description: d.description.trim(),
+      evidenceRequirement: d.evidenceRequirement.trim() || null,
+      requirementType: d.requirementType,
+      controlType: d.controlType,
+      scope: d.scope,
+    })));
+    const created = new Map(
+      results.flatMap((r, i) => (r.status === "fulfilled" ? [[pending[i].localId, r.value] as const] : [])),
+    );
+    if (created.size > 0) {
+      onDraftsChange(drafts.map((d) => {
+        const fc = created.get(d.localId);
+        return fc
+          ? {
+              ...d,
+              frameworkControlId: fc.id,
+              controlSource: "COPIED" as const,
+              controlNumber: fc.controlNumber,
+              description: fc.description,
+              evidenceRequirement: fc.evidenceRequirement ?? "",
+            }
+          : d;
+      }));
+    }
+    const failures = results.filter((r) => r.status === "rejected").length;
+    if (failures > 0) {
+      setSaveToLibraryError(`Failed to save ${failures} control${failures !== 1 ? "s" : ""} to the library. Fix and try again.`);
+    }
+    setSavingAll(false);
+  }
 
   function createDraftControl(fc: AuditFrameworkControl): DraftControl {
     return {
@@ -1245,7 +1368,7 @@ function Step2Controls({
           )}
           {framework && !fwControlsLoading && (fwControlsData ?? []).length === 0 && (
             <Alert severity="info" sx={{ py: 0.5 }}>
-              No controls in the {framework.name} library yet.
+              No controls in the {framework.name} library yet - add rows below to get started.
             </Alert>
           )}
           {framework && !fwControlsLoading && (fwControlsData ?? []).length > 0 && (
@@ -1295,7 +1418,16 @@ function Step2Controls({
                           key={fc.id}
                           hover
                           onClick={() => toggleFwControl(fc)}
-                          sx={{ cursor: "pointer", bgcolor: checked ? "primary.50" : undefined }}
+                          sx={checked
+                            ? {
+                                cursor: "pointer",
+                                bgcolor: "primary.50",
+                                // primary.50 is a fixed light swatch — the default text
+                                // color lightens in dark mode, so pair it with a dark
+                                // override or the row text disappears against it.
+                                "[data-color-scheme='dark'] &": { bgcolor: "rgba(255,255,255,0.12)" },
+                              }
+                            : { cursor: "pointer" }}
                         >
                           <TableCell padding="checkbox">
                             <Checkbox checked={checked} size="small" />
@@ -1345,6 +1477,7 @@ function Step2Controls({
           <Select
             fullWidth
             displayEmpty
+            MenuProps={SELECT_MENU_PROPS}
             inputProps={{ "aria-label": "Source audit" }}
             value={copyAuditId !== null ? String(copyAuditId) : ""}
             onChange={(e) => {
@@ -1412,8 +1545,11 @@ function Step2Controls({
         </Box>
       )}
 
-      {/* Editable table — shown for empty source always, or once drafts are populated */}
-      {(source === "empty" || drafts.length > 0) && !sourceControlsLoading && !fwControlsLoading && (
+      {/* Editable table — shown for empty source always, for template once a
+          framework is selected (so "Add Row" is available even when the
+          library is empty), or once drafts are populated (copy/csv). */}
+      {(source === "empty" || (source === "template" && framework) || drafts.length > 0)
+        && !sourceControlsLoading && !fwControlsLoading && (
           <Box>
             <Box
               sx={{
@@ -1426,17 +1562,36 @@ function Step2Controls({
               <Typography variant="subtitle2" fontWeight={600}>
                 Controls ({drafts.length})
               </Typography>
-              {source !== "csv" && source !== "template" && (
-                <Button
-                  size="small"
-                  startIcon={<Plus size={14} />}
-                  onClick={() => onDraftsChange([...drafts, blankDraft()])}
-                  sx={{ textTransform: "none" }}
-                >
-                  Add Row
-                </Button>
-              )}
+              <Box sx={{ display: "flex", gap: 1 }}>
+                {source === "template" && pendingLibraryCount > 0 && (
+                  <Button
+                    size="small"
+                    variant="contained"
+                    startIcon={savingAll ? <CircularProgress size={14} color="inherit" /> : <Library size={14} />}
+                    onClick={() => void saveAllToLibrary()}
+                    disabled={savingAll}
+                    sx={{ textTransform: "none" }}
+                  >
+                    {savingAll ? "Saving…" : `Save ${pendingLibraryCount} to Library`}
+                  </Button>
+                )}
+                {source !== "csv" && (
+                  <Button
+                    size="small"
+                    startIcon={<Plus size={14} />}
+                    onClick={() => onDraftsChange([...drafts, blankDraft()])}
+                    sx={{ textTransform: "none" }}
+                  >
+                    Add Row
+                  </Button>
+                )}
+              </Box>
             </Box>
+            {source === "template" && saveToLibraryError && (
+              <Alert severity="error" sx={{ mb: 1 }} onClose={() => setSaveToLibraryError(null)}>
+                {saveToLibraryError}
+              </Alert>
+            )}
             <EditableControlsTable drafts={drafts} onChange={onDraftsChange} users={users} teams={teams} />
           </Box>
         )}
@@ -1602,6 +1757,11 @@ export default function CreateAuditPage(): JSX.Element {
   const { data: productsData, isLoading: loadingProducts, isError: errorProducts, refetch: refetchProducts } = useGetProducts();
   const { data: usersData } = useGetUsers();
   const { data: teamsData } = useGetTeams();
+  // Names must be unique (the name doubles as the audit's evidence storage
+  // folder) — the backend enforces this at submit time, but checking against
+  // the already-loaded audit list here catches it on Step 1 instead of after
+  // the auditor has filled in the whole wizard.
+  const { data: auditsForNameCheck } = useGetAudits();
 
   const createAudit = useCreateAudit();
   const bulkAdd = useBulkAddControls();
@@ -1609,11 +1769,26 @@ export default function CreateAuditPage(): JSX.Element {
   // Step 1 state
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
+  // Tracks whether the auditor has typed into the Audit Name field — once true,
+  // the framework/product/period auto-compose effect below stops overwriting it.
+  const [nameEdited, setNameEdited] = useState(false);
   const [framework, setFramework] = useState<AuditFramework | null>(null);
   const [product, setProduct] = useState<AuditProduct | null>(null);
   const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
   const [scopeDescription, setScopeDescription] = useState("");
+
+  // Audit Name is also the top-level Azure evidence folder (see
+  // Human-Readable-Evidence-Blob-Paths design), so it is pre-filled from
+  // "{Framework} {Product} {Year}" as soon as all three are picked — the
+  // auditor can still edit it before submitting, and the backend enforces the
+  // same path-safe/uniqueness rules regardless of where the value came from.
+  useEffect(() => {
+    if (nameEdited || !framework || !product || periodStart.length < 4) return;
+    const year = periodStart.slice(0, 4);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setName(`${framework.name} ${product.name} ${year}`);
+  }, [framework, product, periodStart, nameEdited]);
 
   // Step 2 state
   const [source, setSource] = useState<ControlSourceMode>("empty");
@@ -1640,12 +1815,18 @@ export default function CreateAuditPage(): JSX.Element {
     }
   }, [frameworks, preselectedFrameworkId, framework]);
 
+  const nameConflict = name.trim().length > 0 && (auditsForNameCheck?.items ?? []).some(
+    (a) => a.name.toLowerCase() === name.trim().toLowerCase(),
+  );
+
   const step1Valid =
     name.trim().length > 0 &&
+    !nameConflict &&
     framework !== null &&
     product !== null &&
     periodStart.length > 0 &&
-    periodEnd.length > 0;
+    periodEnd.length > 0 &&
+    periodEnd >= periodStart;
 
   // Step 2 → 3: every draft row must be complete (blank rows are not allowed).
   const draftErrors: string[] = drafts
@@ -1731,6 +1912,7 @@ export default function CreateAuditPage(): JSX.Element {
         {step === 0 && (
           <Step1Form
             name={name}
+            nameConflict={nameConflict}
             framework={framework}
             product={product}
             periodStart={periodStart}
@@ -1744,7 +1926,7 @@ export default function CreateAuditPage(): JSX.Element {
             errorProducts={errorProducts}
             onRefetchFrameworks={refetchFrameworks}
             onRefetchProducts={refetchProducts}
-            onNameChange={setName}
+            onNameChange={(v) => { setNameEdited(true); setName(v); }}
             onFrameworkChange={(v) => { setFramework(v); setCopyAuditId(null); setDrafts([]); }}
             onProductChange={setProduct}
             onPeriodStartChange={setPeriodStart}

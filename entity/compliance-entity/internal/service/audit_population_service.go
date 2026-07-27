@@ -192,6 +192,17 @@ func (s *populationService) ListPopulationFiles(ctx context.Context, populationI
 	return files, nil
 }
 
+func (s *populationService) GetPopulationFileByID(ctx context.Context, fileID int) (domain.AuditEvidenceFile, error) {
+	if fileID <= 0 {
+		return domain.AuditEvidenceFile{}, &apierror.ValidationError{Msg: "fileId must be a positive integer"}
+	}
+	f, err := s.repo.GetPopulationFileByID(ctx, fileID)
+	if err != nil {
+		return domain.AuditEvidenceFile{}, err
+	}
+	return *f, nil
+}
+
 func (s *populationService) DeletePopulationFile(ctx context.Context, fileID int) error {
 	if fileID <= 0 {
 		return &apierror.ValidationError{Msg: "fileId must be a positive integer"}

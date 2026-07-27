@@ -19,7 +19,9 @@ package entity
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/repository"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
 )
@@ -46,4 +48,98 @@ func (r *populationRepo) AddFile(ctx context.Context, populationID int, fileKind
 func (r *populationRepo) UpdateStatus(ctx context.Context, populationID int, status, updatedBy string) error {
 	body := map[string]any{"status": status, "updatedBy": updatedBy}
 	return r.c.Patch(ctx, fmt.Sprintf("/populations/%d", populationID), body, nil)
+}
+
+// entPopulationRound mirrors the entity's AuditPopulation JSON.
+type entPopulationRound struct {
+	ID              int       `json:"id"`
+	ControlID       int       `json:"controlId"`
+	ReferenceNumber *int      `json:"referenceNumber"`
+	Description     *string   `json:"description"`
+	Status          string    `json:"status"`
+	DueDate         *string   `json:"dueDate"`
+	Comments        *string   `json:"comments"`
+	CreatedOn       time.Time `json:"createdOn"`
+	UpdatedOn       time.Time `json:"updatedOn"`
+}
+
+func (p entPopulationRound) toModel() *model.AuditPopulation {
+	return &model.AuditPopulation{
+		ID:              p.ID,
+		ControlID:       p.ControlID,
+		Status:          p.Status,
+		ReferenceNumber: p.ReferenceNumber,
+		Description:     p.Description,
+		DueDate:         p.DueDate,
+		Comments:        p.Comments,
+		CreatedAt:       p.CreatedOn,
+		UpdatedAt:       p.UpdatedOn,
+	}
+}
+
+func (r *populationRepo) ListByControl(ctx context.Context, auditID, controlID int) ([]*model.AuditPopulation, error) {
+	var rounds []entPopulationRound
+	if err := r.c.Get(ctx, fmt.Sprintf("/audits/%d/controls/%d/populations", auditID, controlID), &rounds); err != nil {
+		return nil, err
+	}
+	out := make([]*model.AuditPopulation, 0, len(rounds))
+	for _, p := range rounds {
+		out = append(out, p.toModel())
+	}
+	return out, nil
+}
+
+// entPopulationFile mirrors the entity's AuditEvidenceFile JSON (shared table
+// with evidence files; populationId/fileKind are set only for population rows).
+type entPopulationFile struct {
+	ID           int       `json:"id"`
+	PopulationID *int      `json:"populationId"`
+	FileKind     *string   `json:"fileKind"`
+	FileName     string    `json:"fileName"`
+	FilePath     string    `json:"filePath"`
+	FileType     *string   `json:"fileType"`
+	FileSize     *int64    `json:"fileSize"`
+	CreatedOn    time.Time `json:"createdOn"`
+}
+
+func (f entPopulationFile) toModel() *model.PopulationFile {
+	m := &model.PopulationFile{
+		ID:        f.ID,
+		FileName:  f.FileName,
+		FilePath:  f.FilePath,
+		FileType:  f.FileType,
+		FileSize:  f.FileSize,
+		CreatedAt: f.CreatedOn,
+	}
+	if f.PopulationID != nil {
+		m.PopulationID = *f.PopulationID
+	}
+	if f.FileKind != nil {
+		m.FileKind = *f.FileKind
+	}
+	return m
+}
+
+func (r *populationRepo) ListFiles(ctx context.Context, populationID int) ([]*model.PopulationFile, error) {
+	var files []entPopulationFile
+	if err := r.c.Get(ctx, fmt.Sprintf("/populations/%d/files", populationID), &files); err != nil {
+		return nil, err
+	}
+	out := make([]*model.PopulationFile, 0, len(files))
+	for _, f := range files {
+		out = append(out, f.toModel())
+	}
+	return out, nil
+}
+
+func (r *populationRepo) GetFileByID(ctx context.Context, fileID int) (*model.PopulationFile, error) {
+	var f entPopulationFile
+	if err := r.c.Get(ctx, fmt.Sprintf("/population-files/%d", fileID), &f); err != nil {
+		return nil, err
+	}
+	return f.toModel(), nil
+}
+
+func (r *populationRepo) DeleteFile(ctx context.Context, fileID int) error {
+	return r.c.Delete(ctx, fmt.Sprintf("/population-files/%d", fileID))
 }

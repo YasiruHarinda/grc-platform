@@ -132,13 +132,16 @@ func (r *controlRepo) GetEvidenceAssignment(ctx context.Context, userEmail strin
 }
 
 // FindActivePopulation returns the active population round for an OE control:
-// PENDING (first submission) or COMPLIANCE_REJECTED (need clarification, re-upload).
+// PENDING (first submission), COMPLIANCE_REJECTED (internal review sent it back),
+// or AUDITOR_REJECTED (auditor sent it back) — all three are states from which the
+// population state machine allows a transition straight back to SUBMITTED on the
+// same round (see allowedPopulationTransitions in audit_population_service.go).
 // Not found (no active population / DESIGN control) → sql.ErrNoRows.
 func (r *controlRepo) FindActivePopulation(ctx context.Context, controlID int) (int, error) {
 	var populationID int
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id FROM audit_population
-		WHERE control_id = ? AND status IN ('PENDING','COMPLIANCE_REJECTED')
+		WHERE control_id = ? AND status IN ('PENDING','COMPLIANCE_REJECTED','AUDITOR_REJECTED')
 		ORDER BY id DESC LIMIT 1`, controlID).Scan(&populationID)
 	if err != nil {
 		return 0, err
@@ -158,7 +161,7 @@ const controlSelectCols = `
   fc.version                                                AS template_version,
   c.owner_id,   u_owner.display_name AS owner_name,
   c.team_id,    t.name               AS team_name,
-  c.auditor_id, u_aud.display_name   AS auditor_name,
+  c.auditor_id, u_aud.display_name   AS auditor_name, u_aud.email AS auditor_email,
   DATE_FORMAT(c.due_date, '%Y-%m-%d') AS due_date,
   c.status, c.control_source,
   (c.due_date IS NOT NULL AND c.due_date < CURDATE() AND c.status != 'COMPLETE') AS is_overdue,
@@ -516,7 +519,7 @@ func (r *controlRepo) UpdateControl(ctx context.Context, auditID, controlID int,
 func scanControl(s scanner) (*domain.AuditControl, error) {
 	var c domain.AuditControl
 	var frameworkControlID, templateVersion, ownerID, teamID, auditorID sql.NullInt64
-	var evidenceReq, ownerName, teamName, auditorName, dueDate sql.NullString
+	var evidenceReq, ownerName, teamName, auditorName, auditorEmail, dueDate sql.NullString
 	var popDescription, popComments, popDueDate, popOwnerName, popTeamName sql.NullString
 	err := s.Scan(
 		&c.ID, &c.AuditID,
@@ -526,7 +529,7 @@ func scanControl(s scanner) (*domain.AuditControl, error) {
 		&templateVersion,
 		&ownerID, &ownerName,
 		&teamID, &teamName,
-		&auditorID, &auditorName,
+		&auditorID, &auditorName, &auditorEmail,
 		&dueDate,
 		&c.Status, &c.ControlSource, &c.IsOverdue,
 		&c.CreatedOn, &c.UpdatedOn,
@@ -557,6 +560,7 @@ func scanControl(s scanner) (*domain.AuditControl, error) {
 	c.TeamName = nullStrPtr(teamName)
 	c.AuditorID = nullIntPtr(auditorID)
 	c.AuditorName = nullStrPtr(auditorName)
+	c.AuditorEmail = nullStrPtr(auditorEmail)
 	c.DueDate = nullStrPtr(dueDate)
 	c.PopulationDescription = nullStrPtr(popDescription)
 	c.PopulationComments = nullStrPtr(popComments)

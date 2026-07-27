@@ -24,18 +24,20 @@ import (
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/domain"
 )
 
-// TrailRepository defines persistence for audit_trail.
-type TrailRepository interface {
-	CreateTrail(ctx context.Context, auditID int, req domain.CreateAuditTrailRequest) (*domain.AuditTrail, error)
-	ListTrail(ctx context.Context, auditID int, limit, offset int) ([]domain.AuditTrail, int, error)
+// AuditTrailRepository defines persistence for audit_trail.
+type AuditTrailRepository interface {
+	CreateAuditTrail(ctx context.Context, auditID int, req domain.CreateAuditTrailRequest) (*domain.AuditTrail, error)
+	// ListAuditTrail returns the audit's trail, newest first. When controlID is non-nil
+	// the result is narrowed to that control (used by the per-control History view).
+	ListAuditTrail(ctx context.Context, auditID int, controlID *int, limit, offset int) ([]domain.AuditTrail, int, error)
 }
 
-type trailRepo struct{ db *sql.DB }
+type auditTrailRepo struct{ db *sql.DB }
 
-// NewTrailRepository constructs a TrailRepository.
-func NewTrailRepository(db *sql.DB) TrailRepository { return &trailRepo{db: db} }
+// NewAuditTrailRepository constructs a AuditTrailRepository.
+func NewAuditTrailRepository(db *sql.DB) AuditTrailRepository { return &auditTrailRepo{db: db} }
 
-func (r *trailRepo) CreateTrail(ctx context.Context, auditID int, req domain.CreateAuditTrailRequest) (*domain.AuditTrail, error) {
+func (r *auditTrailRepo) CreateAuditTrail(ctx context.Context, auditID int, req domain.CreateAuditTrailRequest) (*domain.AuditTrail, error) {
 	res, err := r.db.ExecContext(ctx,
 		`INSERT INTO audit_trail
 		 (audit_id, actor_id, control_id, evidence_id, action, details, created_by)
@@ -55,29 +57,39 @@ func (r *trailRepo) CreateTrail(ctx context.Context, auditID int, req domain.Cre
 	if err != nil {
 		return nil, fmt.Errorf("audit_trail.Create last insert id: %w", err)
 	}
-	return r.getTrailByID(ctx, id)
+	return r.getAuditTrailByID(ctx, id)
 }
 
-func (r *trailRepo) getTrailByID(ctx context.Context, id int64) (*domain.AuditTrail, error) {
+func (r *auditTrailRepo) getAuditTrailByID(ctx context.Context, id int64) (*domain.AuditTrail, error) {
 	return scanAuditTrail(r.db.QueryRowContext(ctx,
 		`SELECT id, actor_id, audit_id, control_id, evidence_id, action,
 		        details, created_by, created_at
 		 FROM audit_trail WHERE id = ?`, id))
 }
 
-func (r *trailRepo) ListTrail(ctx context.Context, auditID int, limit, offset int) ([]domain.AuditTrail, int, error) {
+func (r *auditTrailRepo) ListAuditTrail(ctx context.Context, auditID int, controlID *int, limit, offset int) ([]domain.AuditTrail, int, error) {
+	// Optional control narrowing: `AND (? IS NULL OR control_id = ?)` keeps a single
+	// query for both the audit-wide and per-control cases. controlArg is passed twice.
+	var controlArg any
+	if controlID != nil {
+		controlArg = *controlID
+	}
+
 	var total int
 	if err := r.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM audit_trail WHERE audit_id = ?", auditID).Scan(&total); err != nil {
+		`SELECT COUNT(*) FROM audit_trail
+		 WHERE audit_id = ? AND (? IS NULL OR control_id = ?)`,
+		auditID, controlArg, controlArg).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("audit_trail.ListCount: %w", err)
 	}
 
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT id, actor_id, audit_id, control_id, evidence_id, action,
 		        details, created_by, created_at
-		 FROM audit_trail WHERE audit_id = ?
+		 FROM audit_trail
+		 WHERE audit_id = ? AND (? IS NULL OR control_id = ?)
 		 ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-		auditID, limit, offset)
+		auditID, controlArg, controlArg, limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("audit_trail.List: %w", err)
 	}
