@@ -1,0 +1,17 @@
+/* Oxygen UI + MUI handle all component styles via ThemeProvider + CssBaseline */
+
+/* Keep monospace style for agent log output */
+.log-box {
+  background: #1a1a2e;
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 0.85rem;
+}
+
+.log-line {
+  color: #a0f0a0;
+  padding: 0.15rem 0;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}

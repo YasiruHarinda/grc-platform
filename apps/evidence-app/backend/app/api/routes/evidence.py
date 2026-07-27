@@ -6,7 +6,6 @@ from app.models.control import Control
 from app.models.evidence import Evidence
 from app.models.evidence_file import EvidenceFile
 from app.models.submission import Submission
-from app.rbac import require_admin
 from app.schemas.evidence import EvidenceResponse, EvidenceUpdate
 from app.storage.blob_storage import save_file, delete_file
 
@@ -100,13 +99,14 @@ def create_evidence(
 
 
 @router.delete("/files/{file_id}", status_code=204)
-def delete_evidence_file(file_id: int, db: Session = Depends(get_db), user: User = Depends(require_admin)):
+def delete_evidence_file(file_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     ef = db.query(EvidenceFile).filter(EvidenceFile.id == file_id).first()
     if not ef:
         raise HTTPException(status_code=404, detail="File not found")
     evidence_id = ef.evidence_id
     deleted_file_name = ef.file_name
     evidence = db.query(Evidence).filter(Evidence.id == evidence_id).first()
+    _authorize_evidence_access(evidence, user)
     # The Evidence's own file_name/file_url is a separate, legacy reference
     # alongside the EvidenceFile list (see ADR/spec for evidence.py:95): it
     # is "primary" exactly when it still points at the file being deleted.
@@ -177,10 +177,9 @@ def update_evidence(evidence_id: int, body: EvidenceUpdate, db: Session = Depend
 
 
 @router.delete("/{evidence_id}", status_code=204)
-def delete_evidence(evidence_id: int, db: Session = Depends(get_db), user: User = Depends(require_admin)):
+def delete_evidence(evidence_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     evidence = db.query(Evidence).options(selectinload(Evidence.files)).filter(Evidence.id == evidence_id).first()
-    if not evidence:
-        raise HTTPException(status_code=404, detail="Evidence not found")
+    _authorize_evidence_access(evidence, user)
     file_names = {ef.file_name for ef in evidence.files}
     file_names.add(evidence.file_name)
     db.delete(evidence)
