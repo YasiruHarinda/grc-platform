@@ -124,6 +124,48 @@ func isActionOwnerOnly(ctx context.Context) bool {
 	return true
 }
 
+// seesEveryRisk is the hand-maintained allowlist of privileges that are only
+// ever granted to Compliance/Management/Admin (never to a plain Risk Assigner
+// or Risk Owner) — see shared_seed_data.sql's role_privilege grants. Holding
+// any one of these means the caller sees every risk, unscoped.
+//
+// Like isActionOwnerOnly's broader list above, this must be kept in sync by
+// hand: a new Compliance/Management/Admin-only privilege that isn't added here
+// would wrongly leave its holder team-scoped instead of seeing everything.
+var seesEveryRisk = []string{
+	privilege.ComplianceApproveRisk,
+	privilege.ComplianceRejectRisk,
+	privilege.CloseRisk,
+	privilege.EscalateRisk,
+	privilege.ManageComplianceRefs,
+	privilege.ManagementApproveRisk,
+	privilege.ManagementRejectRisk,
+	privilege.CreateManagementActionPlan,
+	privilege.ManageTeams,
+	privilege.ManageRiskScores,
+}
+
+// isTeamScopedOnly reports whether the caller should be scoped to risks
+// belonging to their own risk teams — true for a Risk Assigner or Risk Owner
+// who holds none of the Compliance/Management/Admin-only privileges in
+// seesEveryRisk. Explicitly excludes Action-Owner-only callers (handled by
+// isActionOwnerOnly's own, narrower scoping instead) so the two never overlap:
+// without this check, someone holding only VIEW_RISKS + COMPLETE_ACTION_STEPS
+// would satisfy both, since neither privilege appears in seesEveryRisk.
+// Classifying by privilege (not role name) matches isActionOwnerOnly and the
+// rest of this module's convention.
+func isTeamScopedOnly(ctx context.Context) bool {
+	if isActionOwnerOnly(ctx) {
+		return false
+	}
+	for _, p := range seesEveryRisk {
+		if auth.HasPrivilege(ctx, p) {
+			return false
+		}
+	}
+	return true
+}
+
 // callerUserID resolves the authenticated caller to their internal user id,
 // the same email/subject lookup handleListRisks' Action Owner list scoping
 // uses. Returns (nil, nil) — not an error — when the caller has no platform
@@ -148,31 +190,60 @@ func (d *Deps) callerUserID(ctx context.Context) (*int, error) {
 }
 
 // riskVisibleToCaller reports whether the caller may view riskID's data — the
-// by-id counterpart to handleListRisks' Action Owner list scoping, closing the
-// gap where that scoping was otherwise cosmetic (a caller restricted in the
-// list could still read any risk directly by id). Any caller holding a
-// broader-than-Action-Owner privilege always passes; their access is already
-// governed by the ViewRisks check callers perform before this. An
-// Action-Owner-only caller passes only if they're the action_owner_id of one
-// of the risk's action plans (STANDARD or MANAGEMENT).
+// by-id counterpart to handleListRisks' list scoping, closing the gap where
+// that scoping was otherwise cosmetic (a caller restricted in the list could
+// still read any risk directly by id). Any caller holding a privilege outside
+// both narrower tiers below always passes; their access is already governed
+// by the ViewRisks check callers perform before this.
 func (d *Deps) riskVisibleToCaller(ctx context.Context, riskID int) (bool, error) {
-	if !isActionOwnerOnly(ctx) {
-		return true, nil
-	}
-	callerID, err := d.callerUserID(ctx)
-	if err != nil || callerID == nil {
-		return false, err
-	}
-	plans, err := d.ActionPlan.List(ctx, riskID)
-	if err != nil {
-		return false, err
-	}
-	for _, p := range plans {
-		if p.ActionOwnerID != nil && *p.ActionOwnerID == *callerID {
-			return true, nil
+	if isActionOwnerOnly(ctx) {
+		// Passes only if they're the action_owner_id of one of the risk's
+		// action plans (STANDARD or MANAGEMENT).
+		callerID, err := d.callerUserID(ctx)
+		if err != nil || callerID == nil {
+			return false, err
 		}
+		plans, err := d.ActionPlan.List(ctx, riskID)
+		if err != nil {
+			return false, err
+		}
+		for _, p := range plans {
+			if p.ActionOwnerID != nil && *p.ActionOwnerID == *callerID {
+				return true, nil
+			}
+		}
+		return false, nil
 	}
-	return false, nil
+	if isTeamScopedOnly(ctx) {
+		// Passes only if the caller belongs to the risk's source register or
+		// assignment team.
+		userInfo := auth.FromContext(ctx)
+		if userInfo == nil {
+			return false, nil
+		}
+		email := userInfo.Email
+		if email == "" {
+			email = userInfo.Subject
+		}
+		caller, err := d.Users.GetByEmail(ctx, email)
+		if err != nil {
+			return false, err
+		}
+		if caller == nil || len(caller.RiskTeamIDs) == 0 {
+			return false, nil
+		}
+		risk, err := d.Risk.GetByID(ctx, riskID)
+		if err != nil {
+			return false, err
+		}
+		for _, teamID := range caller.RiskTeamIDs {
+			if teamID == risk.SourceRegisterID || teamID == risk.AssignmentTeamID {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	return true, nil
 }
 
 // handleListRisks serves GET /api/v1/risks.
@@ -251,6 +322,33 @@ func (d *Deps) handleListRisks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		filter.ActionOwnerID = &caller.ID
+	}
+
+	// Team scoping: a Risk Assigner/Risk Owner-only caller (no Compliance/
+	// Management/Admin privilege) sees only risks belonging to their own risk
+	// teams. Fails closed the same way the Action Owner branch above does — an
+	// unresolvable caller or one with zero team memberships gets an empty page,
+	// never an unscoped one.
+	if isTeamScopedOnly(r.Context()) {
+		email, ok := requireUserEmail(w, r)
+		if !ok {
+			return
+		}
+		caller, err := d.Users.GetByEmail(r.Context(), email)
+		if err != nil {
+			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+			return
+		}
+		if caller == nil || len(caller.RiskTeamIDs) == 0 {
+			response.WriteJSONValue(w, http.StatusOK, model.RiskListPage{
+				Items:  []*model.RiskListItem{},
+				Total:  0,
+				Offset: filter.Offset,
+				Limit:  filter.Limit,
+			})
+			return
+		}
+		filter.ScopeTeamIDs = caller.RiskTeamIDs
 	}
 
 	page, err := d.Risk.List(r.Context(), filter)

@@ -159,6 +159,10 @@ func (r *riskRepo) SearchRisks(ctx context.Context, req domain.SearchRisksReques
 		where += " AND EXISTS (SELECT 1 FROM risk_action_plan ap WHERE ap.risk_id = r.id AND ap.action_owner_id = ?)"
 		args = append(args, *req.ActionOwnerID)
 	}
+	if scopeClause, scopeArgs := teamScopeFilter("r", req.ScopeTeamIDs); scopeClause != "" {
+		where += scopeClause
+		args = append(args, scopeArgs...)
+	}
 	// created_at is a datetime, so the bounds are widened to whole days;
 	// otherwise "submitted up to the 5th" would exclude everything after
 	// midnight on the 5th.

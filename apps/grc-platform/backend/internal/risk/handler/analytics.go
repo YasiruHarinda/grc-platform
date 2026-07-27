@@ -21,6 +21,7 @@ import (
 	"strconv"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
@@ -42,7 +43,40 @@ func (d *Deps) handleAnalyticsSummary(w http.ResponseWriter, r *http.Request) {
 		registerID = &id
 	}
 
-	summary, err := d.Analytics.Summary(r.Context(), registerID)
+	// Team scoping: a Risk Assigner/Risk Owner-only caller (no Compliance/
+	// Management/Admin privilege) sees only their own risk teams' data. Fails
+	// closed like handleListRisks' equivalent scoping — an unresolvable caller
+	// or one with zero team memberships gets a zeroed summary, never an
+	// unscoped one.
+	var teamIDs []int
+	if isTeamScopedOnly(r.Context()) {
+		email, ok := requireUserEmail(w, r)
+		if !ok {
+			return
+		}
+		caller, err := d.Users.GetByEmail(r.Context(), email)
+		if err != nil {
+			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+			return
+		}
+		if caller == nil || len(caller.RiskTeamIDs) == 0 {
+			response.WriteJSONValue(w, http.StatusOK, model.AnalyticsSummary{
+				Trend:                []model.TrendPoint{},
+				LevelDistribution:    []model.MonthLevelCount{},
+				IdentifiedByRegister: []model.MonthRegisterCount{},
+				ClosedByRegister:     []model.MonthRegisterCount{},
+				RegisterShares:       []model.RegisterShare{},
+				ComplianceShares:     []model.ComplianceShare{},
+				TreatmentShares:      []model.TreatmentShare{},
+				WorkflowFunnel:       []model.WorkflowStageCount{},
+				AgingRisks:           []model.AgingRiskItem{},
+			})
+			return
+		}
+		teamIDs = caller.RiskTeamIDs
+	}
+
+	summary, err := d.Analytics.Summary(r.Context(), registerID, teamIDs)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return

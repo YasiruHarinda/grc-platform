@@ -132,8 +132,13 @@ type ListRisksFilter struct {
 	// Set automatically by the handler for callers who only hold
 	// COMPLETE_ACTION_STEPS_RISK (Action Owners) — never client-supplied.
 	ActionOwnerID *int
-	Limit         int // rows per page; handler enforces a sensible default and max
-	Offset        int // zero-based row offset
+	// ScopeTeamIDs restricts to risks whose source register or assignment team
+	// is one of these. Set automatically by the handler for callers who hold
+	// Risk Hub privileges but none of the "sees everything" ones (Risk
+	// Assigner/Risk Owner-only) — never client-supplied.
+	ScopeTeamIDs []int
+	Limit        int // rows per page; handler enforces a sensible default and max
+	Offset       int // zero-based row offset
 }
 
 // RiskListPage is the paginated response for GET /api/v1/risks.
@@ -180,6 +185,7 @@ type RiskDetail struct {
 	OwnerID                int     `json:"owner_id"`
 	ImpactDescription      *string `json:"impact_description"`
 	TreatmentStrategy      *string `json:"treatment_strategy"`
+	SourceRegisterID       int     `json:"source_register_id"`
 	AssignmentTeamID       int     `json:"assignment_team_id"`
 	Progress               *string `json:"progress"`
 	ImplementationDate     *string `json:"implementation_date"`

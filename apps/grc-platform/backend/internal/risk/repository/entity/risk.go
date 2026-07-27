@@ -127,6 +127,7 @@ func (r *riskRepository) List(ctx context.Context, filter model.ListRisksFilter)
 		"dueTo":              filter.DueTo,
 		"dueOverdueOnly":     filter.DueOverdueOnly,
 		"actionOwnerId":      filter.ActionOwnerID,
+		"scopeTeamIds":       filter.ScopeTeamIDs,
 		"pagination":         map[string]int{"limit": filter.Limit, "offset": filter.Offset},
 	}
 
@@ -227,6 +228,7 @@ func (r *riskRepository) GetByID(ctx context.Context, id int) (*model.RiskDetail
 		OwnerID:                e.OwnerID,
 		ImpactDescription:      e.ImpactDescription,
 		TreatmentStrategy:      e.TreatmentStrategy,
+		SourceRegisterID:       e.SourceRegisterID,
 		AssignmentTeamID:       e.AssignmentTeamID,
 		Progress:               e.Progress,
 		ImplementationDate:     dateOnlyPtrToRFC3339(e.ImplementationDate),

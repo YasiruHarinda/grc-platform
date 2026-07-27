@@ -79,7 +79,7 @@ export default function ActionPlanStep({ assignmentTeams, users }: ActionPlanSte
 
   const evidenceAttachments = useWatch({ control, name: "evidenceAttachments" });
 
-  // Risk Owner is restricted to users already belonging (via risk_team_id) to
+  // Risk Owner is restricted to users already belonging (via risk_team_ids) to
   // either the source register team (picked in Step 1) or this assignment
   // team — unlike Action Owner, Risk Owner must stay a real, already-provisioned
   // grc-platform account (see conversation: HR entity employees don't
@@ -89,8 +89,8 @@ export default function ActionPlanStep({ assignmentTeams, users }: ActionPlanSte
   const eligibleTeamIds = [sourceRegister, assignmentTeam].filter(
     (id): id is number => typeof id === "number",
   );
-  const eligibleRiskOwners = users.filter(
-    (u) => u.risk_team_id !== null && eligibleTeamIds.includes(u.risk_team_id),
+  const eligibleRiskOwners = users.filter((u) =>
+    u.risk_team_ids.some((teamId) => eligibleTeamIds.includes(teamId)),
   );
 
   // Clear a previously-selected Risk Owner if changing the source register or

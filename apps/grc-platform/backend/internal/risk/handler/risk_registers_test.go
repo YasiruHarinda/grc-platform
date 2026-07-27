@@ -47,6 +47,18 @@ func contextFor(t *testing.T, role string) context.Context {
 			privilege.CreateRisk:          true,
 			privilege.CompleteActionSteps: true,
 		},
+		"grc-platform-risk-assigner": {
+			privilege.ViewRisks:  true,
+			privilege.CreateRisk: true,
+		},
+		"grc-platform-risk-owner": {
+			privilege.ViewRisks:        true,
+			privilege.OwnerApproveRisk: true,
+		},
+		"grc-platform-risk-compliance-team": {
+			privilege.ViewRisks:             true,
+			privilege.ComplianceApproveRisk: true,
+		},
 	})
 	ctx := middleware.WithUserInfo(context.Background(), &middleware.UserInfo{Email: "test@wso2.com"})
 	return privilege.WithContext(ctx, store.Resolve([]string{role}))
@@ -65,6 +77,27 @@ func TestIsActionOwnerOnly(t *testing.T) {
 		got := isActionOwnerOnly(contextFor(t, c.role))
 		if got != c.want {
 			t.Errorf("isActionOwnerOnly(%s) = %v, want %v", c.role, got, c.want)
+		}
+	}
+}
+
+func TestIsTeamScopedOnly(t *testing.T) {
+	cases := []struct {
+		role string
+		want bool
+	}{
+		{"grc-platform-risk-assigner", true},
+		{"grc-platform-risk-owner", true},
+		{"grc-platform-risk-compliance-team", false}, // holds ComplianceApproveRisk, in seesEveryRisk
+		{"grc-platform-risk-management", false},      // holds ManagementApproveRisk, in seesEveryRisk
+		// Action-Owner-only must never also be classified as team-scoped —
+		// isTeamScopedOnly explicitly excludes it so the two never overlap.
+		{"grc-platform-risk-action-owner", false},
+	}
+	for _, c := range cases {
+		got := isTeamScopedOnly(contextFor(t, c.role))
+		if got != c.want {
+			t.Errorf("isTeamScopedOnly(%s) = %v, want %v", c.role, got, c.want)
 		}
 	}
 }

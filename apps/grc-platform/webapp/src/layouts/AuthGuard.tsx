@@ -15,9 +15,10 @@
 // under the License.
 
 import { type JSX, useEffect, useRef, useState } from "react";
-import { useAsgardeo } from "@asgardeo/react";
+import { useAsgardeo, useBrowserUrl } from "@asgardeo/react";
 import { Box, Button, LinearProgress, Typography } from "@wso2/oxygen-ui";
 import AppLayout from "@layouts/AppLayout";
+import { authConfig } from "@config/authConfig";
 
 const isMockAuth = window.config?.GRC_PLATFORM_MOCK_AUTH === true;
 
@@ -55,6 +56,7 @@ export default function AuthGuard(): JSX.Element {
 // ProtectedRoute's built-in loader-swap isn't needed here regardless.
 function RealAuthGuard(): JSX.Element {
   const { isSignedIn, signIn } = useAsgardeo();
+  const { hasAuthParams } = useBrowserUrl();
   const hasTriggeredSignInRef = useRef(false);
   const [signInError, setSignInError] = useState(false);
 
@@ -72,6 +74,20 @@ function RealAuthGuard(): JSX.Element {
 
   useEffect(() => {
     if (isSignedIn) return;
+    // The URL still carries the OAuth callback params (code + session_state)
+    // right after redirecting back from Asgardeo, for as long as the SDK is
+    // exchanging them for a session — which is a real network round trip and
+    // routinely takes longer than the 500ms grace period below. Racing that
+    // timer here previously fired a second, redundant signIn() mid-exchange;
+    // since the user had just authenticated, Asgardeo's SSO session silently
+    // re-approved it, reloading the whole app with a fresh code and
+    // restarting the same race — visible as the app "loading again and
+    // again" after sign-in until one exchange happened to finish inside a
+    // 500ms window. Skip the timer entirely while those params are present
+    // and let the in-flight exchange finish on its own.
+    if (hasAuthParams(new URL(window.location.href), authConfig.signInRedirectURL)) {
+      return;
+    }
     // Grace period: don't redirect to the login page the instant isSignedIn
     // is falsy — give the SDK a brief window to finish hydrating an existing
     // session from storage first (isSignedIn can start out false/undefined
@@ -86,7 +102,7 @@ function RealAuthGuard(): JSX.Element {
       }
     }, 500);
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- signIn deliberately omitted: not guaranteed reference-stable, and including it would reset this grace-period timer on every unrelated render, potentially preventing it from ever firing
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- signIn/hasAuthParams deliberately omitted: neither is guaranteed reference-stable, and including them would reset this grace-period timer on every unrelated render, potentially preventing it from ever firing
   }, [isSignedIn]);
 
   if (signInError) {

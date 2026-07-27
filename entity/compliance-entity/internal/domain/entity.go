@@ -41,13 +41,15 @@ type Pagination struct {
 // =============================================================================
 
 // User represents a platform user from the shared `user` table.
+// RiskTeamIDs comes from the user_risk_team join table (a user may belong to
+// zero or more risk teams); AuditTeamID remains a single column on `user`.
 type User struct {
 	ID          int       `json:"id"`
 	Email       string    `json:"email"`
 	DisplayName string    `json:"displayName"`
 	UserType    string    `json:"userType"` // INTERNAL | EXTERNAL
 	AuditTeamID *int      `json:"auditTeamId"`
-	RiskTeamID  *int      `json:"riskTeamId"`
+	RiskTeamIDs []int     `json:"riskTeamIds"`
 	Status      string    `json:"status"`
 	CreatedOn   time.Time `json:"createdOn"`
 	UpdatedOn   time.Time `json:"updatedOn"`
@@ -518,6 +520,11 @@ type SearchRisksRequest struct {
 	// (STANDARD or MANAGEMENT) whose action_owner_id matches — how the Action
 	// Owner's risk list is scoped to only what they're assigned to.
 	ActionOwnerID *int `json:"actionOwnerId"`
+	// ScopeTeamIDs restricts to risks whose source register or assignment team
+	// is one of these — how a Risk Assigner/Risk Owner-only caller's list is
+	// scoped to their own risk teams. Empty means unrestricted; the GRC backend
+	// decides whether a caller needs this at all before populating it.
+	ScopeTeamIDs []int `json:"scopeTeamIds"`
 
 	// Submitted* bound created_at, Due* bound implementation_date. Dates are
 	// YYYY-MM-DD and inclusive at both ends.
@@ -550,17 +557,21 @@ type CreateUserRequest struct {
 	DisplayName string `json:"displayName"`
 	UserType    string `json:"userType"` // INTERNAL | EXTERNAL; defaults to INTERNAL
 	AuditTeamID *int   `json:"auditTeamId"`
-	RiskTeamID  *int   `json:"riskTeamId"`
+	RiskTeamIDs []int  `json:"riskTeamIds"`
 	Status      string `json:"status"`
 	CreatedBy   string `json:"createdBy"`
 }
 
 // UpdateUserRequest is the payload for PATCH /users/{id}.
+// RiskTeamIDs is a pointer to a slice, not a plain slice, so a caller can omit
+// it to leave team membership untouched — a nil pointer means "not provided,"
+// while a non-nil (possibly empty) slice means "replace membership with exactly
+// this set." Every other field follows the same nil-means-omitted convention.
 type UpdateUserRequest struct {
 	DisplayName *string `json:"displayName"`
 	UserType    *string `json:"userType"` // INTERNAL | EXTERNAL
 	AuditTeamID *int    `json:"auditTeamId"`
-	RiskTeamID  *int    `json:"riskTeamId"`
+	RiskTeamIDs *[]int  `json:"riskTeamIds"`
 	Status      *string `json:"status"`
 	UpdatedBy   string  `json:"updatedBy"`
 }

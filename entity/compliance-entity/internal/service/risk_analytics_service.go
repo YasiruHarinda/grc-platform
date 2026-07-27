@@ -56,25 +56,26 @@ func (s *riskAnalyticsService) Summary(ctx context.Context, req domain.RiskAnaly
 		return domain.RiskAnalyticsSummary{}, &apierror.ValidationError{Msg: "registerId must be a positive integer"}
 	}
 	registerID := req.RegisterID
+	teamIDs := req.ScopeTeamIDs
 	now := time.Now().UTC()
 	monthStart := firstOfMonth(now)
 	since := monthStart.AddDate(0, -(trendWindowMonths - 1), 0)
 	months := scaffoldMonths(since, trendWindowMonths)
 
-	kpis, err := s.buildKPIs(ctx, registerID, monthStart)
+	kpis, err := s.buildKPIs(ctx, registerID, teamIDs, monthStart)
 	if err != nil {
 		return domain.RiskAnalyticsSummary{}, err
 	}
 
-	identified, err := s.repo.IdentifiedTrend(ctx, registerID, dateString(since))
+	identified, err := s.repo.IdentifiedTrend(ctx, registerID, teamIDs, dateString(since))
 	if err != nil {
 		return domain.RiskAnalyticsSummary{}, err
 	}
-	closed, err := s.repo.ClosedTrend(ctx, registerID, dateString(since))
+	closed, err := s.repo.ClosedTrend(ctx, registerID, teamIDs, dateString(since))
 	if err != nil {
 		return domain.RiskAnalyticsSummary{}, err
 	}
-	levelRows, err := s.repo.LevelDistribution(ctx, registerID, dateString(since))
+	levelRows, err := s.repo.LevelDistribution(ctx, registerID, teamIDs, dateString(since))
 	if err != nil {
 		return domain.RiskAnalyticsSummary{}, err
 	}
@@ -86,15 +87,15 @@ func (s *riskAnalyticsService) Summary(ctx context.Context, req domain.RiskAnaly
 	var registerShares []domain.RegisterShare
 	var identifiedByRegister, closedByRegister []domain.MonthRegisterCount
 	if registerID == nil {
-		registerShares, err = s.repo.RegisterTotals(ctx)
+		registerShares, err = s.repo.RegisterTotals(ctx, teamIDs)
 		if err != nil {
 			return domain.RiskAnalyticsSummary{}, err
 		}
-		identifiedRows, err := s.repo.IdentifiedTrendByRegister(ctx, registerID, dateString(since))
+		identifiedRows, err := s.repo.IdentifiedTrendByRegister(ctx, registerID, teamIDs, dateString(since))
 		if err != nil {
 			return domain.RiskAnalyticsSummary{}, err
 		}
-		closedRows, err := s.repo.ClosedTrendByRegister(ctx, registerID, dateString(since))
+		closedRows, err := s.repo.ClosedTrendByRegister(ctx, registerID, teamIDs, dateString(since))
 		if err != nil {
 			return domain.RiskAnalyticsSummary{}, err
 		}
@@ -102,19 +103,19 @@ func (s *riskAnalyticsService) Summary(ctx context.Context, req domain.RiskAnaly
 		closedByRegister = buildTrendByRegister(months, closedRows)
 	}
 
-	complianceShares, err := s.repo.ComplianceDistribution(ctx, registerID)
+	complianceShares, err := s.repo.ComplianceDistribution(ctx, registerID, teamIDs)
 	if err != nil {
 		return domain.RiskAnalyticsSummary{}, err
 	}
-	treatmentShares, err := s.repo.TreatmentMix(ctx, registerID)
+	treatmentShares, err := s.repo.TreatmentMix(ctx, registerID, teamIDs)
 	if err != nil {
 		return domain.RiskAnalyticsSummary{}, err
 	}
-	funnel, err := s.repo.WorkflowFunnel(ctx, registerID)
+	funnel, err := s.repo.WorkflowFunnel(ctx, registerID, teamIDs)
 	if err != nil {
 		return domain.RiskAnalyticsSummary{}, err
 	}
-	aging, err := s.repo.AgingRisks(ctx, registerID, agingRisksLimit)
+	aging, err := s.repo.AgingRisks(ctx, registerID, teamIDs, agingRisksLimit)
 	if err != nil {
 		return domain.RiskAnalyticsSummary{}, err
 	}
@@ -145,16 +146,16 @@ func (s *riskAnalyticsService) Summary(ctx context.Context, req domain.RiskAnaly
 	}, nil
 }
 
-func (s *riskAnalyticsService) buildKPIs(ctx context.Context, registerID *int, monthStart time.Time) (*domain.RiskAnalyticsKPIs, error) {
-	newThisMonth, err := s.repo.NewThisMonthCount(ctx, registerID, dateString(monthStart))
+func (s *riskAnalyticsService) buildKPIs(ctx context.Context, registerID *int, teamIDs []int, monthStart time.Time) (*domain.RiskAnalyticsKPIs, error) {
+	newThisMonth, err := s.repo.NewThisMonthCount(ctx, registerID, teamIDs, dateString(monthStart))
 	if err != nil {
 		return nil, err
 	}
-	avgDays, err := s.repo.AvgDaysToClose(ctx, registerID)
+	avgDays, err := s.repo.AvgDaysToClose(ctx, registerID, teamIDs)
 	if err != nil {
 		return nil, err
 	}
-	avgScore, err := s.repo.AvgEffectiveScore(ctx, registerID)
+	avgScore, err := s.repo.AvgEffectiveScore(ctx, registerID, teamIDs)
 	if err != nil {
 		return nil, err
 	}

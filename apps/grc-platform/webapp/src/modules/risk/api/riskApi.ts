@@ -48,7 +48,7 @@ export interface UserOption {
   id: number;
   display_name: string;
   email: string;
-  risk_team_id: number | null;
+  risk_team_ids: number[];
 }
 
 // EmployeeOption is a WSO2 employee returned by GET /api/v1/employees/search,
