@@ -440,8 +440,14 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function fetchSourceRegisterTeams(authFetch: AuthFetch): Promise<RiskTeam[]> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/teams?type=SOURCE_REGISTER`);
+// mine=true restricts the result to the caller's own risk teams — used by the
+// Dashboard/Analytics/Registers-list register filters so they never offer a
+// register the caller can't see any data for. AddRisk's create-flow register
+// picker omits it, since raising a risk under a register you don't belong to
+// is a legitimate action this scoping was never meant to restrict.
+export async function fetchSourceRegisterTeams(authFetch: AuthFetch, mine?: boolean): Promise<RiskTeam[]> {
+  const query = mine ? "&mine=true" : "";
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/teams?type=SOURCE_REGISTER${query}`);
   return handleResponse<RiskTeam[]>(res);
 }
 

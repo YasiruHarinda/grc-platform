@@ -50,7 +50,7 @@ export default function RiskDashboard(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchSourceRegisterTeams(authFetch).then(setTeams).catch(console.error);
+    fetchSourceRegisterTeams(authFetch, true).then(setTeams).catch(console.error);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

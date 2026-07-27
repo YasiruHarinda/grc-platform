@@ -435,7 +435,7 @@ export default function RiskRegisters(): JSX.Element {
   const statusColumnOptions = statusOptions.map((s) => ({ label: statusLabel(s), value: s }));
 
   useEffect(() => {
-    fetchSourceRegisterTeams(authFetch).then(setSourceTeams).catch(console.error);
+    fetchSourceRegisterTeams(authFetch, true).then(setSourceTeams).catch(console.error);
     fetchAssignmentTeams(authFetch).then(setAssignmentTeams).catch(console.error);
     fetchRiskScores(authFetch).then(setRiskScores).catch(console.error);
     fetchUsers(authFetch).then(setUsers).catch(console.error);
