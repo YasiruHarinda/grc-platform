@@ -12,7 +12,7 @@ class AgentTask(Base):
     prompt: Mapped[str] = mapped_column(String(4000), nullable=False)
     region_hint: Mapped[str | None] = mapped_column(String(500), nullable=True)
     portal_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
-    control_id: Mapped[int | None] = mapped_column(ForeignKey("controls.id"), nullable=True)
+    control_id: Mapped[int | None] = mapped_column(ForeignKey("controls.id", ondelete="SET NULL"), nullable=True)
     title: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     # run | login — "login" tasks just open a browser at `prompt` (a URL) for the
