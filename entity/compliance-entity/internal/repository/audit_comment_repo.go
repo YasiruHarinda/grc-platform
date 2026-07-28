@@ -31,6 +31,11 @@ type CommentRepository interface {
 	CreateComment(ctx context.Context, evidenceID int, req domain.CreateAuditCommentRequest) (*domain.AuditComment, error)
 	ListCommentsByEvidence(ctx context.Context, evidenceID int) ([]domain.AuditComment, error)
 	DeleteComment(ctx context.Context, commentID int) error
+	// ResolveControlAndAudit looks up the control and audit a piece of evidence
+	// belongs to, via audit_evidence.control_id -> audit_control.audit_id. Used
+	// to attribute a COMMENTED audit_trail row to the right audit/control, since
+	// audit_comment itself only stores evidence_id.
+	ResolveControlAndAudit(ctx context.Context, evidenceID int) (controlID, auditID int, err error)
 }
 
 type commentRepo struct{ db *sql.DB }
@@ -85,6 +90,22 @@ func (r *commentRepo) ListCommentsByEvidence(ctx context.Context, evidenceID int
 		comments = append(comments, *c)
 	}
 	return comments, rows.Err()
+}
+
+func (r *commentRepo) ResolveControlAndAudit(ctx context.Context, evidenceID int) (int, int, error) {
+	var controlID, auditID int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT ac.id, ac.audit_id
+		 FROM audit_evidence ae
+		 JOIN audit_control ac ON ac.id = ae.control_id
+		 WHERE ae.id = ?`, evidenceID).Scan(&controlID, &auditID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, 0, &apierror.NotFoundError{Msg: "evidence not found"}
+	}
+	if err != nil {
+		return 0, 0, fmt.Errorf("comment.ResolveControlAndAudit(%d): %w", evidenceID, err)
+	}
+	return controlID, auditID, nil
 }
 
 func (r *commentRepo) DeleteComment(ctx context.Context, commentID int) error {

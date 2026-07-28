@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
@@ -60,11 +61,35 @@ type entTrail struct {
 }
 
 func (r *trailRepo) ListByControl(ctx context.Context, auditID, controlID, limit int) ([]*model.AuditTrailEntry, int, error) {
+	path := fmt.Sprintf("/audits/%d/trail?controlId=%d&limit=%d", auditID, controlID, limit)
+	return r.list(ctx, path)
+}
+
+// trailDateFormat matches the entity's ?from=/?to= parsing (date-only, no time).
+const trailDateFormat = "2006-01-02"
+
+func (r *trailRepo) ListByAudit(ctx context.Context, auditID int, filter model.TrailFilter, limit, offset int) ([]*model.AuditTrailEntry, int, error) {
+	q := url.Values{}
+	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("offset", fmt.Sprintf("%d", offset))
+	for _, cid := range filter.ControlIDs {
+		q.Add("controlId", fmt.Sprintf("%d", cid))
+	}
+	if filter.From != nil {
+		q.Set("from", filter.From.Format(trailDateFormat))
+	}
+	if filter.To != nil {
+		q.Set("to", filter.To.Format(trailDateFormat))
+	}
+	path := fmt.Sprintf("/audits/%d/trail?%s", auditID, q.Encode())
+	return r.list(ctx, path)
+}
+
+func (r *trailRepo) list(ctx context.Context, path string) ([]*model.AuditTrailEntry, int, error) {
 	var resp struct {
 		Trail []entTrail `json:"trail"`
 		Total int        `json:"total"`
 	}
-	path := fmt.Sprintf("/audits/%d/trail?controlId=%d&limit=%d", auditID, controlID, limit)
 	if err := r.c.Get(ctx, path, &resp); err != nil {
 		return nil, 0, err
 	}

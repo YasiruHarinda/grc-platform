@@ -29,10 +29,17 @@ import (
 // entity's own max page size (100), so it is the most we can get in one call.
 const defaultTrailLimit = 100
 
+// defaultAuditTrailLimit is the default page size for the audit-wide activity
+// log. Mirrors the frontend's activityLogPageSize.
+const defaultAuditTrailLimit = 50
+
 // TrailService defines business operations for the audit trail (append-only log).
 type TrailService interface {
 	// ListByControl returns a control's history, newest first, with the total count.
 	ListByControl(ctx context.Context, auditID, controlID int) ([]*model.AuditTrailEntry, int, error)
+	// ListByAudit returns the whole audit's trail (audit-level and every control's
+	// events together), newest first, narrowed by filter, with the total count.
+	ListByAudit(ctx context.Context, auditID int, filter model.TrailFilter, limit, offset int) ([]*model.AuditTrailEntry, int, error)
 	// RecordEvidenceAction appends an attribution entry for an evidence/population
 	// action, tagging the channel it came through (web-app vs evidence-app) and the
 	// token issuer so portal actions stay distinguishable (design §I). evidenceID may
@@ -41,6 +48,10 @@ type TrailService interface {
 	// RecordControlAction appends a control-scoped lifecycle entry (e.g. CREATED, or
 	// a status transition carrying {"from","to"} in details). details may be nil.
 	RecordControlAction(ctx context.Context, auditID, controlID int, action, actor string, details map[string]any) error
+	// RecordAuditAction appends an audit-level lifecycle entry (CREATED, UPDATED,
+	// DELETED) — no control_id, since these describe the audit record itself.
+	// details may be nil.
+	RecordAuditAction(ctx context.Context, auditID int, action, actor string, details map[string]any) error
 }
 
 type trailService struct {
@@ -59,6 +70,17 @@ func (s *trailService) ListByControl(ctx context.Context, auditID, controlID int
 	return entries, total, nil
 }
 
+func (s *trailService) ListByAudit(ctx context.Context, auditID int, filter model.TrailFilter, limit, offset int) ([]*model.AuditTrailEntry, int, error) {
+	if limit <= 0 {
+		limit = defaultAuditTrailLimit
+	}
+	entries, total, err := s.repo.ListByAudit(ctx, auditID, filter, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	return entries, total, nil
+}
+
 func (s *trailService) RecordControlAction(ctx context.Context, auditID, controlID int, action, actor string, details map[string]any) error {
 	var detailsJSON string
 	if len(details) > 0 {
@@ -70,6 +92,18 @@ func (s *trailService) RecordControlAction(ctx context.Context, auditID, control
 	}
 	ctrl := controlID
 	return s.repo.Create(ctx, auditID, &ctrl, nil, action, detailsJSON, actor)
+}
+
+func (s *trailService) RecordAuditAction(ctx context.Context, auditID int, action, actor string, details map[string]any) error {
+	var detailsJSON string
+	if len(details) > 0 {
+		b, err := json.Marshal(details)
+		if err != nil {
+			return err
+		}
+		detailsJSON = string(b)
+	}
+	return s.repo.Create(ctx, auditID, nil, nil, action, detailsJSON, actor)
 }
 
 func (s *trailService) RecordEvidenceAction(ctx context.Context, auditID, controlID, evidenceID int, action, actor, via, issuer string) error {

@@ -19,6 +19,7 @@ import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { controlsQueryKey } from "@modules/audit/api/useGetControls";
 import { auditQueryKey } from "@modules/audit/api/useGetAudit";
+import { extractErrorMessage } from "@modules/audit/api/apiError";
 
 interface DecisionPayload {
   auditId: number;
@@ -48,8 +49,7 @@ export function useValidateEvidence() {
         },
       );
       if (!res.ok) {
-        const msg = await res.text().catch(() => "");
-        throw new Error(msg || `Failed to record decision (${res.status})`);
+        throw new Error(await extractErrorMessage(res, `Failed to record decision (${res.status})`));
       }
       return res.json() as Promise<{ status: string }>;
     },

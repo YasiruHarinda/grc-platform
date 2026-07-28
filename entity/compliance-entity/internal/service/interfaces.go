@@ -169,7 +169,7 @@ type RiskAssessmentService interface {
 // AuditTrailService defines operations on audit_trail.
 type AuditTrailService interface {
 	CreateAuditTrail(ctx context.Context, auditID int, req domain.CreateAuditTrailRequest) (domain.AuditTrail, error)
-	ListAuditTrail(ctx context.Context, auditID int, controlID *int, limit, offset int) (domain.ListAuditTrailResponse, error)
+	ListAuditTrail(ctx context.Context, auditID int, filter domain.TrailFilter, limit, offset int) (domain.ListAuditTrailResponse, error)
 }
 
 // CommentService defines operations on audit_comment (evidence-scoped).

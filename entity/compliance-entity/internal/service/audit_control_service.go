@@ -196,6 +196,25 @@ func (s *controlService) DeleteControl(ctx context.Context, auditID, controlID i
 	if controlID <= 0 {
 		return &apierror.ValidationError{Msg: "controlId must be a positive integer"}
 	}
+	// audit_evidence and audit_population both cascade-delete with the control at
+	// the DB level (see audit_schema.sql), so once work has started on a control
+	// deleting it silently destroys that work. Block it here instead.
+	evidenceCount, activePopulationCount, err := s.repo.CountDeletionBlockers(ctx, controlID)
+	if err != nil {
+		return err
+	}
+	if evidenceCount > 0 || activePopulationCount > 0 {
+		var reasons []string
+		if evidenceCount > 0 {
+			reasons = append(reasons, fmt.Sprintf("%d evidence submission(s)", evidenceCount))
+		}
+		if activePopulationCount > 0 {
+			reasons = append(reasons, fmt.Sprintf("%d population(s) in progress", activePopulationCount))
+		}
+		return &apierror.ConflictError{
+			Msg: fmt.Sprintf("cannot delete control: %s exist for this control", strings.Join(reasons, " and ")),
+		}
+	}
 	return s.repo.DeleteControl(ctx, auditID, controlID)
 }
 

@@ -17,6 +17,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
+import { extractErrorMessage } from "@modules/audit/api/apiError";
 
 /** One immutable event in a control's history (append-only audit trail). */
 export interface TrailEntry {
@@ -30,7 +31,9 @@ export interface TrailEntry {
     | "COMMENTED"
     | "ESCALATED"
     | "AI_VALIDATED"
-    | "EXPORTED";
+    | "EXPORTED"
+    | "UPDATED"
+    | "DELETED";
   controlId: number | null;
   evidenceId: number | null;
   createdBy: string;
@@ -46,7 +49,15 @@ export interface TrailDetails {
   to?: string;
   via?: string;
   comment?: string;
+  isInternal?: boolean;
   controlNumber?: string;
+  // Audit-level CREATED/DELETED carry name; UPDATED carries whichever fields
+  // changed (periodStart/periodEnd/scopeDescription/status).
+  name?: string;
+  periodStart?: string;
+  periodEnd?: string;
+  scopeDescription?: string;
+  status?: string;
   [key: string]: unknown;
 }
 
@@ -70,8 +81,7 @@ export function useGetTrail(auditId: number, controlId: number, enabled: boolean
         `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}/trail`,
       );
       if (!res.ok) {
-        const msg = await res.text().catch(() => "");
-        throw new Error(msg || `Failed to load history (${res.status})`);
+        throw new Error(await extractErrorMessage(res, `Failed to load history (${res.status})`));
       }
       const body = (await res.json()) as TrailListResponse;
       return body.items ?? [];

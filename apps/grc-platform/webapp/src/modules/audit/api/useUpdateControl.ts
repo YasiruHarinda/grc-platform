@@ -20,6 +20,7 @@ import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { controlsQueryKey } from "@modules/audit/api/useGetControls";
 import { auditQueryKey } from "@modules/audit/api/useGetAudit";
 import type { UpdateControlRequest } from "@modules/audit/types/audit";
+import { extractErrorMessage } from "@modules/audit/api/apiError";
 
 interface UpdateControlPayload {
   auditId: number;
@@ -43,8 +44,7 @@ export function useUpdateControl() {
         },
       );
       if (!res.ok) {
-        const msg = await res.text().catch(() => "");
-        throw new Error(msg || `Failed to update control (${res.status})`);
+        throw new Error(await extractErrorMessage(res, `Failed to update control (${res.status})`));
       }
     },
 

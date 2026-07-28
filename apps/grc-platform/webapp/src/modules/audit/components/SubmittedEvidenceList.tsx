@@ -25,6 +25,7 @@ import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { formatTimestamp } from "@modules/audit/utils/format";
 import { viewOrDownloadBlob } from "@modules/audit/utils/fileView";
+import { extractErrorMessage } from "@modules/audit/api/apiError";
 
 function sizeLabel(bytes: number | null): string {
   if (bytes === null) return "";
@@ -80,8 +81,7 @@ export default function SubmittedEvidenceList({
         { method: "DELETE" },
       );
       if (!res.ok) {
-        const msg = await res.text().catch(() => "");
-        throw new Error(msg || `Failed to remove file (${res.status})`);
+        throw new Error(await extractErrorMessage(res, `Failed to remove file (${res.status})`));
       }
       // The backend reports the control status after the delete: removing the
       // last file sends the submission back to EVIDENCE_PENDING.

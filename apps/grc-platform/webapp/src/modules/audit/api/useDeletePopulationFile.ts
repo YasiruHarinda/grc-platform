@@ -18,6 +18,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { populationQueryKey } from "@modules/audit/api/useGetPopulation";
+import { extractErrorMessage } from "@modules/audit/api/apiError";
 
 interface DeletePopulationFilePayload {
   auditId: number;
@@ -41,8 +42,7 @@ export function useDeletePopulationFile() {
         { method: "DELETE" },
       );
       if (!res.ok) {
-        const msg = await res.text().catch(() => "");
-        throw new Error(msg || `Failed to remove file (${res.status})`);
+        throw new Error(await extractErrorMessage(res, `Failed to remove file (${res.status})`));
       }
     },
     onSuccess: (_data, { auditId, controlId }) => {

@@ -72,7 +72,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	evidenceSvc := service.NewEvidenceService(evidenceRepo)
 	dashboardSvc := service.NewDashboardService(dashboardRepo)
 	populationSvc := service.NewPopulationService(populationRepo)
-	commentSvc := service.NewCommentService(commentRepo)
+	commentSvc := service.NewCommentService(commentRepo, auditTrailRepo)
 	aiValidationSvc := service.NewAIValidationService(aiValidationRepo)
 	auditTrailSvc := service.NewAuditTrailService(auditTrailRepo)
 	riskTeamSvc := service.NewRiskTeamService(riskTeamRepo)

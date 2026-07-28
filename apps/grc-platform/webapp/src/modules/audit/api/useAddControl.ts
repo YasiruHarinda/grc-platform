@@ -20,6 +20,7 @@ import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { controlsQueryKey } from "@modules/audit/api/useGetControls";
 import { auditQueryKey } from "@modules/audit/api/useGetAudit";
 import type { AddControlRequest, AuditControl } from "@modules/audit/types/audit";
+import { extractErrorMessage } from "@modules/audit/api/apiError";
 
 interface AddControlPayload {
   auditId: number;
@@ -42,8 +43,7 @@ export function useAddControl() {
         },
       );
       if (!res.ok) {
-        const msg = await res.text().catch(() => "");
-        throw new Error(msg || `Failed to add control (${res.status})`);
+        throw new Error(await extractErrorMessage(res, `Failed to add control (${res.status})`));
       }
       return res.json() as Promise<AuditControl>;
     },

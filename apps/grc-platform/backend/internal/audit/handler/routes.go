@@ -99,6 +99,8 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("PATCH /api/v1/audits/{id}/controls/{controlId}/status", ch.updateControlStatus)
 	// Immutable per-control history (append-only audit_trail) for the History tab.
 	mux.HandleFunc("GET /api/v1/audits/{id}/controls/{controlId}/trail", tlh.listControlTrail)
+	// Audit-wide activity log (audit-level events + every control's events, filterable).
+	mux.HandleFunc("GET /api/v1/audits/{id}/trail", tlh.listAuditTrail)
 
 	// Evidence submission (backend-proxied upload flow).
 	// Note: /upload-link, /upload and /submit must be registered before the plain

@@ -143,6 +143,10 @@ type TrailRepository interface {
 	// ListByControl returns the trail entries for one control, newest first, along
 	// with the total count. limit caps the number of entries returned.
 	ListByControl(ctx context.Context, auditID, controlID, limit int) ([]*model.AuditTrailEntry, int, error)
+	// ListByAudit returns the whole audit's trail (audit-level and every control's
+	// events together), newest first, narrowed by filter, for the audit-wide
+	// activity log.
+	ListByAudit(ctx context.Context, auditID int, filter model.TrailFilter, limit, offset int) ([]*model.AuditTrailEntry, int, error)
 }
 
 // AIValidationLogRepository reads AI evidence-validation rows from the

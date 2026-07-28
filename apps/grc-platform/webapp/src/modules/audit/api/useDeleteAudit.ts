@@ -18,6 +18,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { AUDITS_QUERY_KEY } from "@modules/audit/api/useGetAudits";
+import { extractErrorMessage } from "@modules/audit/api/apiError";
 
 export function useDeleteAudit() {
   const authFetch = useAuthApiClient();
@@ -29,8 +30,7 @@ export function useDeleteAudit() {
         method: "DELETE",
       });
       if (!res.ok) {
-        const msg = await res.text().catch(() => "");
-        throw new Error(msg || `Failed to delete audit (${res.status})`);
+        throw new Error(await extractErrorMessage(res, `Failed to delete audit (${res.status})`));
       }
     },
     onSuccess: () => {

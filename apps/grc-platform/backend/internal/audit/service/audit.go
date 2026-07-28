@@ -21,6 +21,7 @@ package service
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -42,15 +43,33 @@ type auditService struct {
 	repo          repository.AuditRepository
 	frameworkRepo repository.FrameworkRepository
 	productRepo   repository.ProductRepository
+	// trail records audit-level lifecycle events (created, updated, deleted) to
+	// the append-only audit trail. Best-effort; may be nil (recording is then
+	// skipped) — same contract as controlService.recordTrail.
+	trail TrailService
 }
 
-// NewAuditService wires audit, framework, and product repos so Create can validate references.
+// NewAuditService wires audit, framework, and product repos so Create can
+// validate references, plus trail for audit-level lifecycle logging.
 func NewAuditService(
 	repo repository.AuditRepository,
 	frameworkRepo repository.FrameworkRepository,
 	productRepo repository.ProductRepository,
+	trail TrailService,
 ) AuditService {
-	return &auditService{repo: repo, frameworkRepo: frameworkRepo, productRepo: productRepo}
+	return &auditService{repo: repo, frameworkRepo: frameworkRepo, productRepo: productRepo, trail: trail}
+}
+
+// recordTrail appends a best-effort audit-level lifecycle entry. A failure here
+// must never fail the operation that triggered it — the trail is advisory
+// history, not part of the write it describes.
+func (s *auditService) recordTrail(ctx context.Context, auditID int, action, actor string, details map[string]any) {
+	if s.trail == nil {
+		return
+	}
+	if err := s.trail.RecordAuditAction(ctx, auditID, action, actor, details); err != nil {
+		slog.WarnContext(ctx, "record audit trail failed", "auditId", auditID, "action", action, "err", err)
+	}
 }
 
 func (s *auditService) List(ctx context.Context) ([]*model.Audit, error) {
@@ -113,7 +132,12 @@ func (s *auditService) Create(ctx context.Context, req model.CreateAuditRequest,
 	}
 	req.Name = name
 
-	return s.repo.Create(ctx, req, createdBy)
+	created, err := s.repo.Create(ctx, req, createdBy)
+	if err != nil {
+		return nil, err
+	}
+	s.recordTrail(ctx, created.ID, "CREATED", createdBy, map[string]any{"name": created.Name})
+	return created, nil
 }
 
 // composeAuditName builds the default audit name "{Framework} {Product} {Year}"
@@ -159,7 +183,32 @@ func (s *auditService) Update(ctx context.Context, id int, req model.UpdateAudit
 	if req.Name != nil && !strings.EqualFold(strings.TrimSpace(*req.Name), a.Name) {
 		return &apierror.Error{StatusCode: http.StatusConflict, Body: "audit name is locked once created — it is used as the evidence storage path"}
 	}
-	return s.repo.Update(ctx, id, req, updatedBy)
+	if err := s.repo.Update(ctx, id, req, updatedBy); err != nil {
+		return err
+	}
+	// Logged as a generic UPDATED entry regardless of which fields changed — no
+	// special-cased status-change event, even when Status is the only field set.
+	s.recordTrail(ctx, id, "UPDATED", updatedBy, updatedAuditFields(req))
+	return nil
+}
+
+// updatedAuditFields collects the non-nil fields of an UpdateAuditRequest into a
+// details map for the trail entry, so the log shows what actually changed.
+func updatedAuditFields(req model.UpdateAuditRequest) map[string]any {
+	details := map[string]any{}
+	if req.PeriodStart != nil {
+		details["periodStart"] = *req.PeriodStart
+	}
+	if req.PeriodEnd != nil {
+		details["periodEnd"] = *req.PeriodEnd
+	}
+	if req.ScopeDescription != nil {
+		details["scopeDescription"] = *req.ScopeDescription
+	}
+	if req.Status != nil {
+		details["status"] = *req.Status
+	}
+	return details
 }
 
 func (s *auditService) Delete(ctx context.Context, id int, deletedBy string) error {
@@ -173,5 +222,11 @@ func (s *auditService) Delete(ctx context.Context, id int, deletedBy string) err
 	if a == nil {
 		return &apierror.Error{StatusCode: http.StatusNotFound, Body: "audit not found"}
 	}
+	// Recorded before the delete call: the audit itself is soft-deleted (status
+	// -> REMOVED, schema audit_schema.sql:111) so the row survives either way,
+	// but this matches the "record before delete" ordering used for controls
+	// (where the row is a hard delete and order matters) rather than relying on
+	// that distinction holding forever.
+	s.recordTrail(ctx, id, "DELETED", deletedBy, map[string]any{"name": a.Name})
 	return s.repo.Delete(ctx, id, deletedBy)
 }

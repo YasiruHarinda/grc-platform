@@ -18,6 +18,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { controlsQueryKey } from "@modules/audit/api/useGetControls";
+import { extractErrorMessage } from "@modules/audit/api/apiError";
 
 interface RequestTimePayload {
   auditId: number;
@@ -36,8 +37,7 @@ export function useRequestSampleTime() {
         { method: "POST" },
       );
       if (!res.ok) {
-        const msg = await res.text().catch(() => "");
-        throw new Error(msg || `Failed to request more time (${res.status})`);
+        throw new Error(await extractErrorMessage(res, `Failed to request more time (${res.status})`));
       }
       return res.json() as Promise<{ status: string }>;
     },

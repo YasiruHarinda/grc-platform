@@ -60,7 +60,7 @@ type ControlService interface {
 	// UpdateStatusWithSample is UpdateStatus plus setting the sample note
 	// atomically — used when the auditor submits the sample.
 	UpdateStatusWithSample(ctx context.Context, auditID, controlID int, status, sampleReference, updatedBy string) error
-	Delete(ctx context.Context, auditID, controlID int) error
+	Delete(ctx context.Context, auditID, controlID int, deletedBy string) error
 	GetAssignedForEvidence(ctx context.Context, userEmail string) ([]*model.AssignedControlForEvidence, error)
 	// AssignedAuditID returns the audit id for controlID when userEmail's team is
 	// assigned and the control is actionable; found=false means not assigned.
@@ -222,7 +222,7 @@ func (s *controlService) UpdateStatusWithSample(ctx context.Context, auditID, co
 	return nil
 }
 
-func (s *controlService) Delete(ctx context.Context, auditID, controlID int) error {
+func (s *controlService) Delete(ctx context.Context, auditID, controlID int, deletedBy string) error {
 	c, err := s.repo.GetByID(ctx, auditID, controlID)
 	if err != nil {
 		return err
@@ -230,6 +230,13 @@ func (s *controlService) Delete(ctx context.Context, auditID, controlID int) err
 	if c == nil {
 		return &apierror.Error{StatusCode: http.StatusNotFound, Body: "control not found"}
 	}
+	// Record before deleting: audit_trail.control_id is a foreign key to
+	// audit_control.id, so writing this row after the delete would fail (there's
+	// no longer a matching control row) and the DELETED entry would silently
+	// never appear — recordTrail swallows its own errors by design.
+	s.recordTrail(ctx, auditID, controlID, "DELETED", deletedBy, map[string]any{
+		"controlNumber": c.ControlNumber,
+	})
 	return s.repo.Delete(ctx, auditID, controlID)
 }
 

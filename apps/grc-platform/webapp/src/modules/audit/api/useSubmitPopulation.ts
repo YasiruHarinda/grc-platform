@@ -19,6 +19,7 @@ import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { controlsQueryKey } from "@modules/audit/api/useGetControls";
 import { populationQueryKey } from "@modules/audit/api/useGetPopulation";
+import { extractErrorMessage } from "@modules/audit/api/apiError";
 
 interface SubmitPopulationPayload {
   auditId: number;
@@ -27,8 +28,7 @@ interface SubmitPopulationPayload {
 }
 
 async function errText(res: Response, action: string): Promise<string> {
-  const msg = await res.text().catch(() => "");
-  return msg || `Failed to ${action} (${res.status})`;
+  return extractErrorMessage(res, `Failed to ${action} (${res.status})`);
 }
 
 /**

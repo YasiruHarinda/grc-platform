@@ -19,6 +19,7 @@ import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { controlsQueryKey } from "@modules/audit/api/useGetControls";
 import { evidenceQueryKey } from "@modules/audit/api/useGetEvidence";
+import { extractErrorMessage } from "@modules/audit/api/apiError";
 
 interface WithdrawPayload {
   auditId: number;
@@ -42,8 +43,7 @@ export function useWithdrawEvidence() {
         { method: "POST" },
       );
       if (!res.ok) {
-        const msg = await res.text().catch(() => "");
-        throw new Error(msg || `Failed to withdraw submission (${res.status})`);
+        throw new Error(await extractErrorMessage(res, `Failed to withdraw submission (${res.status})`));
       }
       return res.json() as Promise<{ status: string }>;
     },

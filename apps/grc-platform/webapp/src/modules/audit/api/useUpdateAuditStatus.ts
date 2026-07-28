@@ -20,6 +20,7 @@ import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { AUDITS_QUERY_KEY } from "@modules/audit/api/useGetAudits";
 import { AUDIT_DASHBOARD_QUERY_KEY } from "@modules/audit/api/useGetDashboard";
 import type { AuditStatus } from "@modules/audit/types/audit";
+import { extractErrorMessage } from "@modules/audit/api/apiError";
 
 /** Changes an audit's lifecycle status (e.g. archive / unarchive). */
 export function useUpdateAuditStatus() {
@@ -34,8 +35,7 @@ export function useUpdateAuditStatus() {
         body: JSON.stringify({ status }),
       });
       if (!res.ok) {
-        const msg = await res.text().catch(() => "");
-        throw new Error(msg || `Failed to update audit status (${res.status})`);
+        throw new Error(await extractErrorMessage(res, `Failed to update audit status (${res.status})`));
       }
     },
     onSuccess: () => {

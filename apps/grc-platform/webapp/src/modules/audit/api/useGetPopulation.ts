@@ -17,6 +17,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
+import { extractErrorMessage } from "@modules/audit/api/apiError";
 
 export interface PopulationFile {
   id: number;
@@ -64,8 +65,7 @@ export function useGetPopulation(auditId: number, controlId: number, enabled: bo
         `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}/population`,
       );
       if (!res.ok) {
-        const msg = await res.text().catch(() => "");
-        throw new Error(msg || `Failed to load population (${res.status})`);
+        throw new Error(await extractErrorMessage(res, `Failed to load population (${res.status})`));
       }
       return res.json() as Promise<PopulationView>;
     },

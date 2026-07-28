@@ -160,7 +160,8 @@ func (h *evidenceHandler) submitSample(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	actor := auth.FromContext(r.Context()).Email
+	user := auth.FromContext(r.Context())
+	actor := user.Email
 	fileCount, err := h.popSvc.SubmitSample(r.Context(), round.ID, req.FolderPath, actor)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
@@ -176,6 +177,10 @@ func (h *evidenceHandler) submitSample(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	// UpdateStatusWithSample already records a generic status-change trail row
+	// (statusChangeAction); this adds the same explicit attribution row that
+	// evidence/population submission get, matching population.go's submitPopulation.
+	recordEvidenceTrail(r.Context(), h.trailSvc, auditID, controlID, 0, actor, channelWebApp, user.Issuer)
 	response.WriteJSONValue(w, http.StatusCreated, map[string]any{
 		"status":    "SUBMITTED_SAMPLE",
 		"fileCount": fileCount,

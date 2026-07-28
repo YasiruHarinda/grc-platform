@@ -18,17 +18,25 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"log"
 
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/apierror"
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/domain"
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/repository"
 )
 
-type commentService struct{ repo repository.CommentRepository }
+type commentService struct {
+	repo repository.CommentRepository
+	// trail records a COMMENTED entry to the append-only audit trail. Best-effort;
+	// may be nil (recording is then skipped) — same contract as the gateway's
+	// controlService.recordTrail.
+	trail repository.AuditTrailRepository
+}
 
 // NewCommentService constructs a CommentService.
-func NewCommentService(repo repository.CommentRepository) CommentService {
-	return &commentService{repo: repo}
+func NewCommentService(repo repository.CommentRepository, trail repository.AuditTrailRepository) CommentService {
+	return &commentService{repo: repo, trail: trail}
 }
 
 func (s *commentService) CreateComment(ctx context.Context, evidenceID int, req domain.CreateAuditCommentRequest) (domain.AuditComment, error) {
@@ -45,7 +53,45 @@ func (s *commentService) CreateComment(ctx context.Context, evidenceID int, req 
 	if err != nil {
 		return domain.AuditComment{}, err
 	}
+	s.recordCommentTrail(ctx, evidenceID, req)
 	return *c, nil
+}
+
+// recordCommentTrail appends a best-effort COMMENTED entry to audit_trail. A
+// failure here must never fail the comment write that triggered it — the trail
+// is advisory history, not part of the write it describes (mirrors the
+// gateway's controlService.recordTrail contract).
+func (s *commentService) recordCommentTrail(ctx context.Context, evidenceID int, req domain.CreateAuditCommentRequest) {
+	if s.trail == nil {
+		return
+	}
+	controlID, auditID, err := s.repo.ResolveControlAndAudit(ctx, evidenceID)
+	if err != nil {
+		log.Printf("comment trail: resolve control/audit for evidence %d: %v", evidenceID, err)
+		return
+	}
+	detailsBytes, err := json.Marshal(map[string]any{
+		// key is "comment" (not "content") to match the frontend's existing
+		// TrailDetails.comment field, read by ControlHistoryTimeline's readComment.
+		"comment":    req.Content,
+		"isInternal": req.IsInternal,
+	})
+	if err != nil {
+		log.Printf("comment trail: marshal details for evidence %d: %v", evidenceID, err)
+		return
+	}
+	details := string(detailsBytes)
+	evID := evidenceID
+	trailReq := domain.CreateAuditTrailRequest{
+		ControlID:  &controlID,
+		EvidenceID: &evID,
+		Action:     "COMMENTED",
+		Details:    &details,
+		CreatedBy:  &req.CreatedBy,
+	}
+	if _, err := s.trail.CreateAuditTrail(ctx, auditID, trailReq); err != nil {
+		log.Printf("comment trail: create for evidence %d: %v", evidenceID, err)
+	}
 }
 
 func (s *commentService) ListCommentsByEvidence(ctx context.Context, evidenceID int) (domain.ListAuditCommentsResponse, error) {

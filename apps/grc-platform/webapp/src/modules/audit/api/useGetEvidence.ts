@@ -17,6 +17,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
+import { extractErrorMessage } from "@modules/audit/api/apiError";
 
 export interface EvidenceFile {
   id: number;
@@ -53,8 +54,7 @@ export function useGetEvidence(auditId: number, controlId: number, enabled: bool
         `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}/evidence`,
       );
       if (!res.ok) {
-        const msg = await res.text().catch(() => "");
-        throw new Error(msg || `Failed to load evidence (${res.status})`);
+        throw new Error(await extractErrorMessage(res, `Failed to load evidence (${res.status})`));
       }
       return res.json() as Promise<EvidenceSubmission[]>;
     },

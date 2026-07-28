@@ -1010,6 +1010,16 @@ type CreateAuditTrailRequest struct {
 	CreatedBy  *string `json:"createdBy"`
 }
 
+// TrailFilter narrows a GET /audits/{auditId}/trail listing. ControlIDs empty
+// means "don't filter on this"; multiple values are OR'd (IN (...)), matching
+// the audit-wide activity log's Control column filter. Empty returns the whole
+// audit's trail (audit-level rows and every control's rows together).
+type TrailFilter struct {
+	ControlIDs []int
+	From       *time.Time
+	To         *time.Time
+}
+
 // ListAuditTrailResponse is returned by GET /audits/{auditId}/trail.
 type ListAuditTrailResponse struct {
 	Trail  []AuditTrail `json:"trail"`

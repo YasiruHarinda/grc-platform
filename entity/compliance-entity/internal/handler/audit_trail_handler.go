@@ -20,11 +20,17 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/apierror"
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/domain"
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/service"
 )
+
+// trailDateFormat is the query-param format for ?from=/?to= — date-only (no
+// time), matching a typical date-range picker. ?to is treated as inclusive of
+// that whole day (see below).
+const trailDateFormat = "2006-01-02"
 
 // AuditTrailHandler handles /audits/{auditId}/trail routes.
 type AuditTrailHandler struct{ svc service.AuditTrailService }
@@ -64,17 +70,37 @@ func (h *AuditTrailHandler) ListAuditTrail(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	// Optional ?controlId=<n> narrows the trail to a single control.
-	var controlID *int
-	if raw := r.URL.Query().Get("controlId"); raw != "" {
+	q := r.URL.Query()
+	// Optional repeated ?controlId=<n>&controlId=<n>... narrows to one or more
+	// controls (OR'd). Empty means "every control (and audit-level rows)".
+	var filter domain.TrailFilter
+	for _, raw := range q["controlId"] {
 		cid, err := strconv.Atoi(raw)
 		if err != nil {
 			writeServiceError(w, r, &apierror.ValidationError{Msg: "controlId must be a positive integer"})
 			return
 		}
-		controlID = &cid
+		filter.ControlIDs = append(filter.ControlIDs, cid)
 	}
-	resp, err := h.svc.ListAuditTrail(r.Context(), auditID, controlID, limit, offset)
+	if raw := q.Get("from"); raw != "" {
+		from, err := time.Parse(trailDateFormat, raw)
+		if err != nil {
+			writeServiceError(w, r, &apierror.ValidationError{Msg: "from must be YYYY-MM-DD"})
+			return
+		}
+		filter.From = &from
+	}
+	if raw := q.Get("to"); raw != "" {
+		to, err := time.Parse(trailDateFormat, raw)
+		if err != nil {
+			writeServiceError(w, r, &apierror.ValidationError{Msg: "to must be YYYY-MM-DD"})
+			return
+		}
+		// Inclusive of the whole day: shift to the start of the next day.
+		to = to.AddDate(0, 0, 1)
+		filter.To = &to
+	}
+	resp, err := h.svc.ListAuditTrail(r.Context(), auditID, filter, limit, offset)
 	if err != nil {
 		writeServiceError(w, r, err)
 		return

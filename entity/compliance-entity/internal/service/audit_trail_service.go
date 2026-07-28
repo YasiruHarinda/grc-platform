@@ -51,6 +51,7 @@ var validTrailActions = map[string]bool{
 	"CREATED": true, "UPLOADED": true, "RESUBMITTED": true,
 	"APPROVED": true, "REJECTED": true, "COMMENTED": true,
 	"ESCALATED": true, "AI_VALIDATED": true, "EXPORTED": true,
+	"UPDATED": true, "DELETED": true,
 }
 
 func (s *auditTrailService) CreateAuditTrail(ctx context.Context, auditID int, req domain.CreateAuditTrailRequest) (domain.AuditTrail, error) {
@@ -71,16 +72,18 @@ func (s *auditTrailService) CreateAuditTrail(ctx context.Context, auditID int, r
 	return *e, nil
 }
 
-func (s *auditTrailService) ListAuditTrail(ctx context.Context, auditID int, controlID *int, limit, offset int) (domain.ListAuditTrailResponse, error) {
+func (s *auditTrailService) ListAuditTrail(ctx context.Context, auditID int, filter domain.TrailFilter, limit, offset int) (domain.ListAuditTrailResponse, error) {
 	if auditID <= 0 {
 		return domain.ListAuditTrailResponse{}, &apierror.ValidationError{Msg: "auditId must be a positive integer"}
 	}
-	if controlID != nil && *controlID <= 0 {
-		return domain.ListAuditTrailResponse{}, &apierror.ValidationError{Msg: "controlId must be a positive integer"}
+	for _, cid := range filter.ControlIDs {
+		if cid <= 0 {
+			return domain.ListAuditTrailResponse{}, &apierror.ValidationError{Msg: "controlId must be a positive integer"}
+		}
 	}
 	p := domain.Pagination{Limit: limit, Offset: offset}
 	normalizePagination(&p)
-	entries, total, err := s.repo.ListAuditTrail(ctx, auditID, controlID, p.Limit, p.Offset)
+	entries, total, err := s.repo.ListAuditTrail(ctx, auditID, filter, p.Limit, p.Offset)
 	if err != nil {
 		return domain.ListAuditTrailResponse{}, err
 	}
