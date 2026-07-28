@@ -50,20 +50,34 @@ def _get_blob_service() -> BlobServiceClient:
     return _blob_service
 
 
-def save_file(file: UploadFile) -> tuple[str, str]:
+def save_file(file: UploadFile, *, prefix: str = "", label: str | None = None) -> tuple[str, str]:
     """Upload an evidence file to blob storage and return (blob_name, public_url).
+
+    `prefix` and `label` are both optional and both default to producing
+    exactly the old behaviour -- a bare `{uuid}{ext}` -- so every existing
+    caller that doesn't pass them is unaffected. When given, the blob name
+    becomes `{prefix}{label}-{uuid}{ext}`: `prefix` is meant to be a
+    `product/framework/control/`-shaped path (see
+    `app.storage.blob_paths.build_control_prefix`) and `label` a short,
+    already-sanitised descriptive name (see
+    `app.storage.blob_paths.sanitize_title`). This function does no
+    sanitisation itself -- a caller passing an unsanitised `label` or
+    `prefix` gets exactly that in the blob name, slashes and all -- so
+    building a safe hierarchical name is entirely the caller's job; this is
+    just string assembly plus the upload.
 
     Rejects a file with no name at all (`filename` is `None` or empty
     string) as a bad request rather than storing it. The stored blob name
-    is always a fresh UUID; the client's filename is only ever consulted
-    for its extension, so a present-but-unusual name (no extension, a
-    trailing dot) still works unchanged. A *missing* name is different: a
-    browser file input always attaches one, so in practice this only
-    happens with a non-browser client (the Runner, curl, a script) that
-    built its request incorrectly. Silently storing it under a generated,
-    extensionless name would hide that mistake rather than surface it, so
-    it is rejected instead, the same way this app already rejects other
-    malformed input up front rather than accepting or masking it.
+    always ends in a fresh UUID; the client's filename is only ever
+    consulted for its extension, so a present-but-unusual name (no
+    extension, a trailing dot) still works unchanged. A *missing* name is
+    different: a browser file input always attaches one, so in practice
+    this only happens with a non-browser client (the Runner, curl, a
+    script) that built its request incorrectly. Silently storing it under a
+    generated, extensionless name would hide that mistake rather than
+    surface it, so it is rejected instead, the same way this app already
+    rejects other malformed input up front rather than accepting or masking
+    it.
 
     Also rejects, before any network call, a content type outside the image
     allow-list, or actual bytes over `MAX_UPLOAD_SIZE_BYTES` -- so a
@@ -98,7 +112,8 @@ def save_file(file: UploadFile) -> tuple[str, str]:
         )
 
     extension = Path(file.filename).suffix
-    unique_name = f"{uuid.uuid4()}{extension}"
+    name_stub = f"{label}-" if label else ""
+    unique_name = f"{prefix}{name_stub}{uuid.uuid4()}{extension}"
     blob = _get_blob_service().get_blob_client(
         container=settings.AZURE_STORAGE_CONTAINER, blob=unique_name
     )
