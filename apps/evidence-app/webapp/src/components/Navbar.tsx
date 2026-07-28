@@ -11,6 +11,8 @@ import Menu from "@mui/material/Menu";
 import MenuItem from "@mui/material/MenuItem";
 import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
+import Snackbar from "@mui/material/Snackbar";
+import Alert from "@mui/material/Alert";
 import { BarsIcon, SunIcon, CrescentBrightIcon, ArrowRightFromBracketIcon } from "@oxygen-ui/react-icons";
 import { useNavigate } from "react-router-dom";
 import { useAuthContext } from "@asgardeo/auth-react";
@@ -29,6 +31,7 @@ export default function Navbar({ onToggleSidebar }: NavbarProps) {
   const { signOut } = useAuthContext();
   const queryClient = useQueryClient();
   const [accountMenuAnchor, setAccountMenuAnchor] = useState<HTMLElement | null>(null);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
 
   const isDark = mode === "dark";
   const userInitial = (user?.email ?? "U").charAt(0).toUpperCase();
@@ -48,7 +51,17 @@ export default function Navbar({ onToggleSidebar }: NavbarProps) {
     // so the next person to sign in on this machine never sees a flash of
     // the previous user's data before the first refetch replaces it.
     queryClient.clear();
-    signOut();
+    // If signing out fails there is nothing to see: the redirect never
+    // happens, the cleared queries refetch against the still-live session,
+    // and the app looks exactly as it did. Someone on a shared machine would
+    // walk away from an open session believing they had left it. Say so
+    // instead, so they know to close the browser.
+    signOut().catch((err) => {
+      console.error("Sign-out failed:", err);
+      setSignOutError(
+        "Sign-out failed — you are still signed in. Close the browser before leaving this machine.",
+      );
+    });
   };
 
   return (
@@ -164,6 +177,18 @@ export default function Navbar({ onToggleSidebar }: NavbarProps) {
           </>
         )}
       </Toolbar>
+
+      {/* Deliberately does not auto-hide: this one has to be read and
+          dismissed, not missed while walking away from the machine. */}
+      <Snackbar
+        open={signOutError != null}
+        onClose={() => setSignOutError(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert onClose={() => setSignOutError(null)} severity="error" variant="filled" sx={{ width: "100%" }}>
+          {signOutError}
+        </Alert>
+      </Snackbar>
     </AppBar>
   );
 }
