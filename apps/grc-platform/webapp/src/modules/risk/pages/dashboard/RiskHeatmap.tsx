@@ -58,7 +58,7 @@ export default function RiskHeatmap({ cells, scores }: RiskHeatmapProps): JSX.El
   const overall = overallResidualRisk(cells);
 
   return (
-    <Box sx={{ maxWidth: 480, mx: "auto" }}>
+    <Box sx={{ maxWidth: 640, mx: "auto" }}>
       <Box sx={{ display: "flex", alignItems: "stretch", gap: 1 }}>
         <Box
           sx={{
@@ -114,7 +114,7 @@ export default function RiskHeatmap({ cells, scores }: RiskHeatmapProps): JSX.El
                   const levelName = score
                     ? (LEVEL_LABELS[score.risk_level] ?? score.risk_level)
                     : "";
-                  const cellDescription = `Likelihood ${likelihood} × Impact ${impact}${levelName ? ` — ${levelName}` : ""}: ${count} open risk${count === 1 ? "" : "s"}`;
+                  const cellDescription = `Likelihood ${likelihood} × Impact ${impact}${levelName ? ` ; ${levelName}` : ""}: ${count} open risk${count === 1 ? "" : "s"}`;
                   return (
                     <Tooltip key={`${likelihood}-${impact}`} title={cellDescription}>
                       <Box
@@ -122,8 +122,8 @@ export default function RiskHeatmap({ cells, scores }: RiskHeatmapProps): JSX.El
                         role="img"
                         aria-label={cellDescription}
                         sx={{
-                          aspectRatio: "1.6",
-                          minHeight: 56,
+                          aspectRatio: "1.3",
+                          minHeight: 84,
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",

@@ -14,9 +14,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import { useCallback, useRef, useState } from "react";
 import { Controller, useFormContext, useWatch } from "react-hook-form";
 import {
   AdapterDateFns,
+  Autocomplete,
   Box,
   ComplexSelect,
   DatePickers,
@@ -36,7 +38,15 @@ import {
 import type { JSX, ReactNode } from "react";
 import type { AddRiskFormValues } from "./types";
 import { QUARTERS, YEAR_OPTIONS } from "./constants";
-import type { ComplianceReference, RiskTeam, UserOption } from "../../api/riskApi";
+import { searchEmployees } from "../../api/riskApi";
+import type { ComplianceReference, EmployeeOption, RiskTeam, UserOption } from "../../api/riskApi";
+import { useAuthApiClient } from "@hooks/useAuthApiClient";
+
+// Minimum characters before searching — matches the backend's own floor
+// (GET /api/v1/employees/search ignores shorter queries) so we don't fire
+// requests that would just come back empty.
+const MIN_EMPLOYEE_SEARCH_LEN = 2;
+const EMPLOYEE_SEARCH_DEBOUNCE_MS = 300;
 
 const { DatePicker, LocalizationProvider } = DatePickers;
 
@@ -77,12 +87,42 @@ export default function BasicInformationStep({
   complianceRefs,
   users,
 }: BasicInformationStepProps): JSX.Element {
-  const { control, clearErrors } = useFormContext<AddRiskFormValues>();
+  const { control, clearErrors, setValue } = useFormContext<AddRiskFormValues>();
+  const authFetch = useAuthApiClient();
 
   const year             = useWatch({ control, name: "year" });
   const quarter          = useWatch({ control, name: "quarter" });
   const sourceRegister   = useWatch({ control, name: "sourceRegister" });
   const identifiedByType = useWatch({ control, name: "identifiedByType" });
+
+  // Employee search is live against the HR entity (never our own database),
+  // so — unlike the other dropdowns — options aren't fetched once up front.
+  const [employeeOptions, setEmployeeOptions] = useState<EmployeeOption[]>([]);
+  const [employeeSearchLoading, setEmployeeSearchLoading] = useState(false);
+  const [employeeSearchError, setEmployeeSearchError] = useState<string | null>(null);
+  const employeeSearchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const runEmployeeSearch = useCallback((query: string) => {
+    if (query.trim().length < MIN_EMPLOYEE_SEARCH_LEN) {
+      setEmployeeOptions([]);
+      setEmployeeSearchError(null);
+      return;
+    }
+    setEmployeeSearchLoading(true);
+    setEmployeeSearchError(null);
+    searchEmployees(authFetch, query)
+      .then(setEmployeeOptions)
+      .catch(() => {
+        setEmployeeOptions([]);
+        setEmployeeSearchError("Unable to reach the employee directory. Please try again.");
+      })
+      .finally(() => setEmployeeSearchLoading(false));
+  }, [authFetch]);
+
+  const handleEmployeeInputChange = (value: string): void => {
+    if (employeeSearchDebounce.current) clearTimeout(employeeSearchDebounce.current);
+    employeeSearchDebounce.current = setTimeout(() => runEmployeeSearch(value), EMPLOYEE_SEARCH_DEBOUNCE_MS);
+  };
 
   const selectedTeam = typeof sourceRegister === "number"
     ? sourceRegisterTeams.find(t => t.id === sourceRegister) ?? null
@@ -364,37 +404,64 @@ export default function BasicInformationStep({
             )}
           />
 
-          {/* Conditional: Employee dropdown (identified_by_user_id FK) */}
+          {/* Conditional: Employee search (identified_by_name VARCHAR) — options are
+               fetched live from the HR entity service by email substring, never from
+               our own database. On lookup failure the field stays required/blocked
+               rather than falling back to free text. */}
           {identifiedByType === "EMPLOYEE" && (
             <Controller
-              name="identifiedByEmployee"
+              name="identifiedByName"
               control={control}
-              rules={{ required: "Please select an employee" }}
+              rules={{ required: "Please select the employee who identified this risk" }}
               render={({ field, fieldState }) => (
                 <Box>
                   <FieldLabel>Select Employee</FieldLabel>
-                  <ComplexSelect
-                    {...field}
-                    fullWidth
-                    error={!!fieldState.error}
-                    displayEmpty
-                    onChange={(e) => {
-                      field.onChange(e);
-                      if (e.target.value) clearErrors("identifiedByEmployee");
+                  <Autocomplete
+                    options={employeeOptions}
+                    loading={employeeSearchLoading}
+                    filterOptions={(opts) => opts}
+                    getOptionLabel={(option) => option.name}
+                    isOptionEqualToValue={(option, value) => option.name === value.name}
+                    value={field.value ? { name: field.value, email: "" } : null}
+                    onInputChange={(_, newInputValue, reason) => {
+                      if (reason === "input") handleEmployeeInputChange(newInputValue);
                     }}
-                  >
-                    <ComplexSelect.MenuItem value="" disabled sx={{ display: "none" }}>
-                      Select an employee
-                    </ComplexSelect.MenuItem>
-                    {users.map((u) => (
-                      <ComplexSelect.MenuItem key={u.id} value={u.id}>
-                        {u.display_name}
-                      </ComplexSelect.MenuItem>
-                    ))}
-                  </ComplexSelect>
-                  {fieldState.error && (
-                    <FormHelperText error>{fieldState.error.message}</FormHelperText>
-                  )}
+                    onChange={(_, newValue) => {
+                      field.onChange(newValue?.name ?? "");
+                      // The backend re-resolves identity from this email and
+                      // ignores the name above on its own — see types.ts.
+                      setValue("identifiedByEmail", newValue?.email ?? "");
+                      if (newValue) clearErrors("identifiedByName");
+                    }}
+                    loadingText="Searching…"
+                    noOptionsText={
+                      employeeSearchError ??
+                      "Type at least 2 characters of the employee's email to search"
+                    }
+                    slotProps={{
+                      paper: {
+                        sx: {
+                          backdropFilter: "none",
+                          backgroundColor: "#fff",
+                          "[data-color-scheme='dark'] &": {
+                            backgroundColor: "#1e1e1e",
+                          },
+                        },
+                      },
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        fullWidth
+                        placeholder="Search by email"
+                        error={!!fieldState.error || !!employeeSearchError}
+                        helperText={
+                          fieldState.error?.message ?? employeeSearchError ?? undefined
+                        }
+                        onBlur={field.onBlur}
+                      />
+                    )}
+                  />
                 </Box>
               )}
             />

@@ -20,6 +20,7 @@ import {
   Box,
   Button,
   CircularProgress,
+  Stack,
   Typography,
 } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
@@ -27,27 +28,38 @@ import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import {
   fetchDashboard,
   fetchRiskScores,
+  fetchSourceRegisterTeams,
   type DashboardSummary,
   type RiskScore,
+  type RiskTeam,
 } from "../api/riskApi";
 import DashboardView from "./dashboard/DashboardView";
+import RegisterFilter from "./analytics/RegisterFilter";
 
 // Risk dashboard: current organisational risk posture built from a single
 // GET /api/v1/risks/dashboard payload, plus the 3×3 risk_score matrix that
-// colors heatmap cells holding no risks.
+// colors heatmap cells holding no risks. Optionally scoped by the same
+// register filter used on the Analytics page.
 export default function RiskDashboard(): JSX.Element {
   const authFetch = useAuthApiClient();
+  const [teams, setTeams] = useState<RiskTeam[]>([]);
+  const [registerId, setRegisterId] = useState(0); // 0 = All Registers
   const [dashboard, setDashboard] = useState<DashboardSummary | null>(null);
   const [scores, setScores] = useState<RiskScore[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchSourceRegisterTeams(authFetch).then(setTeams).catch(console.error);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const load = useCallback(async (): Promise<void> => {
     setLoading(true);
     setError(null);
     try {
       const [summary, scoreMatrix] = await Promise.all([
-        fetchDashboard(authFetch),
+        fetchDashboard(authFetch, registerId || undefined),
         fetchRiskScores(authFetch).catch(() => [] as RiskScore[]),
       ]);
       setDashboard(summary);
@@ -57,27 +69,25 @@ export default function RiskDashboard(): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [authFetch]);
+  }, [authFetch, registerId]);
 
-  // Run once on mount, not on every `load` identity change — matches
-  // RiskRegisters.tsx's initial-fetch effect. `load` depends on authFetch,
-  // whose stability isn't a documented @asgardeo/react guarantee, so gating
-  // on `load` risks a refetch loop if that internal detail ever changes.
   useEffect(() => {
     void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [load]);
 
   return (
     <Box sx={{ p: 3, display: "flex", flexDirection: "column", gap: 3 }}>
-      <Box>
-        <Typography variant="h4" fontWeight={700}>
-          Risk Dashboard
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          Overview of organizational risk posture
-        </Typography>
-      </Box>
+      <Stack direction="row" justifyContent="space-between" alignItems="flex-start" flexWrap="wrap" gap={2}>
+        <Box>
+          <Typography variant="h4" fontWeight={700}>
+            Risk Dashboard
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            Overview of organizational risk posture
+          </Typography>
+        </Box>
+        <RegisterFilter teams={teams} value={registerId} onChange={setRegisterId} />
+      </Stack>
 
       {loading && (
         <Box sx={{ display: "flex", justifyContent: "center", py: 10 }}>
@@ -99,7 +109,7 @@ export default function RiskDashboard(): JSX.Element {
       )}
 
       {!loading && !error && dashboard && (
-        <DashboardView dashboard={dashboard} scores={scores} />
+        <DashboardView dashboard={dashboard} scores={scores} isAllRegisters={registerId === 0} />
       )}
     </Box>
   );

@@ -18,7 +18,9 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/apierror"
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/domain"
@@ -51,24 +53,66 @@ var validRiskStatuses = map[string]bool{
 
 var validRiskQuarters = map[string]bool{"Q1": true, "Q2": true, "Q3": true, "Q4": true}
 
-// allowedRiskTransitions defines the legal next statuses for each risk workflow_status.
-// Happy path: DRAFT → PENDING_RISK_OWNER_APPROVAL → PENDING_MANAGEMENT_APPROVAL →
-// PENDING_COMPLIANCE_REVIEW → IN_REMEDIATION → PENDING_OWNER_COMPLETION_APPROVAL →
-// PENDING_COMPLIANCE_CLOSURE → CLOSED. Plus amendment, revision, escalation, and
-// cancellation paths. CLOSED and CANCELLED are terminal.
+// allowedRiskTransitions defines the legal next statuses for each risk
+// workflow_status. It is derived from the GRC backend's risk service, which
+// owns the workflow and is the authoritative definition of it:
+//
+//   - OwnerApprove: PENDING_RISK_OWNER_APPROVAL or PENDING_AMENDMENT →
+//     PENDING_COMPLIANCE_REVIEW, or → PENDING_MANAGEMENT_APPROVAL when the
+//     treatment is ACCEPT and the gross level is HIGH; and
+//     PENDING_OWNER_COMPLETION_APPROVAL → PENDING_COMPLIANCE_CLOSURE
+//   - ManagementApprove: PENDING_MANAGEMENT_APPROVAL → PENDING_COMPLIANCE_REVIEW
+//   - Approve:          PENDING_COMPLIANCE_REVIEW → IN_REMEDIATION
+//   - Reject:           any of the five pending-approval states → PENDING_REVISION
+//   - Complete:         IN_REMEDIATION → PENDING_OWNER_COMPLETION_APPROVAL
+//   - Resubmit:         PENDING_REVISION → PENDING_RISK_OWNER_APPROVAL, or →
+//     PENDING_OWNER_COMPLETION_APPROVAL when the rejection stage was COMPLETION_OWNER
+//   - Close:            PENDING_COMPLIANCE_CLOSURE → CLOSED
+//   - Cancel:           PENDING_RISK_OWNER_APPROVAL → CANCELLED
+//
+// An earlier version of this map encoded a different workflow, written before
+// the risk module existed, and would have rejected the backend's most common
+// transition (PENDING_RISK_OWNER_APPROVAL → PENDING_COMPLIANCE_REVIEW) along
+// with every rejection path. When the two disagree, the backend is right.
+//
+// This map is deliberately a superset: DRAFT and ESCALATED transitions are kept
+// even though the backend never performs them, and CANCELLED is permitted from
+// every non-terminal state. Being more permissive than the caller is safe —
+// the backend decides which transition to make, and this only stops a move that
+// is nonsense in every workflow. Being less permissive is not: it turns a
+// legitimate action into a 409. CLOSED and CANCELLED remain terminal.
 var allowedRiskTransitions = map[string][]string{
-	"DRAFT":                             {"PENDING_RISK_OWNER_APPROVAL", "CANCELLED"},
-	"PENDING_RISK_OWNER_APPROVAL":       {"PENDING_MANAGEMENT_APPROVAL", "PENDING_AMENDMENT", "CANCELLED"},
-	"PENDING_MANAGEMENT_APPROVAL":       {"PENDING_COMPLIANCE_REVIEW", "PENDING_AMENDMENT", "ESCALATED", "CANCELLED"},
-	"PENDING_COMPLIANCE_REVIEW":         {"IN_REMEDIATION", "PENDING_REVISION", "ESCALATED", "CANCELLED"},
-	"IN_REMEDIATION":                    {"PENDING_OWNER_COMPLETION_APPROVAL", "ESCALATED"},
-	"PENDING_OWNER_COMPLETION_APPROVAL": {"PENDING_COMPLIANCE_CLOSURE", "IN_REMEDIATION"},
-	"PENDING_COMPLIANCE_CLOSURE":        {"CLOSED", "IN_REMEDIATION"},
-	"PENDING_AMENDMENT":                 {"PENDING_RISK_OWNER_APPROVAL", "CANCELLED"},
-	"PENDING_REVISION":                  {"PENDING_COMPLIANCE_REVIEW", "CANCELLED"},
-	"ESCALATED":                         {"PENDING_MANAGEMENT_APPROVAL", "CANCELLED"},
-	"CLOSED":                            {},
-	"CANCELLED":                         {},
+	"DRAFT": {"PENDING_RISK_OWNER_APPROVAL", "CANCELLED"},
+	"PENDING_RISK_OWNER_APPROVAL": {
+		"PENDING_COMPLIANCE_REVIEW", "PENDING_MANAGEMENT_APPROVAL",
+		"PENDING_AMENDMENT", "PENDING_REVISION", "ESCALATED", "CANCELLED",
+	},
+	"PENDING_AMENDMENT": {
+		"PENDING_COMPLIANCE_REVIEW", "PENDING_MANAGEMENT_APPROVAL",
+		"PENDING_RISK_OWNER_APPROVAL", "PENDING_REVISION", "CANCELLED",
+	},
+	"PENDING_MANAGEMENT_APPROVAL": {
+		"PENDING_COMPLIANCE_REVIEW", "PENDING_AMENDMENT",
+		"PENDING_REVISION", "ESCALATED", "CANCELLED",
+	},
+	"PENDING_COMPLIANCE_REVIEW": {
+		"IN_REMEDIATION", "PENDING_REVISION", "ESCALATED", "CANCELLED",
+	},
+	"IN_REMEDIATION": {"PENDING_OWNER_COMPLETION_APPROVAL", "ESCALATED"},
+	"PENDING_OWNER_COMPLETION_APPROVAL": {
+		"PENDING_COMPLIANCE_CLOSURE", "PENDING_REVISION", "IN_REMEDIATION",
+	},
+	"PENDING_COMPLIANCE_CLOSURE": {"CLOSED", "IN_REMEDIATION"},
+	"PENDING_REVISION": {
+		"PENDING_RISK_OWNER_APPROVAL", "PENDING_OWNER_COMPLETION_APPROVAL",
+		"PENDING_COMPLIANCE_REVIEW", "CANCELLED",
+	},
+	// IN_REMEDIATION: the daily escalation job (internal/job) reverts a risk
+	// here once its linked MANAGEMENT action plan completes — see
+	// internal/service/risk_action_plan_service.go's completion cascade.
+	"ESCALATED": {"PENDING_MANAGEMENT_APPROVAL", "IN_REMEDIATION", "CANCELLED"},
+	"CLOSED":    {},
+	"CANCELLED": {},
 }
 
 // isValidRiskTransition reports whether moving from → to is a legal workflow step.
@@ -90,8 +134,17 @@ func isValidRiskTransition(from, to string) bool {
 // validTreatmentStrategies / validIdentifiedByTypes mirror the risk.treatment_strategy
 // and risk.identified_by_type ENUMs in risk_schema.sql. Both columns are nullable,
 // so these are only enforced when a value is provided.
-var validTreatmentStrategies = map[string]bool{"MITIGATE": true, "ACCEPT": true, "TRANSFER": true, "VOID": true}
+// REMEDIATE, not MITIGATE: the risk.treatment_strategy ENUM is
+// ('REMEDIATE','ACCEPT','TRANSFER','VOID'). MITIGATE was accepted here and then
+// rejected by MySQL as a truncated value, while every real REMEDIATE row was
+// refused — the validator had it exactly backwards.
+var validTreatmentStrategies = map[string]bool{"REMEDIATE": true, "ACCEPT": true, "TRANSFER": true, "VOID": true}
 var validIdentifiedByTypes = map[string]bool{"EMPLOYEE": true, "EXTERNAL_PERSON": true, "TOOL": true}
+
+// validRiskLevels mirrors the distinct risk_score.risk_level values;
+// validRiskTypes mirrors the risk.risk_type ENUM.
+var validRiskLevels = map[string]bool{"LOW": true, "MEDIUM": true, "HIGH": true}
+var validRiskTypes = map[string]bool{"NEW": true, "UPDATED": true}
 
 func (s *riskService) SearchRisks(ctx context.Context, req domain.SearchRisksRequest) (domain.SearchRisksResponse, error) {
 	for i, sk := range req.WorkflowStatusKeys {
@@ -106,6 +159,32 @@ func (s *riskService) SearchRisks(ctx context.Context, req domain.SearchRisksReq
 		}
 		req.RiskQuarterKeys[i] = strings.ToUpper(qk)
 	}
+	for i, lk := range req.RiskLevelKeys {
+		up := strings.ToUpper(lk)
+		if !validRiskLevels[up] {
+			return domain.SearchRisksResponse{}, &apierror.ValidationError{Msg: "invalid riskLevelKey: " + lk + " (must be LOW, MEDIUM, or HIGH)"}
+		}
+		req.RiskLevelKeys[i] = up
+	}
+	for i, tk := range req.RiskTypeKeys {
+		up := strings.ToUpper(tk)
+		if !validRiskTypes[up] {
+			return domain.SearchRisksResponse{}, &apierror.ValidationError{Msg: "invalid riskTypeKey: " + tk + " (must be NEW or UPDATED)"}
+		}
+		req.RiskTypeKeys[i] = up
+	}
+	for _, d := range []struct{ name, value string }{
+		{"submittedFrom", req.SubmittedFrom}, {"submittedTo", req.SubmittedTo},
+		{"dueFrom", req.DueFrom}, {"dueTo", req.DueTo},
+	} {
+		if d.value == "" {
+			continue
+		}
+		if _, err := time.Parse("2006-01-02", d.value); err != nil {
+			return domain.SearchRisksResponse{}, &apierror.ValidationError{Msg: d.name + " must be a date in YYYY-MM-DD format"}
+		}
+	}
+
 	normalizePagination(&req.Pagination)
 	risks, total, err := s.repo.SearchRisks(ctx, req)
 	if err != nil {
@@ -151,8 +230,16 @@ func (s *riskService) CreateRisk(ctx context.Context, req domain.CreateRiskReque
 	if !validRiskQuarters[req.RiskQuarter] {
 		return domain.Risk{}, &apierror.ValidationError{Msg: "riskQuarter must be Q1, Q2, Q3, or Q4"}
 	}
+	// Bounds match the 3×3 risk_score matrix; the repository resolves the pair
+	// to a score row and fails the create if no cell matches.
+	if req.Likelihood < 1 || req.Likelihood > 3 {
+		return domain.Risk{}, &apierror.ValidationError{Msg: "likelihood must be 1, 2, or 3"}
+	}
+	if req.Impact < 1 || req.Impact > 3 {
+		return domain.Risk{}, &apierror.ValidationError{Msg: "impact must be 1, 2, or 3"}
+	}
 	if req.TreatmentStrategy != nil && !validTreatmentStrategies[strings.ToUpper(*req.TreatmentStrategy)] {
-		return domain.Risk{}, &apierror.ValidationError{Msg: "treatmentStrategy must be MITIGATE, ACCEPT, TRANSFER, or VOID"}
+		return domain.Risk{}, &apierror.ValidationError{Msg: "treatmentStrategy must be REMEDIATE, ACCEPT, TRANSFER, or VOID"}
 	}
 	if req.TreatmentStrategy != nil {
 		up := strings.ToUpper(*req.TreatmentStrategy)
@@ -167,6 +254,19 @@ func (s *riskService) CreateRisk(ctx context.Context, req domain.CreateRiskReque
 	}
 	if req.CreatedBy == "" {
 		return domain.Risk{}, &apierror.ValidationError{Msg: "createdBy is required"}
+	}
+	// Every risk must carry at least one non-empty action step. The backend
+	// enforces this too, but it's re-checked here (the last writer before the
+	// DB) so a direct caller can't create a stepless plan — which could never
+	// be marked COMPLETED, permanently blocking the risk from being submitted
+	// for completion approval.
+	if len(req.ActionSteps) == 0 {
+		return domain.Risk{}, &apierror.ValidationError{Msg: "at least one action step is required"}
+	}
+	for i, step := range req.ActionSteps {
+		if strings.TrimSpace(step.Description) == "" {
+			return domain.Risk{}, &apierror.ValidationError{Msg: fmt.Sprintf("action step %d description is required", i+1)}
+		}
 	}
 	r, err := s.repo.CreateRisk(ctx, req)
 	if err != nil {
@@ -190,19 +290,27 @@ func (s *riskService) UpdateRisk(ctx context.Context, id int, req domain.UpdateR
 		req.WorkflowStatus = &up
 	}
 	if req.WorkflowStatus != nil {
-		current, err := s.repo.GetRiskByID(ctx, id)
-		if err != nil {
-			return domain.Risk{}, err
+		// A caller that supplied expectedStatus already read the risk and made a
+		// decision against that value — validate and guard on it, not on a fresh
+		// read. Re-reading here would check a transition the caller never
+		// decided on, and would let a concurrent change slip past the CAS.
+		from := req.ExpectedStatus
+		if from == "" {
+			current, err := s.repo.GetRiskByID(ctx, id)
+			if err != nil {
+				return domain.Risk{}, err
+			}
+			from = current.WorkflowStatus
+			req.ExpectedStatus = from
 		}
-		if !isValidRiskTransition(current.WorkflowStatus, *req.WorkflowStatus) {
+		if !isValidRiskTransition(from, *req.WorkflowStatus) {
 			return domain.Risk{}, &apierror.ValidationError{
-				Msg: "invalid workflow transition: " + current.WorkflowStatus + " → " + *req.WorkflowStatus,
+				Msg: "invalid workflow transition: " + from + " → " + *req.WorkflowStatus,
 			}
 		}
-		req.ExpectedStatus = current.WorkflowStatus
 	}
 	if req.TreatmentStrategy != nil && !validTreatmentStrategies[strings.ToUpper(*req.TreatmentStrategy)] {
-		return domain.Risk{}, &apierror.ValidationError{Msg: "treatmentStrategy must be MITIGATE, ACCEPT, TRANSFER, or VOID"}
+		return domain.Risk{}, &apierror.ValidationError{Msg: "treatmentStrategy must be REMEDIATE, ACCEPT, TRANSFER, or VOID"}
 	}
 	if req.TreatmentStrategy != nil {
 		up := strings.ToUpper(*req.TreatmentStrategy)
@@ -213,4 +321,31 @@ func (s *riskService) UpdateRisk(ctx context.Context, id int, req domain.UpdateR
 		return domain.Risk{}, err
 	}
 	return *r, nil
+}
+
+// NextSequenceNumber previews the sequence number the next risk created for
+// this source register would get. It consumes nothing — CreateRisk owns the
+// increment.
+func (s *riskService) NextSequenceNumber(ctx context.Context, sourceRegisterID int) (domain.NextSequenceResponse, error) {
+	if sourceRegisterID <= 0 {
+		return domain.NextSequenceResponse{}, &apierror.ValidationError{Msg: "sourceRegisterId must be a positive integer"}
+	}
+	n, err := s.repo.NextSequenceNumber(ctx, sourceRegisterID)
+	if err != nil {
+		return domain.NextSequenceResponse{}, err
+	}
+	return domain.NextSequenceResponse{NextSequenceNumber: n}, nil
+}
+
+// GetRiskDetail returns the fully-composed risk: every column, resolved names,
+// both scores, and the related references, action plan, steps and assessments.
+func (s *riskService) GetRiskDetail(ctx context.Context, id int) (domain.RiskDetail, error) {
+	if id <= 0 {
+		return domain.RiskDetail{}, &apierror.ValidationError{Msg: "risk id must be a positive integer"}
+	}
+	d, err := s.repo.GetRiskDetail(ctx, id)
+	if err != nil {
+		return domain.RiskDetail{}, err
+	}
+	return *d, nil
 }

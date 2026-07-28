@@ -16,14 +16,19 @@
 
 package model
 
+import "time"
+
 // Escalation represents a risk escalation record, mapping to `risk_escalation`.
+// Created automatically by the compliance-entity's daily overdue-risk job —
+// there is no escalated_to/reason, since no human chooses a target or
+// justification at creation time; CreatedAt is what "escalated on" shows in
+// the UI instead.
 type Escalation struct {
-	ID                   int     `json:"id"`
-	RiskID               int     `json:"risk_id"`
-	EscalatedTo          int     `json:"escalated_to"`
-	Reason               *string `json:"reason"`
-	NewTreatmentStrategy *string `json:"new_treatment_strategy"`
-	ActionPlanID         *int    `json:"action_plan_id"`
-	Decision             *string `json:"decision"`
-	Status               string  `json:"status"`
+	ID                   int       `json:"id"`
+	RiskID               int       `json:"risk_id"`
+	NewTreatmentStrategy *string   `json:"new_treatment_strategy"`
+	ActionPlanID         *int      `json:"action_plan_id"`
+	Decision             *string   `json:"decision"`
+	Status               string    `json:"status"` // OPEN | RESOLVED
+	CreatedAt            time.Time `json:"created_at"`
 }

@@ -18,6 +18,7 @@ import { CalendarClock, Gauge, TrendingUp } from "@wso2/oxygen-ui-icons-react";
 import type { JSX } from "react";
 import StatGrid, { type StatConfig } from "@components/stat-grid/StatGrid";
 import type { AnalyticsKPIs } from "../../api/riskApi";
+import { darkCardSx } from "../cardStyles";
 
 type KpiKey = "new_risks_this_month" | "avg_days_to_close" | "avg_effective_score";
 
@@ -51,6 +52,7 @@ export default function KpiTiles({ loading, kpis }: KpiTilesProps): JSX.Element 
       entityName="risk analytics"
       itemSize={{ xs: 12, sm: 6, md: 4 }}
       valueFormatter={(v) => (Number.isInteger(v) ? v : v.toFixed(1))}
+      cardSx={darkCardSx}
     />
   );
 }

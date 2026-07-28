@@ -38,4 +38,6 @@ export const RiskPrivilege = {
   ManageActionPlans:     "MANAGE_ACTION_PLANS",
   ManageComplianceRefs:  "MANAGE_COMPLIANCE_REFS",
   ViewAnalytics:         "VIEW_ANALYTICS",
+  CreateManagementActionPlan: "CREATE_MANAGEMENT_ACTION_PLAN_RISK",
+  CompleteActionSteps:        "COMPLETE_ACTION_STEPS_RISK",
 } as const;

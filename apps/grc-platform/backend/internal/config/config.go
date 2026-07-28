@@ -26,9 +26,9 @@ import (
 // Config holds all application configuration loaded from environment variables.
 type Config struct {
 	Port                    string
-	DB                      DBConfig
 	Auth                    AuthConfig
 	ComplianceEntityBaseURL string
+	HREntity                HREntityConfig
 	CORSAllowedOrigin       string
 	AIValidation            AIValidationConfig
 }
@@ -39,10 +39,6 @@ type AIValidationConfig struct {
 	Enabled      bool
 	AgentBaseURL string
 	AgentAPIKey  string
-}
-
-type DBConfig struct {
-	DSN string
 }
 
 // Auth scope values classify what an IdP's tokens are allowed to reach.
@@ -73,7 +69,23 @@ type AuthConfig struct {
 	TokenValidatorEnabled bool
 }
 
+// HREntityConfig holds the connection details for the WSO2 HR entity GraphQL
+// service (hr_entity), used to look up employees for the Risk module's
+// "Risk Identified By: Employee" field. Employee data is never stored in the
+// GRC platform's own database — it is fetched live on every search.
+// GraphQLURL points at the real service on Choreo in production, or a local
+// mock server during development; the code is identical either way.
+type HREntityConfig struct {
+	GraphQLURL   string
+	TokenURL     string
+	ClientID     string
+	ClientSecret string
+}
+
 // Load reads configuration from environment variables.
+//
+// There is no database configuration: the backend reaches all data through the
+// Compliance Entity, so DB_DSN is neither read nor required.
 // AUTH_JWKS_ENDPOINT, AUTH_ISSUER, and AUTH_AUDIENCE are only required when
 // AUTH_TOKEN_VALIDATOR_ENABLED is true (the default). They are not needed for
 // local development (set AUTH_TOKEN_VALIDATOR_ENABLED=false).
@@ -92,19 +104,39 @@ func Load() (Config, error) {
 		authCfg.IdPs = idps
 	}
 
-	dsn, err := mustEnv("DB_DSN")
+	complianceEntityBaseURL, err := mustEnv("COMPLIANCE_ENTITY_BASE_URL")
+	if err != nil {
+		return Config{}, err
+	}
+
+	hrEntityGraphQLURL, err := mustEnv("HR_ENTITY_GRAPHQL_URL")
+	if err != nil {
+		return Config{}, err
+	}
+	hrEntityTokenURL, err := mustEnv("HR_ENTITY_TOKEN_URL")
+	if err != nil {
+		return Config{}, err
+	}
+	hrEntityClientID, err := mustEnv("HR_ENTITY_CLIENT_ID")
+	if err != nil {
+		return Config{}, err
+	}
+	hrEntityClientSecret, err := mustEnv("HR_ENTITY_CLIENT_SECRET")
 	if err != nil {
 		return Config{}, err
 	}
 
 	return Config{
-		Port: envOrDefault("PORT", ":8080"),
-		DB: DBConfig{
-			DSN: dsn,
-		},
+		Port:                    envOrDefault("PORT", ":8080"),
 		Auth:                    authCfg,
-		ComplianceEntityBaseURL: envOrDefault("COMPLIANCE_ENTITY_BASE_URL", "http://localhost:8081"),
-		CORSAllowedOrigin:       envOrDefault("CORS_ALLOWED_ORIGIN", "http://localhost:3000"),
+		ComplianceEntityBaseURL: complianceEntityBaseURL,
+		HREntity: HREntityConfig{
+			GraphQLURL:   hrEntityGraphQLURL,
+			TokenURL:     hrEntityTokenURL,
+			ClientID:     hrEntityClientID,
+			ClientSecret: hrEntityClientSecret,
+		},
+		CORSAllowedOrigin: envOrDefault("CORS_ALLOWED_ORIGIN", "http://localhost:3000"),
 		AIValidation: AIValidationConfig{
 			Enabled:      os.Getenv("AI_VALIDATION_ENABLED") == "true",
 			AgentBaseURL: envOrDefault("AI_AGENT_BASE_URL", "http://localhost:8090"),

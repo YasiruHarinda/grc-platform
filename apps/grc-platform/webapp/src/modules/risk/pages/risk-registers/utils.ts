@@ -67,6 +67,9 @@ export interface DueInfo {
 
 // Returns due/overdue label and color based on implementation_date.
 // color thresholds: overdue = red, <=7 days = orange, >7 days = green.
+// Meaningless for a CLOSED risk (nothing is "due" anymore) — callers should
+// check workflow_status themselves and skip calling this entirely rather
+// than passing a reference date, so this stays a pure "today" calculation.
 export function calcDue(implementationDate: string | null | undefined): DueInfo {
   if (!implementationDate) return { label: "—", color: "text.secondary", daysLeft: 0 };
   const due = parseDateStr(implementationDate);
@@ -118,4 +121,11 @@ export const PENDING_REVISION_STATUSES = [
 // Statuses that appear in the "Approved Risks" tab.
 export const APPROVED_OPEN_STATUSES = ["IN_REMEDIATION"];
 
-export const APPROVED_ALL_STATUSES = [...APPROVED_OPEN_STATUSES, "CLOSED"];
+// ESCALATED risks stay visible here too (their chip still reads "Open" — see
+// statusLabel()/OutlinedStatusChip() in RiskRegisters.tsx, which special-case
+// ESCALATED for this tab specifically). The dedicated "Overdue Risks" tab is
+// the only place that shows the real "Escalated" chip.
+export const APPROVED_ALL_STATUSES = [...APPROVED_OPEN_STATUSES, "CLOSED", "ESCALATED"];
+
+// Statuses shown in the "Overdue Risks" tab.
+export const OVERDUE_STATUSES = ["ESCALATED"];

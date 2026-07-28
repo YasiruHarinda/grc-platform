@@ -27,7 +27,7 @@ export const TREATMENT_STRATEGIES: { value: TreatmentStrategy; label: string }[]
   { value: "REMEDIATE", label: "Remediate" },
   { value: "ACCEPT",   label: "Accept" },
   { value: "TRANSFER", label: "Transfer" },
-  { value: "VOID",     label: "Void" },
+  { value: "VOID",     label: "Avoid" },
 ];
 
 export const getCurrentYear = (): number => new Date().getFullYear();

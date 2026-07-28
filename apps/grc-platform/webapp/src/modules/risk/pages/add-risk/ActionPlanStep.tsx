@@ -14,6 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Controller, useFieldArray, useFormContext, useWatch } from "react-hook-form";
 import type { FieldPath } from "react-hook-form";
 import {
@@ -33,7 +34,13 @@ import type { JSX, ReactNode } from "react";
 import EvidenceAttachments from "@components/evidence-attachments/EvidenceAttachments";
 import type { AddRiskFormValues } from "./types";
 import { TREATMENT_STRATEGIES } from "./constants";
-import type { RiskTeam, UserOption } from "../../api/riskApi";
+import { resolveUserByEmail, searchEmployees } from "../../api/riskApi";
+import type { EmployeeOption, RiskTeam, UserOption } from "../../api/riskApi";
+import { useAuthApiClient } from "@hooks/useAuthApiClient";
+
+// Minimum characters before searching — matches the backend's own floor.
+const MIN_EMPLOYEE_SEARCH_LEN = 2;
+const EMPLOYEE_SEARCH_DEBOUNCE_MS = 300;
 
 function FieldLabel({ children }: { children: ReactNode }): JSX.Element {
   return (
@@ -66,10 +73,71 @@ interface ActionPlanStepProps {
 
 export default function ActionPlanStep({ assignmentTeams, users }: ActionPlanStepProps): JSX.Element {
   const { control, setValue, clearErrors } = useFormContext<AddRiskFormValues>();
+  const authFetch = useAuthApiClient();
 
   const { fields, append, remove } = useFieldArray({ control, name: "actionSteps" });
 
   const evidenceAttachments = useWatch({ control, name: "evidenceAttachments" });
+
+  // Risk Owner is restricted to users already belonging (via risk_team_id) to
+  // either the source register team (picked in Step 1) or this assignment
+  // team — unlike Action Owner, Risk Owner must stay a real, already-provisioned
+  // grc-platform account (see conversation: HR entity employees don't
+  // automatically get platform access, so they're not eligible here).
+  const sourceRegister = useWatch({ control, name: "sourceRegister" });
+  const assignmentTeam = useWatch({ control, name: "assignmentTeam" });
+  const eligibleTeamIds = [sourceRegister, assignmentTeam].filter(
+    (id): id is number => typeof id === "number",
+  );
+  const eligibleRiskOwners = users.filter(
+    (u) => u.risk_team_id !== null && eligibleTeamIds.includes(u.risk_team_id),
+  );
+
+  // Clear a previously-selected Risk Owner if changing the source register or
+  // assignment team makes them no longer eligible — avoids submitting a
+  // riskOwner value that's silently stale relative to the visible options.
+  const riskOwner = useWatch({ control, name: "riskOwner" });
+  useEffect(() => {
+    if (riskOwner !== "" && !eligibleRiskOwners.some((u) => u.id === riskOwner)) {
+      setValue("riskOwner", "", { shouldDirty: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-check when the eligible team ids change
+  }, [eligibleTeamIds.join(",")]);
+
+  // Action Owner can be any employee, not just an existing grc-platform
+  // user, so — like "Risk Identified By: Employee" — options are searched
+  // live against the HR entity rather than a pre-fetched list. Unlike that
+  // field, action_owner_id is a real FK, so on selection we resolve the
+  // chosen employee to an internal user.id (creating the user row on the
+  // fly if needed) via resolveUserByEmail before setting the form value.
+  const [actionOwnerOptions, setActionOwnerOptions] = useState<EmployeeOption[]>([]);
+  const [actionOwnerSelected, setActionOwnerSelected] = useState<EmployeeOption | null>(null);
+  const [actionOwnerSearchLoading, setActionOwnerSearchLoading] = useState(false);
+  const [actionOwnerResolving, setActionOwnerResolving] = useState(false);
+  const [actionOwnerError, setActionOwnerError] = useState<string | null>(null);
+  const actionOwnerDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const runActionOwnerSearch = useCallback((query: string) => {
+    if (query.trim().length < MIN_EMPLOYEE_SEARCH_LEN) {
+      setActionOwnerOptions([]);
+      setActionOwnerError(null);
+      return;
+    }
+    setActionOwnerSearchLoading(true);
+    setActionOwnerError(null);
+    searchEmployees(authFetch, query)
+      .then(setActionOwnerOptions)
+      .catch(() => {
+        setActionOwnerOptions([]);
+        setActionOwnerError("Unable to reach the employee directory. Please try again.");
+      })
+      .finally(() => setActionOwnerSearchLoading(false));
+  }, [authFetch]);
+
+  const handleActionOwnerInputChange = (value: string): void => {
+    if (actionOwnerDebounce.current) clearTimeout(actionOwnerDebounce.current);
+    actionOwnerDebounce.current = setTimeout(() => runActionOwnerSearch(value), EMPLOYEE_SEARCH_DEBOUNCE_MS);
+  };
 
   return (
     <Stack gap={4}>
@@ -139,7 +207,7 @@ export default function ActionPlanStep({ assignmentTeams, users }: ActionPlanSte
                   <ComplexSelect.MenuItem value="" disabled sx={{ display: "none" }}>
                     Select a risk owner
                   </ComplexSelect.MenuItem>
-                  {users.map((u) => (
+                  {eligibleRiskOwners.map((u) => (
                     <ComplexSelect.MenuItem key={u.id} value={u.id}>
                       {u.display_name}
                     </ComplexSelect.MenuItem>
@@ -147,6 +215,10 @@ export default function ActionPlanStep({ assignmentTeams, users }: ActionPlanSte
                 </ComplexSelect>
                 {fieldState.error ? (
                   <FormHelperText error>{fieldState.error.message}</FormHelperText>
+                ) : eligibleTeamIds.length > 0 && eligibleRiskOwners.length === 0 ? (
+                  <FormHelperText error>
+                    No users are assigned to the selected team(s) yet. Contact an admin to assign team membership.
+                  </FormHelperText>
                 ) : (
                   <FormHelperText>Person accountable for managing this risk.</FormHelperText>
                 )}
@@ -161,14 +233,40 @@ export default function ActionPlanStep({ assignmentTeams, users }: ActionPlanSte
           control={control}
           render={({ field, fieldState }) => (
             <Autocomplete
-              options={users}
-              getOptionLabel={(option) => option.display_name}
-              value={users.find((u) => u.id === field.value) ?? null}
-              onChange={(_, newValue) => {
-                field.onChange(newValue?.id ?? "");
-                if (newValue) clearErrors("actionOwner");
+              options={actionOwnerOptions}
+              loading={actionOwnerSearchLoading || actionOwnerResolving}
+              filterOptions={(opts) => opts}
+              getOptionLabel={(option) => option.name}
+              isOptionEqualToValue={(option, value) => option.email === value.email}
+              value={actionOwnerSelected}
+              onInputChange={(_, newInputValue, reason) => {
+                if (reason === "input") handleActionOwnerInputChange(newInputValue);
               }}
-              isOptionEqualToValue={(option, value) => option.id === value.id}
+              onChange={(_, newValue) => {
+                if (!newValue) {
+                  setActionOwnerSelected(null);
+                  field.onChange("");
+                  return;
+                }
+                setActionOwnerResolving(true);
+                resolveUserByEmail(authFetch, newValue)
+                  .then((resolved) => {
+                    setActionOwnerSelected(newValue);
+                    field.onChange(resolved.id);
+                    clearErrors("actionOwner");
+                  })
+                  .catch(() => {
+                    setActionOwnerSelected(null);
+                    field.onChange("");
+                    setActionOwnerError("Unable to link this employee to a user account. Please try again.");
+                  })
+                  .finally(() => setActionOwnerResolving(false));
+              }}
+              loadingText="Searching…"
+              noOptionsText={
+                actionOwnerError ??
+                "Type at least 2 characters of the employee's email to search"
+              }
               slotProps={{
                 paper: {
                   sx: {
@@ -197,9 +295,10 @@ export default function ActionPlanStep({ assignmentTeams, users }: ActionPlanSte
                 <TextField
                   {...params}
                   label="Action Owner"
-                  error={!!fieldState.error}
+                  placeholder="Search by email"
+                  error={!!fieldState.error || !!actionOwnerError}
                   helperText={
-                    fieldState.error?.message ?? "Person responsible for executing the action plan."
+                    fieldState.error?.message ?? actionOwnerError ?? "Person responsible for executing the action plan."
                   }
                   onBlur={field.onBlur}
                 />

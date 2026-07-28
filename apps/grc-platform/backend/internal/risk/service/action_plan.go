@@ -19,9 +19,14 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"strings"
 
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/apierror"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/repository"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
 
 // errNotImplemented is returned by service stubs that are not yet implemented.
@@ -31,52 +36,125 @@ var errNotImplemented = errors.New("not implemented")
 type ActionPlanService interface {
 	List(ctx context.Context, riskID int) ([]*model.ActionPlan, error)
 	GetByID(ctx context.Context, riskID, planID int) (*model.ActionPlan, error)
+	// Create is MANAGEMENT-only: STANDARD plans are still created inline as
+	// part of risk registration, a separate path this deliberately doesn't
+	// touch (see repository/entity/stubs.go's note on the two paths).
 	Create(ctx context.Context, riskID int, req model.CreateActionPlanRequest, createdBy string) (*model.ActionPlan, error)
-	Update(ctx context.Context, riskID, planID int, req model.UpdateActionPlanRequest, updatedBy string) error
 	ListSteps(ctx context.Context, planID int) ([]*model.ActionPlanStep, error)
-	AddStep(ctx context.Context, planID int, req model.AddActionPlanStepRequest, createdBy string) (*model.ActionPlanStep, error)
-	UpdateStep(ctx context.Context, planID, stepID int, req model.UpdateActionPlanStepRequest, updatedBy string) error
+	// UpdateStep and Complete are ownership-gated in addition to the
+	// CompleteActionSteps privilege the handler already checks: callerEmail
+	// must resolve to the plan's action_owner_id, uniformly for STANDARD and
+	// MANAGEMENT plans.
+	UpdateStep(ctx context.Context, riskID, planID, stepID int, req model.UpdateActionPlanStepRequest, callerEmail string) error
+	Complete(ctx context.Context, riskID, planID int, callerEmail string) (*model.ActionPlan, error)
 }
 
 type actionPlanService struct {
-	repo repository.ActionPlanRepository
+	repo     repository.ActionPlanRepository
+	userRepo user.Repository
 }
 
-func NewActionPlanService(repo repository.ActionPlanRepository) ActionPlanService {
-	return &actionPlanService{repo: repo}
+// NewActionPlanService constructs an ActionPlanService. userRepo resolves the
+// caller's email (from the JWT) to their user.id for the ownership check on
+// UpdateStep/Complete.
+func NewActionPlanService(repo repository.ActionPlanRepository, userRepo user.Repository) ActionPlanService {
+	return &actionPlanService{repo: repo, userRepo: userRepo}
+}
+
+func badRequest(msg string) error {
+	return &apierror.Error{StatusCode: http.StatusBadRequest, Body: msg}
 }
 
 func (s *actionPlanService) List(ctx context.Context, riskID int) ([]*model.ActionPlan, error) {
-	// TODO: delegate to repo
-	return nil, errNotImplemented
+	if riskID <= 0 {
+		return nil, badRequest("riskId must be a positive integer")
+	}
+	return s.repo.List(ctx, riskID)
+}
+
+// getForRisk fetches a plan and verifies it belongs to riskID, so a caller
+// can't reach another risk's plan just by guessing its planID.
+func (s *actionPlanService) getForRisk(ctx context.Context, riskID, planID int) (*model.ActionPlan, error) {
+	if planID <= 0 {
+		return nil, badRequest("planId must be a positive integer")
+	}
+	plan, err := s.repo.GetByID(ctx, planID)
+	if err != nil {
+		return nil, err
+	}
+	if plan == nil || plan.RiskID != riskID {
+		return nil, &apierror.Error{StatusCode: http.StatusNotFound, Body: fmt.Sprintf("action plan %d not found for risk %d", planID, riskID)}
+	}
+	return plan, nil
 }
 
 func (s *actionPlanService) GetByID(ctx context.Context, riskID, planID int) (*model.ActionPlan, error) {
-	// TODO: delegate to repo; verify plan belongs to riskID
-	return nil, errNotImplemented
+	if riskID <= 0 {
+		return nil, badRequest("riskId must be a positive integer")
+	}
+	return s.getForRisk(ctx, riskID, planID)
 }
 
 func (s *actionPlanService) Create(ctx context.Context, riskID int, req model.CreateActionPlanRequest, createdBy string) (*model.ActionPlan, error) {
-	// TODO: verify risk exists and is in a status that allows plan creation, delegate to repo
-	return nil, errNotImplemented
-}
-
-func (s *actionPlanService) Update(ctx context.Context, riskID, planID int, req model.UpdateActionPlanRequest, updatedBy string) error {
-	// TODO: verify plan belongs to riskID, delegate to repo
-	return errNotImplemented
+	if riskID <= 0 {
+		return nil, badRequest("riskId must be a positive integer")
+	}
+	if strings.ToUpper(req.PlanType) != "MANAGEMENT" {
+		return nil, badRequest("planType must be MANAGEMENT — STANDARD plans are created as part of risk registration")
+	}
+	req.PlanType = "MANAGEMENT"
+	if createdBy == "" {
+		return nil, badRequest("createdBy is required")
+	}
+	return s.repo.Create(ctx, riskID, req, createdBy)
 }
 
 func (s *actionPlanService) ListSteps(ctx context.Context, planID int) ([]*model.ActionPlanStep, error) {
-	// TODO: delegate to repo, order by step_no
-	return nil, errNotImplemented
+	if planID <= 0 {
+		return nil, badRequest("planId must be a positive integer")
+	}
+	return s.repo.ListSteps(ctx, planID)
 }
 
-func (s *actionPlanService) AddStep(ctx context.Context, planID int, req model.AddActionPlanStepRequest, createdBy string) (*model.ActionPlanStep, error) {
-	// TODO: determine next step_no, delegate to repo
-	return nil, errNotImplemented
+// requireOwner reports whether callerEmail resolves to plan's action_owner_id.
+func (s *actionPlanService) requireOwner(ctx context.Context, plan *model.ActionPlan, callerEmail string) error {
+	caller, err := s.userRepo.GetByEmail(ctx, callerEmail)
+	if err != nil {
+		return err
+	}
+	if caller == nil || plan.ActionOwnerID == nil || caller.ID != *plan.ActionOwnerID {
+		return &apierror.Error{StatusCode: http.StatusForbidden, Body: "you are not the action owner of this plan"}
+	}
+	return nil
 }
 
-func (s *actionPlanService) UpdateStep(ctx context.Context, planID, stepID int, req model.UpdateActionPlanStepRequest, updatedBy string) error {
-	// TODO: verify step belongs to planID, delegate to repo
-	return errNotImplemented
+func (s *actionPlanService) UpdateStep(ctx context.Context, riskID, planID, stepID int, req model.UpdateActionPlanStepRequest, callerEmail string) error {
+	if stepID <= 0 {
+		return badRequest("stepId must be a positive integer")
+	}
+	if callerEmail == "" {
+		return badRequest("caller email is required")
+	}
+	plan, err := s.getForRisk(ctx, riskID, planID)
+	if err != nil {
+		return err
+	}
+	if err := s.requireOwner(ctx, plan, callerEmail); err != nil {
+		return err
+	}
+	return s.repo.UpdateStep(ctx, planID, stepID, req, callerEmail)
+}
+
+func (s *actionPlanService) Complete(ctx context.Context, riskID, planID int, callerEmail string) (*model.ActionPlan, error) {
+	if callerEmail == "" {
+		return nil, badRequest("caller email is required")
+	}
+	plan, err := s.getForRisk(ctx, riskID, planID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.requireOwner(ctx, plan, callerEmail); err != nil {
+		return nil, err
+	}
+	return s.repo.Complete(ctx, planID, callerEmail)
 }

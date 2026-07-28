@@ -18,6 +18,7 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
@@ -25,11 +26,23 @@ import (
 )
 
 // handleDashboard serves GET /api/v1/risks/dashboard.
+// Optional query param register_id scopes the payload to one register.
 func (d *Deps) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewRisks) {
 		return
 	}
-	summary, err := d.Dashboard.Summary(r.Context())
+
+	var registerID *int
+	if raw := r.URL.Query().Get("register_id"); raw != "" {
+		id, err := strconv.Atoi(raw)
+		if err != nil || id <= 0 {
+			response.WriteError(w, http.StatusBadRequest, "register_id must be a positive integer")
+			return
+		}
+		registerID = &id
+	}
+
+	summary, err := d.Dashboard.Summary(r.Context(), registerID)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return

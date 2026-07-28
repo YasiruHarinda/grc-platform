@@ -117,8 +117,17 @@ func (r *userRepo) CreateUser(ctx context.Context, req domain.CreateUserRequest)
 	if userType == "" {
 		userType = "INTERNAL"
 	}
+	// Upsert on uq_user_email: callers provisioning a user from an external
+	// directory (e.g. an HR employee picked as a risk's Action Owner) can't know
+	// whether the email is already known, so a duplicate refreshes the display
+	// name instead of failing. Only display_name/updated_by are refreshed —
+	// team assignments and status stay under explicit UpdateUser control.
+	//
+	// id = LAST_INSERT_ID(id) is required: without it LastInsertId() returns 0
+	// when the duplicate-key branch fires, and the GetUserByID below would miss.
 	res, err := r.db.ExecContext(ctx,
-		"INSERT INTO `user` (email, display_name, user_type, audit_team_id, risk_team_id, status, created_by, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		"INSERT INTO `user` (email, display_name, user_type, audit_team_id, risk_team_id, status, created_by, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "+
+			"ON DUPLICATE KEY UPDATE display_name = VALUES(display_name), updated_by = VALUES(updated_by), id = LAST_INSERT_ID(id)",
 		req.Email, req.DisplayName, userType, nullableInt(req.AuditTeamID), nullableInt(req.RiskTeamID), status, req.CreatedBy, req.CreatedBy)
 	if err != nil {
 		return nil, fmt.Errorf("user.Create: %w", err)

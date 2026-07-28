@@ -98,3 +98,38 @@ func (h *RiskHandler) UpdateRisk(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(risk)
 }
+
+// NextSequenceNumber handles GET /risks/next-sequence-number?sourceRegisterId=N.
+// It previews the sequence number the next risk for that register would receive,
+// for showing a risk code on a form before the risk exists. It consumes nothing.
+func (h *RiskHandler) NextSequenceNumber(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(r.URL.Query().Get("sourceRegisterId"))
+	if err != nil {
+		writeServiceError(w, r, &apierror.ValidationError{Msg: "sourceRegisterId must be a positive integer"})
+		return
+	}
+	resp, err := h.svc.NextSequenceNumber(r.Context(), id)
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// GetRiskDetail handles GET /risks/{id}/detail — the whole risk page in one
+// response, so a caller does not have to fan out and risk the parts disagreeing.
+func (h *RiskHandler) GetRiskDetail(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		writeServiceError(w, r, &apierror.ValidationError{Msg: "id must be a positive integer"})
+		return
+	}
+	d, err := h.svc.GetRiskDetail(r.Context(), id)
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(d)
+}

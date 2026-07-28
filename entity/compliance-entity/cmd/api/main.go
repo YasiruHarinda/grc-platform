@@ -29,7 +29,10 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/config"
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/db"
+	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/job"
+	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/repository"
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/server"
+	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/service"
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/storage"
 )
 
@@ -72,6 +75,18 @@ func main() {
 			log.Fatalf("server error: %v", err)
 		}
 	}()
+
+	// Daily overdue-risk escalation job. Runs against its own repo/service
+	// instances (cheap — thin wrappers over the same pool) rather than
+	// reaching into NewRouter's, which aren't exposed outside server.New.
+	jobCtx, jobCancel := context.WithCancel(context.Background())
+	defer jobCancel()
+	jobRiskSvc := service.NewRiskService(repository.NewRiskRepository(pool))
+	escalationJob := job.NewEscalationJob(
+		jobRiskSvc,
+		service.NewRiskEscalationService(repository.NewRiskEscalationRepository(pool), jobRiskSvc),
+	)
+	go escalationJob.Start(jobCtx)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

@@ -24,10 +24,10 @@ import { parseDateStr } from "../risk-registers/utils";
 export const TREATMENT_ORDER = ["REMEDIATE", "ACCEPT", "TRANSFER", "VOID", "UNSPECIFIED"] as const;
 
 export const TREATMENT_LABELS: Record<string, string> = {
-  REMEDIATE: "Remediate",
-  ACCEPT: "Accept",
+  REMEDIATE: "To be Remediated",
+  ACCEPT: "Risk Accepted",
   TRANSFER: "Transfer",
-  VOID: "Void",
+  VOID: "Avoid",
   UNSPECIFIED: "Unspecified",
 };
 
@@ -63,6 +63,18 @@ export const LEVEL_LABELS: Record<string, string> = {
   HIGH: "High",
   MEDIUM: "Medium",
   LOW: "Low",
+};
+
+// X-axis order for each register's status chart: closed risks, then every
+// open-risk treatment strategy.
+export const STATUS_BUCKET_ORDER = ["CLOSED", "REMEDIATE", "ACCEPT", "TRANSFER", "VOID"] as const;
+
+export const STATUS_BUCKET_LABELS: Record<string, string> = {
+  CLOSED: "Closed",
+  REMEDIATE: "To be Remediated",
+  ACCEPT: "Accepted",
+  TRANSFER: "Transfer",
+  VOID: "Avoid",
 };
 
 // Severity palette shared across the risk module: dashboard charts use it as
@@ -114,6 +126,16 @@ export function buildRegisterColorMap(registerNames: string[]): Map<string, stri
     map.set(name, i < CERT_PALETTE.length ? CERT_PALETTE[i] : CERT_OVERFLOW_COLOR);
   });
   return map;
+}
+
+// Builds the cert-distribution chart's subtitle from whichever certification
+// names are actually present in the current data, so newly added certs show
+// up automatically instead of needing a hardcoded list.
+export function certListSentence(certNames: string[]): string {
+  const unique = [...new Set(certNames)].sort((a, b) => a.localeCompare(b));
+  if (unique.length === 0) return "";
+  const list = new Intl.ListFormat("en", { style: "long", type: "conjunction" }).format(unique);
+  return `Open risks mapped to compliance certifications: ${list}`;
 }
 
 export function formatMonthYear(value: string | null): string {

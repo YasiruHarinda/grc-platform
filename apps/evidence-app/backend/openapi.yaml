@@ -1,0 +1,159 @@
+openapi: "3.0.0"
+info:
+  title: Compliance Backend
+  version: "1.0.0"
+security: []
+paths:
+  # Wildcard patterns for all path depths — covers every FastAPI route
+  # without maintaining a list. Choreo/WSO2 APIM uses x-auth-type: None
+  # to disable gateway-level auth on these resources.
+  "/{a}":
+    parameters:
+      - {name: a, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: w1g
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+    post:
+      operationId: w1p
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+    put:
+      operationId: w1pu
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+    patch:
+      operationId: w1pa
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+    delete:
+      operationId: w1d
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+  "/{a}/{b}":
+    parameters:
+      - {name: a, in: path, required: true, schema: {type: string}}
+      - {name: b, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: w2g
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+    post:
+      operationId: w2p
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+    put:
+      operationId: w2pu
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+    patch:
+      operationId: w2pa
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+    delete:
+      operationId: w2d
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+  "/{a}/{b}/{c}":
+    parameters:
+      - {name: a, in: path, required: true, schema: {type: string}}
+      - {name: b, in: path, required: true, schema: {type: string}}
+      - {name: c, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: w3g
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+    post:
+      operationId: w3p
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+    put:
+      operationId: w3pu
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+    patch:
+      operationId: w3pa
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+    delete:
+      operationId: w3d
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+  "/{a}/{b}/{c}/{d}":
+    parameters:
+      - {name: a, in: path, required: true, schema: {type: string}}
+      - {name: b, in: path, required: true, schema: {type: string}}
+      - {name: c, in: path, required: true, schema: {type: string}}
+      - {name: d, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: w4g
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+    post:
+      operationId: w4p
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+    put:
+      operationId: w4pu
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+    patch:
+      operationId: w4pa
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+    delete:
+      operationId: w4d
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+  "/{a}/{b}/{c}/{d}/{e}":
+    parameters:
+      - {name: a, in: path, required: true, schema: {type: string}}
+      - {name: b, in: path, required: true, schema: {type: string}}
+      - {name: c, in: path, required: true, schema: {type: string}}
+      - {name: d, in: path, required: true, schema: {type: string}}
+      - {name: e, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: w5g
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+    post:
+      operationId: w5p
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+    put:
+      operationId: w5pu
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+    patch:
+      operationId: w5pa
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}
+    delete:
+      operationId: w5d
+      security: []
+      x-auth-type: None
+      responses: {"200": {description: OK}}

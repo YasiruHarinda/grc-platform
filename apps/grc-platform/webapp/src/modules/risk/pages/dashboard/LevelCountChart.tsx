@@ -56,7 +56,7 @@ export default function LevelCountChart({ data }: LevelCountChartProps): JSX.Ele
       data={rows}
       xAxisDataKey="level"
       bars={bars}
-      height={320}
+      height={420}
       maxBarSize={64}
       legend={{ show: false }}
       isAnimationActive={false}

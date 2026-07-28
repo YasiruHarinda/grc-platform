@@ -23,8 +23,6 @@ import {
   Box,
   Button,
   Divider,
-  PageContent,
-  PageTitle,
   Paper,
   Stack,
   Step,
@@ -39,6 +37,7 @@ import RiskAssessmentStep from "./add-risk/RiskAssessmentStep";
 import ActionPlanStep from "./add-risk/ActionPlanStep";
 import { buildRiskCode, getCurrentQuarter, getCurrentYear } from "./add-risk/constants";
 import type { AddRiskFormValues } from "./add-risk/types";
+import { darkCardSx } from "./cardStyles";
 import {
   createRisk,
   fetchAssignmentTeams,
@@ -131,8 +130,8 @@ export default function AddRisk(): JSX.Element {
       riskDescription: "",
       complianceReferences: [],
       identifiedByType: "EMPLOYEE",
-      identifiedByEmployee: "",
       identifiedByName: "",
+      identifiedByEmail: "",
       assignedBy: "",
       riskIdentifiedDate: null,
       // ── Step 2 defaults ───────────────────────────────────────────────────
@@ -157,7 +156,7 @@ export default function AddRisk(): JSX.Element {
     mode: "onSubmit",
   });
 
-  const { trigger, getValues, handleSubmit, setError } = methods;
+  const { trigger, handleSubmit, setError } = methods;
 
   // Watch the three fields that determine the risk code preview and next-sequence-id.
   const watchedYear            = methods.watch("year");
@@ -224,13 +223,7 @@ export default function AddRisk(): JSX.Element {
     let valid = true;
 
     if (activeStep === 0) {
-      const identifiedByType = getValues("identifiedByType");
-      const conditionalField: (keyof AddRiskFormValues)[] =
-        identifiedByType === "EMPLOYEE"
-          ? ["identifiedByEmployee"]
-          : ["identifiedByName"];
-
-      valid = await trigger([...STEP_1_FIELDS, ...conditionalField]);
+      valid = await trigger([...STEP_1_FIELDS, "identifiedByName"]);
     } else if (activeStep === 1) {
       valid = await trigger(STEP_2_FIELDS);
     }
@@ -312,13 +305,13 @@ export default function AddRisk(): JSX.Element {
   ];
 
   return (
-    <PageContent>
-      <PageTitle sx={{ mb: 3 }}>
-        <PageTitle.Header>Add a Risk</PageTitle.Header>
-        <PageTitle.SubHeader>
-          Complete all three steps to register a new risk in the system.
-        </PageTitle.SubHeader>
-      </PageTitle>
+    <Box sx={{ p: { xs: 2, sm: 3 }, maxWidth: 1500, mx: "auto" }}>
+      <Typography variant="h4" fontWeight={700} sx={{ mb: 0.5 }}>
+        Add a Risk
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+        Complete all three steps to register a new risk in the system.
+      </Typography>
 
       <FormProvider {...methods}>
         <Paper
@@ -327,10 +320,7 @@ export default function AddRisk(): JSX.Element {
           sx={{
             p: { xs: 2, sm: 4 },
             borderRadius: 2,
-            "[data-color-scheme='dark'] &": {
-              backgroundColor: "rgba(36, 36, 36, 0.6)",
-              borderColor: "rgba(255, 255, 255, 0.16)",
-            },
+            ...darkCardSx,
           }}
           onSubmit={(e) => e.preventDefault()}
           noValidate
@@ -402,6 +392,6 @@ export default function AddRisk(): JSX.Element {
           )}
         </Paper>
       </FormProvider>
-    </PageContent>
+    </Box>
   );
 }

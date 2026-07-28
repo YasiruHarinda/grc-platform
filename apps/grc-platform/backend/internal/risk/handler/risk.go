@@ -17,10 +17,13 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/apierror"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
@@ -88,6 +91,18 @@ func (d *Deps) handleCreateRisk(w http.ResponseWriter, r *http.Request) {
 	if err := validateCreateRiskRequest(req); err != nil {
 		response.WriteError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	if req.IdentifiedByType == model.IdentifiedByEmployee {
+		name, err := d.resolveIdentifiedByEmployee(r.Context(), *req.IdentifiedByEmail)
+		if err != nil {
+			response.MapServiceError(r.Context(), w, err, "Unable to verify the identifying employee. Please try again.")
+			return
+		}
+		req.IdentifiedByName = &name
+	} else if req.IdentifiedByType == model.IdentifiedByExternalPerson || req.IdentifiedByType == model.IdentifiedByTool {
+		trimmed := strings.TrimSpace(*req.IdentifiedByName)
+		req.IdentifiedByName = &trimmed
 	}
 
 	createdBy := user.Email
@@ -168,16 +183,38 @@ func validateCreateRiskRequest(req model.CreateRiskRequest) error {
 		}
 	}
 	switch req.IdentifiedByType {
-	case "EMPLOYEE":
-		if req.IdentifiedByUserID == nil {
-			return errorf("identified_by_user_id is required when identified_by_type is EMPLOYEE")
+	case model.IdentifiedByEmployee:
+		// IdentifiedByName is deliberately not checked here: it is never
+		// trusted for EMPLOYEE and gets overwritten from hr_entity once this
+		// validation passes — see handleCreateRisk.
+		if req.IdentifiedByEmail == nil || strings.TrimSpace(*req.IdentifiedByEmail) == "" {
+			return errorf("identified_by_email is required when identified_by_type is %s", model.IdentifiedByEmployee)
 		}
-	case "EXTERNAL_PERSON", "TOOL":
-		if req.IdentifiedByName == nil || *req.IdentifiedByName == "" {
+	case model.IdentifiedByExternalPerson, model.IdentifiedByTool:
+		if req.IdentifiedByName == nil || strings.TrimSpace(*req.IdentifiedByName) == "" {
 			return errorf("identified_by_name is required when identified_by_type is %s", req.IdentifiedByType)
 		}
 	default:
-		return errorf("identified_by_type must be EMPLOYEE, EXTERNAL_PERSON, or TOOL")
+		return errorf("identified_by_type must be %s, %s, or %s", model.IdentifiedByEmployee, model.IdentifiedByExternalPerson, model.IdentifiedByTool)
 	}
 	return nil
+}
+
+// resolveIdentifiedByEmployee verifies email against hr_entity and returns
+// their canonical display name. Used by both handleCreateRisk and
+// handleUpdateRisk so identified_by_name is always derived server-side for
+// identified_by_type=EMPLOYEE, never taken from the request body — a client
+// cannot attribute a risk to an employee it hasn't proven exists.
+func (d *Deps) resolveIdentifiedByEmployee(ctx context.Context, email string) (string, error) {
+	opt, err := d.Employee.Resolve(ctx, strings.TrimSpace(email))
+	if err != nil {
+		return "", err
+	}
+	if opt == nil {
+		return "", &apierror.Error{
+			StatusCode: http.StatusUnprocessableEntity,
+			Body:       "identified_by_email does not match an active WSO2 employee",
+		}
+	}
+	return opt.Name, nil
 }

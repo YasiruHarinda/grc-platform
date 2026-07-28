@@ -17,6 +17,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -78,6 +79,102 @@ func splitCSVInts(raw string) []int {
 	return out
 }
 
+// isActionOwnerOnly reports whether the caller holds CompleteActionSteps but
+// none of the broader viewer privileges — the privilege-driven equivalent of
+// "this is an Action Owner, not a Risk Assigner/Owner/Compliance/Management/
+// Admin user," without checking a role name (this module never does).
+//
+// broader is a hand-maintained allowlist, not derived from the full privilege
+// set — a future write/approve privilege that isn't added here would silently
+// mis-classify a broad holder as action-owner-only, over-scoping them (see
+// riskVisibleToCaller and its handleListRisks / by-id read callers). When you
+// add a new Risk-module write or approval privilege, add it to this list too.
+func isActionOwnerOnly(ctx context.Context) bool {
+	if !auth.HasPrivilege(ctx, privilege.CompleteActionSteps) {
+		return false
+	}
+	// Keep in sync with every write/approval privilege in
+	// internal/shared/privilege/privilege.go's Risk Hub block.
+	broader := []string{
+		privilege.CreateRisk,
+		privilege.UpdateRisk,
+		privilege.SubmitRisk,
+		privilege.CancelRisk,
+		privilege.OwnerApproveRisk,
+		privilege.ManagementApproveRisk,
+		privilege.ComplianceApproveRisk,
+		privilege.OwnerRejectRisk,
+		privilege.ManagementRejectRisk,
+		privilege.ComplianceRejectRisk,
+		privilege.CompleteRisk,
+		privilege.CloseRisk,
+		privilege.EscalateRisk,
+		privilege.AssessRisk,
+		privilege.ManageTeams,
+		privilege.ManageRiskScores,
+		privilege.ManageActionPlans,
+		privilege.ManageComplianceRefs,
+		privilege.CreateManagementActionPlan,
+	}
+	for _, p := range broader {
+		if auth.HasPrivilege(ctx, p) {
+			return false
+		}
+	}
+	return true
+}
+
+// callerUserID resolves the authenticated caller to their internal user id,
+// the same email/subject lookup handleListRisks' Action Owner list scoping
+// uses. Returns (nil, nil) — not an error — when the caller has no platform
+// user row, so callers can fail closed on that case themselves.
+func (d *Deps) callerUserID(ctx context.Context) (*int, error) {
+	userInfo := auth.FromContext(ctx)
+	if userInfo == nil {
+		return nil, nil
+	}
+	email := userInfo.Email
+	if email == "" {
+		email = userInfo.Subject
+	}
+	caller, err := d.Users.GetByEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	if caller == nil {
+		return nil, nil
+	}
+	return &caller.ID, nil
+}
+
+// riskVisibleToCaller reports whether the caller may view riskID's data — the
+// by-id counterpart to handleListRisks' Action Owner list scoping, closing the
+// gap where that scoping was otherwise cosmetic (a caller restricted in the
+// list could still read any risk directly by id). Any caller holding a
+// broader-than-Action-Owner privilege always passes; their access is already
+// governed by the ViewRisks check callers perform before this. An
+// Action-Owner-only caller passes only if they're the action_owner_id of one
+// of the risk's action plans (STANDARD or MANAGEMENT).
+func (d *Deps) riskVisibleToCaller(ctx context.Context, riskID int) (bool, error) {
+	if !isActionOwnerOnly(ctx) {
+		return true, nil
+	}
+	callerID, err := d.callerUserID(ctx)
+	if err != nil || callerID == nil {
+		return false, err
+	}
+	plans, err := d.ActionPlan.List(ctx, riskID)
+	if err != nil {
+		return false, err
+	}
+	for _, p := range plans {
+		if p.ActionOwnerID != nil && *p.ActionOwnerID == *callerID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // handleListRisks serves GET /api/v1/risks.
 // Query params:
 //   - statuses:        comma-separated workflow status values
@@ -120,6 +217,42 @@ func (d *Deps) handleListRisks(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Action Owner list scoping: a caller who can only complete action steps
+	// (not create/approve/escalate risks) sees just the risks where they own
+	// a plan — implementing what the grc-platform-risk-action-owner role's
+	// own seed-data description promises. Broader-privilege holders (Risk
+	// Assigner, Risk Owner, Compliance, Management, Admin) see everything,
+	// same as before; this never narrows their view.
+	//
+	// Fails closed: leaving ActionOwnerID unset when the caller can't be
+	// resolved would hand them the entire register — the exact exposure this
+	// scoping exists to prevent — so an unresolvable caller gets an error or
+	// an empty page, never an unscoped one.
+	if isActionOwnerOnly(r.Context()) {
+		email, ok := requireUserEmail(w, r)
+		if !ok {
+			return
+		}
+		caller, err := d.Users.GetByEmail(r.Context(), email)
+		if err != nil {
+			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+			return
+		}
+		if caller == nil {
+			// Authenticated but with no platform user row: they cannot be any
+			// plan's action_owner_id, so an empty page is the truthful scoped
+			// result rather than an error.
+			response.WriteJSONValue(w, http.StatusOK, model.RiskListPage{
+				Items:  []*model.RiskListItem{},
+				Total:  0,
+				Offset: filter.Offset,
+				Limit:  filter.Limit,
+			})
+			return
+		}
+		filter.ActionOwnerID = &caller.ID
+	}
+
 	page, err := d.Risk.List(r.Context(), filter)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
@@ -135,6 +268,15 @@ func (d *Deps) handleGetRisk(w http.ResponseWriter, r *http.Request) {
 	}
 	id, ok := parseRiskID(w, r)
 	if !ok {
+		return
+	}
+	visible, err := d.riskVisibleToCaller(r.Context(), id)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	if !visible {
+		response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
 		return
 	}
 
@@ -178,6 +320,35 @@ func (d *Deps) handleUpdateRisk(w http.ResponseWriter, r *http.Request) {
 	if req.EmailSubject == "" {
 		response.WriteError(w, http.StatusBadRequest, "email_subject is required")
 		return
+	}
+
+	// IdentifiedByType == "" means "leave Identified By unchanged" — see the
+	// COALESCE-on-empty convention this maps onto in the repository. Only
+	// validate/resolve when the caller is actually setting it this request.
+	if req.IdentifiedByType != "" {
+		switch req.IdentifiedByType {
+		case model.IdentifiedByEmployee:
+			if req.IdentifiedByEmail == nil || strings.TrimSpace(*req.IdentifiedByEmail) == "" {
+				response.WriteError(w, http.StatusBadRequest, "identified_by_email is required when identified_by_type is "+model.IdentifiedByEmployee)
+				return
+			}
+			name, err := d.resolveIdentifiedByEmployee(r.Context(), *req.IdentifiedByEmail)
+			if err != nil {
+				response.MapServiceError(r.Context(), w, err, "Unable to verify the identifying employee. Please try again.")
+				return
+			}
+			req.IdentifiedByName = &name
+		case model.IdentifiedByExternalPerson, model.IdentifiedByTool:
+			if req.IdentifiedByName == nil || strings.TrimSpace(*req.IdentifiedByName) == "" {
+				response.WriteError(w, http.StatusBadRequest, "identified_by_name is required when identified_by_type is "+req.IdentifiedByType)
+				return
+			}
+			trimmed := strings.TrimSpace(*req.IdentifiedByName)
+			req.IdentifiedByName = &trimmed
+		default:
+			response.WriteError(w, http.StatusBadRequest, "identified_by_type must be "+model.IdentifiedByEmployee+", "+model.IdentifiedByExternalPerson+", or "+model.IdentifiedByTool)
+			return
+		}
 	}
 
 	if err := d.Risk.Update(r.Context(), id, req, by); err != nil {

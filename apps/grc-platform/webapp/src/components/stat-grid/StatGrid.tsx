@@ -15,6 +15,7 @@
 // under the License.
 
 import { Box, StatCard, Skeleton, Tooltip, useTheme } from "@wso2/oxygen-ui";
+import type { SxProps, Theme } from "@wso2/oxygen-ui";
 import { type ComponentType, type JSX } from "react";
 import { Info } from "@wso2/oxygen-ui-icons-react";
 
@@ -54,6 +55,7 @@ export interface StatGridProps<T extends string> {
   valueFormatter?: (value: number) => string | number;
   onStatClick?: (key: T) => void;
   nonClickableKeys?: T[];
+  cardSx?: SxProps<Theme>;
 }
 
 /**
@@ -85,6 +87,7 @@ export default function StatGrid<T extends string>({
   valueFormatter,
   onStatClick,
   nonClickableKeys,
+  cardSx,
 }: StatGridProps<T>): JSX.Element {
   const theme = useTheme();
   const xs = itemSize.xs ?? 12;
@@ -221,6 +224,7 @@ export default function StatGrid<T extends string>({
                   }
                   icon={<Icon />}
                   iconColor={stat.iconColor}
+                  sx={cardSx}
                 />
               </>
             )}

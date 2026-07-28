@@ -10,7 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@asgardeo/react": "0.25.5",
+    "@asgardeo/browser": "^0.7.10",
+    "@asgardeo/react": "^0.25.6",
     "@asgardeo/react-router": "2.0.0",
     "@tanstack/react-query": "5.90.20",
     "@wso2/oxygen-ui": "0.13.0",

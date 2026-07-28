@@ -20,15 +20,19 @@ package handler
 import (
 	"net/http"
 
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
 	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
 
 // Deps holds dependencies for shared user handlers.
 type Deps struct {
-	Users userentity.Repository
+	Users    userentity.Repository
+	HREntity *hrentity.Client
 }
 
 // RegisterRoutes mounts shared user routes onto mux.
 func RegisterRoutes(mux *http.ServeMux, deps Deps) {
+	mux.HandleFunc("GET /api/v1/me/profile", handleGetMyProfile(deps.HREntity))
 	mux.HandleFunc("GET /api/v1/users", handleListUsers(deps.Users))
+	mux.HandleFunc("POST /api/v1/users/resolve", handleResolveUser(deps.Users, deps.HREntity))
 }

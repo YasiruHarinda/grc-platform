@@ -38,3 +38,10 @@ const (
 	RiskTypeNew     = "NEW"
 	RiskTypeUpdated = "UPDATED"
 )
+
+// The three values for the identified_by_type column.
+const (
+	IdentifiedByEmployee       = "EMPLOYEE"
+	IdentifiedByExternalPerson = "EXTERNAL_PERSON"
+	IdentifiedByTool           = "TOOL"
+)

@@ -71,6 +71,26 @@ func (h *RiskEscalationHandler) ListRiskEscalations(w http.ResponseWriter, r *ht
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// EscalateRisk handles POST /risks/{riskId}/escalate — the manual trigger.
+func (h *RiskEscalationHandler) EscalateRisk(w http.ResponseWriter, r *http.Request) {
+	riskID, err := strconv.Atoi(r.PathValue("riskId"))
+	if err != nil {
+		writeServiceError(w, r, &apierror.ValidationError{Msg: "riskId must be a positive integer"})
+		return
+	}
+	var req domain.EscalateRiskRequest
+	if !decodeRequest(w, r, &req) {
+		return
+	}
+	e, err := h.svc.EscalateRisk(r.Context(), riskID, req)
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(e)
+}
+
 // GetRiskEscalationByID handles GET /risks/{riskId}/escalations/{escalationId}.
 func (h *RiskEscalationHandler) GetRiskEscalationByID(w http.ResponseWriter, r *http.Request) {
 	riskID, err := strconv.Atoi(r.PathValue("riskId"))

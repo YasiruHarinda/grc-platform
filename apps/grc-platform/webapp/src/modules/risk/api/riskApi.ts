@@ -48,6 +48,15 @@ export interface UserOption {
   id: number;
   display_name: string;
   email: string;
+  risk_team_id: number | null;
+}
+
+// EmployeeOption is a WSO2 employee returned by GET /api/v1/employees/search,
+// sourced live from the HR entity service — never from the GRC platform's
+// own database. Used only for the "Risk Identified By: Employee" field.
+export interface EmployeeOption {
+  name: string;
+  email: string;
 }
 
 export interface CreateRiskResponse {
@@ -105,6 +114,34 @@ export interface ActionPlanDetail {
   steps: ActionPlanStep[];
 }
 
+// ActionPlan is the standalone shape returned by GET/POST .../action-plans —
+// unlike RiskDetail.action_plan (always the STANDARD plan embedded at risk
+// creation), this is how the MANAGEMENT plan created on an escalated risk is
+// fetched, and how both plans are listed together.
+export interface ActionPlan {
+  id: number;
+  risk_id: number;
+  action_owner_id: number | null;
+  description: string | null;
+  status: string; // PENDING | IN_PROGRESS | COMPLETED
+  completed_date: string | null;
+  plan_type: string; // STANDARD | MANAGEMENT
+  created_by: string | null;
+}
+
+// Escalation is created automatically by the compliance-entity's daily
+// overdue-risk job — no escalated_to/reason, since it's system-driven, not a
+// human decision. created_at is what "escalated on" shows in the UI.
+export interface Escalation {
+  id: number;
+  risk_id: number;
+  new_treatment_strategy: string | null;
+  action_plan_id: number | null;
+  decision: string | null;
+  status: string; // OPEN | RESOLVED
+  created_at: string;
+}
+
 export interface RiskAssessmentRecord {
   id: number;
   risk_id: number;
@@ -132,7 +169,6 @@ export interface RiskDetail {
   risk_description: string;
   risk_identified_date: string | null;
   identified_by_type: string | null;
-  identified_by_user_id: number | null;
   identified_by_name: string | null;
   assigner_id: number;
   owner_id: number;
@@ -157,7 +193,6 @@ export interface RiskDetail {
   assignment_team_name: string;
   owner_name: string;
   assigner_name: string;
-  identified_by_user_name: string | null;
   compliance_approver_name: string | null;
   // Original rating from creation; immutable once a risk owner has approved
   // the risk. Only EditRiskDialog should read this — for display, use
@@ -199,8 +234,10 @@ export interface UpdateRiskPayload {
   risk_description: string;
   risk_identified_date?: string;
   identified_by_type?: string;
-  identified_by_user_id?: number;
   identified_by_name?: string;
+  // Required alongside identified_by_type "EMPLOYEE"; the backend re-resolves
+  // the name from this and ignores identified_by_name on its own.
+  identified_by_email?: string;
   assigner_id?: number;
   owner_id?: number;
   impact_description?: string;
@@ -262,9 +299,10 @@ export interface RegisterCertShare {
   percentage: number;
 }
 
-export interface RegisterLevelTreatmentCount {
+export interface RegisterStatusLevelCount {
+  bucket: string;
   risk_level: string;
-  treatment_strategy: string;
+  color_code: string;
   count: number;
 }
 
@@ -273,8 +311,7 @@ export interface RegisterAnalytics {
   register_name: string;
   open_count: number;
   heatmap: HeatmapCell[];
-  level_counts: RiskLevelCount[];
-  level_treatments: RegisterLevelTreatmentCount[];
+  status_levels: RegisterStatusLevelCount[];
 }
 
 export interface RepeatedRiskOccurrence {
@@ -292,7 +329,7 @@ export interface RepeatedComplianceRisk {
 export interface HighRiskItem {
   id: number;
   risk_code: string;
-  risk_description: string;
+  risk_title: string;
   register_name: string;
   owner_name: string;
   identified_date: string | null;
@@ -428,6 +465,34 @@ export async function fetchUsers(authFetch: AuthFetch): Promise<UserOption[]> {
   return handleResponse<UserOption[]>(res);
 }
 
+// searchEmployees looks up active employees by email substring, live
+// from the HR entity service (never the GRC platform's own database), for
+export async function searchEmployees(authFetch: AuthFetch, query: string): Promise<EmployeeOption[]> {
+  const params = new URLSearchParams({ q: query });
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/employees/search?${params}`);
+  return handleResponse<EmployeeOption[]>(res);
+}
+
+// resolveUserByEmail links an HR entity employee to an internal user.id by
+// email, creating the user row on the fly if one doesn't exist yet (e.g. an
+// employee who's never logged into grc-platform). Used to let fields
+// like Action Owner assign any real employee, not just existing grc-platform
+// users, while still storing a proper FK rather than free text.
+//
+// Only email is sent: the backend looks the display name up from hr_entity
+// itself rather than trust one supplied here (the search result's `name` is
+// display-only and no longer part of this request) — see resolve.go.
+export async function resolveUserByEmail(
+  authFetch: AuthFetch,
+  employee: EmployeeOption,
+): Promise<UserOption> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/users/resolve`, {
+    method: "POST",
+    body: JSON.stringify({ email: employee.email }),
+  });
+  return handleResponse<UserOption>(res);
+}
+
 export async function fetchNextSequenceID(
   authFetch: AuthFetch,
   sourceRegisterID: number,
@@ -455,9 +520,14 @@ export function buildCreateRiskPayload(data: AddRiskFormValues): Record<string, 
     risk_description: data.riskDescription,
     compliance_reference_ids: data.complianceReferences,
     identified_by_type: data.identifiedByType,
-    ...(data.identifiedByType === "EMPLOYEE"
-      ? { identified_by_user_id: data.identifiedByEmployee !== "" ? data.identifiedByEmployee : undefined }
-      : { identified_by_name: data.identifiedByName !== "" ? data.identifiedByName : undefined }),
+    identified_by_name: data.identifiedByName !== "" ? data.identifiedByName : undefined,
+    // Only meaningful (and only required by the backend) for EMPLOYEE — the
+    // server derives identified_by_name from this rather than trust the
+    // string above on its own.
+    identified_by_email:
+      data.identifiedByType === "EMPLOYEE" && data.identifiedByEmail !== ""
+        ? data.identifiedByEmail
+        : undefined,
     assigner_id: data.assignedBy !== "" ? data.assignedBy : undefined,
     risk_identified_date: toDateOnlyString(data.riskIdentifiedDate),
     likelihood: data.likelihood,
@@ -578,8 +648,12 @@ export async function resubmitRisk(authFetch: AuthFetch, id: number): Promise<vo
   return handleResponse<void>(res);
 }
 
-export async function fetchDashboard(authFetch: AuthFetch): Promise<DashboardSummary> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/dashboard`);
+export async function fetchDashboard(
+  authFetch: AuthFetch,
+  registerId?: number,
+): Promise<DashboardSummary> {
+  const qs = registerId ? `?register_id=${registerId}` : "";
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/dashboard${qs}`);
   return handleResponse<DashboardSummary>(res);
 }
 
@@ -602,4 +676,87 @@ export async function createAssessment(
     body: JSON.stringify(payload),
   });
   return handleResponse<RiskAssessmentRecord>(res);
+}
+
+// ── Action plans (Overdue Risks / escalation feature) ──────────────────────────
+
+export async function fetchActionPlans(authFetch: AuthFetch, riskId: number): Promise<ActionPlan[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/action-plans`);
+  return handleResponse<ActionPlan[]>(res);
+}
+
+// createManagementActionPlan is MANAGEMENT-only — the backend rejects any
+// other plan_type here, since STANDARD plans are still created inline as
+// part of risk registration (Add Risk's own flow).
+export async function createManagementActionPlan(
+  authFetch: AuthFetch,
+  riskId: number,
+  payload: { description: string; action_owner_id: number | null; steps: string[] },
+): Promise<ActionPlan> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/action-plans`, {
+    method: "POST",
+    body: JSON.stringify({
+      description: payload.description,
+      action_owner_id: payload.action_owner_id,
+      plan_type: "MANAGEMENT",
+      // Steps are created atomically with the plan on the backend, so a
+      // failure can't leave an orphaned, stepless plan behind.
+      steps: payload.steps,
+    }),
+  });
+  return handleResponse<ActionPlan>(res);
+}
+
+export async function fetchActionPlanSteps(
+  authFetch: AuthFetch,
+  riskId: number,
+  planId: number,
+): Promise<ActionPlanStep[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/action-plans/${planId}/steps`);
+  return handleResponse<ActionPlanStep[]>(res);
+}
+
+// completeActionStep marks one step done. Gated server-side by
+// COMPLETE_ACTION_STEPS_RISK plus an ownership check (caller must be the plan's
+// action_owner_id) — applies uniformly to STANDARD and MANAGEMENT plans.
+export async function completeActionStep(
+  authFetch: AuthFetch,
+  riskId: number,
+  planId: number,
+  stepId: number,
+  completedDate: string,
+): Promise<void> {
+  const res = await authFetch(
+    `${BACKEND_BASE_URL}/api/v1/risks/${riskId}/action-plans/${planId}/steps/${stepId}`,
+    { method: "PATCH", body: JSON.stringify({ status: "COMPLETED", completed_date: completedDate }) },
+  );
+  return handleResponse<void>(res);
+}
+
+// completeActionPlan requires every step already COMPLETED (enforced
+// server-side); for a MANAGEMENT plan this also resolves its escalation and
+// reverts the risk to IN_REMEDIATION.
+export async function completeActionPlan(
+  authFetch: AuthFetch,
+  riskId: number,
+  planId: number,
+): Promise<ActionPlan> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/action-plans/${planId}/complete`, {
+    method: "POST",
+  });
+  return handleResponse<ActionPlan>(res);
+}
+
+export async function fetchEscalations(authFetch: AuthFetch, riskId: number): Promise<Escalation[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/escalations`);
+  return handleResponse<Escalation[]>(res);
+}
+
+// escalateRisk is the manual trigger — Compliance/Admin escalating an
+// overdue IN_REMEDIATION risk on demand instead of waiting for the daily job
+// (up to 24h) to reach it. Same outcome either way: the risk moves to
+// ESCALATED and shows up in the Overdue Risks tab.
+export async function escalateRisk(authFetch: AuthFetch, riskId: number): Promise<Escalation> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/escalate`, { method: "POST" });
+  return handleResponse<Escalation>(res);
 }

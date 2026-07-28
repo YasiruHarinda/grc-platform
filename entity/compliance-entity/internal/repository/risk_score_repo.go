@@ -34,9 +34,14 @@ type riskScoreRepo struct{ db *sql.DB }
 // NewRiskScoreRepository constructs a RiskScoreRepository.
 func NewRiskScoreRepository(db *sql.DB) RiskScoreRepository { return &riskScoreRepo{db: db} }
 
+// ListRiskScores returns the full score matrix ordered by likelihood then
+// impact. Ordering by risk_rating instead would tie — (1,2) and (2,1) both rate
+// 2, as do (1,3) and (3,1) — and MySQL does not guarantee the order of tied
+// rows, so the sequence could vary between executions. Likelihood/impact is
+// total, and matches the order the GRC backend has always returned.
 func (r *riskScoreRepo) ListRiskScores(ctx context.Context) ([]domain.RiskScore, error) {
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, likelihood, impact, risk_rating, risk_level, color_code FROM risk_score ORDER BY risk_rating")
+		"SELECT id, likelihood, impact, risk_rating, risk_level, color_code FROM risk_score ORDER BY likelihood, impact")
 	if err != nil {
 		return nil, fmt.Errorf("risk_score.List: %w", err)
 	}

@@ -472,17 +472,68 @@ type Risk struct {
 	ReassessmentDate   *string   `json:"reassessmentDate"`   // YYYY-MM-DD
 	CreatedOn          time.Time `json:"createdOn"`
 	UpdatedOn          time.Time `json:"updatedOn"`
+
+	// Remaining risk columns. These were absent while nothing consumed this
+	// type; the GRC backend's risk detail and list views need all of them, and
+	// omitting one renders as a blank field rather than an error.
+	RiskIdentifiedDate     *string `json:"riskIdentifiedDate"` // YYYY-MM-DD
+	IdentifiedByType       *string `json:"identifiedByType"`   // EMPLOYEE | EXTERNAL_PERSON | TOOL
+	IdentifiedByName       *string `json:"identifiedByName"`
+	ImpactDescription      *string `json:"impactDescription"`
+	ActionPlanID           *int    `json:"actionPlanId"`
+	Progress               *string `json:"progress"`
+	ComplianceApprovalBy   *int    `json:"complianceApprovalBy"`
+	ComplianceApprovalDate *string `json:"complianceApprovalDate"` // YYYY-MM-DD
+	GitIssueURL            *string `json:"gitIssueUrl"`
+	EmailSubject           *string `json:"emailSubject"`
+	Remarks                *string `json:"remarks"`
+	RiskType               string  `json:"riskType"` // NEW | UPDATED
+	RejectionComment       *string `json:"rejectionComment"`
+	RejectionStage         *string `json:"rejectionStage"`
+	OwnerFirstApprovedAt   *string `json:"ownerFirstApprovedAt"`
+	CreatedBy              string  `json:"createdBy"`
+	UpdatedBy              string  `json:"updatedBy"`
+
+	// Effective residual standing: the most recent assessment's score, or the
+	// gross score when the risk has not been reassessed. This is what a risk
+	// row should display — GrossRiskLevel is the original rating and goes stale
+	// the moment a reassessment lands.
+	EffectiveRiskLevel *string `json:"effectiveRiskLevel"`
+	EffectiveColorCode *string `json:"effectiveColorCode"`
 }
 
 // SearchRisksRequest is the payload for POST /risks/search.
 type SearchRisksRequest struct {
-	SearchQuery        string     `json:"searchQuery"`
-	WorkflowStatusKeys []string   `json:"workflowStatusKeys"` // filter by status values
-	SourceRegisterIDs  []int      `json:"sourceRegisterIds"`
-	AssignmentTeamIDs  []int      `json:"assignmentTeamIds"`
-	RiskYears          []int      `json:"riskYears"`
-	RiskQuarterKeys    []string   `json:"riskQuarterKeys"` // Q1 | Q2 | Q3 | Q4
-	Pagination         Pagination `json:"pagination"`
+	SearchQuery        string   `json:"searchQuery"` // matched against risk_code and risk_title
+	WorkflowStatusKeys []string `json:"workflowStatusKeys"`
+	SourceRegisterIDs  []int    `json:"sourceRegisterIds"`
+	AssignmentTeamIDs  []int    `json:"assignmentTeamIds"`
+	RiskYears          []int    `json:"riskYears"`
+	RiskQuarterKeys    []string `json:"riskQuarterKeys"` // Q1 | Q2 | Q3 | Q4
+
+	// RiskLevelKeys filters on the *effective* residual level — the most recent
+	// assessment's level, or the gross level when a risk has not been
+	// reassessed. Filtering on the gross level would contradict what the same
+	// row displays.
+	RiskLevelKeys []string `json:"riskLevelKeys"` // LOW | MEDIUM | HIGH
+	RiskTypeKeys  []string `json:"riskTypeKeys"`  // NEW | UPDATED
+	OwnerIDs      []int    `json:"ownerIds"`
+	// ActionOwnerID restricts to risks with at least one risk_action_plan row
+	// (STANDARD or MANAGEMENT) whose action_owner_id matches — how the Action
+	// Owner's risk list is scoped to only what they're assigned to.
+	ActionOwnerID *int `json:"actionOwnerId"`
+
+	// Submitted* bound created_at, Due* bound implementation_date. Dates are
+	// YYYY-MM-DD and inclusive at both ends.
+	SubmittedFrom string `json:"submittedFrom"`
+	SubmittedTo   string `json:"submittedTo"`
+	DueFrom       string `json:"dueFrom"`
+	DueTo         string `json:"dueTo"`
+	// DueOverdueOnly restricts to risks already past their implementation date,
+	// independent of any Due range above.
+	DueOverdueOnly bool `json:"dueOverdueOnly"`
+
+	Pagination Pagination `json:"pagination"`
 }
 
 // SearchRisksResponse is returned by POST /risks/search.
@@ -840,27 +891,51 @@ type UpdateRiskReferenceRequest struct {
 
 // CreateRiskRequest is the payload for POST /risks.
 type CreateRiskRequest struct {
-	RiskTitle          string  `json:"riskTitle"`
-	RiskDescription    *string `json:"riskDescription"`
-	SourceRegisterID   int     `json:"sourceRegisterId"`
-	AssignmentTeamID   int     `json:"assignmentTeamId"`
-	AssignerID         int     `json:"assignerId"`
-	OwnerID            int     `json:"ownerId"`
-	RiskYear           int     `json:"riskYear"`
-	RiskQuarter        string  `json:"riskQuarter"` // Q1 | Q2 | Q3 | Q4
-	GrossScoreID       *int    `json:"grossScoreId"`
+	RiskTitle        string  `json:"riskTitle"`
+	RiskDescription  *string `json:"riskDescription"`
+	SourceRegisterID int     `json:"sourceRegisterId"`
+	AssignmentTeamID int     `json:"assignmentTeamId"`
+	AssignerID       int     `json:"assignerId"`
+	OwnerID          int     `json:"ownerId"`
+	RiskYear         int     `json:"riskYear"`
+	RiskQuarter      string  `json:"riskQuarter"` // Q1 | Q2 | Q3 | Q4
+	// Likelihood and impact identify the gross score cell; the score_id is
+	// resolved server-side from risk_score, as it is for assessments. Callers
+	// describe the rating they gave, not the surrogate key behind it.
+	Likelihood         int     `json:"likelihood"`
+	Impact             int     `json:"impact"`
 	TreatmentStrategy  *string `json:"treatmentStrategy"`
 	ImplementationDate *string `json:"implementationDate"` // YYYY-MM-DD
 	ReassessmentDate   *string `json:"reassessmentDate"`   // YYYY-MM-DD
 	ImpactDescription  *string `json:"impactDescription"`
 	RiskIdentifiedDate *string `json:"riskIdentifiedDate"`
 	IdentifiedByType   *string `json:"identifiedByType"` // EMPLOYEE | EXTERNAL_PERSON | TOOL
-	IdentifiedByUserID *int    `json:"identifiedByUserId"`
-	IdentifiedByName   *string `json:"identifiedByName"`
-	GitIssueURL        *string `json:"gitIssueUrl"`
-	EmailSubject       *string `json:"emailSubject"`
-	Remarks            *string `json:"remarks"`
-	CreatedBy          string  `json:"createdBy"`
+	// IdentifiedByUserID is deliberately absent: the GRC platform dropped the
+	// risk.identified_by_user_id column, and risks now record only
+	// identified_by_name.
+	IdentifiedByName *string `json:"identifiedByName"`
+	GitIssueURL      *string `json:"gitIssueUrl"`
+	EmailSubject     *string `json:"emailSubject"`
+	Remarks          *string `json:"remarks"`
+	Progress         *string `json:"progress"`
+
+	// Creating a risk also creates its action plan, that plan's steps and its
+	// compliance-reference links. They belong to this request rather than to
+	// follow-up calls, so the whole thing commits or none of it does: a risk
+	// that reaches the register without its action plan is not a valid state,
+	// and over HTTP a second call can always fail.
+	ActionOwnerID          *int              `json:"actionOwnerId"`
+	ActionPlanDescription  *string           `json:"actionPlanDescription"`
+	ActionSteps            []ActionStepInput `json:"actionSteps"`
+	ComplianceReferenceIDs []int             `json:"complianceReferenceIds"`
+
+	CreatedBy string `json:"createdBy"`
+}
+
+// ActionStepInput is one step of the action plan created alongside a risk.
+// Step numbers are assigned from the slice order, starting at 1.
+type ActionStepInput struct {
+	Description string `json:"description"`
 }
 
 // UpdateRiskRequest is the payload for PATCH /risks/{id}.
@@ -882,8 +957,77 @@ type UpdateRiskRequest struct {
 	ActionPlanID           *int    `json:"actionPlanId"`
 	GitIssueURL            *string `json:"gitIssueUrl"`
 	Remarks                *string `json:"remarks"`
-	UpdatedBy              string  `json:"updatedBy"`
-	ExpectedStatus         string  `json:"-"` // set server-side for atomic transition; never decoded from JSON
+	// EmailSubject is settable on update: the backend treats a change to it as
+	// one of the three edits that move an IN_REMEDIATION risk to
+	// PENDING_AMENDMENT, so it must be updatable, not create-only.
+	EmailSubject *string `json:"emailSubject"`
+	// RiskType and OwnerFirstApprovedAt back the backend's SetRiskType and
+	// SetOwnerFirstApprovedAt, which are single-column updates rather than
+	// workflow transitions.
+	RiskType             *string `json:"riskType"` // NEW | UPDATED
+	OwnerFirstApprovedAt *string `json:"ownerFirstApprovedAt"`
+
+	// Fields the risk edit form can change that were previously absent here.
+	ImpactDescription  *string `json:"impactDescription"`
+	RiskIdentifiedDate *string `json:"riskIdentifiedDate"` // YYYY-MM-DD
+	IdentifiedByType   *string `json:"identifiedByType"`   // EMPLOYEE | EXTERNAL_PERSON | TOOL
+	IdentifiedByName   *string `json:"identifiedByName"`
+	AssignerID         *int    `json:"assignerId"`
+
+	// ClearRejection sets rejection_comment and rejection_stage back to NULL.
+	// A *string cannot express this: nil means "leave alone", so there is
+	// otherwise no way to clear a nullable column — sending "" writes an empty
+	// string, which is not the same thing and shows up as a blank rejection
+	// banner rather than none.
+	ClearRejection bool `json:"clearRejection"`
+
+	UpdatedBy string `json:"updatedBy"`
+
+	// Related rows the caller wants rewritten in the same transaction. Each is
+	// nil when the caller is not touching that relation — an empty slice is a
+	// meaningful instruction ("remove them all") and is not the same as nil.
+	//
+	// The caller decides *what* to write; this service decides whether the
+	// write is legal and makes it atomic. That split matters: which edits
+	// require re-approval, and what belongs in the change log, are workflow
+	// rules owned by the GRC backend, not persistence rules owned here.
+	ComplianceReferenceIDs []int              `json:"complianceReferenceIds"`
+	ActionPlan             *ActionPlanUpdate  `json:"actionPlan"`
+	ActionSteps            []ActionStepUpdate `json:"actionSteps"`
+	ChangeLog              []ChangeLogEntry   `json:"changeLog"`
+
+	// ExpectedStatus makes the update a compare-and-set. When the caller
+	// supplies it, the UPDATE is guarded by that status and a mismatch is a
+	// 409 — so a caller that read the risk, decided something, and is now
+	// writing cannot be overtaken in between. Left empty, this service reads
+	// the current status itself when a workflow transition is requested.
+	ExpectedStatus string `json:"expectedStatus"`
+}
+
+// ActionPlanUpdate patches the risk's STANDARD action plan. Nil fields are left
+// as they are.
+type ActionPlanUpdate struct {
+	Description   *string `json:"description"`
+	ActionOwnerID *int    `json:"actionOwnerId"`
+}
+
+// ActionStepUpdate is one step in the desired final state of the action plan.
+// A step carrying an ID that still exists on the plan is updated in place,
+// which is what preserves its status and completed_date; anything else is
+// inserted as new, and steps absent from the list are deleted. Step numbers are
+// reassigned from list order.
+type ActionStepUpdate struct {
+	ID          *int   `json:"id"`
+	Description string `json:"description"`
+}
+
+// ChangeLogEntry is one row for risk_change_log, composed by the caller because
+// deciding what counts as a noteworthy change is a workflow question.
+type ChangeLogEntry struct {
+	Action       string  `json:"action"` // CREATE | UPDATE
+	FieldChanged *string `json:"fieldChanged"`
+	OldValue     *string `json:"oldValue"`
+	NewValue     *string `json:"newValue"`
 }
 
 // =============================================================================
@@ -899,6 +1043,7 @@ type RiskActionPlan struct {
 	Status        string    `json:"status"` // PENDING | IN_PROGRESS | COMPLETED
 	CompletedDate *string   `json:"completedDate"`
 	PlanType      string    `json:"planType"` // STANDARD | MANAGEMENT
+	CreatedBy     *string   `json:"createdBy"`
 	CreatedOn     time.Time `json:"createdOn"`
 	UpdatedOn     time.Time `json:"updatedOn"`
 }
@@ -909,6 +1054,11 @@ type CreateRiskActionPlanRequest struct {
 	ActionOwnerID *int    `json:"actionOwnerId"`
 	PlanType      string  `json:"planType"` // STANDARD | MANAGEMENT
 	CreatedBy     string  `json:"createdBy"`
+	// Steps are the plan's action-step descriptions, created atomically with
+	// the plan in the same transaction (see CreateRiskActionPlan) so a
+	// partially-populated plan can never be persisted. Ordered; step_no is
+	// assigned by position.
+	Steps []string `json:"steps"`
 }
 
 // UpdateRiskActionPlanRequest is the payload for PATCH /action-plans/{planId}.
@@ -923,6 +1073,14 @@ type UpdateRiskActionPlanRequest struct {
 // ListRiskActionPlansResponse is returned by GET /risks/{riskId}/action-plans.
 type ListRiskActionPlansResponse struct {
 	Plans []RiskActionPlan `json:"plans"`
+}
+
+// CompleteRiskActionPlanRequest is the payload for POST /action-plans/{planId}/complete.
+// Requires every one of the plan's steps to already be COMPLETED. For a
+// MANAGEMENT plan, completion also resolves the linked risk_escalation and
+// reverts the risk from ESCALATED back to IN_REMEDIATION.
+type CompleteRiskActionPlanRequest struct {
+	UpdatedBy string `json:"updatedBy"`
 }
 
 // =============================================================================
@@ -967,11 +1125,26 @@ type RiskAssessment struct {
 	ReassessmentDate string    `json:"reassessmentDate"` // YYYY-MM-DD
 	AssessedBy       string    `json:"assessedBy"`       // actor email
 	CreatedOn        time.Time `json:"createdOn"`
+	// Residual score, resolved by joining risk_score on score_id. A bare
+	// scoreId is not enough for callers: the GRC backend renders the residual
+	// likelihood, impact, rating, level and colour directly from this response,
+	// and would otherwise have to fetch the score matrix to interpret it.
+	ResidualLikelihood int    `json:"residualLikelihood"`
+	ResidualImpact     int    `json:"residualImpact"`
+	ResidualRating     int    `json:"residualRating"`
+	ResidualLevel      string `json:"residualLevel"`
+	ResidualColorCode  string `json:"residualColorCode"`
 }
 
 // CreateRiskAssessmentRequest is the payload for POST /risks/{riskId}/assessments.
+//
+// Likelihood and impact identify the residual score cell; the score_id is
+// resolved server-side from risk_score. Callers describe the assessment they
+// made, not the surrogate key of a row they would otherwise have to look up
+// first.
 type CreateRiskAssessmentRequest struct {
-	ScoreID          int    `json:"scoreId"`
+	Likelihood       int    `json:"likelihood"`
+	Impact           int    `json:"impact"`
 	Progress         string `json:"progress"`
 	ReassessmentDate string `json:"reassessmentDate"` // YYYY-MM-DD
 	AssessedBy       string `json:"assessedBy"`
@@ -1093,12 +1266,13 @@ type ListRiskComplianceRefsResponse struct {
 // Risk Escalation (risk_escalation)
 // =============================================================================
 
-// RiskEscalation records an escalation of a risk to Management.
+// RiskEscalation records an escalation of a risk to Management. It is created
+// automatically by the daily overdue-risk job (see internal/job) — there is no
+// human-supplied target or reason; the trigger is always "IN_REMEDIATION past
+// implementation_date".
 type RiskEscalation struct {
 	ID                   int       `json:"id"`
 	RiskID               int       `json:"riskId"`
-	EscalatedTo          int       `json:"escalatedTo"`
-	Reason               *string   `json:"reason"`
 	NewTreatmentStrategy *string   `json:"newTreatmentStrategy"`
 	ActionPlanID         *int      `json:"actionPlanId"`
 	Decision             *string   `json:"decision"`
@@ -1111,11 +1285,16 @@ type RiskEscalation struct {
 
 // CreateRiskEscalationRequest is the payload for POST /risks/{riskId}/escalations.
 type CreateRiskEscalationRequest struct {
-	EscalatedTo          int     `json:"escalatedTo"`
-	Reason               *string `json:"reason"`
 	NewTreatmentStrategy *string `json:"newTreatmentStrategy"`
 	ActionPlanID         *int    `json:"actionPlanId"`
 	CreatedBy            string  `json:"createdBy"`
+}
+
+// EscalateRiskRequest is the payload for POST /risks/{riskId}/escalate — the
+// manual trigger a Compliance user clicks on an overdue IN_REMEDIATION risk,
+// as an alternative to waiting for the daily job to reach it.
+type EscalateRiskRequest struct {
+	CreatedBy string `json:"createdBy"`
 }
 
 // UpdateRiskEscalationRequest is the payload for PATCH /risks/{riskId}/escalations/{escalationId}.
@@ -1163,6 +1342,54 @@ type ListRiskChangeLogResponse struct {
 	Total   int             `json:"total"`
 	Limit   int             `json:"limit"`
 	Offset  int             `json:"offset"`
+}
+
+// =============================================================================
+// Risk Notification (risk_notification)
+// =============================================================================
+
+// RiskNotification is a single in-app/email notification for a risk-module
+// event. Only the write path (create) has a caller so far — the escalation
+// job and the action-plan-completion cascade. There is no notification-center
+// UI yet, so List/MarkRead exist as a real API surface but are unconsumed
+// until that UI is built, the same way risk_change_log's read side sat unused
+// before the changelog viewer existed.
+type RiskNotification struct {
+	ID          int64     `json:"id"`
+	RecipientID int       `json:"recipientId"`
+	RiskID      *int      `json:"riskId"`
+	Type        string    `json:"type"`    // REMINDER | ESCALATION | STATUS_CHANGE | APPROVAL | REASSESSMENT | REJECTION
+	Channel     string    `json:"channel"` // EMAIL | IN_APP
+	Message     string    `json:"message"`
+	IsRead      bool      `json:"isRead"`
+	CreatedBy   *string   `json:"createdBy"`
+	UpdatedBy   *string   `json:"updatedBy"`
+	CreatedOn   time.Time `json:"createdOn"`
+	UpdatedOn   time.Time `json:"updatedOn"`
+}
+
+// CreateRiskNotificationRequest is the payload for POST /notifications.
+// Channel defaults to IN_APP when omitted — no email transport exists yet
+// (see the email-service integration this is deliberately deferred to).
+type CreateRiskNotificationRequest struct {
+	RecipientID int     `json:"recipientId"`
+	RiskID      *int    `json:"riskId"`
+	Type        string  `json:"type"`
+	Channel     *string `json:"channel"`
+	Message     string  `json:"message"`
+	CreatedBy   string  `json:"createdBy"`
+}
+
+// MarkRiskNotificationReadRequest is the payload for PATCH /notifications/{id}/read.
+// RecipientID scopes the update so one recipient cannot mark another's notification read.
+type MarkRiskNotificationReadRequest struct {
+	RecipientID int    `json:"recipientId"`
+	UpdatedBy   string `json:"updatedBy"`
+}
+
+// ListRiskNotificationsResponse is returned by GET /users/{userId}/notifications.
+type ListRiskNotificationsResponse struct {
+	Notifications []RiskNotification `json:"notifications"`
 }
 
 // =============================================================================
@@ -1230,4 +1457,53 @@ type CreateAuditAIValidationLogRequest struct {
 // ListAuditAIValidationLogsResponse is returned by GET /evidence/{evidenceId}/ai-validations.
 type ListAuditAIValidationLogsResponse struct {
 	Validations []AuditAIValidationLog `json:"validations"`
+}
+
+// NextSequenceResponse is returned by GET /risks/next-sequence-number.
+type NextSequenceResponse struct {
+	NextSequenceNumber int `json:"nextSequenceNumber"`
+}
+
+// =============================================================================
+// Risk detail
+// =============================================================================
+
+// RiskDetail is the fully-composed risk returned by GET /risks/{id}/detail:
+// every risk column, the display names its foreign keys resolve to, both scores,
+// and the related rows a risk page needs. Assembling it here rather than making
+// the caller issue six requests keeps the read consistent — the parts cannot
+// disagree with each other — and keeps a page load to one round trip.
+//
+// It carries only what is stored. Presentation-level entries, such as the
+// synthetic "initial" assessment some callers prepend so an assessment log
+// reads gross → reassessment → reassessment, are the caller's business.
+type RiskDetail struct {
+	Risk
+
+	// ComplianceApproverName resolves compliance_approval_by, which the
+	// summary Risk does not carry.
+	ComplianceApproverName *string `json:"complianceApproverName"`
+
+	// GrossScore is the rating given at creation. EffectiveScore is the
+	// residual standing now: the most recent assessment's score when one
+	// exists, otherwise the gross score. Both are nil when a risk has no
+	// gross score and no assessments.
+	GrossScore     *RiskScore `json:"grossScore"`
+	EffectiveScore *RiskScore `json:"effectiveScore"`
+
+	ComplianceReferences []RiskComplianceReference `json:"complianceReferences"`
+	ActionPlan           *RiskActionPlanDetail     `json:"actionPlan"`
+	Assessments          []RiskAssessment          `json:"assessments"`
+}
+
+// RiskActionPlanDetail is the risk's STANDARD action plan with its steps
+// embedded, ordered by step_no.
+type RiskActionPlanDetail struct {
+	ID            int              `json:"id"`
+	RiskID        int              `json:"riskId"`
+	ActionOwnerID *int             `json:"actionOwnerId"`
+	Description   *string          `json:"description"`
+	Status        string           `json:"status"`
+	PlanType      string           `json:"planType"`
+	Steps         []RiskActionStep `json:"steps"`
 }

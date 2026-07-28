@@ -24,6 +24,8 @@ package model
 //   - "Open" = any status other than CLOSED; "Closed" = CLOSED.
 //   - Risk level/likelihood/impact use the effective residual score: the
 //     latest risk_assessment score when one exists, else the gross score.
+//   - Every field is open-risks-only EXCEPT RegisterAnalytics.StatusLevels,
+//     which also includes closed risks (see its own doc comment).
 type DashboardSummary struct {
 	Summary                 RiskStatusSummary        `json:"summary"`
 	TreatmentByRegister     []RegisterTreatmentCount `json:"treatment_by_register"`
@@ -78,23 +80,24 @@ type RegisterCertShare struct {
 	Percentage   float64 `json:"percentage"`
 }
 
-// RegisterLevelTreatmentCount is one stacked segment of a register's
-// "Accept and Mitigate" chart (x = risk level).
-type RegisterLevelTreatmentCount struct {
-	RiskLevel         string `json:"risk_level"`
-	TreatmentStrategy string `json:"treatment_strategy"`
-	Count             int    `json:"count"`
+// RegisterStatusLevelCount is one stacked segment of a register's status
+// chart: x = status bucket (CLOSED, or an open risk's treatment strategy),
+// legend = effective residual level.
+type RegisterStatusLevelCount struct {
+	Bucket    string `json:"bucket"`
+	RiskLevel string `json:"risk_level"`
+	ColorCode string `json:"color_code"`
+	Count     int    `json:"count"`
 }
 
 // RegisterAnalytics is one per-register dashboard section. Registers with no
-// open risks are omitted from the payload.
+// risks at all (open or closed) are omitted from the payload.
 type RegisterAnalytics struct {
-	RegisterID      int                           `json:"register_id"`
-	RegisterName    string                        `json:"register_name"`
-	OpenCount       int                           `json:"open_count"`
-	Heatmap         []HeatmapCell                 `json:"heatmap"`
-	LevelCounts     []RiskLevelCount              `json:"level_counts"`
-	LevelTreatments []RegisterLevelTreatmentCount `json:"level_treatments"`
+	RegisterID   int                        `json:"register_id"`
+	RegisterName string                     `json:"register_name"`
+	OpenCount    int                        `json:"open_count"`
+	Heatmap      []HeatmapCell              `json:"heatmap"`
+	StatusLevels []RegisterStatusLevelCount `json:"status_levels"`
 }
 
 // RepeatedComplianceRisk is one row group of the "Repeated Risks Potentially
@@ -114,12 +117,12 @@ type RepeatedRiskOccurrence struct {
 	ColorCode    string `json:"color_code"`
 }
 
-// HighRiskItem is one row of the "High Risk Detailed View" table: an open
+// HighRiskItem is one row of the "High Severity Open Risks" table: an open
 // risk whose effective residual level is HIGH.
 type HighRiskItem struct {
 	ID                 int     `json:"id"`
 	RiskCode           string  `json:"risk_code"`
-	RiskDescription    string  `json:"risk_description"`
+	RiskTitle          string  `json:"risk_title"`
 	RegisterName       string  `json:"register_name"`
 	OwnerName          string  `json:"owner_name"`
 	IdentifiedDate     *string `json:"identified_date"`
@@ -146,6 +149,20 @@ type OpenRiskFact struct {
 type RegisterCertCount struct {
 	RegisterName string
 	CertName     string
+	Count        int
+}
+
+// RegisterStatusFact is one aggregated repository row of every non-cancelled
+// risk (open and closed) grouped by register × effective residual level ×
+// status bucket. Bucket is "CLOSED" for closed risks, else the risk's own
+// treatment strategy (REMEDIATE/ACCEPT/TRANSFER/VOID). The dashboard service
+// composes each register's status chart from these rows.
+type RegisterStatusFact struct {
+	RegisterID   int
+	RegisterName string
+	RiskLevel    string
+	ColorCode    string
+	Bucket       string
 	Count        int
 }
 

@@ -25,7 +25,8 @@ type ActionPlan struct {
 	Description   *string `json:"description"`
 	Status        string  `json:"status"`
 	CompletedDate *string `json:"completed_date"`
-	PlanType      string  `json:"plan_type"`
+	PlanType      string  `json:"plan_type"` // STANDARD | MANAGEMENT
+	CreatedBy     *string `json:"created_by"`
 }
 
 // ActionPlanStep represents an individual step within an action plan,
@@ -41,24 +42,13 @@ type ActionPlanStep struct {
 
 // CreateActionPlanRequest is the payload for POST /api/v1/risks/{id}/action-plans.
 type CreateActionPlanRequest struct {
-	Description   string `json:"description"`
-	ActionOwnerID *int   `json:"action_owner_id"`
-	PlanType      string `json:"plan_type"`
+	Description   string   `json:"description"`
+	ActionOwnerID *int     `json:"action_owner_id"`
+	PlanType      string   `json:"plan_type"`
+	Steps         []string `json:"steps"`
 }
 
-// UpdateActionPlanRequest is the payload for PUT /api/v1/risks/{id}/action-plans/{planId}.
-type UpdateActionPlanRequest struct {
-	Description   string  `json:"description"`
-	Status        string  `json:"status"`
-	CompletedDate *string `json:"completed_date"`
-}
-
-// AddActionPlanStepRequest is the payload for POST .../steps.
-type AddActionPlanStepRequest struct {
-	Description string `json:"description"`
-}
-
-// UpdateActionPlanStepRequest is the payload for PUT .../steps/{stepId}.
+// UpdateActionPlanStepRequest is the payload for PATCH .../steps/{stepId}.
 type UpdateActionPlanStepRequest struct {
 	Description   string  `json:"description"`
 	Status        string  `json:"status"`

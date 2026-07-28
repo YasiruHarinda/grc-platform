@@ -24,11 +24,23 @@ interface RegisterFilterProps {
   onChange: (registerId: number) => void;
 }
 
-// Page-level register filter; scopes every chart on the Analytics page.
-// The register-comparison donut only renders when value === 0 ("All").
+// Page-level register filter; scopes every chart on the Analytics and Dashboard
+// pages. The register-comparison donut only renders when value === 0 ("All").
+//
+// No size="small" on the FormControl. Oxygen UI's theme already defaults Select
+// to small and nudges the resting label up 7px to re-centre it against a
+// normal-height FormControl; making the FormControl small as well applies that
+// correction twice and the label sits above centre.
+//
+// A plain outlined Select, matching the filters on the Risk Registers page.
+// It was previously wrapped in a Paper card whose border sat outside the
+// Select's own outline, so the control drew two borders and stood taller than
+// the filters elsewhere. The inner outline was suppressed with a raw MUI class
+// selector, which both stopped working across an Oxygen UI upgrade and removed
+// the notch the floating label needs to sit in.
 export default function RegisterFilter({ teams, value, onChange }: RegisterFilterProps): JSX.Element {
   return (
-    <FormControl size="small" sx={{ minWidth: 200 }}>
+    <FormControl sx={{ minWidth: 200 }}>
       <InputLabel>Register</InputLabel>
       <Select
         label="Register"

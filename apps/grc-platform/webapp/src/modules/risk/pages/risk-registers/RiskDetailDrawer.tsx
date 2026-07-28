@@ -14,24 +14,45 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import { useEffect, useState } from "react";
 import {
   Alert,
   Box,
   Button,
   Chip,
   CircularProgress,
-  Divider,
   Drawer,
   IconButton,
+  Paper,
   Stack,
+  Tab,
+  Tabs,
   Typography,
 } from "@wso2/oxygen-ui";
-import { X } from "@wso2/oxygen-ui-icons-react";
-import type { JSX } from "react";
-import type * as React from "react";
-import type { RiskDetail } from "../../api/riskApi";
+import {
+  Briefcase,
+  Calendar,
+  Check,
+  FileText,
+  Link as LinkIcon,
+  ListChecks,
+  MessageSquare,
+  Shield,
+  TrendingUp,
+  Users,
+  Wrench,
+  X,
+} from "@wso2/oxygen-ui-icons-react";
+import type { JSX, ReactNode } from "react";
+import type { ActionPlan, ActionPlanStep, RiskDetail } from "../../api/riskApi";
 import { RiskPrivilege } from "../../privileges";
+import { dialogPaperSx } from "../cardStyles";
 import { STATUS_CONFIG, calcAge, calcDue, formatDate } from "./utils";
+
+// ActionPlan doesn't embed its steps (GET .../action-plans lists plans only;
+// steps come from a separate GET .../action-plans/{planId}/steps call) — the
+// parent page fetches both and merges them before passing down here.
+export type ActionPlanWithSteps = ActionPlan & { steps: ActionPlanStep[] };
 
 export interface DrawerActions {
   onOwnerApprove: () => void;
@@ -44,6 +65,8 @@ export interface DrawerActions {
   onEdit: () => void;
   onAssess: () => void;
   onCancel: () => void;
+  onCreateManagementActionPlan: () => void;
+  onEscalate: () => void;
 }
 
 interface RiskDetailDrawerProps extends DrawerActions {
@@ -54,6 +77,20 @@ interface RiskDetailDrawerProps extends DrawerActions {
   actionsDisabled: boolean;
   can: (privilege: string) => boolean;
   onClose: () => void;
+  // Full action-plan list (STANDARD + MANAGEMENT) — separate from
+  // detail.action_plan, which only ever embeds the STANDARD one.
+  actionPlans: ActionPlanWithSteps[];
+  // Fetched independently of `detail`/`error` above, so a failure loading
+  // action plans doesn't blank out the rest of the drawer — only the Action
+  // Plans tab shows this.
+  actionPlansError: string;
+  currentUserId: number | null;
+  // id → display_name, resolved at render time so the Action Owner label
+  // stays correct even when the drawer opens before the users list finishes
+  // loading (e.g. a dashboard deep-link).
+  userNames: Map<number, string>;
+  onCompleteStep: (planId: number, stepId: number) => void;
+  onCompletePlan: (planId: number) => void;
 }
 
 const REJECTION_STAGE_LABELS: Record<string, string> = {
@@ -63,27 +100,216 @@ const REJECTION_STAGE_LABELS: Record<string, string> = {
   COMPLETION_OWNER: "Risk Owner (Completion)",
 };
 
-function DetailRow({ label, value }: { label: string; value: React.ReactNode }): JSX.Element {
+// ── Shared visual building blocks (matching Audit's ControlDrawer.tsx —
+// SectionCard/InfoTile/TabPanel there are file-local, not exported/shared
+// anywhere, so this is the same per-file-duplication convention, not a
+// regression) ──────────────────────────────────────────────────────────────
+
+interface SectionCardProps {
+  icon: ReactNode;
+  iconColor?: string;
+  iconBg?: string;
+  title: string;
+  headerExtra?: ReactNode;
+  children: ReactNode;
+}
+
+function SectionCard({
+  icon,
+  iconColor = "#475569",
+  iconBg = "#f1f5f9",
+  title,
+  headerExtra,
+  children,
+}: SectionCardProps): JSX.Element {
   return (
-    <Box>
-      <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ display: "block" }}>
+    <Paper variant="outlined" sx={{ borderRadius: 2, overflow: "hidden" }}>
+      <Box
+        sx={{
+          px: 2.5,
+          py: 1.5,
+          display: "flex",
+          alignItems: "center",
+          gap: 1.25,
+          borderBottom: 1,
+          borderColor: "divider",
+          bgcolor: "action.hover",
+        }}
+      >
+        <Box
+          sx={{
+            width: 30,
+            height: 30,
+            borderRadius: 1.5,
+            bgcolor: iconBg,
+            color: iconColor,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+          }}
+        >
+          {icon}
+        </Box>
+        <Typography variant="subtitle2" fontWeight={700} sx={{ flex: 1 }}>
+          {title}
+        </Typography>
+        {headerExtra}
+      </Box>
+      <Box sx={{ p: 2.5 }}>{children}</Box>
+    </Paper>
+  );
+}
+
+function InfoTile({ label, children }: { label: string; children: ReactNode }): JSX.Element {
+  return (
+    <Box
+      sx={{
+        px: 1.25,
+        py: 1,
+        borderRadius: 1,
+        border: "1px solid",
+        borderColor: "divider",
+        bgcolor: "action.hover",
+        display: "flex",
+        flexDirection: "column",
+        gap: 0.4,
+      }}
+    >
+      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500, fontSize: "0.67rem", lineHeight: 1 }}>
         {label}
       </Typography>
-      <Typography variant="body2" sx={{ mt: 0.25 }}>
-        {value || "—"}
+      <Typography variant="body2" fontWeight={600}>
+        {children || "—"}
       </Typography>
     </Box>
   );
 }
 
-function SectionTitle({ children }: { children: React.ReactNode }): JSX.Element {
+function InfoGrid({ children }: { children: ReactNode }): JSX.Element {
+  return <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1 }}>{children}</Box>;
+}
+
+function TabPanel({ value, index, children }: { value: number; index: number; children: ReactNode }): JSX.Element {
   return (
-    <Box sx={{ mt: 2.5, mb: 1.5 }}>
-      <Typography variant="subtitle2" fontWeight={700} color="text.primary">
-        {children}
-      </Typography>
-      <Divider sx={{ mt: 0.5 }} />
+    <Box role="tabpanel" hidden={value !== index} sx={{ display: value === index ? "block" : "none" }}>
+      {value === index && <Stack gap={2}>{children}</Stack>}
     </Box>
+  );
+}
+
+function EmptyState({ icon, title, caption }: { icon: ReactNode; title: string; caption: string }): JSX.Element {
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", py: 6, gap: 1.5 }}>
+      <Box
+        sx={{
+          width: 64,
+          height: 64,
+          borderRadius: "50%",
+          bgcolor: "action.hover",
+          color: "text.disabled",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        {icon}
+      </Box>
+      <Typography variant="subtitle1" fontWeight={600}>
+        {title}
+      </Typography>
+      <Typography variant="caption" color="text.secondary">
+        {caption}
+      </Typography>
+    </Box>
+  );
+}
+
+// One card per action plan (STANDARD and/or MANAGEMENT). Step completion and
+// the final "Complete Action Plan" button are only shown to the plan's own
+// action_owner_id — the same COMPLETE_ACTION_STEPS_RISK-gated, ownership-checked
+// flow applies uniformly to both plan types.
+function ActionPlanCard({
+  plan,
+  can,
+  currentUserId,
+  disabled,
+  riskStatus,
+  userNames,
+  onCompleteStep,
+  onCompletePlan,
+}: {
+  plan: ActionPlanWithSteps;
+  can: (privilege: string) => boolean;
+  currentUserId: number | null;
+  disabled: boolean;
+  riskStatus: string;
+  userNames: Map<number, string>;
+  onCompleteStep: (planId: number, stepId: number) => void;
+  onCompletePlan: (planId: number) => void;
+}): JSX.Element {
+  const isOwner = plan.action_owner_id !== null && plan.action_owner_id === currentUserId;
+  // Mirrors the backend gate: steps/plan can only be completed while the
+  // risk is actively being remediated, not before compliance approval.
+  const riskActive = riskStatus === "IN_REMEDIATION" || riskStatus === "ESCALATED";
+  const canComplete = can(RiskPrivilege.CompleteActionSteps) && isOwner && riskActive;
+  const allStepsDone = plan.steps.length > 0 && plan.steps.every((s) => s.status === "COMPLETED");
+  const isManagement = plan.plan_type === "MANAGEMENT";
+  const ownerName = plan.action_owner_id !== null ? (userNames.get(plan.action_owner_id) ?? null) : null;
+
+  return (
+    <SectionCard
+      icon={isManagement ? <Briefcase size={16} /> : <Wrench size={16} />}
+      iconBg={isManagement ? "#fff7ed" : "#eff6ff"}
+      iconColor={isManagement ? "#b45309" : "#2563eb"}
+      title={isManagement ? "Management Plan" : "Standard Plan"}
+      headerExtra={<Chip label={plan.status} size="small" variant="outlined" />}
+    >
+      <Stack gap={1.5}>
+        {plan.description && <Typography variant="body2">{plan.description}</Typography>}
+        <Typography variant="caption" color="text.secondary">
+          Action Owner: <strong>{ownerName ?? "Unassigned"}</strong>
+        </Typography>
+        {plan.steps.length > 0 && (
+          <Stack gap={0.75}>
+            {plan.steps.map((step) => (
+              <Stack key={step.id} direction="row" gap={1} alignItems="center">
+                <Typography variant="body2" color="text.secondary" fontWeight={600} sx={{ minWidth: 24 }}>
+                  {step.step_no}.
+                </Typography>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    flex: 1,
+                    color: step.status === "COMPLETED" ? "text.secondary" : "text.primary",
+                  }}
+                >
+                  {step.description}
+                </Typography>
+                {step.status === "COMPLETED" ? (
+                  <Chip label="Done" size="small" color="success" variant="outlined" />
+                ) : canComplete ? (
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    disabled={disabled}
+                    startIcon={<Check size={14} />}
+                    onClick={() => onCompleteStep(plan.id, step.id)}
+                  >
+                    Mark Done
+                  </Button>
+                ) : null}
+              </Stack>
+            ))}
+          </Stack>
+        )}
+        {canComplete && allStepsDone && plan.status !== "COMPLETED" && (
+          <Button variant="contained" size="small" fullWidth disabled={disabled} onClick={() => onCompletePlan(plan.id)}>
+            Complete Action Plan
+          </Button>
+        )}
+      </Stack>
+    </SectionCard>
   );
 }
 
@@ -92,11 +318,15 @@ function ActionFooter({
   actions,
   disabled,
   can,
+  actionPlans,
+  isOverdue,
 }: {
   status: string;
   actions: DrawerActions;
   disabled: boolean;
   can: (privilege: string) => boolean;
+  actionPlans: ActionPlanWithSteps[];
+  isOverdue: boolean;
 }): JSX.Element | null {
   const rejectAndApprove = (approveLabel: string, onApprove: () => void, approvePriv: string, rejectPriv: string) => {
     const showReject = can(rejectPriv);
@@ -174,8 +404,15 @@ function ActionFooter({
     case "IN_REMEDIATION": {
       const showEdit = can(RiskPrivilege.UpdateRisk);
       const showAssess = can(RiskPrivilege.AssessRisk);
-      const showComplete = can(RiskPrivilege.CompleteRisk);
-      if (!showEdit && !showAssess && !showComplete) return null;
+      // At least one action plan must be COMPLETED first — not necessarily
+      // all of them, since an abandoned STANDARD plan from a prior
+      // escalation cycle shouldn't permanently block resubmission.
+      const showComplete = can(RiskPrivilege.CompleteRisk) && actionPlans.some((p) => p.status === "COMPLETED");
+      // Escalation happens automatically within 24h either way (the daily
+      // job) — this just lets Compliance/Admin jump the queue for a risk
+      // they've already spotted is overdue.
+      const showEscalate = isOverdue && can(RiskPrivilege.EscalateRisk);
+      if (!showEdit && !showAssess && !showComplete && !showEscalate) return null;
       return (
         <Box sx={{ pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
           {(showEdit || showAssess) && (
@@ -191,6 +428,18 @@ function ActionFooter({
                 </Button>
               )}
             </Stack>
+          )}
+          {showEscalate && (
+            <Button
+              variant="outlined"
+              color="error"
+              fullWidth
+              disabled={disabled}
+              onClick={actions.onEscalate}
+              sx={{ mb: showComplete ? 1 : 0 }}
+            >
+              Escalate
+            </Button>
           )}
           {showComplete && (
             <Button variant="contained" fullWidth disabled={disabled} onClick={actions.onComplete}>
@@ -233,6 +482,24 @@ function ActionFooter({
         </Box>
       );
 
+    case "ESCALATED": {
+      // Only one ACTIVE MANAGEMENT plan per escalation cycle. A risk can be
+      // escalated more than once over its life (if it goes overdue again
+      // after a previous escalation resolved), so a COMPLETED MANAGEMENT
+      // plan from an earlier cycle must not block creating a new one now.
+      const hasActiveManagementPlan = actionPlans.some(
+        (p) => p.plan_type === "MANAGEMENT" && p.status !== "COMPLETED",
+      );
+      if (hasActiveManagementPlan || !can(RiskPrivilege.CreateManagementActionPlan)) return null;
+      return (
+        <Box sx={{ pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
+          <Button variant="contained" fullWidth disabled={disabled} onClick={actions.onCreateManagementActionPlan}>
+            Create Management Action Plan
+          </Button>
+        </Box>
+      );
+    }
+
     default:
       return null;
   }
@@ -246,10 +513,25 @@ export default function RiskDetailDrawer({
   actionsDisabled,
   can,
   onClose,
+  actionPlans,
+  actionPlansError,
+  currentUserId,
+  userNames,
+  onCompleteStep,
+  onCompletePlan,
   ...actions
 }: RiskDetailDrawerProps): JSX.Element {
   const status = detail?.workflow_status ?? "";
   const statusCfg = STATUS_CONFIG[status] ?? { label: status, color: "default" as const };
+  const isOverdue = !!detail && calcDue(detail.implementation_date).daysLeft < 0;
+
+  const [tab, setTab] = useState(0);
+  // Reset to the first tab whenever a different risk is opened, so the
+  // drawer doesn't retain the previous risk's active tab.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTab(0);
+  }, [detail?.id]);
 
   return (
     <Drawer
@@ -262,12 +544,7 @@ export default function RiskDetailDrawer({
           display: "flex",
           flexDirection: "column",
           p: 0,
-          backdropFilter: "none",
-          backgroundImage: "none",
-          backgroundColor: "#ffffff",
-          "[data-color-scheme='dark'] &": {
-            backgroundColor: "#1a1a24",
-          },
+          ...dialogPaperSx,
         },
       }}
     >
@@ -302,14 +579,20 @@ export default function RiskDetailDrawer({
                     size="small"
                     variant="outlined"
                   />
-                  {(() => {
-                    const due = calcDue(detail.implementation_date);
-                    return (
-                      <Typography variant="caption" fontWeight={700} sx={{ color: due.color, alignSelf: "center" }}>
-                        {due.label}
-                      </Typography>
-                    );
-                  })()}
+                  {detail.workflow_status === "CLOSED" ? (
+                    <Typography variant="caption" fontWeight={700} sx={{ color: "text.secondary", alignSelf: "center" }}>
+                      —
+                    </Typography>
+                  ) : (
+                    (() => {
+                      const due = calcDue(detail.implementation_date);
+                      return (
+                        <Typography variant="caption" fontWeight={700} sx={{ color: due.color, alignSelf: "center" }}>
+                          {due.label}
+                        </Typography>
+                      );
+                    })()
+                  )}
                 </Stack>
               </>
             ) : (
@@ -324,8 +607,21 @@ export default function RiskDetailDrawer({
         </Box>
       </Box>
 
+      {detail && !loading && !error && (
+        <Tabs
+          value={tab}
+          onChange={(_, v: number) => setTab(v)}
+          sx={{ px: 2, borderBottom: 1, borderColor: "divider", flexShrink: 0, minHeight: 44 }}
+        >
+          <Tab icon={<FileText size={15} />} iconPosition="start" label="Basic Information" sx={{ textTransform: "none", minHeight: 44, fontWeight: 600 }} />
+          <Tab icon={<Shield size={15} />} iconPosition="start" label="Risk Treatment" sx={{ textTransform: "none", minHeight: 44, fontWeight: 600 }} />
+          <Tab icon={<ListChecks size={15} />} iconPosition="start" label="Action Plans" sx={{ textTransform: "none", minHeight: 44, fontWeight: 600 }} />
+          <Tab icon={<TrendingUp size={15} />} iconPosition="start" label="Assessment History" sx={{ textTransform: "none", minHeight: 44, fontWeight: 600 }} />
+        </Tabs>
+      )}
+
       {/* Scrollable content */}
-      <Box sx={{ flex: 1, overflowY: "auto", px: 3, py: 2 }}>
+      <Box sx={{ flex: 1, overflowY: "auto", px: 3, py: 2.5 }}>
         {loading ? (
           <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200 }}>
             <CircularProgress />
@@ -348,147 +644,147 @@ export default function RiskDetailDrawer({
               </Alert>
             )}
 
-            <SectionTitle>Basic Information</SectionTitle>
-            <Stack gap={2}>
-              <DetailRow label="Source Register" value={detail.source_register_name} />
-              <DetailRow label="Description" value={detail.risk_description} />
-              <DetailRow label="Impact Description" value={detail.impact_description} />
-              <DetailRow label="Risk Identified Date" value={formatDate(detail.risk_identified_date)} />
-              <DetailRow
-                label="Identified By"
-                value={
-                  detail.identified_by_user_name ??
-                  detail.identified_by_name ??
-                  detail.identified_by_type ??
-                  "—"
-                }
-              />
-              <Stack direction="row" gap={4}>
-                <DetailRow label="Assigned By" value={detail.assigner_name} />
-                <DetailRow label="Risk Owner" value={detail.owner_name} />
-              </Stack>
-              {detail.compliance_references.length > 0 && (
-                <Box>
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    fontWeight={600}
-                    display="block"
-                  >
-                    Compliance References
-                  </Typography>
-                  <Stack direction="row" flexWrap="wrap" gap={0.75} sx={{ mt: 0.75 }}>
+            <TabPanel value={tab} index={0}>
+              <SectionCard icon={<FileText size={16} />} iconBg="#f1f5f9" iconColor="#475569" title="Identification">
+                <Stack gap={1}>
+                  <InfoGrid>
+                    <InfoTile label="Source Register">{detail.source_register_name}</InfoTile>
+                    <InfoTile label="Risk Identified Date">{formatDate(detail.risk_identified_date)}</InfoTile>
+                    <InfoTile label="Identified By">{detail.identified_by_name ?? detail.identified_by_type ?? "—"}</InfoTile>
+                  </InfoGrid>
+                  {detail.risk_description && (
+                    <InfoTile label="Description">{detail.risk_description}</InfoTile>
+                  )}
+                  {detail.impact_description && (
+                    <InfoTile label="Impact Description">{detail.impact_description}</InfoTile>
+                  )}
+                </Stack>
+              </SectionCard>
+
+              <SectionCard icon={<Users size={16} />} iconBg="#eff6ff" iconColor="#2563eb" title="Ownership">
+                <InfoGrid>
+                  <InfoTile label="Assigned By">{detail.assigner_name}</InfoTile>
+                  <InfoTile label="Risk Owner">{detail.owner_name}</InfoTile>
+                </InfoGrid>
+              </SectionCard>
+
+              <SectionCard icon={<LinkIcon size={16} />} iconBg="#f5f3ff" iconColor="#7c3aed" title="Compliance References">
+                {detail.compliance_references.length > 0 ? (
+                  <Stack direction="row" flexWrap="wrap" gap={0.75}>
                     {detail.compliance_references.map((ref) => (
                       <Chip key={ref.id} label={ref.name} size="small" variant="outlined" />
                     ))}
                   </Stack>
-                </Box>
-              )}
-            </Stack>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    No compliance references linked.
+                  </Typography>
+                )}
+              </SectionCard>
+            </TabPanel>
 
-            <SectionTitle>Risk Treatment</SectionTitle>
-            <Stack gap={2}>
-              <Stack direction="row" gap={4}>
-                <DetailRow label="Assignment Team" value={detail.assignment_team_name} />
-                <DetailRow label="Treatment Strategy" value={detail.treatment_strategy} />
-              </Stack>
-              <Stack direction="row" gap={4}>
-                <DetailRow label="Implementation Date" value={formatDate(detail.implementation_date)} />
-                <DetailRow label="Reassessment Date" value={formatDate(detail.reassessment_date)} />
-              </Stack>
-              <DetailRow label="Progress" value={detail.progress} />
-              <DetailRow label="Email Subject" value={detail.email_subject} />
-              {detail.git_issue_url && (
-                <DetailRow
-                  label="Git Issue URL"
-                  value={
-                    <a href={detail.git_issue_url} target="_blank" rel="noreferrer">
-                      {detail.git_issue_url}
-                    </a>
-                  }
+            <TabPanel value={tab} index={1}>
+              <SectionCard icon={<Shield size={16} />} iconBg="#fff7ed" iconColor="#b45309" title="Treatment">
+                <InfoGrid>
+                  <InfoTile label="Assignment Team">{detail.assignment_team_name}</InfoTile>
+                  <InfoTile label="Treatment Strategy">{detail.treatment_strategy}</InfoTile>
+                </InfoGrid>
+              </SectionCard>
+
+              <SectionCard icon={<Calendar size={16} />} iconBg="#dcfce7" iconColor="#16a34a" title="Timeline & Progress">
+                <Stack gap={1}>
+                  <InfoGrid>
+                    <InfoTile label="Implementation Date">{formatDate(detail.implementation_date)}</InfoTile>
+                    <InfoTile label="Reassessment Date">{formatDate(detail.reassessment_date)}</InfoTile>
+                  </InfoGrid>
+                  {detail.progress && <InfoTile label="Progress">{detail.progress}</InfoTile>}
+                </Stack>
+              </SectionCard>
+
+              <SectionCard icon={<MessageSquare size={16} />} iconBg="#fff7ed" iconColor="#ea580c" title="References">
+                <Stack gap={1}>
+                  <InfoGrid>
+                    <InfoTile label="Email Subject">{detail.email_subject}</InfoTile>
+                    <InfoTile label="Git Issue URL">
+                      {detail.git_issue_url ? (
+                        <a href={detail.git_issue_url} target="_blank" rel="noreferrer">
+                          {detail.git_issue_url}
+                        </a>
+                      ) : (
+                        "—"
+                      )}
+                    </InfoTile>
+                  </InfoGrid>
+                  {detail.remarks && <InfoTile label="Remarks">{detail.remarks}</InfoTile>}
+                </Stack>
+              </SectionCard>
+            </TabPanel>
+
+            <TabPanel value={tab} index={2}>
+              {actionPlansError ? (
+                <Alert severity="error">{actionPlansError}</Alert>
+              ) : actionPlans.length > 0 ? (
+                actionPlans.map((plan) => (
+                  <ActionPlanCard
+                    key={plan.id}
+                    plan={plan}
+                    can={can}
+                    currentUserId={currentUserId}
+                    disabled={actionsDisabled}
+                    riskStatus={status}
+                    userNames={userNames}
+                    onCompleteStep={onCompleteStep}
+                    onCompletePlan={onCompletePlan}
+                  />
+                ))
+              ) : (
+                <EmptyState
+                  icon={<ListChecks size={28} />}
+                  title="No action plans yet"
+                  caption="An action plan will appear here once one is created for this risk."
                 />
               )}
-              <DetailRow label="Remarks" value={detail.remarks} />
-            </Stack>
+            </TabPanel>
 
-            {detail.action_plan && (
-              <>
-                <SectionTitle>Action Plan</SectionTitle>
-                <Stack gap={1.5}>
-                  <DetailRow label="Description" value={detail.action_plan.description} />
-                  <DetailRow label="Status" value={detail.action_plan.status} />
-                  {detail.action_plan.steps.length > 0 && (
-                    <Box>
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        fontWeight={600}
-                        display="block"
-                      >
-                        Steps
+            <TabPanel value={tab} index={3}>
+              {detail.assessments.length > 0 ? (
+                detail.assessments.map((a) => (
+                  <SectionCard
+                    key={a.is_initial ? "initial" : a.id}
+                    icon={<TrendingUp size={16} />}
+                    iconBg="action.hover"
+                    iconColor={a.residual_color_code}
+                    title={a.is_initial ? "Initial Assessment" : `Reassessment — ${formatDate(a.reassessment_date)}`}
+                    headerExtra={
+                      <Chip
+                        label={`${a.residual_level} : Score ${a.residual_rating}`}
+                        size="small"
+                        sx={{ bgcolor: a.residual_color_code, color: "#fff", fontWeight: 700 }}
+                      />
+                    }
+                  >
+                    {a.is_initial ? (
+                      <Typography variant="body2" color="text.secondary">
+                        Gross score recorded at risk creation, before any remediation progress.
                       </Typography>
-                      {detail.action_plan.steps.map((step) => (
-                        <Box key={step.id} sx={{ display: "flex", gap: 1, mt: 0.75 }}>
-                          <Typography
-                            variant="body2"
-                            color="text.secondary"
-                            fontWeight={600}
-                            sx={{ minWidth: 24 }}
-                          >
-                            {step.step_no}.
-                          </Typography>
-                          <Typography variant="body2">{step.description}</Typography>
-                        </Box>
-                      ))}
-                    </Box>
-                  )}
-                </Stack>
-              </>
-            )}
-
-            {detail.assessments.length > 0 && (
-              <>
-                <SectionTitle>Assessment History</SectionTitle>
-                <Stack gap={2}>
-                  {detail.assessments.map((a) => (
-                    <Box
-                      key={a.is_initial ? "initial" : a.id}
-                      sx={{
-                        border: "1px solid",
-                        borderColor: "divider",
-                        borderRadius: 1,
-                        p: 1.5,
-                      }}
-                    >
-                      <Stack direction="row" justifyContent="space-between" alignItems="center">
-                        <Chip
-                          label={`${a.residual_level} : Score ${a.residual_rating}`}
-                          size="small"
-                          sx={{ bgcolor: a.residual_color_code, color: "#fff", fontWeight: 700 }}
-                        />
+                    ) : (
+                      <Stack gap={0.5}>
+                        <Typography variant="body2">{a.progress}</Typography>
                         <Typography variant="caption" color="text.secondary">
-                          {formatDate(a.reassessment_date)}
+                          Assessed by {a.assessed_by}
                         </Typography>
                       </Stack>
-                      {a.is_initial ? (
-                        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: "block" }}>
-                          Initial assessment (gross score)
-                        </Typography>
-                      ) : (
-                        <>
-                          <Typography variant="body2" sx={{ mt: 1 }}>
-                            {a.progress}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            Assessed by {a.assessed_by}
-                          </Typography>
-                        </>
-                      )}
-                    </Box>
-                  ))}
-                </Stack>
-              </>
-            )}
+                    )}
+                  </SectionCard>
+                ))
+              ) : (
+                <EmptyState
+                  icon={<TrendingUp size={28} />}
+                  title="No reassessments yet"
+                  caption="Residual score history will appear here once this risk is reassessed."
+                />
+              )}
+            </TabPanel>
           </>
         ) : null}
       </Box>
@@ -496,7 +792,14 @@ export default function RiskDetailDrawer({
       {/* Fixed action footer */}
       {detail && !loading && !error && (
         <Box sx={{ px: 3, pb: 3, pt: 0 }}>
-          <ActionFooter status={status} actions={actions} disabled={actionsDisabled} can={can} />
+          <ActionFooter
+            status={status}
+            actions={actions}
+            disabled={actionsDisabled}
+            can={can}
+            actionPlans={actionPlans}
+            isOverdue={isOverdue}
+          />
         </Box>
       )}
     </Drawer>

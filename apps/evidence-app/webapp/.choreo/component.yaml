@@ -1,0 +1,5 @@
+schemaVersion: "1.2"
+dependencies:
+  connectionReferences:
+    - name: backend
+      resourceRef: service:/compliance-evidence-porta/backend/v1/be2b5/PUBLIC

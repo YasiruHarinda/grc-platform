@@ -14,29 +14,39 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
+  Chip,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
+  TablePagination,
   TableRow,
   Typography,
 } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
 import type { HighRiskItem } from "../../api/riskApi";
-import { formatTreatment } from "./constants";
+import { TREATMENT_COLORS, TREATMENT_LABELS } from "./constants";
 import { formatDate } from "../risk-registers/utils";
+import HighRiskDetailModal from "./HighRiskDetailModal";
 
 interface HighRisksTableProps {
   data: HighRiskItem[];
 }
 
-// Org-wide open HIGH (residual) risks, oldest identified first. Long
-// descriptions are clamped to three lines; clicking a row toggles the clamp.
+const ROWS_PER_PAGE = 5;
+
+// Org-wide open HIGH (residual) risks, oldest identified first, 5 per page.
+// Clicking a row opens a read-only detail modal.
 export default function HighRisksTable({ data }: HighRisksTableProps): JSX.Element {
-  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [page, setPage] = useState(0);
+  const [selected, setSelected] = useState<HighRiskItem | null>(null);
+
+  useEffect(() => {
+    setPage(0);
+  }, [data]);
 
   if (data.length === 0) {
     return (
@@ -46,76 +56,73 @@ export default function HighRisksTable({ data }: HighRisksTableProps): JSX.Eleme
     );
   }
 
-  const toggle = (id: number): void => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  };
+  const pageRows = data.slice(page * ROWS_PER_PAGE, page * ROWS_PER_PAGE + ROWS_PER_PAGE);
 
   return (
     <TableContainer>
       <Table size="small">
         <TableHead>
           <TableRow>
-            <TableCell sx={{ minWidth: 320 }}>Risk Detail</TableCell>
             <TableCell>Source Register</TableCell>
+            <TableCell sx={{ minWidth: 320 }}>Risk Title</TableCell>
             <TableCell>Risk Owner</TableCell>
             <TableCell>Identified Date</TableCell>
             <TableCell>Treatment</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
-          {data.map((risk) => (
-            <TableRow
-              key={risk.id}
-              hover
-              role="button"
-              tabIndex={0}
-              aria-expanded={expanded.has(risk.id)}
-              onClick={() => toggle(risk.id)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  toggle(risk.id);
-                }
-              }}
-              sx={{ cursor: "pointer", verticalAlign: "top" }}
-            >
-              <TableCell>
-                <Typography
-                  variant="body2"
-                  sx={
-                    expanded.has(risk.id)
-                      ? { whiteSpace: "pre-line" }
-                      : {
-                          display: "-webkit-box",
-                          WebkitLineClamp: 3,
-                          WebkitBoxOrient: "vertical",
-                          overflow: "hidden",
-                        }
+          {pageRows.map((risk) => {
+            const treatmentColor = risk.treatment_strategy
+              ? TREATMENT_COLORS[risk.treatment_strategy]
+              : undefined;
+            return (
+              <TableRow
+                key={risk.id}
+                hover
+                role="button"
+                tabIndex={0}
+                onClick={() => setSelected(risk)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setSelected(risk);
                   }
-                >
-                  {risk.risk_description}
-                </Typography>
-              </TableCell>
-              <TableCell>{risk.register_name}</TableCell>
-              <TableCell>{risk.owner_name || "—"}</TableCell>
-              <TableCell sx={{ whiteSpace: "nowrap" }}>
-                {formatDate(risk.identified_date)}
-              </TableCell>
-              <TableCell sx={{ whiteSpace: "nowrap" }}>
-                {formatTreatment(risk.treatment_strategy, risk.implementation_date)}
-              </TableCell>
-            </TableRow>
-          ))}
+                }}
+                sx={{ cursor: "pointer", verticalAlign: "top" }}
+              >
+                <TableCell sx={{ whiteSpace: "nowrap" }}>{risk.register_name}</TableCell>
+                <TableCell>
+                  <Typography variant="body2">{risk.risk_title}</Typography>
+                </TableCell>
+                <TableCell>{risk.owner_name || "—"}</TableCell>
+                <TableCell sx={{ whiteSpace: "nowrap" }}>
+                  {formatDate(risk.identified_date)}
+                </TableCell>
+                <TableCell sx={{ whiteSpace: "nowrap" }}>
+                  {risk.treatment_strategy ? (
+                    <Chip
+                      size="small"
+                      label={TREATMENT_LABELS[risk.treatment_strategy] ?? risk.treatment_strategy}
+                      sx={{ bgcolor: `${treatmentColor}26`, border: `1px solid ${treatmentColor}` }}
+                    />
+                  ) : (
+                    "—"
+                  )}
+                </TableCell>
+              </TableRow>
+            );
+          })}
         </TableBody>
       </Table>
+      <TablePagination
+        component="div"
+        count={data.length}
+        page={page}
+        onPageChange={(_, newPage) => setPage(newPage)}
+        rowsPerPage={ROWS_PER_PAGE}
+        rowsPerPageOptions={[ROWS_PER_PAGE]}
+      />
+      <HighRiskDetailModal risk={selected} onClose={() => setSelected(null)} />
     </TableContainer>
   );
 }

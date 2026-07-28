@@ -96,10 +96,42 @@ func (r *riskActionStepRepo) UpdateRiskActionStep(ctx context.Context, planID, s
 	args = append(args, req.UpdatedBy)
 	args = append(args, stepID, planID)
 
-	if _, err := r.db.ExecContext(ctx,
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("risk_action_step.Update: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// Lock the parent risk row and read its status in the SAME transaction as
+	// the step UPDATE below. FOR UPDATE serialises against a concurrent workflow
+	// transition (which UPDATEs risk.workflow_status): it must wait for this tx
+	// to commit, so the risk can't slip out of an eligible state between the
+	// check and the write — closing the TOCTOU the service-level check alone
+	// left open.
+	var workflowStatus string
+	err = tx.QueryRowContext(ctx,
+		`SELECT r.workflow_status
+		 FROM risk r JOIN risk_action_plan p ON p.risk_id = r.id
+		 WHERE p.id = ? FOR UPDATE`, planID).Scan(&workflowStatus)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, &apierror.NotFoundError{Msg: fmt.Sprintf("action plan %d not found", planID)}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("risk_action_step.Update: lock risk: %w", err)
+	}
+	if workflowStatus != "IN_REMEDIATION" && workflowStatus != "ESCALATED" {
+		return nil, &apierror.ValidationError{Msg: "action steps can only be modified while the risk is IN_REMEDIATION or ESCALATED"}
+	}
+
+	if _, err := tx.ExecContext(ctx,
 		"UPDATE risk_action_step SET "+strings.Join(sets, ", ")+" WHERE id = ? AND plan_id = ?", args...); err != nil { // #nosec G202
 		return nil, fmt.Errorf("risk_action_step.Update(%d): %w", stepID, err)
 	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("risk_action_step.Update: commit: %w", err)
+	}
+	// Re-read outside the tx: a missing step (UPDATE matched nothing) surfaces
+	// as NotFound here; an existing one (including a no-op update) is returned.
 	return r.GetRiskActionStepByID(ctx, planID, stepID)
 }
 

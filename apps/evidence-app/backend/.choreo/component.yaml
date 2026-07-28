@@ -1,0 +1,12 @@
+schemaVersion: "1.2"
+endpoints:
+  - name: compliance-backend
+    displayName: Compliance Backend
+    service:
+      basePath: /
+      port: 8000
+    type: REST
+    networkVisibilities:
+      - Public
+      - Organization
+    schemaFilePath: openapi.yaml

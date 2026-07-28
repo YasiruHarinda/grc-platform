@@ -30,7 +30,6 @@ type Risk struct {
 	RiskDescription        string    `json:"risk_description"`
 	RiskIdentifiedDate     *string   `json:"risk_identified_date"`
 	IdentifiedByType       *string   `json:"identified_by_type"`
-	IdentifiedByUserID     *int      `json:"identified_by_user_id"`
 	IdentifiedByName       *string   `json:"identified_by_name"`
 	AssignerID             int       `json:"assigner_id"`
 	OwnerID                int       `json:"owner_id"`
@@ -60,17 +59,22 @@ type Risk struct {
 // Dates are YYYY-MM-DD strings. Evidence files are uploaded separately after creation.
 type CreateRiskRequest struct {
 	// Step 1: Basic Information
-	Year                   int     `json:"year"`
-	Quarter                string  `json:"quarter"`
-	SourceRegisterID       int     `json:"source_register_id"`
-	RiskTitle              string  `json:"risk_title"`
-	RiskDescription        string  `json:"risk_description"`
-	ComplianceReferenceIDs []int   `json:"compliance_reference_ids"`
-	IdentifiedByType       string  `json:"identified_by_type"`
-	IdentifiedByUserID     *int    `json:"identified_by_user_id,omitempty"`
-	IdentifiedByName       *string `json:"identified_by_name,omitempty"`
-	AssignerID             int     `json:"assigner_id"`
-	RiskIdentifiedDate     string  `json:"risk_identified_date"`
+	Year                   int    `json:"year"`
+	Quarter                string `json:"quarter"`
+	SourceRegisterID       int    `json:"source_register_id"`
+	RiskTitle              string `json:"risk_title"`
+	RiskDescription        string `json:"risk_description"`
+	ComplianceReferenceIDs []int  `json:"compliance_reference_ids"`
+	IdentifiedByType       string `json:"identified_by_type"`
+	// IdentifiedByName is ignored when IdentifiedByType is "EMPLOYEE": the
+	// server derives it from IdentifiedByEmail via hr_entity instead, so a
+	// client cannot attribute a risk to an employee by name alone. It is
+	// still the source of truth for EXTERNAL_PERSON and TOOL, which have no
+	// directory to verify against.
+	IdentifiedByName   *string `json:"identified_by_name,omitempty"`
+	IdentifiedByEmail  *string `json:"identified_by_email,omitempty"`
+	AssignerID         int     `json:"assigner_id"`
+	RiskIdentifiedDate string  `json:"risk_identified_date"`
 
 	// Step 2: Risk Assessment
 	Likelihood         int    `json:"likelihood"`
@@ -124,8 +128,12 @@ type ListRisksFilter struct {
 	DueFrom        string   // implementation_date >= this date (YYYY-MM-DD); empty = unbounded
 	DueTo          string   // implementation_date <= this date (YYYY-MM-DD); empty = unbounded
 	DueOverdueOnly bool     // implementation_date < today, regardless of the range above
-	Limit          int      // rows per page; handler enforces a sensible default and max
-	Offset         int      // zero-based row offset
+	// ActionOwnerID restricts to risks with an action plan owned by this user.
+	// Set automatically by the handler for callers who only hold
+	// COMPLETE_ACTION_STEPS_RISK (Action Owners) — never client-supplied.
+	ActionOwnerID *int
+	Limit         int // rows per page; handler enforces a sensible default and max
+	Offset        int // zero-based row offset
 }
 
 // RiskListPage is the paginated response for GET /api/v1/risks.
@@ -167,7 +175,6 @@ type RiskDetail struct {
 	RiskDescription        string  `json:"risk_description"`
 	RiskIdentifiedDate     *string `json:"risk_identified_date"`
 	IdentifiedByType       *string `json:"identified_by_type"`
-	IdentifiedByUserID     *int    `json:"identified_by_user_id"`
 	IdentifiedByName       *string `json:"identified_by_name"`
 	AssignerID             int     `json:"assigner_id"`
 	OwnerID                int     `json:"owner_id"`
@@ -194,7 +201,6 @@ type RiskDetail struct {
 	AssignmentTeamName     string  `json:"assignment_team_name"`
 	OwnerName              string  `json:"owner_name"`
 	AssignerName           string  `json:"assigner_name"`
-	IdentifiedByUserName   *string `json:"identified_by_user_name"`
 	ComplianceApproverName *string `json:"compliance_approver_name"`
 
 	// Gross score (from risk_score join) — the original rating assigned at
@@ -232,12 +238,16 @@ type ActionPlanDetail struct {
 //
 // All other fields are free-edit and do not affect workflow status.
 type UpdateRiskRequest struct {
-	RiskTitle              string  `json:"risk_title"`
-	RiskDescription        string  `json:"risk_description"`
-	RiskIdentifiedDate     string  `json:"risk_identified_date,omitempty"`
+	RiskTitle          string `json:"risk_title"`
+	RiskDescription    string `json:"risk_description"`
+	RiskIdentifiedDate string `json:"risk_identified_date,omitempty"`
+	// IdentifiedByType empty means "leave Identified By unchanged" (matching
+	// the repository's COALESCE-on-empty convention for these two columns).
+	// When set to "EMPLOYEE", IdentifiedByName is ignored in favour of a
+	// server-side lookup of IdentifiedByEmail — see CreateRiskRequest.
 	IdentifiedByType       string  `json:"identified_by_type,omitempty"`
-	IdentifiedByUserID     *int    `json:"identified_by_user_id,omitempty"`
 	IdentifiedByName       *string `json:"identified_by_name,omitempty"`
+	IdentifiedByEmail      *string `json:"identified_by_email,omitempty"`
 	AssignerID             *int    `json:"assigner_id,omitempty"`
 	OwnerID                *int    `json:"owner_id,omitempty"`
 	ImpactDescription      string  `json:"impact_description"`

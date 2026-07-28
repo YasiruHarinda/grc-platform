@@ -1,0 +1,6 @@
+# Test-only dependencies. Install alongside requirements.txt:
+#   pip install -r requirements.txt -r requirements-test.txt
+#
+# The Postgres driver the test harness needs (psycopg2-binary) is already
+# declared in requirements.txt.
+pytest>=8.0,<9
