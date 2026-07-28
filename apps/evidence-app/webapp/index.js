@@ -30,6 +30,31 @@ const MIME_TYPES = {
   '.woff2': 'font/woff2',
 };
 
+// Checklist 3.1 mandatory security headers. Applied to static-file responses
+// (serveStatic below) and to the 502 / 504 this server writes itself when the
+// backend never answers — never to a response the backend actually produced.
+// Those forward the backend's headers through unchanged
+// (`res.writeHead(proxyRes.statusCode, proxyRes.headers)` in
+// proxyToBackend), including its own Content-Security-Policy and
+// Strict-Transport-Security. Attaching these there too would put two CSP
+// headers on the same response; browsers intersect multiple CSPs into the
+// most restrictive combination, silently producing a policy nobody wrote.
+// The 502 / 504 path has no such conflict: the backend either never connected
+// or never sent headers, so there is nothing to collide with.
+//
+// The restrictive CSP directives (default-src 'self' etc.) and
+// Permissions-Policy are a separate, deferred piece of work (see issue #75)
+// — not added here. `preload` on HSTS is a deliberate inclusion for the web
+// app only; see issue #72.
+const STATIC_SECURITY_HEADERS = {
+  'X-Frame-Options': 'deny',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Permitted-Cross-Domain-Policies': 'None',
+  'Content-Security-Policy': "upgrade-insecure-requests; frame-ancestors 'none'",
+  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload',
+  'Referrer-Policy': 'no-referrer',
+};
+
 function proxyToBackend(req, res) {
   const target = new URL(BACKEND_URL + req.url);
   const isHttps = target.protocol === 'https:';
@@ -81,7 +106,7 @@ function proxyToBackend(req, res) {
     finished = true;
     proxyReq.destroy(new Error('Upstream response headers timed out'));
     if (!res.headersSent) {
-      res.writeHead(504);
+      res.writeHead(504, STATIC_SECURITY_HEADERS);
       res.end('Gateway Timeout');
     }
   }, headersTimeoutMs);
@@ -93,7 +118,7 @@ function proxyToBackend(req, res) {
     responded = true;
     console.error('Proxy error:', err.code, err.message, '→', target.href);
     if (!res.headersSent) {
-      res.writeHead(502);
+      res.writeHead(502, STATIC_SECURITY_HEADERS);
       res.end('Bad Gateway');
     }
   });
@@ -136,11 +161,11 @@ function serveStatic(req, res) {
   const contentType = MIME_TYPES[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
   fs.readFile(filePath, (err, data) => {
     if (err) {
-      res.writeHead(404);
+      res.writeHead(404, STATIC_SECURITY_HEADERS);
       res.end('Not found');
       return;
     }
-    res.writeHead(200, { 'Content-Type': contentType });
+    res.writeHead(200, { ...STATIC_SECURITY_HEADERS, 'Content-Type': contentType });
     res.end(data);
   });
 }
