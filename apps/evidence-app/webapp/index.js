@@ -30,14 +30,17 @@ const MIME_TYPES = {
   '.woff2': 'font/woff2',
 };
 
-// Checklist 3.1 mandatory security headers. Applied only to static-file
-// responses (serveStatic below) — never to the /api/* proxy path. Proxied
-// responses forward the backend's headers through unchanged
+// Checklist 3.1 mandatory security headers. Applied to static-file responses
+// (serveStatic below) and to the 502 / 504 this server writes itself when the
+// backend never answers — never to a response the backend actually produced.
+// Those forward the backend's headers through unchanged
 // (`res.writeHead(proxyRes.statusCode, proxyRes.headers)` in
 // proxyToBackend), including its own Content-Security-Policy and
-// Strict-Transport-Security. Attaching these here too would put two CSP
+// Strict-Transport-Security. Attaching these there too would put two CSP
 // headers on the same response; browsers intersect multiple CSPs into the
 // most restrictive combination, silently producing a policy nobody wrote.
+// The 502 / 504 path has no such conflict: the backend either never connected
+// or never sent headers, so there is nothing to collide with.
 //
 // The restrictive CSP directives (default-src 'self' etc.) and
 // Permissions-Policy are a separate, deferred piece of work (see issue #75)
@@ -103,7 +106,7 @@ function proxyToBackend(req, res) {
     finished = true;
     proxyReq.destroy(new Error('Upstream response headers timed out'));
     if (!res.headersSent) {
-      res.writeHead(504);
+      res.writeHead(504, STATIC_SECURITY_HEADERS);
       res.end('Gateway Timeout');
     }
   }, headersTimeoutMs);
@@ -115,7 +118,7 @@ function proxyToBackend(req, res) {
     responded = true;
     console.error('Proxy error:', err.code, err.message, '→', target.href);
     if (!res.headersSent) {
-      res.writeHead(502);
+      res.writeHead(502, STATIC_SECURITY_HEADERS);
       res.end('Bad Gateway');
     }
   });
