@@ -208,7 +208,12 @@ export default function AuditDetailPage(): JSX.Element {
     activeFilterCount(filters) > 0 ||
     search.trim().length > 0;
 
-  const handleBack = () => void navigate("/audit/audits");
+  // Return to the framework-scoped audit list the user likely came from
+  // (AuditsListPage's drilled view, /audit/audits?framework=<id>) rather than
+  // always dropping back to the top-level framework overview — the audit's
+  // own framework id is already loaded, so no navigation state needs threading.
+  const handleBack = () =>
+    void navigate(audit ? `/audit/audits?framework=${audit.framework.id}` : "/audit/audits");
 
   // Days-left pill for active audits.
   const remaining = audit?.status === "ACTIVE" ? daysLeft(audit.periodEnd) : null;

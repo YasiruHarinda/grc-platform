@@ -128,10 +128,12 @@ type SearchAuditFrameworksResponse struct {
 // Audit Framework Control (versioned control library)
 // =============================================================================
 
-// AuditFrameworkControl represents one immutable version of a control definition
-// in the `audit_framework_control` table. Rows are never updated — a new version
-// row is inserted instead. audit_control rows reference a specific version via
-// framework_control_id.
+// AuditFrameworkControl represents one version of a control definition in the
+// `audit_framework_control` reference catalog. A control number's current row
+// (is_current=TRUE) can be edited in place (Create) or superseded with a new
+// version (NewVersion). audit_control never references this table by foreign
+// key — it's an independent, optional catalog (see
+// docs/new/Audit-Control-Framework-Optional-Design.md).
 type AuditFrameworkControl struct {
 	ID                  int       `json:"id"`
 	FrameworkID         int       `json:"frameworkId"`
@@ -253,14 +255,13 @@ type SearchAuditsResponse struct {
 // Audit Control
 // =============================================================================
 
-// AuditControl represents a control from the `audit_control` table.
-// Definition columns are resolved via COALESCE from audit_framework_control when linked.
-// Owner, team, and auditor names are joined in.
+// AuditControl represents a control from the `audit_control` table. Every row
+// owns its full definition text directly — it is never linked to
+// audit_framework_control by foreign key. Owner, team, and auditor names are
+// joined in.
 type AuditControl struct {
 	ID                  int       `json:"id"`
 	AuditID             int       `json:"auditId"`
-	FrameworkControlID  *int      `json:"frameworkControlId"` // non-nil when sourced from template
-	TemplateVersion     *int      `json:"templateVersion"`    // version of the template row used
 	ControlNumber       string    `json:"controlNumber"`
 	Description         string    `json:"description"`
 	EvidenceRequirement *string   `json:"evidenceRequirement"`
@@ -664,10 +665,13 @@ type InlinePopulationRequest struct {
 }
 
 // CreateControlRequest is the payload for POST /audits/{auditId}/controls.
+// Always creates a standalone audit_control row with full definition text —
+// there is no framework-linked shape. PushToFramework optionally also writes
+// this control into the framework's catalog (audit_framework_control) as a
+// side effect: a first version if SourceFrameworkControlID is nil, or a new
+// version of that existing catalog control if it's set. See
+// docs/new/Audit-Control-Framework-Optional-Design.md §6.
 type CreateControlRequest struct {
-	// When FrameworkControlID is set the definition columns below may be omitted;
-	// they will be resolved from the template via COALESCE on read.
-	FrameworkControlID  *int                     `json:"frameworkControlId"`
 	ControlSource       string                   `json:"controlSource"` // MANUAL | COPIED | CSV; defaults to MANUAL
 	ControlNumber       string                   `json:"controlNumber"`
 	Description         string                   `json:"description"`
@@ -681,6 +685,14 @@ type CreateControlRequest struct {
 	DueDate             *string                  `json:"dueDate"`    // YYYY-MM-DD
 	Population          *InlinePopulationRequest `json:"population"` // OE controls only
 	CreatedBy           string                   `json:"createdBy"`
+
+	// PushToFramework, when true, also writes this control into the audit's
+	// framework catalog. SourceFrameworkControlID, when set alongside it,
+	// identifies an existing catalog control being edited-and-pushed-back
+	// (-> NewVersion); when nil, PushToFramework means a brand-new control
+	// number (-> first version, v1).
+	PushToFramework          bool `json:"pushToFramework"`
+	SourceFrameworkControlID *int `json:"sourceFrameworkControlId"`
 }
 
 // UpdateControlRequest is the payload for PATCH /audits/{auditId}/controls/{controlId}.

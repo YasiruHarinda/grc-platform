@@ -253,18 +253,14 @@ func (s *controlService) ActivePopulationID(ctx context.Context, controlID int) 
 }
 
 func validateAddRequest(req model.AddControlRequest) error {
-	// Framework-linked controls omit controlNumber/description; the entity resolves
-	// them from the template via COALESCE. Skip those checks for that path.
-	if req.FrameworkControlID == nil {
-		if req.ControlNumber == "" {
-			return &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "controlNumber is required"}
-		}
-		if req.Description == "" {
-			return &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "description is required"}
-		}
-		if req.DueDate == nil || strings.TrimSpace(*req.DueDate) == "" {
-			return &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "dueDate is required"}
-		}
+	if req.ControlNumber == "" {
+		return &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "controlNumber is required"}
+	}
+	if req.Description == "" {
+		return &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "description is required"}
+	}
+	if req.DueDate == nil || strings.TrimSpace(*req.DueDate) == "" {
+		return &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "dueDate is required"}
 	}
 	if req.RequirementType != "DESIGN" && req.RequirementType != "OE" {
 		return &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "requirementType must be DESIGN or OE"}

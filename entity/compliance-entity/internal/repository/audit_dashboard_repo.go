@@ -252,15 +252,14 @@ func (r *dashboardRepo) queryActionItems(ctx context.Context, req domain.AuditDa
 	}
 	q := fmt.Sprintf(`
 		SELECT c.id, c.audit_id, a.name,
-		       COALESCE(c.control_number, fc.control_number, ''),
-		       COALESCE(c.description, fc.description, ''),
+		       c.control_number,
+		       c.description,
 		       c.status,
 		       COALESCE(DATE_FORMAT(c.due_date,'%%Y-%%m-%%d'),''),
 		       COALESCE(t.name,''),
 		       COALESCE(u.display_name,''),
 		       c.team_id, c.owner_id
 		FROM audit_control c JOIN audit a ON a.id = c.audit_id
-		LEFT JOIN audit_framework_control fc ON fc.id = c.framework_control_id
 		LEFT JOIN audit_team t ON t.id = c.team_id
 		LEFT JOIN `+"`user`"+` u ON u.id = c.owner_id
 		%s AND %s ORDER BY c.due_date ASC, c.id ASC LIMIT 100`, baseWhere, statusFilter) // #nosec G201
@@ -274,15 +273,14 @@ func (r *dashboardRepo) queryDueSoonItems(ctx context.Context, req domain.AuditD
 	}
 	q := fmt.Sprintf(`
 		SELECT c.id, c.audit_id, a.name,
-		       COALESCE(c.control_number, fc.control_number, ''),
-		       COALESCE(c.description, fc.description, ''),
+		       c.control_number,
+		       c.description,
 		       c.status,
 		       COALESCE(DATE_FORMAT(c.due_date,'%%Y-%%m-%%d'),''),
 		       COALESCE(t.name,''),
 		       COALESCE(u.display_name,''),
 		       c.team_id, c.owner_id
 		FROM audit_control c JOIN audit a ON a.id = c.audit_id
-		LEFT JOIN audit_framework_control fc ON fc.id = c.framework_control_id
 		LEFT JOIN audit_team t ON t.id = c.team_id
 		LEFT JOIN `+"`user`"+` u ON u.id = c.owner_id
 		%s AND %s AND c.due_date IS NOT NULL
@@ -374,15 +372,14 @@ func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQue
 		// page
 		q := fmt.Sprintf(`
 			SELECT c.id, c.audit_id, a.name,
-			       COALESCE(c.control_number, fc.control_number, ''),
-			       COALESCE(c.description, fc.description, ''),
+			       c.control_number,
+			       c.description,
 			       c.status,
 			       COALESCE(DATE_FORMAT(c.due_date,'%%Y-%%m-%%d'),''),
 			       COALESCE(t.name,''),
 			       COALESCE(u.display_name,''),
 			       c.team_id, c.owner_id
 			FROM audit_control c JOIN audit a ON a.id = c.audit_id
-			LEFT JOIN audit_framework_control fc ON fc.id = c.framework_control_id
 			LEFT JOIN audit_team t ON t.id = c.team_id
 			LEFT JOIN `+"`user`"+` u ON u.id = c.owner_id
 			%s AND %s%s ORDER BY c.due_date ASC, c.id ASC LIMIT ? OFFSET ?`, baseWhere, statusFilter, filterSQL) // #nosec G201
@@ -402,15 +399,14 @@ func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQue
 		}
 		q := fmt.Sprintf(`
 			SELECT c.id, c.audit_id, a.name,
-			       COALESCE(c.control_number, fc.control_number, ''),
-			       COALESCE(c.description, fc.description, ''),
+			       c.control_number,
+			       c.description,
 			       c.status,
 			       COALESCE(DATE_FORMAT(c.due_date,'%%Y-%%m-%%d'),''),
 			       COALESCE(t.name,''),
 			       COALESCE(u.display_name,''),
 			       c.team_id, c.owner_id
 			FROM audit_control c JOIN audit a ON a.id = c.audit_id
-			LEFT JOIN audit_framework_control fc ON fc.id = c.framework_control_id
 			LEFT JOIN audit_team t ON t.id = c.team_id
 			LEFT JOIN `+"`user`"+` u ON u.id = c.owner_id
 			%s ORDER BY c.due_date ASC, c.id ASC LIMIT ? OFFSET ?`, dueSoonWhere) // #nosec G201
@@ -426,15 +422,14 @@ func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQue
 		}
 		q := fmt.Sprintf(`
 			SELECT c.id, c.audit_id, a.name,
-			       COALESCE(c.control_number, fc.control_number, ''),
-			       COALESCE(c.description, fc.description, ''),
+			       c.control_number,
+			       c.description,
 			       c.status,
 			       DATE_FORMAT(c.due_date,'%%Y-%%m-%%d'),
 			       COALESCE(t.name,''),
 			       COALESCE(u.display_name,''),
 			       c.team_id, c.owner_id
 			FROM audit_control c JOIN audit a ON a.id = c.audit_id
-			LEFT JOIN audit_framework_control fc ON fc.id = c.framework_control_id
 			LEFT JOIN audit_team t ON t.id = c.team_id
 			LEFT JOIN `+"`user`"+` u ON u.id = c.owner_id
 			%s ORDER BY c.due_date ASC LIMIT ? OFFSET ?`, overdueWhere) // #nosec G201
@@ -468,15 +463,14 @@ func (r *dashboardRepo) scanControlItems(ctx context.Context, q string, args []a
 func (r *dashboardRepo) queryOverdueControls(ctx context.Context, baseWhere string, scopeArgs []any) ([]domain.DashboardControlItem, error) {
 	q := fmt.Sprintf(`
 		SELECT c.id, c.audit_id, a.name,
-		       COALESCE(c.control_number, fc.control_number, ''),
-		       COALESCE(c.description, fc.description, ''),
+		       c.control_number,
+		       c.description,
 		       c.status,
 		       DATE_FORMAT(c.due_date,'%%Y-%%m-%%d'),
 		       COALESCE(t.name,''),
 		       COALESCE(u.display_name,''),
 		       c.team_id, c.owner_id
 		FROM audit_control c JOIN audit a ON a.id = c.audit_id
-		LEFT JOIN audit_framework_control fc ON fc.id = c.framework_control_id
 		LEFT JOIN audit_team t ON t.id = c.team_id
 		LEFT JOIN `+"`user`"+` u ON u.id = c.owner_id
 		%s AND c.due_date IS NOT NULL AND c.due_date < CURDATE() AND c.status != 'COMPLETE'

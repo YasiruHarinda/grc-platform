@@ -127,27 +127,25 @@ CREATE TABLE IF NOT EXISTS audit (
 -- =============================================================================
 -- audit_control  (control snapshot inside an audit)
 --
--- framework_control_id links to the versioned template row at creation time,
--- snapshotting the version. Definition columns (control_number, description,
--- etc.) are NULL when a template is linked; reads use COALESCE(fc.col, c.col)
--- to resolve definitions from the template automatically.
+-- Always a standalone copy: every row owns its full definition text, and is
+-- never linked back to audit_framework_control by foreign key. A control may
+-- optionally have been authored into the framework catalog at the same time
+-- it was authored here (see audit_framework_control), but that's a one-time
+-- write at creation, not a persisted relationship.
 -- control_source tracks whether the control was added MANUALLY, COPIED from
--- a previous audit, or imported via CSV.
+-- a previous audit/framework, or imported via CSV.
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS audit_control (
   id                   INT          NOT NULL AUTO_INCREMENT,
   audit_id             INT          NOT NULL,
-  framework_control_id INT          NULL,     -- NULL = manually added control with no template
 
-  -- Definition columns: only stored when framework_control_id IS NULL.
-  -- Reads use COALESCE(framework_control.col, audit_control.col).
-  control_number       VARCHAR(60)  NULL,
-  description          TEXT         NULL,
+  control_number       VARCHAR(60)  NOT NULL,
+  description          TEXT         NOT NULL,
   evidence_requirement TEXT         NULL,
-  requirement_type     ENUM('DESIGN','OE')              NULL,
-  control_type         ENUM('CONFIG','NON_CONFIG')       NULL,
-  scope                ENUM('COMMON','PRODUCT_SPECIFIC') NULL,
+  requirement_type     ENUM('DESIGN','OE')              NOT NULL,
+  control_type         ENUM('CONFIG','NON_CONFIG')       NOT NULL,
+  scope                ENUM('COMMON','PRODUCT_SPECIFIC') NOT NULL,
 
   -- Instance data (always present)
   owner_id             INT          NULL,
@@ -176,31 +174,17 @@ CREATE TABLE IF NOT EXISTS audit_control (
   updated_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   updated_by           VARCHAR(255) NULL,
   PRIMARY KEY (id),
-  -- Prevent same template control appearing twice in one audit
-  UNIQUE KEY uq_fwctl_per_audit       (audit_id, framework_control_id),
-  -- Prevent duplicate manual control numbers within one audit (NULLs exempt)
+  -- Prevent duplicate control numbers within one audit
   UNIQUE KEY uq_manual_ctrl_per_audit (audit_id, control_number),
   KEY idx_control_audit_status (audit_id, status),
-  KEY idx_control_fwctl        (framework_control_id),
   KEY idx_control_team         (team_id),
   KEY idx_control_owner        (owner_id),
   KEY idx_control_auditor      (auditor_id),
   KEY idx_control_due          (due_date),
   CONSTRAINT fk_control_audit   FOREIGN KEY (audit_id)             REFERENCES audit(id)                   ON DELETE CASCADE,
-  CONSTRAINT fk_control_fwctl   FOREIGN KEY (framework_control_id) REFERENCES audit_framework_control(id) ON DELETE RESTRICT,
   CONSTRAINT fk_control_owner   FOREIGN KEY (owner_id)             REFERENCES `user`(id)                  ON DELETE SET NULL,
   CONSTRAINT fk_control_team    FOREIGN KEY (team_id)              REFERENCES audit_team(id)              ON DELETE SET NULL,
-  CONSTRAINT fk_control_auditor FOREIGN KEY (auditor_id)           REFERENCES `user`(id)                  ON DELETE SET NULL,
-  -- Either template reference OR all 5 definition columns must be present
-  CONSTRAINT chk_control_definition CHECK (
-    framework_control_id IS NOT NULL OR (
-      control_number   IS NOT NULL AND
-      description      IS NOT NULL AND
-      requirement_type IS NOT NULL AND
-      control_type     IS NOT NULL AND
-      scope            IS NOT NULL
-    )
-  )
+  CONSTRAINT fk_control_auditor FOREIGN KEY (auditor_id)           REFERENCES `user`(id)                  ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- =============================================================================

@@ -53,7 +53,6 @@ import {
   Copy,
   FileUp,
   Library,
-  Pencil,
   Plus,
   Trash2,
 } from "@wso2/oxygen-ui-icons-react";
@@ -69,7 +68,6 @@ import { useGetTeams } from "@modules/audit/api/useGetTeams";
 import { useCreateAudit } from "@modules/audit/api/useCreateAudit";
 import { useCreateFramework } from "@modules/audit/api/useCreateFramework";
 import { useCreateProduct } from "@modules/audit/api/useCreateProduct";
-import { useCreateFrameworkControl } from "@modules/audit/api/useCreateFrameworkControl";
 import { useBulkAddControls } from "@modules/audit/api/useBulkAddControls";
 import type {
   AddControlRequest,
@@ -87,7 +85,10 @@ import type { AuditUser } from "@modules/audit/types/user";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type ControlSourceMode = "empty" | "copy" | "csv" | "template";
+// Two top-level Step 2 choices. "framework" holds four sub-tabs (below);
+// "copyAudit" never touches the framework catalog (see FwSubTab/DraftControl).
+type TopSource = "framework" | "copyAudit";
+type FwSubTab = "pick" | "manual" | "csv" | "clone";
 
 // The app's default theme (AcrylicOrangeTheme) makes `background.paper` an
 // intentionally translucent color (~77% opacity: #ffffffc5 / #000000c5) and
@@ -117,13 +118,23 @@ const SELECT_MENU_PROPS = {
 let _localIdCounter = 0;
 const nextLocalId = () => String(++_localIdCounter);
 
+
+// that a due date isn't in the past.
+function todayISO(): string {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 interface PopulationDraft {
   description: string;
   dueDate: string;
   comments: string;
-  /** Population-phase process owner — may differ from the control's process owner. */
+  /** Population-phase process owner  may differ from the control's process owner. */
   ownerId: number | null;
-  /** Population-phase team — may differ from the control's team. */
+  /** Population-phase team  may differ from the control's team. */
   teamId: number | null;
 }
 
@@ -133,9 +144,6 @@ function blankPopulation(): PopulationDraft {
 
 interface DraftControl {
   localId: string;
-  // When set this draft is linked to a framework template row (source = COPIED).
-  // Definition fields below are read-only display values; only assignments are editable.
-  frameworkControlId?: number;
   controlSource: "MANUAL" | "COPIED" | "CSV";
   controlNumber: string;
   description: string;
@@ -148,9 +156,29 @@ interface DraftControl {
   teamId: number | null;
   auditorId: number | null;
   population: PopulationDraft | null; // non-null for OE controls
+
+  // Framework-catalog push-back (only ever meaningful under the "Copy from
+  // Framework" top source — see docs/new/Audit-Control-Framework-Optional-Design.md
+  // §6). Never set for "Copy from Previous Audit" drafts.
+  //
+  // sourceFrameworkControlId: set when this row was picked from *this*
+  // framework's current catalog — identifies which catalog control a
+  // push-back should version, rather than insert as new.
+  sourceFrameworkControlId?: number;
+  // pushToFramework: the "also add/update framework library" choice for this
+  // row. User-toggleable by default; forced true (see pushLocked) when the
+  // catalog started empty, or for rows cloned from another framework.
+  pushToFramework: boolean;
+  // pushLocked: true removes the user's choice — pushToFramework always
+  // applies and no checkbox is shown for this row.
+  pushLocked?: boolean;
+  // clonedFromControlId: bookkeeping only (never sent to the backend) — which
+  // control in the *source* framework this row was cloned from, so the Clone
+  // picker can show it as already-selected.
+  clonedFromControlId?: number;
 }
 
-function blankDraft(): DraftControl {
+function blankDraft(pushToFramework = false, pushLocked = false): DraftControl {
   return {
     localId: nextLocalId(),
     controlSource: "MANUAL",
@@ -165,13 +193,14 @@ function blankDraft(): DraftControl {
     teamId: null,
     auditorId: null,
     population: null,
+    pushToFramework,
+    pushLocked,
   };
 }
 
 function controlToDraft(c: AuditControl): DraftControl {
   return {
     localId: nextLocalId(),
-    frameworkControlId: c.frameworkControlId ?? undefined,
     controlSource: "COPIED",
     controlNumber: c.controlNumber,
     description: c.description,
@@ -179,11 +208,14 @@ function controlToDraft(c: AuditControl): DraftControl {
     controlType: c.controlType,
     scope: c.scope,
     evidenceRequirement: c.evidenceRequirement ?? "",
-    dueDate: c.dueDate ?? "",
+    dueDate: "",
     ownerId: c.ownerId ?? null,
     teamId: c.teamId ?? null,
     auditorId: c.auditorId ?? null,
     population: c.requirementType === "OE" ? blankPopulation() : null,
+    // Copy from Previous Audit never pushes to the framework catalog (§6) —
+    // no toggle, always false, regardless of what the source control was.
+    pushToFramework: false,
   };
 }
 
@@ -196,21 +228,6 @@ function draftToRequest(d: DraftControl): AddControlRequest {
       comments: d.population.comments.trim() || null,
       ownerId: d.population.ownerId,
       teamId: d.population.teamId,
-    };
-  }
-  // Template-linked: send only the FK + assignments; backend resolves definitions from the template.
-  if (d.frameworkControlId) {
-    return {
-      frameworkControlId: d.frameworkControlId,
-      controlSource: "COPIED" as const,
-      requirementType: d.requirementType,
-      controlType: d.controlType,
-      scope: d.scope,
-      dueDate: d.dueDate || null,
-      ownerId: d.ownerId,
-      teamId: d.teamId,
-      auditorId: d.auditorId,
-      population,
     };
   }
   return {
@@ -226,6 +243,8 @@ function draftToRequest(d: DraftControl): AddControlRequest {
     auditorId: d.auditorId,
     controlSource: d.controlSource,
     population,
+    pushToFramework: d.pushToFramework,
+    sourceFrameworkControlId: d.sourceFrameworkControlId,
   };
 }
 
@@ -299,6 +318,9 @@ function parseCSV(text: string): DraftControl[] | string {
       teamId: null,
       auditorId: null,
       population: pop,
+      // Caller (handleFileChange) overwrites this based on whether the
+      // target framework's catalog is currently empty.
+      pushToFramework: false,
     });
   }
   if (drafts.length === 0) return "No valid rows found in CSV.";
@@ -444,9 +466,13 @@ interface EditableControlsTableProps {
   onChange: (drafts: DraftControl[]) => void;
   users: AuditUser[];
   teams: AuditTeam[];
+  // Shows the "also add/update framework library" column. Only meaningful
+  // under the "Copy from Framework" top source (§6) — Copy from Previous
+  // Audit never pushes, so the caller passes false there.
+  showPushColumn: boolean;
 }
 
-function EditableControlsTable({ drafts, onChange, users, teams }: EditableControlsTableProps): JSX.Element {
+function EditableControlsTable({ drafts, onChange, users, teams, showPushColumn }: EditableControlsTableProps): JSX.Element {
   const [populationDialogId, setPopulationDialogId] = useState<string | null>(null);
   const dialogDraft = drafts.find((d) => d.localId === populationDialogId);
 
@@ -470,10 +496,17 @@ function EditableControlsTable({ drafts, onChange, users, teams }: EditableContr
     onChange(drafts.filter((d) => d.localId !== localId));
   }
 
-  function unlinkFromTemplate(localId: string) {
-    onChange(drafts.map((d) =>
-      d.localId === localId ? { ...d, frameworkControlId: undefined } : d,
-    ));
+  // "Add to Library" select-all — only affects rows with a real choice
+  // (pushLocked rows have none, so they're excluded from both the count and the toggle).
+  const togglablePushIds = drafts.filter((d) => !d.pushLocked).map((d) => d.localId);
+  const checkedPushCount = togglablePushIds.filter(
+    (id) => drafts.find((d) => d.localId === id)?.pushToFramework,
+  ).length;
+  const allPushChecked = togglablePushIds.length > 0 && checkedPushCount === togglablePushIds.length;
+  const somePushChecked = checkedPushCount > 0 && !allPushChecked;
+
+  function toggleAllPush(checked: boolean) {
+    onChange(drafts.map((d) => (d.pushLocked ? d : { ...d, pushToFramework: checked })));
   }
 
   const paperProps = DROPDOWN_PAPER_PROPS;
@@ -496,13 +529,32 @@ function EditableControlsTable({ drafts, onChange, users, teams }: EditableContr
             <TableCell sx={{ fontWeight: 600, minWidth: 155 }}>Auditor POC</TableCell>
             <TableCell sx={{ fontWeight: 600, minWidth: 130 }}>Team</TableCell>
             <TableCell sx={{ fontWeight: 600, minWidth: 108 }}>Due Date</TableCell>
+            {showPushColumn && (
+              <TableCell sx={{ fontWeight: 600, minWidth: 130 }}>
+                <Box sx={{ display: "flex", alignItems: "center" }}>
+                  Add to Library
+                  <Tooltip title={togglablePushIds.length > 0 ? "Toggle 'add to library' for every row" : "No rows to toggle"}>
+                    <span>
+                      <Checkbox
+                        size="small"
+                        checked={allPushChecked}
+                        indeterminate={somePushChecked}
+                        disabled={togglablePushIds.length === 0}
+                        onChange={(e) => toggleAllPush(e.target.checked)}
+                        sx={{ p: 0.5 }}
+                      />
+                    </span>
+                  </Tooltip>
+                </Box>
+              </TableCell>
+            )}
             <TableCell sx={{ width: 40 }} />
           </TableRow>
         </TableHead>
         <TableBody>
           {drafts.length === 0 && (
             <TableRow>
-              <TableCell colSpan={12} align="center" sx={{ py: 3 }}>
+              <TableCell colSpan={showPushColumn ? 13 : 12} align="center" sx={{ py: 3 }}>
                 <Typography variant="body2" color="text.secondary">
                   No controls yet - click "Add Row" to begin.
                 </Typography>
@@ -513,68 +565,52 @@ function EditableControlsTable({ drafts, onChange, users, teams }: EditableContr
             <TableRow key={d.localId}>
               {/* Control # */}
               <TableCell>
-                {d.frameworkControlId ? (
-                  <Typography variant="body2" fontWeight={600} noWrap sx={FS}>{d.controlNumber}</Typography>
-                ) : (
-                  <TextField
-                    value={d.controlNumber}
-                    onChange={(e) => update(d.localId, "controlNumber", e.target.value)}
-                    size="small"
-                    variant="standard"
-                    placeholder="CA-01"
-                    inputProps={{ style: FS }}
-                  />
-                )}
+                <TextField
+                  value={d.controlNumber}
+                  onChange={(e) => update(d.localId, "controlNumber", e.target.value)}
+                  size="small"
+                  variant="standard"
+                  placeholder="CA-01"
+                  inputProps={{ style: FS }}
+                />
               </TableCell>
               {/* Description */}
               <TableCell>
-                {d.frameworkControlId ? (
-                  <Typography variant="body2" color="text.secondary" sx={{ ...FS, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={d.description}>{d.description}</Typography>
-                ) : (
-                  <TextField
-                    value={d.description}
-                    onChange={(e) => update(d.localId, "description", e.target.value)}
-                    size="small"
-                    variant="standard"
-                    placeholder="Description"
-                    fullWidth
-                    inputProps={{ style: FS }}
-                  />
-                )}
+                <TextField
+                  value={d.description}
+                  onChange={(e) => update(d.localId, "description", e.target.value)}
+                  size="small"
+                  variant="standard"
+                  placeholder="Description"
+                  fullWidth
+                  inputProps={{ style: FS }}
+                />
               </TableCell>
               {/* Evidence Requirement */}
               <TableCell>
-                {d.frameworkControlId ? (
-                  <Typography variant="caption" color="text.disabled" sx={{ fontStyle: "italic" }}>from library</Typography>
-                ) : (
-                  <TextField
-                    value={d.evidenceRequirement}
-                    onChange={(e) => update(d.localId, "evidenceRequirement", e.target.value)}
-                    size="small"
-                    variant="standard"
-                    placeholder="Requirement"
-                    fullWidth
-                    inputProps={{ style: FS }}
-                  />
-                )}
+                <TextField
+                  value={d.evidenceRequirement}
+                  onChange={(e) => update(d.localId, "evidenceRequirement", e.target.value)}
+                  size="small"
+                  variant="standard"
+                  placeholder="Requirement"
+                  fullWidth
+                  inputProps={{ style: FS }}
+                />
               </TableCell>
               {/* Req. Type */}
               <TableCell>
-                {d.frameworkControlId ? (
-                  <Chip label={d.requirementType} size="small" color={d.requirementType === "OE" ? "warning" : "default"} sx={{ height: 18, fontSize: "0.65rem" }} />
-                ) : (
-                  <Select
-                    value={d.requirementType}
-                    onChange={(e) => handleReqTypeChange(d.localId, e.target.value as RequirementType)}
-                    size="small"
-                    variant="standard"
-                    MenuProps={SELECT_MENU_PROPS}
-                    sx={{ ...FS }}
-                  >
-                    <MenuItem value="DESIGN">Design</MenuItem>
-                    <MenuItem value="OE">OE</MenuItem>
-                  </Select>
-                )}
+                <Select
+                  value={d.requirementType}
+                  onChange={(e) => handleReqTypeChange(d.localId, e.target.value as RequirementType)}
+                  size="small"
+                  variant="standard"
+                  MenuProps={SELECT_MENU_PROPS}
+                  sx={{ ...FS }}
+                >
+                  <MenuItem value="DESIGN">Design</MenuItem>
+                  <MenuItem value="OE">OE</MenuItem>
+                </Select>
               </TableCell>
               {/* Population — only active for OE rows */}
               <TableCell>
@@ -602,39 +638,31 @@ function EditableControlsTable({ drafts, onChange, users, teams }: EditableContr
               </TableCell>
               {/* Control Type */}
               <TableCell>
-                {d.frameworkControlId ? (
-                  <Typography variant="caption" color="text.secondary" sx={FS}>{d.controlType === "CONFIG" ? "Config" : "Non-Config"}</Typography>
-                ) : (
-                  <Select
-                    value={d.controlType}
-                    onChange={(e) => update(d.localId, "controlType", e.target.value as ControlType)}
-                    size="small"
-                    variant="standard"
-                    MenuProps={SELECT_MENU_PROPS}
-                    sx={{ ...FS }}
-                  >
-                    <MenuItem value="CONFIG">Config</MenuItem>
-                    <MenuItem value="NON_CONFIG">Non-Config</MenuItem>
-                  </Select>
-                )}
+                <Select
+                  value={d.controlType}
+                  onChange={(e) => update(d.localId, "controlType", e.target.value as ControlType)}
+                  size="small"
+                  variant="standard"
+                  MenuProps={SELECT_MENU_PROPS}
+                  sx={{ ...FS }}
+                >
+                  <MenuItem value="CONFIG">Config</MenuItem>
+                  <MenuItem value="NON_CONFIG">Non-Config</MenuItem>
+                </Select>
               </TableCell>
               {/* Scope */}
               <TableCell>
-                {d.frameworkControlId ? (
-                  <Typography variant="caption" color="text.secondary" sx={FS}>{d.scope === "COMMON" ? "Common" : "Product"}</Typography>
-                ) : (
-                  <Select
-                    value={d.scope}
-                    onChange={(e) => update(d.localId, "scope", e.target.value as ControlScope)}
-                    size="small"
-                    variant="standard"
-                    MenuProps={SELECT_MENU_PROPS}
-                    sx={{ ...FS }}
-                  >
-                    <MenuItem value="COMMON">Common</MenuItem>
-                    <MenuItem value="PRODUCT_SPECIFIC">Product Specific</MenuItem>
-                  </Select>
-                )}
+                <Select
+                  value={d.scope}
+                  onChange={(e) => update(d.localId, "scope", e.target.value as ControlScope)}
+                  size="small"
+                  variant="standard"
+                  MenuProps={SELECT_MENU_PROPS}
+                  sx={{ ...FS }}
+                >
+                  <MenuItem value="COMMON">Common</MenuItem>
+                  <MenuItem value="PRODUCT_SPECIFIC">Product Specific</MenuItem>
+                </Select>
               </TableCell>
               {/* Process Owner — internal users only */}
               <TableCell>
@@ -704,27 +732,48 @@ function EditableControlsTable({ drafts, onChange, users, teams }: EditableContr
                   ))}
                 </Select>
               </TableCell>
-              {/* Due Date — at the end */}
+              {/* Due Date — at the end. Must be today or later (never in the
+                  past) — `min` blocks it in the native picker, `error`
+                  catches a past date typed/pasted directly. */}
               <TableCell>
-                <TextField
-                  value={d.dueDate}
-                  onChange={(e) => update(d.localId, "dueDate", e.target.value)}
-                  type="date"
-                  size="small"
-                  variant="standard"
-                  InputLabelProps={{ shrink: true }}
-                  inputProps={{ style: FS }}
-                />
+                <Tooltip title={d.dueDate && d.dueDate < todayISO() ? "Due Date cannot be in the past" : ""}>
+                  <TextField
+                    value={d.dueDate}
+                    onChange={(e) => update(d.localId, "dueDate", e.target.value)}
+                    type="date"
+                    size="small"
+                    variant="standard"
+                    error={Boolean(d.dueDate && d.dueDate < todayISO())}
+                    InputLabelProps={{ shrink: true }}
+                    inputProps={{ style: FS, min: todayISO() }}
+                  />
+                </Tooltip>
               </TableCell>
-              <TableCell>
-                <Box sx={{ display: "flex" }}>
-                  {d.frameworkControlId && (
-                    <Tooltip title="Edit definition (unlinks from library template)">
-                      <IconButton size="small" onClick={() => unlinkFromTemplate(d.localId)}>
-                        <Pencil size={14} />
-                      </IconButton>
+              {/* Add to Library — §6: whether this row also writes into the
+                  framework catalog. Hidden per-row when pushLocked (catalog
+                  started empty, or this row was cloned from another
+                  framework) since there's nothing to choose. */}
+              {showPushColumn && (
+                <TableCell>
+                  {d.pushLocked ? (
+                    <Tooltip title="Automatically added to the framework library">
+                      <Chip label="Auto" size="small" color="primary" variant="outlined" sx={{ height: 20, fontSize: "0.65rem" }} />
+                    </Tooltip>
+                  ) : (
+                    <Tooltip title={d.sourceFrameworkControlId
+                      ? "Update the framework standard with this edit"
+                      : "Also add this control to the framework library"}>
+                      <Checkbox
+                        size="small"
+                        checked={d.pushToFramework}
+                        onChange={(e) => update(d.localId, "pushToFramework", e.target.checked)}
+                      />
                     </Tooltip>
                   )}
+                </TableCell>
+              )}
+              <TableCell>
+                <Box sx={{ display: "flex" }}>
                   <Tooltip title="Remove row">
                     <IconButton size="small" color="error" onClick={() => remove(d.localId)}>
                       <Trash2 size={14} />
@@ -936,7 +985,7 @@ function Step1Form({
         helperText={
           nameConflict
             ? `An audit named "${name.trim()}" already exists, choose a different name.`
-            : "This name is used to identify the audit in the system and reports."
+            : "This name is used to identify the audit in the system."
         }
       />
 
@@ -1145,11 +1194,90 @@ function Step1Form({
   );
 }
 
+// ── Framework control picker (shared by "Pick existing" and "Clone") ──────────
+
+interface ControlPickerTableProps {
+  controls: AuditFrameworkControl[];
+  selectedIds: Set<number>;
+  onToggle: (fc: AuditFrameworkControl) => void;
+}
+
+function ControlPickerTable({ controls, selectedIds, onToggle }: ControlPickerTableProps): JSX.Element {
+  return (
+    <Paper variant="outlined" sx={{ borderRadius: 2, maxHeight: 400, overflowY: "auto" }}>
+      <Table size="small" stickyHeader>
+        <TableHead>
+          <TableRow>
+            <TableCell padding="checkbox" />
+            <TableCell sx={{ fontWeight: 600, width: 90 }}>Control #</TableCell>
+            <TableCell sx={{ fontWeight: 600 }}>Description</TableCell>
+            <TableCell sx={{ fontWeight: 600, width: 80 }}>Type</TableCell>
+            <TableCell sx={{ fontWeight: 600, width: 80 }}>Scope</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {controls.map((fc) => {
+            const checked = selectedIds.has(fc.id);
+            return (
+              <TableRow
+                key={fc.id}
+                hover
+                onClick={() => onToggle(fc)}
+                sx={checked
+                  ? {
+                      cursor: "pointer",
+                      bgcolor: "primary.50",
+                      // primary.50 is a fixed light swatch — the default text
+                      // color lightens in dark mode, so pair it with a dark
+                      // override or the row text disappears against it.
+                      "[data-color-scheme='dark'] &": { bgcolor: "rgba(255,255,255,0.12)" },
+                    }
+                  : { cursor: "pointer" }}
+              >
+                <TableCell padding="checkbox">
+                  <Checkbox checked={checked} size="small" />
+                </TableCell>
+                <TableCell>
+                  <Typography variant="body2" fontWeight={600} noWrap>
+                    {fc.controlNumber}
+                  </Typography>
+                </TableCell>
+                <TableCell>
+                  <Typography variant="body2" sx={{ maxWidth: 400 }}>
+                    {fc.description}
+                  </Typography>
+                </TableCell>
+                <TableCell>
+                  <Chip
+                    label={fc.requirementType}
+                    size="small"
+                    color={fc.requirementType === "OE" ? "warning" : "default"}
+                    sx={{ height: 20, fontSize: "0.65rem" }}
+                  />
+                </TableCell>
+                <TableCell>
+                  <Typography variant="caption" color="text.secondary">
+                    {fc.scope === "COMMON" ? "Common" : "Product"}
+                  </Typography>
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </Paper>
+  );
+}
+
 // ── Step 2: Controls ──────────────────────────────────────────────────────────
 
 interface Step2Props {
-  source: ControlSourceMode;
-  onSourceChange: (s: ControlSourceMode) => void;
+  topSource: TopSource;
+  onTopSourceChange: (s: TopSource) => void;
+  fwSubTab: FwSubTab;
+  onFwSubTabChange: (t: FwSubTab) => void;
+  cloneFrameworkId: number | null;
+  onCloneFrameworkIdChange: (id: number | null) => void;
   drafts: DraftControl[];
   onDraftsChange: (d: DraftControl[]) => void;
   copyAuditId: number | null;
@@ -1157,11 +1285,16 @@ interface Step2Props {
   csvError: string | null;
   onCsvErrorChange: (e: string | null) => void;
   framework: AuditFramework | null;
+  frameworks: AuditFramework[];
 }
 
 function Step2Controls({
-  source,
-  onSourceChange,
+  topSource,
+  onTopSourceChange,
+  fwSubTab,
+  onFwSubTabChange,
+  cloneFrameworkId,
+  onCloneFrameworkIdChange,
   drafts,
   onDraftsChange,
   copyAuditId,
@@ -1169,79 +1302,43 @@ function Step2Controls({
   csvError,
   onCsvErrorChange,
   framework,
+  frameworks,
 }: Step2Props): JSX.Element {
   const { data: auditsData } = useGetAudits();
   const { data: sourceControlsData, isLoading: sourceControlsLoading } = useGetControls(
     copyAuditId ?? 0,
   );
   const { data: fwControlsData, isLoading: fwControlsLoading } = useGetFrameworkControls(
-    source === "template" ? (framework?.id ?? null) : null,
+    framework?.id ?? null,
+  );
+  const { data: cloneControlsData, isLoading: cloneControlsLoading } = useGetFrameworkControls(
+    fwSubTab === "clone" ? cloneFrameworkId : null,
   );
   const { data: usersData } = useGetUsers();
   const { data: teamsData } = useGetTeams();
   const users = usersData ?? [];
   const teams = teamsData ?? [];
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const createFrameworkControl = useCreateFrameworkControl(framework?.id ?? 0);
-  const [savingAll, setSavingAll] = useState(false);
-  const [saveToLibraryError, setSaveToLibraryError] = useState<string | null>(null);
   // Tracks which auditId we've already seeded into drafts, so that a
   // background refetch of sourceControlsData never overwrites user edits.
   const seededForAuditId = useRef<number | null>(null);
-  // Set of selected framework control IDs for the template source.
-  const selectedFwCtlIds = new Set(drafts.filter((d) => d.frameworkControlId).map((d) => d.frameworkControlId!));
-  // Manually-added rows with enough filled in to be saved to the library.
-  const pendingLibraryCount = drafts.filter(
-    (d) => !d.frameworkControlId && d.controlNumber.trim() && d.description.trim(),
-  ).length;
+  // Tracks which framework we've already auto-picked a default sub-tab for.
+  const autoTabForFramework = useRef<number | null>(null);
 
-  // Manually-added rows (template source) are plain drafts until this runs.
-  // It persists every complete, not-yet-linked row as a real framework
-  // control in one batch, then re-links each to its new control — same
-  // fate as picking one from the library checklist.
-  async function saveAllToLibrary() {
-    if (!framework) return;
-    const pending = drafts.filter((d) => !d.frameworkControlId && d.controlNumber.trim() && d.description.trim());
-    if (pending.length === 0) return;
-    setSaveToLibraryError(null);
-    setSavingAll(true);
-    const results = await Promise.allSettled(pending.map((d) => createFrameworkControl.mutateAsync({
-      controlNumber: d.controlNumber.trim(),
-      description: d.description.trim(),
-      evidenceRequirement: d.evidenceRequirement.trim() || null,
-      requirementType: d.requirementType,
-      controlType: d.controlType,
-      scope: d.scope,
-    })));
-    const created = new Map(
-      results.flatMap((r, i) => (r.status === "fulfilled" ? [[pending[i].localId, r.value] as const] : [])),
-    );
-    if (created.size > 0) {
-      onDraftsChange(drafts.map((d) => {
-        const fc = created.get(d.localId);
-        return fc
-          ? {
-              ...d,
-              frameworkControlId: fc.id,
-              controlSource: "COPIED" as const,
-              controlNumber: fc.controlNumber,
-              description: fc.description,
-              evidenceRequirement: fc.evidenceRequirement ?? "",
-            }
-          : d;
-      }));
-    }
-    const failures = results.filter((r) => r.status === "rejected").length;
-    if (failures > 0) {
-      setSaveToLibraryError(`Failed to save ${failures} control${failures !== 1 ? "s" : ""} to the library. Fix and try again.`);
-    }
-    setSavingAll(false);
-  }
+  const catalogEmpty = framework !== null && !fwControlsLoading && (fwControlsData ?? []).length === 0;
 
-  function createDraftControl(fc: AuditFrameworkControl): DraftControl {
+  // Sets of already-picked control ids, so the two pickers below know which
+  // rows to render checked (and toggling removes exactly that row).
+  const selectedFwCtlIds = new Set(
+    drafts.filter((d) => d.sourceFrameworkControlId !== undefined).map((d) => d.sourceFrameworkControlId!),
+  );
+  const selectedCloneIds = new Set(
+    drafts.filter((d) => d.clonedFromControlId !== undefined).map((d) => d.clonedFromControlId!),
+  );
+
+  function pickedDraft(fc: AuditFrameworkControl): DraftControl {
     return {
       localId: nextLocalId(),
-      frameworkControlId: fc.id,
       controlSource: "COPIED",
       controlNumber: fc.controlNumber,
       description: fc.description,
@@ -1254,19 +1351,54 @@ function Step2Controls({
       teamId: null,
       auditorId: null,
       population: fc.requirementType === "OE" ? blankPopulation() : null,
+      // Identifies which catalog control an edit-and-push-back should version
+      // (§6) — set even though it's unedited right now.
+      sourceFrameworkControlId: fc.id,
+      pushToFramework: false,
     };
   }
 
   function toggleFwControl(fc: AuditFrameworkControl) {
     if (selectedFwCtlIds.has(fc.id)) {
-      onDraftsChange(drafts.filter((d) => d.frameworkControlId !== fc.id));
+      onDraftsChange(drafts.filter((d) => d.sourceFrameworkControlId !== fc.id));
     } else {
-      onDraftsChange([...drafts, createDraftControl(fc)]);
+      onDraftsChange([...drafts, pickedDraft(fc)]);
     }
   }
 
+  function clonedDraft(fc: AuditFrameworkControl): DraftControl {
+    return {
+      localId: nextLocalId(),
+      controlSource: "COPIED",
+      controlNumber: fc.controlNumber,
+      description: fc.description,
+      requirementType: fc.requirementType as RequirementType,
+      controlType: fc.controlType as ControlType,
+      scope: fc.scope as ControlScope,
+      evidenceRequirement: fc.evidenceRequirement ?? "",
+      dueDate: "",
+      ownerId: null,
+      teamId: null,
+      auditorId: null,
+      population: fc.requirementType === "OE" ? blankPopulation() : null,
+      // Cloning always seeds this framework's catalog (§6) — no toggle.
+      pushToFramework: true,
+      pushLocked: true,
+      clonedFromControlId: fc.id,
+    };
+  }
+
+  function toggleCloneControl(fc: AuditFrameworkControl) {
+    if (selectedCloneIds.has(fc.id)) {
+      onDraftsChange(drafts.filter((d) => d.clonedFromControlId !== fc.id));
+    } else {
+      onDraftsChange([...drafts, clonedDraft(fc)]);
+    }
+  }
+
+  // Copy from Previous Audit: seed drafts from the source audit once per pick.
   useEffect(() => {
-    if (source !== "copy") {
+    if (topSource !== "copyAudit") {
       seededForAuditId.current = null;
       return;
     }
@@ -1274,12 +1406,23 @@ function Step2Controls({
     if (seededForAuditId.current === copyAuditId) return;
     seededForAuditId.current = copyAuditId;
     onDraftsChange(sourceControlsData.items.map(controlToDraft));
-  }, [source, sourceControlsData, copyAuditId, onDraftsChange]);
+  }, [topSource, sourceControlsData, copyAuditId, onDraftsChange]);
+
+  // Copy from Framework: default to "Pick existing" when the catalog already
+  // has controls, otherwise "Manual" — once per framework selection, so it
+  // doesn't fight the user's own sub-tab choice afterward.
+  useEffect(() => {
+    if (topSource !== "framework" || !framework || fwControlsLoading) return;
+    if (autoTabForFramework.current === framework.id) return;
+    autoTabForFramework.current = framework.id;
+    onFwSubTabChange((fwControlsData ?? []).length > 0 ? "pick" : "manual");
+  }, [topSource, framework, fwControlsLoading, fwControlsData, onFwSubTabChange]);
 
   const allAudits = auditsData?.items ?? [];
   const sameFrameworkAudits = allAudits.filter(
     (a) => framework !== null && a.framework.id === framework.id,
   );
+  const cloneSourceOptions = frameworks.filter((f) => f.id !== framework?.id);
 
   function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -1294,7 +1437,8 @@ function Step2Controls({
         onDraftsChange([]);
       } else {
         onCsvErrorChange(null);
-        onDraftsChange(result);
+        // Empty catalog → every CSV row auto-seeds the library (§6), no choice.
+        onDraftsChange(result.map((d) => ({ ...d, pushToFramework: catalogEmpty, pushLocked: catalogEmpty })));
       }
     };
     reader.readAsText(file);
@@ -1302,177 +1446,253 @@ function Step2Controls({
     e.target.value = "";
   }
 
+  const showEditableTable =
+    (topSource === "framework" && (fwSubTab === "manual" || fwSubTab === "csv")) || drafts.length > 0;
+  const showAddRow = !(topSource === "framework" && fwSubTab === "csv");
+
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
-      {/* Source cards */}
+      {/* Top-level source */}
       <Box sx={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 2 }}>
         <SourceCard
           icon={<Library size={22} />}
-          title="From Framework Library"
-          description="Pick controls from the framework's control library. Definitions are pre-filled."
-          selected={source === "template"}
+          title="Copy from Framework"
+          description="Pick from the framework's control library, type new controls, import a CSV, or clone from another framework."
+          selected={topSource === "framework"}
           onClick={() => {
-            onSourceChange("template");
+            onTopSourceChange("framework");
             onDraftsChange([]);
           }}
         />
         <SourceCard
           icon={<Copy size={22} />}
           title="Copy from Previous Audit"
-          description="Import controls from an existing audit and edit before submitting."
-          selected={source === "copy"}
+          description="Import controls and assignments from an existing audit. Never affects any framework's library."
+          selected={topSource === "copyAudit"}
           onClick={() => {
-            onSourceChange("copy");
+            onTopSourceChange("copyAudit");
             onCopyAuditIdChange(null);
             onDraftsChange([]);
           }}
         />
-        <SourceCard
-          icon={<ClipboardList size={22} />}
-          title="Start Empty"
-          description="Add controls manually - control number, description, and all fields are yours to fill."
-          selected={source === "empty"}
-          onClick={() => {
-            onSourceChange("empty");
-            onDraftsChange([]);
-          }}
-        />
-        <SourceCard
-          icon={<FileUp size={22} />}
-          title="Upload CSV"
-          description="Upload a CSV with columns: control_number, description, evidence_requirement."
-          selected={source === "csv"}
-          onClick={() => {
-            onSourceChange("csv");
-            onDraftsChange([]);
-            onCsvErrorChange(null);
-          }}
-        />
       </Box>
 
-      {/* Template — framework control library checklist */}
-      {source === "template" && (
-        <Box>
-          {!framework && (
-            <Alert severity="warning" sx={{ py: 0.5 }}>
-              Select a framework in Step 1 first - controls are specific to each framework.
-            </Alert>
-          )}
-          {framework && fwControlsLoading && (
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <CircularProgress size={16} />
-              <Typography variant="body2" color="text.secondary">
-                Loading {framework.name} controls…
-              </Typography>
+      {/* Copy from Framework — sub-tabs */}
+      {topSource === "framework" && !framework && (
+        <Alert severity="warning" sx={{ py: 0.5 }}>
+          Select a framework in Step 1 first - controls are specific to each framework.
+        </Alert>
+      )}
+      {topSource === "framework" && framework && (
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+            {!catalogEmpty && (
+              <Button
+                size="small"
+                variant={fwSubTab === "pick" ? "contained" : "outlined"}
+                onClick={() => onFwSubTabChange("pick")}
+                sx={{ textTransform: "none" }}
+              >
+                Pick Existing
+              </Button>
+            )}
+            <Button
+              size="small"
+              variant={fwSubTab === "manual" ? "contained" : "outlined"}
+              onClick={() => onFwSubTabChange("manual")}
+              sx={{ textTransform: "none" }}
+            >
+              Manual
+            </Button>
+            <Button
+              size="small"
+              variant={fwSubTab === "csv" ? "contained" : "outlined"}
+              onClick={() => onFwSubTabChange("csv")}
+              sx={{ textTransform: "none" }}
+            >
+              Upload CSV
+            </Button>
+            <Button
+              size="small"
+              variant={fwSubTab === "clone" ? "contained" : "outlined"}
+              onClick={() => onFwSubTabChange("clone")}
+              sx={{ textTransform: "none" }}
+            >
+              Clone Another Framework
+            </Button>
+          </Box>
+
+          {/* Pick existing — this framework's current catalog */}
+          {fwSubTab === "pick" && (
+            <Box>
+              {fwControlsLoading ? (
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                  <CircularProgress size={16} />
+                  <Typography variant="body2" color="text.secondary">
+                    Loading {framework.name} controls…
+                  </Typography>
+                </Box>
+              ) : (
+                <Box>
+                  <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 1.5 }}>
+                    <Typography variant="subtitle2" fontWeight={600}>
+                      {framework.name} - {(fwControlsData ?? []).length} controls
+                    </Typography>
+                    <Box sx={{ display: "flex", gap: 1 }}>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        sx={{ textTransform: "none" }}
+                        onClick={() => {
+                          const toAdd = (fwControlsData ?? []).filter((fc) => !selectedFwCtlIds.has(fc.id));
+                          onDraftsChange([...drafts, ...toAdd.map(pickedDraft)]);
+                        }}
+                      >
+                        Select All
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        sx={{ textTransform: "none" }}
+                        onClick={() => onDraftsChange(drafts.filter((d) => d.sourceFrameworkControlId === undefined))}
+                      >
+                        Clear All
+                      </Button>
+                    </Box>
+                  </Box>
+                  <ControlPickerTable
+                    controls={fwControlsData ?? []}
+                    selectedIds={selectedFwCtlIds}
+                    onToggle={toggleFwControl}
+                  />
+                  {selectedFwCtlIds.size > 0 && (
+                    <Typography variant="caption" color="primary.main" sx={{ mt: 1, display: "block" }}>
+                      {selectedFwCtlIds.size} control{selectedFwCtlIds.size !== 1 ? "s" : ""} selected. Assign owners and due dates in the table below.
+                    </Typography>
+                  )}
+                </Box>
+              )}
             </Box>
           )}
-          {framework && !fwControlsLoading && (fwControlsData ?? []).length === 0 && (
+
+          {/* CSV — file input */}
+          {fwSubTab === "csv" && (
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+              <Alert severity="info" sx={{ py: 0.5 }}>
+                <strong>Required columns:</strong> control_number, description, evidence_requirement<br />
+                <strong>Optional columns:</strong> requirement_type (DESIGN/OE), control_type, scope, due_date<br />
+                <strong>OE population columns (optional):</strong> population_description, population_due_date, population_comments<br />
+                Process Owner, Auditor POC, and Team must be set manually after upload.
+                {catalogEmpty && <><br /><strong>{framework.name}'s library is empty</strong> — every uploaded control is added to it.</>}
+              </Alert>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,text/csv"
+                style={{ display: "none" }}
+                onChange={handleFileChange}
+              />
+              <Button
+                variant="outlined"
+                startIcon={<FileUp size={16} />}
+                onClick={() => fileInputRef.current?.click()}
+                sx={{ textTransform: "none", alignSelf: "flex-start" }}
+              >
+                Choose CSV File
+              </Button>
+              {csvError && (
+                <Alert severity="error">
+                  {csvError}
+                </Alert>
+              )}
+            </Box>
+          )}
+
+          {/* Manual */}
+          {fwSubTab === "manual" && catalogEmpty && (
             <Alert severity="info" sx={{ py: 0.5 }}>
-              No controls in the {framework.name} library yet - add rows below to get started.
+              {framework.name}'s library is empty — every control you add here is also added to it.
             </Alert>
           )}
-          {framework && !fwControlsLoading && (fwControlsData ?? []).length > 0 && (
-            <Box>
-              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 1.5 }}>
-                <Typography variant="subtitle2" fontWeight={600}>
-                  {framework.name} - {fwControlsData!.length} controls
-                </Typography>
-                <Box sx={{ display: "flex", gap: 1 }}>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    sx={{ textTransform: "none" }}
-                    onClick={() => {
-                      const toAdd = (fwControlsData ?? []).filter((fc) => !selectedFwCtlIds.has(fc.id));
-                      onDraftsChange([...drafts, ...toAdd.map(createDraftControl)]);
-                    }}
-                  >
-                    Select All
-                  </Button>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    sx={{ textTransform: "none" }}
-                    onClick={() => onDraftsChange(drafts.filter((d) => !d.frameworkControlId))}
-                  >
-                    Clear All
-                  </Button>
+
+          {/* Clone another framework */}
+          {fwSubTab === "clone" && (
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+              <Select
+                fullWidth
+                displayEmpty
+                MenuProps={SELECT_MENU_PROPS}
+                inputProps={{ "aria-label": "Framework to clone from" }}
+                value={cloneFrameworkId !== null ? String(cloneFrameworkId) : ""}
+                onChange={(e) => {
+                  const v = e.target.value as string;
+                  onCloneFrameworkIdChange(v === "" ? null : Number(v));
+                }}
+                renderValue={(v) =>
+                  v === ""
+                    ? <span style={{ opacity: 0.5 }}>Select framework to clone from</span>
+                    : (cloneSourceOptions.find((f) => String(f.id) === v)?.name ?? "")
+                }
+              >
+                {cloneSourceOptions.length === 0 ? (
+                  <MenuItem disabled value="">No other frameworks yet</MenuItem>
+                ) : (
+                  cloneSourceOptions.map((f) => (
+                    <MenuItem key={f.id} value={String(f.id)}>{f.name}</MenuItem>
+                  ))
+                )}
+              </Select>
+              <Alert severity="info" sx={{ py: 0.5 }}>
+                Cloned controls are added to both {framework.name}'s library and this audit.
+              </Alert>
+              {cloneFrameworkId && cloneControlsLoading && (
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                  <CircularProgress size={16} />
+                  <Typography variant="body2" color="text.secondary">Loading controls…</Typography>
                 </Box>
-              </Box>
-              <Paper variant="outlined" sx={{ borderRadius: 2, maxHeight: 400, overflowY: "auto" }}>
-                <Table size="small" stickyHeader>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell padding="checkbox" />
-                      <TableCell sx={{ fontWeight: 600, width: 90 }}>Control #</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>Description</TableCell>
-                      <TableCell sx={{ fontWeight: 600, width: 80 }}>Type</TableCell>
-                      <TableCell sx={{ fontWeight: 600, width: 80 }}>Scope</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {(fwControlsData ?? []).map((fc) => {
-                      const checked = selectedFwCtlIds.has(fc.id);
-                      return (
-                        <TableRow
-                          key={fc.id}
-                          hover
-                          onClick={() => toggleFwControl(fc)}
-                          sx={checked
-                            ? {
-                                cursor: "pointer",
-                                bgcolor: "primary.50",
-                                // primary.50 is a fixed light swatch — the default text
-                                // color lightens in dark mode, so pair it with a dark
-                                // override or the row text disappears against it.
-                                "[data-color-scheme='dark'] &": { bgcolor: "rgba(255,255,255,0.12)" },
-                              }
-                            : { cursor: "pointer" }}
-                        >
-                          <TableCell padding="checkbox">
-                            <Checkbox checked={checked} size="small" />
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" fontWeight={600} noWrap>
-                              {fc.controlNumber}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" sx={{ maxWidth: 400 }}>
-                              {fc.description}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Chip
-                              label={fc.requirementType}
-                              size="small"
-                              color={fc.requirementType === "OE" ? "warning" : "default"}
-                              sx={{ height: 20, fontSize: "0.65rem" }}
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="caption" color="text.secondary">
-                              {fc.scope === "COMMON" ? "Common" : "Product"}
-                            </Typography>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </Paper>
-              {selectedFwCtlIds.size > 0 && (
-                <Typography variant="caption" color="primary.main" sx={{ mt: 1, display: "block" }}>
-                  {selectedFwCtlIds.size} control{selectedFwCtlIds.size !== 1 ? "s" : ""} selected. Assign owners and due dates in the table below.
-                </Typography>
+              )}
+              {cloneFrameworkId && !cloneControlsLoading && (
+                <Box>
+                  <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 1.5 }}>
+                    <Typography variant="subtitle2" fontWeight={600}>
+                      {(cloneControlsData ?? []).length} controls
+                    </Typography>
+                    <Box sx={{ display: "flex", gap: 1 }}>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        sx={{ textTransform: "none" }}
+                        onClick={() => {
+                          const toAdd = (cloneControlsData ?? []).filter((fc) => !selectedCloneIds.has(fc.id));
+                          onDraftsChange([...drafts, ...toAdd.map(clonedDraft)]);
+                        }}
+                      >
+                        Select All
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        sx={{ textTransform: "none" }}
+                        onClick={() => onDraftsChange(drafts.filter((d) => d.clonedFromControlId === undefined))}
+                      >
+                        Clear All
+                      </Button>
+                    </Box>
+                  </Box>
+                  <ControlPickerTable
+                    controls={cloneControlsData ?? []}
+                    selectedIds={selectedCloneIds}
+                    onToggle={toggleCloneControl}
+                  />
+                </Box>
               )}
             </Box>
           )}
         </Box>
       )}
 
-      {/* Copy — audit selector */}
-      {source === "copy" && (
+      {/* Copy from Previous Audit — audit selector */}
+      {topSource === "copyAudit" && (
         <Box>
           <Select
             fullWidth
@@ -1513,88 +1733,33 @@ function Step2Controls({
         </Box>
       )}
 
-      {/* CSV — file input */}
-      {source === "csv" && (
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
-          <Alert severity="info" sx={{ py: 0.5 }}>
-            <strong>Required columns:</strong> control_number, description, evidence_requirement<br />
-            <strong>Optional columns:</strong> requirement_type (DESIGN/OE), control_type, scope, due_date<br />
-            <strong>OE population columns (optional):</strong> population_description, population_due_date, population_comments<br />
-            Process Owner, Auditor POC, and Team must be set manually after upload.
-          </Alert>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".csv,text/csv"
-            style={{ display: "none" }}
-            onChange={handleFileChange}
+      {/* Editable table */}
+      {showEditableTable && !sourceControlsLoading && !fwControlsLoading && (
+        <Box>
+          <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 1 }}>
+            <Typography variant="subtitle2" fontWeight={600}>
+              Controls ({drafts.length})
+            </Typography>
+            {showAddRow && (
+              <Button
+                size="small"
+                startIcon={<Plus size={14} />}
+                onClick={() => onDraftsChange([...drafts, blankDraft(catalogEmpty, catalogEmpty)])}
+                sx={{ textTransform: "none" }}
+              >
+                Add Row
+              </Button>
+            )}
+          </Box>
+          <EditableControlsTable
+            drafts={drafts}
+            onChange={onDraftsChange}
+            users={users}
+            teams={teams}
+            showPushColumn={topSource === "framework"}
           />
-          <Button
-            variant="outlined"
-            startIcon={<FileUp size={16} />}
-            onClick={() => fileInputRef.current?.click()}
-            sx={{ textTransform: "none", alignSelf: "flex-start" }}
-          >
-            Choose CSV File
-          </Button>
-          {csvError && (
-            <Alert severity="error">
-              {csvError}
-            </Alert>
-          )}
         </Box>
       )}
-
-      {/* Editable table — shown for empty source always, for template once a
-          framework is selected (so "Add Row" is available even when the
-          library is empty), or once drafts are populated (copy/csv). */}
-      {(source === "empty" || (source === "template" && framework) || drafts.length > 0)
-        && !sourceControlsLoading && !fwControlsLoading && (
-          <Box>
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                mb: 1,
-              }}
-            >
-              <Typography variant="subtitle2" fontWeight={600}>
-                Controls ({drafts.length})
-              </Typography>
-              <Box sx={{ display: "flex", gap: 1 }}>
-                {source === "template" && pendingLibraryCount > 0 && (
-                  <Button
-                    size="small"
-                    variant="contained"
-                    startIcon={savingAll ? <CircularProgress size={14} color="inherit" /> : <Library size={14} />}
-                    onClick={() => void saveAllToLibrary()}
-                    disabled={savingAll}
-                    sx={{ textTransform: "none" }}
-                  >
-                    {savingAll ? "Saving…" : `Save ${pendingLibraryCount} to Library`}
-                  </Button>
-                )}
-                {source !== "csv" && (
-                  <Button
-                    size="small"
-                    startIcon={<Plus size={14} />}
-                    onClick={() => onDraftsChange([...drafts, blankDraft()])}
-                    sx={{ textTransform: "none" }}
-                  >
-                    Add Row
-                  </Button>
-                )}
-              </Box>
-            </Box>
-            {source === "template" && saveToLibraryError && (
-              <Alert severity="error" sx={{ mb: 1 }} onClose={() => setSaveToLibraryError(null)}>
-                {saveToLibraryError}
-              </Alert>
-            )}
-            <EditableControlsTable drafts={drafts} onChange={onDraftsChange} users={users} teams={teams} />
-          </Box>
-        )}
     </Box>
   );
 }
@@ -1791,7 +1956,9 @@ export default function CreateAuditPage(): JSX.Element {
   }, [framework, product, periodStart, nameEdited]);
 
   // Step 2 state
-  const [source, setSource] = useState<ControlSourceMode>("empty");
+  const [topSource, setTopSource] = useState<TopSource>("framework");
+  const [fwSubTab, setFwSubTab] = useState<FwSubTab>("manual");
+  const [cloneFrameworkId, setCloneFrameworkId] = useState<number | null>(null);
   const [copyAuditId, setCopyAuditId] = useState<number | null>(null);
   const [drafts, setDrafts] = useState<DraftControl[]>([]);
   const [csvError, setCsvError] = useState<string | null>(null);
@@ -1833,16 +2000,15 @@ export default function CreateAuditPage(): JSX.Element {
     .flatMap((d) => {
       const errs: string[] = [];
       const label = d.controlNumber.trim() || "(unnamed)";
-      // Template-linked drafts skip definition column checks — those come from the library.
-      if (!d.frameworkControlId) {
-        if (!d.controlNumber.trim())       errs.push(`${label}: Control Number is required`);
-        if (!d.description.trim())         errs.push(`${label}: Description is required`);
-        if (!d.evidenceRequirement.trim()) errs.push(`${label}: Evidence Requirement is required`);
-      }
+      if (!d.controlNumber.trim())       errs.push(`${label}: Control Number is required`);
+      if (!d.description.trim())         errs.push(`${label}: Description is required`);
+      if (!d.evidenceRequirement.trim()) errs.push(`${label}: Evidence Requirement is required`);
       if (!d.dueDate)                    errs.push(`${label}: Due Date is required`);
+      else if (d.dueDate < todayISO())   errs.push(`${label}: Due Date cannot be in the past`);
       if (d.requirementType === "OE") {
         if (!d.population?.description.trim()) errs.push(`${label}: Population Requirement is required`);
         if (!d.population?.dueDate)            errs.push(`${label}: Population Due Date is required`);
+        else if (d.population.dueDate < todayISO()) errs.push(`${label}: Population Due Date cannot be in the past`);
       }
       return errs;
     });
@@ -1927,7 +2093,7 @@ export default function CreateAuditPage(): JSX.Element {
             onRefetchFrameworks={refetchFrameworks}
             onRefetchProducts={refetchProducts}
             onNameChange={(v) => { setNameEdited(true); setName(v); }}
-            onFrameworkChange={(v) => { setFramework(v); setCopyAuditId(null); setDrafts([]); }}
+            onFrameworkChange={(v) => { setFramework(v); setCopyAuditId(null); setCloneFrameworkId(null); setDrafts([]); }}
             onProductChange={setProduct}
             onPeriodStartChange={setPeriodStart}
             onPeriodEndChange={setPeriodEnd}
@@ -1937,8 +2103,12 @@ export default function CreateAuditPage(): JSX.Element {
 
         {step === 1 && (
           <Step2Controls
-            source={source}
-            onSourceChange={setSource}
+            topSource={topSource}
+            onTopSourceChange={setTopSource}
+            fwSubTab={fwSubTab}
+            onFwSubTabChange={setFwSubTab}
+            cloneFrameworkId={cloneFrameworkId}
+            onCloneFrameworkIdChange={setCloneFrameworkId}
             drafts={drafts}
             onDraftsChange={setDrafts}
             copyAuditId={copyAuditId}
@@ -1946,6 +2116,7 @@ export default function CreateAuditPage(): JSX.Element {
             csvError={csvError}
             onCsvErrorChange={setCsvError}
             framework={framework}
+            frameworks={frameworks}
           />
         )}
 
