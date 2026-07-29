@@ -20,6 +20,9 @@
 // backend/internal/shared/privilege/privilege.go exactly.
 export const RiskPrivilege = {
   ViewRisks:             "RISK_VIEW_RISKS",
+  // ViewAllRisks grants org-wide read visibility without edit/approve rights
+  // — see backend/internal/shared/privilege/privilege.go for details.
+  ViewAllRisks:          "RISK_VIEW_ALL_RISKS",
   // ViewRiskDashboard gates the Dashboard nav item/route specifically —
   // distinct from ViewRisks (which gates the Registers list) so an Action
   // Owner can hold list access without also getting the dashboard.

@@ -133,6 +133,7 @@ func isActionOwnerOnly(ctx context.Context) bool {
 // hand: a new Compliance/Management/Admin-only privilege that isn't added here
 // would wrongly leave its holder team-scoped instead of seeing everything.
 var seesEveryRisk = []string{
+	privilege.ViewAllRisks,
 	privilege.ComplianceApproveRisk,
 	privilege.ComplianceRejectRisk,
 	privilege.CloseRisk,

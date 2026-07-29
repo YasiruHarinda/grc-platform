@@ -37,12 +37,12 @@ func contextFor(t *testing.T, role string) context.Context {
 			privilege.ViewRisks:           true,
 			privilege.CompleteActionSteps: true,
 		},
-		"grc-platform-risk-management": {
+		"grc-platform-management": {
 			privilege.ViewRisks:                  true,
 			privilege.ManagementApproveRisk:      true,
 			privilege.CreateManagementActionPlan: true,
 		},
-		"grc-platform-risk-admin": {
+		"grc-platform-risk-compliance-admin": {
 			privilege.ViewRisks:           true,
 			privilege.CreateRisk:          true,
 			privilege.CompleteActionSteps: true,
@@ -55,9 +55,9 @@ func contextFor(t *testing.T, role string) context.Context {
 			privilege.ViewRisks:        true,
 			privilege.OwnerApproveRisk: true,
 		},
-		"grc-platform-risk-compliance-team": {
-			privilege.ViewRisks:             true,
-			privilege.ComplianceApproveRisk: true,
+		"grc-platform-compliance-team": {
+			privilege.ViewRisks:    true,
+			privilege.ViewAllRisks: true,
 		},
 	})
 	ctx := middleware.WithUserInfo(context.Background(), &middleware.UserInfo{Email: "test@wso2.com"})
@@ -70,8 +70,8 @@ func TestIsActionOwnerOnly(t *testing.T) {
 		want bool
 	}{
 		{"grc-platform-risk-action-owner", true},
-		{"grc-platform-risk-management", false},
-		{"grc-platform-risk-admin", false}, // holds CompleteActionSteps AND CreateRisk
+		{"grc-platform-management", false},
+		{"grc-platform-risk-compliance-admin", false}, // holds CompleteActionSteps AND CreateRisk
 	}
 	for _, c := range cases {
 		got := isActionOwnerOnly(contextFor(t, c.role))
@@ -88,8 +88,8 @@ func TestIsTeamScopedOnly(t *testing.T) {
 	}{
 		{"grc-platform-risk-assigner", true},
 		{"grc-platform-risk-owner", true},
-		{"grc-platform-risk-compliance-team", false}, // holds ComplianceApproveRisk, in seesEveryRisk
-		{"grc-platform-risk-management", false},      // holds ManagementApproveRisk, in seesEveryRisk
+		{"grc-platform-compliance-team", false}, // holds ViewAllRisks, in seesEveryRisk
+		{"grc-platform-management", false},      // holds ManagementApproveRisk, in seesEveryRisk
 		// Action-Owner-only must never also be classified as team-scoped —
 		// isTeamScopedOnly explicitly excludes it so the two never overlap.
 		{"grc-platform-risk-action-owner", false},

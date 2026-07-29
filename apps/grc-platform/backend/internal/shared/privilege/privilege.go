@@ -41,6 +41,12 @@ const (
 	// (GET /risks/{id}).
 	ViewRisks = "RISK_VIEW_RISKS"
 
+	// ViewAllRisks grants org-wide read visibility (dashboards, analytics,
+	// registers) without any edit/approve/close/escalate rights — distinct
+	// from ViewRisks, which Risk Assigner/Owner also hold but are legitimately
+	// team-scoped for. See seesEveryRisk in risk_registers.go.
+	ViewAllRisks = "RISK_VIEW_ALL_RISKS"
+
 	// CreateRisk gates registering a new risk (POST /risks) — creation and
 	// initial submission into the approval workflow happen in one step.
 	CreateRisk = "RISK_CREATE"
