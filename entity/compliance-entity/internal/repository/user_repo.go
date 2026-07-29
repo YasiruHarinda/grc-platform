@@ -63,7 +63,7 @@ func (r *userRepo) SearchUsers(ctx context.Context, req domain.SearchUsersReques
 
 	dataArgs := append(append([]any{}, args...), req.Pagination.Limit, req.Pagination.Offset)
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, email, display_name, user_type, audit_team_id, risk_team_id, status, created_at, updated_at "+
+		"SELECT id, email, display_name, user_type, risk_team_id, status, created_at, updated_at "+
 			"FROM `user` "+where+" ORDER BY display_name LIMIT ? OFFSET ?",
 		dataArgs...)
 	if err != nil {
@@ -79,12 +79,27 @@ func (r *userRepo) SearchUsers(ctx context.Context, req domain.SearchUsersReques
 		}
 		users = append(users, *u)
 	}
-	return users, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	ids := make([]int, len(users))
+	for i, u := range users {
+		ids[i] = u.ID
+	}
+	teamsByUser, err := r.loadAuditTeamIDsBatch(ctx, ids)
+	if err != nil {
+		return nil, 0, err
+	}
+	for i := range users {
+		users[i].AuditTeamIDs = teamsByUser[users[i].ID]
+	}
+	return users, total, nil
 }
 
 func (r *userRepo) GetUserByID(ctx context.Context, id int) (*domain.User, error) {
 	row := r.db.QueryRowContext(ctx,
-		"SELECT id, email, display_name, user_type, audit_team_id, risk_team_id, status, created_at, updated_at FROM `user` WHERE id = ?", id)
+		"SELECT id, email, display_name, user_type, risk_team_id, status, created_at, updated_at FROM `user` WHERE id = ?", id)
 	u, err := scanUser(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, &apierror.NotFoundError{Msg: fmt.Sprintf("user %d not found", id)}
@@ -92,18 +107,24 @@ func (r *userRepo) GetUserByID(ctx context.Context, id int) (*domain.User, error
 	if err != nil {
 		return nil, fmt.Errorf("user.GetByID(%d): %w", id, err)
 	}
+	if u.AuditTeamIDs, err = r.loadAuditTeamIDs(ctx, u.ID); err != nil {
+		return nil, err
+	}
 	return u, nil
 }
 
 func (r *userRepo) GetUserByEmail(ctx context.Context, email string) (*domain.User, error) {
 	row := r.db.QueryRowContext(ctx,
-		"SELECT id, email, display_name, user_type, audit_team_id, risk_team_id, status, created_at, updated_at FROM `user` WHERE email = ?", email)
+		"SELECT id, email, display_name, user_type, risk_team_id, status, created_at, updated_at FROM `user` WHERE email = ?", email)
 	u, err := scanUser(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, &apierror.NotFoundError{Msg: fmt.Sprintf("user with email %q not found", email)}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("user.GetByEmail(%q): %w", email, err)
+	}
+	if u.AuditTeamIDs, err = r.loadAuditTeamIDs(ctx, u.ID); err != nil {
+		return nil, err
 	}
 	return u, nil
 }
@@ -117,23 +138,52 @@ func (r *userRepo) CreateUser(ctx context.Context, req domain.CreateUserRequest)
 	if userType == "" {
 		userType = "INTERNAL"
 	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("user.Create begin: %w", err)
+	}
+	defer tx.Rollback()
+
 	// Upsert on uq_user_email: callers provisioning a user from an external
 	// directory (e.g. an HR employee picked as a risk's Action Owner) can't know
 	// whether the email is already known, so a duplicate refreshes the display
 	// name instead of failing. Only display_name/updated_by are refreshed —
-	// team assignments and status stay under explicit UpdateUser control.
+	// team assignments and status stay under explicit UpdateUser control, so
+	// audit team rows below are only written when this was a genuine insert.
 	//
 	// id = LAST_INSERT_ID(id) is required: without it LastInsertId() returns 0
 	// when the duplicate-key branch fires, and the GetUserByID below would miss.
-	res, err := r.db.ExecContext(ctx,
-		"INSERT INTO `user` (email, display_name, user_type, audit_team_id, risk_team_id, status, created_by, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "+
+	res, err := tx.ExecContext(ctx,
+		"INSERT INTO `user` (email, display_name, user_type, risk_team_id, status, created_by, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?) "+
 			"ON DUPLICATE KEY UPDATE display_name = VALUES(display_name), updated_by = VALUES(updated_by), id = LAST_INSERT_ID(id)",
-		req.Email, req.DisplayName, userType, nullableInt(req.AuditTeamID), nullableInt(req.RiskTeamID), status, req.CreatedBy, req.CreatedBy)
+		req.Email, req.DisplayName, userType, nullableInt(req.RiskTeamID), status, req.CreatedBy, req.CreatedBy)
 	if err != nil {
 		return nil, fmt.Errorf("user.Create: %w", err)
 	}
-	id, _ := res.LastInsertId()
-	return r.GetUserByID(ctx, int(id))
+	id64, _ := res.LastInsertId()
+	id := int(id64)
+
+	// RowsAffected is 1 for a fresh insert under ON DUPLICATE KEY UPDATE, and
+	// 0 or 2 when the duplicate-key branch fired instead — only a fresh insert
+	// gets its requested team memberships written.
+	if n, _ := res.RowsAffected(); n == 1 {
+		for _, teamID := range req.AuditTeamIDs {
+			if _, err = tx.ExecContext(ctx,
+				"INSERT INTO user_audit_team (user_id, audit_team_id, created_by, updated_by) VALUES (?, ?, ?, ?)",
+				id, teamID, req.CreatedBy, req.CreatedBy); err != nil {
+				if isFKViolation(err) {
+					return nil, &apierror.ValidationError{Msg: fmt.Sprintf("audit team %d not found", teamID)}
+				}
+				return nil, fmt.Errorf("user.Create audit team %d: %w", teamID, err)
+			}
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return nil, fmt.Errorf("user.Create commit: %w", err)
+	}
+	return r.GetUserByID(ctx, id)
 }
 
 func (r *userRepo) UpdateUser(ctx context.Context, id int, req domain.UpdateUserRequest) (*domain.User, error) {
@@ -143,10 +193,6 @@ func (r *userRepo) UpdateUser(ctx context.Context, id int, req domain.UpdateUser
 	if req.DisplayName != nil {
 		sets = append(sets, "display_name = ?")
 		args = append(args, *req.DisplayName)
-	}
-	if req.AuditTeamID != nil {
-		sets = append(sets, "audit_team_id = ?")
-		args = append(args, *req.AuditTeamID)
 	}
 	if req.RiskTeamID != nil {
 		sets = append(sets, "risk_team_id = ?")
@@ -164,27 +210,105 @@ func (r *userRepo) UpdateUser(ctx context.Context, id int, req domain.UpdateUser
 	args = append(args, req.UpdatedBy)
 	args = append(args, id)
 
-	if _, err := r.db.ExecContext(ctx,
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("user.Update(%d) begin: %w", id, err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
 		"UPDATE `user` SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...); err != nil { // #nosec G202
 		return nil, fmt.Errorf("user.Update(%d): %w", id, err)
+	}
+
+	// AuditTeamIDs nil means "not touching them"; a non-nil slice is the
+	// complete desired set, so replace wholesale — same convention as
+	// UpdateRiskRequest.ComplianceReferenceIDs.
+	if req.AuditTeamIDs != nil {
+		if _, err = tx.ExecContext(ctx,
+			"DELETE FROM user_audit_team WHERE user_id = ?", id); err != nil {
+			return nil, fmt.Errorf("user.Update(%d) clear audit teams: %w", id, err)
+		}
+		for _, teamID := range req.AuditTeamIDs {
+			if _, err = tx.ExecContext(ctx,
+				"INSERT INTO user_audit_team (user_id, audit_team_id, created_by, updated_by) VALUES (?, ?, ?, ?)",
+				id, teamID, req.UpdatedBy, req.UpdatedBy); err != nil {
+				if isFKViolation(err) {
+					return nil, &apierror.ValidationError{Msg: fmt.Sprintf("audit team %d not found", teamID)}
+				}
+				return nil, fmt.Errorf("user.Update(%d) audit team %d: %w", id, teamID, err)
+			}
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return nil, fmt.Errorf("user.Update(%d) commit: %w", id, err)
 	}
 	return r.GetUserByID(ctx, id)
 }
 
+// loadAuditTeamIDs returns the audit team ids a single user belongs to.
+func (r *userRepo) loadAuditTeamIDs(ctx context.Context, userID int) ([]int, error) {
+	rows, err := r.db.QueryContext(ctx,
+		"SELECT audit_team_id FROM user_audit_team WHERE user_id = ? ORDER BY audit_team_id", userID)
+	if err != nil {
+		return nil, fmt.Errorf("user_audit_team.load(%d): %w", userID, err)
+	}
+	defer rows.Close()
+
+	ids := []int{}
+	for rows.Next() {
+		var teamID int
+		if err := rows.Scan(&teamID); err != nil {
+			return nil, fmt.Errorf("user_audit_team.load(%d) scan: %w", userID, err)
+		}
+		ids = append(ids, teamID)
+	}
+	return ids, rows.Err()
+}
+
+// loadAuditTeamIDsBatch returns each user's audit team ids in one query, so a
+// page of search results costs one extra round trip rather than one per row.
+func (r *userRepo) loadAuditTeamIDsBatch(ctx context.Context, userIDs []int) (map[int][]int, error) {
+	out := map[int][]int{}
+	if len(userIDs) == 0 {
+		return out, nil
+	}
+
+	ph := strings.Repeat("?,", len(userIDs))
+	args := make([]any, len(userIDs))
+	for i, id := range userIDs {
+		args[i] = id
+	}
+	rows, err := r.db.QueryContext(ctx,
+		"SELECT user_id, audit_team_id FROM user_audit_team WHERE user_id IN ("+ph[:len(ph)-1]+") ORDER BY user_id, audit_team_id",
+		args...)
+	if err != nil {
+		return nil, fmt.Errorf("user_audit_team.loadBatch: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var userID, teamID int
+		if err := rows.Scan(&userID, &teamID); err != nil {
+			return nil, fmt.Errorf("user_audit_team.loadBatch scan: %w", err)
+		}
+		out[userID] = append(out[userID], teamID)
+	}
+	return out, rows.Err()
+}
+
 func scanUser(s scanner) (*domain.User, error) {
 	var u domain.User
-	var auditTeamID, riskTeamID sql.NullInt64
-	if err := s.Scan(&u.ID, &u.Email, &u.DisplayName, &u.UserType, &auditTeamID, &riskTeamID, &u.Status, &u.CreatedOn, &u.UpdatedOn); err != nil {
+	var riskTeamID sql.NullInt64
+	if err := s.Scan(&u.ID, &u.Email, &u.DisplayName, &u.UserType, &riskTeamID, &u.Status, &u.CreatedOn, &u.UpdatedOn); err != nil {
 		return nil, err
-	}
-	if auditTeamID.Valid {
-		v := int(auditTeamID.Int64)
-		u.AuditTeamID = &v
 	}
 	if riskTeamID.Valid {
 		v := int(riskTeamID.Int64)
 		u.RiskTeamID = &v
 	}
+	u.AuditTeamIDs = []int{}
 	return &u, nil
 }
 

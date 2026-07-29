@@ -9,7 +9,9 @@
 --   privilege      — fine-grained privileges used for frontend view rendering
 --   role_privilege — maps roles to privileges (many-to-many)
 --
--- NOTE: user.audit_team_id FK → added by audit_schema.sql (after audit_team exists)
+-- NOTE: user ↔ audit_team membership lives in the user_audit_team junction
+--       table (many-to-many), created by audit_schema.sql after audit_team
+--       exists — see that file for the table.
 --       user.risk_team_id  FK → added by risk_schema.sql  (after risk_team  exists)
 -- =============================================================================
 
@@ -19,15 +21,15 @@ SET FOREIGN_KEY_CHECKS = 0;
 -- user
 -- Platform users provisioned via Asgardeo SSO.
 -- Role assignment lives in Asgardeo JWT claims, not here.
--- audit_team_id and risk_team_id columns are present here; FK constraints
--- are wired in by audit_schema.sql and risk_schema.sql respectively.
+-- Audit team membership is many-to-many (see user_audit_team in
+-- audit_schema.sql), not a column here. risk_team_id remains a single-value
+-- column; its FK constraint is wired in by risk_schema.sql.
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `user` (
   id            INT          NOT NULL AUTO_INCREMENT,
   email         VARCHAR(255) NOT NULL,
   display_name  VARCHAR(255) NOT NULL,
   user_type     ENUM('INTERNAL','EXTERNAL') NOT NULL DEFAULT 'INTERNAL',
-  audit_team_id INT          NULL,
   risk_team_id  INT          NULL,
   status        ENUM('ACTIVE','INACTIVE','REMOVED') NOT NULL DEFAULT 'ACTIVE',
   created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -36,7 +38,6 @@ CREATE TABLE IF NOT EXISTS `user` (
   updated_by    VARCHAR(255) NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_user_email (email),
-  KEY idx_user_audit_team (audit_team_id),
   KEY idx_user_risk_team  (risk_team_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

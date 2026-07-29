@@ -5,6 +5,7 @@
 --
 -- Tables:
 --   audit_team              — team unit that submits evidence for controls
+--   user_audit_team         — many-to-many: which audit team(s) a user belongs to
 --   audit_framework         — SOC2, ISO 27001, HIPAA, etc.
 --   audit_product           — Asgardeo, Choreo, etc.
 --   audit_framework_control — versioned, immutable control definition library
@@ -36,9 +37,28 @@ CREATE TABLE IF NOT EXISTS audit_team (
   PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Wire the FK from user.audit_team_id now that audit_team exists.
-ALTER TABLE `user`
-  ADD CONSTRAINT fk_user_audit_team FOREIGN KEY (audit_team_id) REFERENCES audit_team(id) ON DELETE SET NULL;
+-- =============================================================================
+-- user_audit_team
+-- Many-to-many junction: a user can belong to more than one audit team.
+-- Composite PK (user_id, audit_team_id) enforces uniqueness. is_active allows
+-- toggling a mapping without deleting it. CASCADE on both sides — unlike
+-- role_privilege's RESTRICT — because a membership row is meaningless once
+-- either the user or the team it points at is gone; there is no "in use"
+-- concern to protect the way there is for roles/privileges.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS user_audit_team (
+  user_id       INT      NOT NULL,
+  audit_team_id INT      NOT NULL,
+  is_active     BOOLEAN  NOT NULL DEFAULT TRUE,
+  created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_by    VARCHAR(255) NULL,
+  updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  updated_by    VARCHAR(255) NULL,
+  PRIMARY KEY (user_id, audit_team_id),
+  KEY idx_uat_team (audit_team_id),
+  CONSTRAINT fk_uat_user FOREIGN KEY (user_id)       REFERENCES `user`(id)    ON DELETE CASCADE,
+  CONSTRAINT fk_uat_team FOREIGN KEY (audit_team_id) REFERENCES audit_team(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- =============================================================================
 -- audit_framework and audit_product

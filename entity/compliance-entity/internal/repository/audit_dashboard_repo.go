@@ -46,15 +46,13 @@ func (r *dashboardRepo) resolveScope(ctx context.Context, req domain.AuditDashbo
 	case domain.RoleComplianceAdmin, domain.RoleComplianceTeam, domain.RoleManagement:
 		return "", nil, nil
 	case domain.RoleInternalTeam:
-		var teamID sql.NullInt64
-		err := r.db.QueryRowContext(ctx, "SELECT audit_team_id FROM `user` WHERE email = ?", req.UserEmail).Scan(&teamID)
-		if errors.Is(err, sql.ErrNoRows) || (err == nil && !teamID.Valid) {
-			return " AND 1=0", nil, nil
-		}
-		if err != nil {
-			return "", nil, fmt.Errorf("dashboard.resolveScope: lookup team for %q: %w", req.UserEmail, err)
-		}
-		return " AND c.team_id = ?", []any{teamID.Int64}, nil
+		// A user can belong to more than one audit team (user_audit_team is
+		// many-to-many), so scope to any of them via a subquery rather than a
+		// single equality check. A user with no team membership simply matches
+		// no rows — no separate "not found" branch is needed the way the old
+		// single-column lookup required.
+		return " AND c.team_id IN (SELECT uat.audit_team_id FROM user_audit_team uat JOIN `user` u ON u.id = uat.user_id WHERE u.email = ?)",
+			[]any{req.UserEmail}, nil
 	case domain.RoleExternalAuditor:
 		var userID sql.NullInt64
 		err := r.db.QueryRowContext(ctx, "SELECT id FROM `user` WHERE email = ?", req.UserEmail).Scan(&userID)

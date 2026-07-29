@@ -41,16 +41,19 @@ type Pagination struct {
 // =============================================================================
 
 // User represents a platform user from the shared `user` table.
+// AuditTeamIDs is many-to-many (see the user_audit_team junction table) —
+// a user can belong to more than one audit team — so it is always a slice,
+// never null; a user with no audit team membership gets an empty slice.
 type User struct {
-	ID          int       `json:"id"`
-	Email       string    `json:"email"`
-	DisplayName string    `json:"displayName"`
-	UserType    string    `json:"userType"` // INTERNAL | EXTERNAL
-	AuditTeamID *int      `json:"auditTeamId"`
-	RiskTeamID  *int      `json:"riskTeamId"`
-	Status      string    `json:"status"`
-	CreatedOn   time.Time `json:"createdOn"`
-	UpdatedOn   time.Time `json:"updatedOn"`
+	ID           int       `json:"id"`
+	Email        string    `json:"email"`
+	DisplayName  string    `json:"displayName"`
+	UserType     string    `json:"userType"` // INTERNAL | EXTERNAL
+	AuditTeamIDs []int     `json:"auditTeamIds"`
+	RiskTeamID   *int      `json:"riskTeamId"`
+	Status       string    `json:"status"`
+	CreatedOn    time.Time `json:"createdOn"`
+	UpdatedOn    time.Time `json:"updatedOn"`
 }
 
 // SearchUsersRequest is the payload for POST /users/search.
@@ -550,24 +553,30 @@ type SearchRisksResponse struct {
 // =============================================================================
 
 // CreateUserRequest is the payload for POST /users.
+// AuditTeamIDs assigns the user to zero or more audit teams as part of
+// creation, atomically with the user row.
 type CreateUserRequest struct {
-	Email       string `json:"email"`
-	DisplayName string `json:"displayName"`
-	UserType    string `json:"userType"` // INTERNAL | EXTERNAL; defaults to INTERNAL
-	AuditTeamID *int   `json:"auditTeamId"`
-	RiskTeamID  *int   `json:"riskTeamId"`
-	Status      string `json:"status"`
-	CreatedBy   string `json:"createdBy"`
+	Email        string `json:"email"`
+	DisplayName  string `json:"displayName"`
+	UserType     string `json:"userType"` // INTERNAL | EXTERNAL; defaults to INTERNAL
+	AuditTeamIDs []int  `json:"auditTeamIds"`
+	RiskTeamID   *int   `json:"riskTeamId"`
+	Status       string `json:"status"`
+	CreatedBy    string `json:"createdBy"`
 }
 
 // UpdateUserRequest is the payload for PATCH /users/{id}.
+// AuditTeamIDs nil means "leave team membership alone"; a non-nil slice
+// (including an empty one) replaces the user's full set of audit team
+// memberships wholesale — the same nil-vs-empty convention used by
+// UpdateRiskRequest.ComplianceReferenceIDs.
 type UpdateUserRequest struct {
-	DisplayName *string `json:"displayName"`
-	UserType    *string `json:"userType"` // INTERNAL | EXTERNAL
-	AuditTeamID *int    `json:"auditTeamId"`
-	RiskTeamID  *int    `json:"riskTeamId"`
-	Status      *string `json:"status"`
-	UpdatedBy   string  `json:"updatedBy"`
+	DisplayName  *string `json:"displayName"`
+	UserType     *string `json:"userType"` // INTERNAL | EXTERNAL
+	AuditTeamIDs []int   `json:"auditTeamIds"`
+	RiskTeamID   *int    `json:"riskTeamId"`
+	Status       *string `json:"status"`
+	UpdatedBy    string  `json:"updatedBy"`
 }
 
 // =============================================================================

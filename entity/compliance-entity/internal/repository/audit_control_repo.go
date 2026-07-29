@@ -77,7 +77,8 @@ func (r *controlRepo) ListAssignedForEvidence(ctx context.Context, userEmail str
 		JOIN audit_product   p ON p.id = a.product_id
 		JOIN audit_framework f ON f.id = a.framework_id
 		JOIN audit_team      t ON t.id = c.team_id
-		JOIN `+"`user`"+` u ON u.audit_team_id = t.id
+		JOIN user_audit_team uat ON uat.audit_team_id = t.id
+		JOIN `+"`user`"+` u ON u.id = uat.user_id
 		WHERE u.email = ?
 		  AND a.status = 'ACTIVE'
 		  AND c.status IN (`+evidenceActionableStatuses+`)
@@ -121,7 +122,8 @@ func (r *controlRepo) GetEvidenceAssignment(ctx context.Context, userEmail strin
 		FROM audit_control c
 		JOIN audit      a ON a.id = c.audit_id
 		JOIN audit_team t ON t.id = c.team_id
-		JOIN `+"`user`"+` u ON u.audit_team_id = t.id
+		JOIN user_audit_team uat ON uat.audit_team_id = t.id
+		JOIN `+"`user`"+` u ON u.id = uat.user_id
 		WHERE u.email = ? AND c.id = ?
 		  AND a.status = 'ACTIVE'
 		  AND c.status IN (`+evidenceActionableStatuses+`)
