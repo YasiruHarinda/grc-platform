@@ -31,6 +31,27 @@ type Config struct {
 	HREntity                HREntityConfig
 	CORSAllowedOrigin       string
 	AIValidation            AIValidationConfig
+	Email                   EmailConfig
+}
+
+// EmailConfig holds the connection details for the shared email-sending
+// service (email-service), used to notify a risk's owner when the risk is
+// created. Required (mustEnv) like HREntityConfig: unlike AI validation, a
+// misconfigured/disabled notifier fails silently from the product's
+// perspective (nobody gets told the risk exists), so this is treated as
+// load-bearing rather than optional.
+//
+// The service's own code (service.bal) has no inbound auth check, but the
+// real Choreo-hosted instance sits behind API Manager with OAuth2
+// client-credentials, same as HREntityConfig — ClientID/ClientSecret/TokenURL
+// are required for real calls to succeed.
+type EmailConfig struct {
+	ServiceURL      string
+	FromAddress     string
+	FrontendBaseURL string
+	ClientID        string
+	ClientSecret    string
+	TokenURL        string
 }
 
 // AIValidationConfig configures the fire-and-forget trigger to the AI Validation
@@ -126,6 +147,31 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	emailServiceURL, err := mustEnv("EMAIL_SERVICE_URL")
+	if err != nil {
+		return Config{}, err
+	}
+	emailFromAddress, err := mustEnv("EMAIL_FROM_ADDRESS")
+	if err != nil {
+		return Config{}, err
+	}
+	frontendBaseURL, err := mustEnv("FRONTEND_BASE_URL")
+	if err != nil {
+		return Config{}, err
+	}
+	emailClientID, err := mustEnv("EMAIL_CLIENT_ID")
+	if err != nil {
+		return Config{}, err
+	}
+	emailClientSecret, err := mustEnv("EMAIL_CLIENT_SECRET")
+	if err != nil {
+		return Config{}, err
+	}
+	emailTokenURL, err := mustEnv("EMAIL_TOKEN_URL")
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		Port:                    envOrDefault("PORT", ":8080"),
 		Auth:                    authCfg,
@@ -141,6 +187,14 @@ func Load() (Config, error) {
 			Enabled:      os.Getenv("AI_VALIDATION_ENABLED") == "true",
 			AgentBaseURL: envOrDefault("AI_AGENT_BASE_URL", "http://localhost:8090"),
 			AgentAPIKey:  os.Getenv("AI_AGENT_API_KEY"),
+		},
+		Email: EmailConfig{
+			ServiceURL:      emailServiceURL,
+			FromAddress:     emailFromAddress,
+			FrontendBaseURL: frontendBaseURL,
+			ClientID:        emailClientID,
+			ClientSecret:    emailClientSecret,
+			TokenURL:        emailTokenURL,
 		},
 	}, nil
 }

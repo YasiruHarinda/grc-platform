@@ -92,7 +92,7 @@ func main() {
 	})
 
 	userhandler.RegisterRoutes(mux, userDeps)
-	riskhandler.RegisterRoutes(mux, buildRiskDeps(entityCli, fileSvc, hrClient))
+	riskhandler.RegisterRoutes(mux, buildRiskDeps(entityCli, fileSvc, hrClient, cfg.Email))
 	audithandler.RegisterRoutes(mux, buildAuditDeps(fileSvc, entityCli, cfg.AIValidation))
 
 	// Scope guard runs just inside Auth: an evidence-app-scoped token (IdP-2) is

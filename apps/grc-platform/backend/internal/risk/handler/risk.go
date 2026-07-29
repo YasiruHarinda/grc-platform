@@ -19,6 +19,7 @@ package handler
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -27,6 +28,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
@@ -115,8 +117,50 @@ func (d *Deps) handleCreateRisk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	d.notifyRiskOwnerCreated(r.Context(), result.ID, req.OwnerID, createdBy)
+
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/risks/%d", result.ID))
 	response.WriteJSONValue(w, http.StatusCreated, result)
+}
+
+// notifyRiskOwnerCreated emails the risk owner that a new risk has been
+// assigned to them. Best-effort: the risk is already committed by the time
+// this runs, so any failure here is logged and swallowed rather than
+// affecting the 201 response.
+func (d *Deps) notifyRiskOwnerCreated(ctx context.Context, riskID, ownerID int, createdBy string) {
+	owner, err := d.Users.GetByID(ctx, ownerID)
+	if err != nil {
+		slog.Warn("risk creation email: failed to resolve owner", "riskId", riskID, "ownerId", ownerID, "err", err)
+		return
+	}
+	if owner == nil || owner.Email == "" {
+		slog.Warn("risk creation email: owner has no email on file", "riskId", riskID, "ownerId", ownerID)
+		return
+	}
+
+	detail, err := d.Risk.GetByID(ctx, riskID)
+	if err != nil {
+		slog.Warn("risk creation email: failed to load risk detail", "riskId", riskID, "err", err)
+		return
+	}
+
+	riskLevel := ""
+	if detail.GrossScore != nil {
+		riskLevel = detail.GrossScore.RiskLevel
+	}
+
+	if err := d.Email.SendRiskCreated(ctx, owner.Email, emailer.RiskCreated{
+		RiskCode:       detail.RiskCode,
+		RiskTitle:      detail.RiskTitle,
+		SourceRegister: detail.SourceRegisterName,
+		RiskLevel:      riskLevel,
+		CreatedBy:      createdBy,
+		DetailURL:      fmt.Sprintf("%s/risk/registers?riskId=%d", d.FrontendBaseURL, riskID),
+	}); err != nil {
+		slog.Warn("risk creation email: send failed", "riskId", riskID, "ownerEmail", owner.Email, "err", err)
+		return
+	}
+	slog.Info("risk creation email sent", "riskId", riskID, "ownerEmail", owner.Email)
 }
 
 // validateCreateRiskRequest performs business validation on the incoming payload.

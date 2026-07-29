@@ -22,6 +22,7 @@ import (
 	"net/http"
 
 	riskservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/service"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
 
@@ -43,6 +44,13 @@ type Deps struct {
 	// user.id — used by handleListRisks (Action Owner list scoping) and the
 	// action-plan handlers (ownership checks).
 	Users user.Repository
+	// Email sends the risk-owner notification fired synchronously right
+	// after a risk is created. A delivery failure is logged but never fails
+	// risk creation itself — see handleCreateRisk.
+	Email *emailer.Client
+	// FrontendBaseURL is used to build the risk-detail link inside that
+	// notification email.
+	FrontendBaseURL string
 }
 
 // RegisterRoutes mounts all Risk Hub routes onto mux under /api/v1.
