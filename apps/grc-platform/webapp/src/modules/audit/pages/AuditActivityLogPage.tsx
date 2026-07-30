@@ -53,6 +53,7 @@ function describeDetails(d: TrailDetails | null | undefined): string {
   if (d.scopeDescription) parts.push("scope updated");
   if (d.via) parts.push(`via ${d.via === "evidence-app" ? "Evidence Portal" : "Audit Hub"}`);
   if (d.comment) parts.push(d.isInternal ? `internal note: "${d.comment}"` : `"${d.comment}"`);
+  if (d.files && d.files.length > 0) parts.push(d.files.join(", "));
   return parts.join(" · ");
 }
 

@@ -18,6 +18,7 @@ import { Alert, Box, Button, CircularProgress, IconButton, Typography } from "@w
 import { FileUp, Upload, X } from "@wso2/oxygen-ui-icons-react";
 import { useRef, useState, type JSX } from "react";
 import { useSubmitEvidence } from "@modules/audit/api/useSubmitEvidence";
+import { useAddEvidenceFiles } from "@modules/audit/api/useAddEvidenceFiles";
 import { useSubmitPopulation } from "@modules/audit/api/useSubmitPopulation";
 
 /**
@@ -46,6 +47,16 @@ interface EvidenceUploadBoxProps {
   onSubmitted: () => void;
   /** Which submission flow to drive; defaults to the evidence endpoints. */
   phase?: "evidence" | "population";
+  /**
+   * evidence phase only. "append" (the "Add Files" case, used while a
+   * submission is still under internal review) adds to the CURRENT round via
+   * useAddEvidenceFiles instead of starting a brand-new one — starting a new
+   * round here would leave the still-open one stranded once a reviewer's
+   * decision only closes out the latest round, silently resurfacing its files
+   * alongside every future resubmission. Defaults to "new" (the initial
+   * submission / post-rejection resubmission case).
+   */
+  evidenceMode?: "new" | "append";
 }
 
 /**
@@ -62,14 +73,19 @@ export default function EvidenceUploadBox({
   buttonLabel,
   onSubmitted,
   phase = "evidence",
+  evidenceMode = "new",
 }: EvidenceUploadBoxProps): JSX.Element {
   const [files, setFiles] = useState<File[]>([]);
   const [sizeError, setSizeError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const submitEvidence = useSubmitEvidence();
+  const addEvidenceFiles = useAddEvidenceFiles();
   const submitPopulation = useSubmitPopulation();
-  const submit = phase === "population" ? submitPopulation : submitEvidence;
+  const submit =
+    phase === "population" ? submitPopulation
+    : evidenceMode === "append" ? addEvidenceFiles
+    : submitEvidence;
   const busy = submit.isPending;
 
   function addFiles(list: FileList | null) {
@@ -138,7 +154,7 @@ export default function EvidenceUploadBox({
           "&:hover": { borderColor: "primary.main", bgcolor: "action.hover" },
         })}
       >
-        <Box sx={{ width: 44, height: 44, borderRadius: "50%", bgcolor: "#f0fdf4", display: "flex", alignItems: "center", justifyContent: "center", color: "#16a34a" }}>
+        <Box sx={{ width: 44, height: 44, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", color: "text.secondary" }}>
           <Upload size={20} />
         </Box>
         <Typography variant="body2" fontWeight={600}>Drop files here or click to browse</Typography>

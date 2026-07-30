@@ -72,13 +72,17 @@ type ControlService interface {
 
 type controlService struct {
 	repo repository.ControlRepository
+	// population is used only to edit an OE control's population details
+	// (requirement text, due date, comments, owner, team) from the same form
+	// used to create them.
+	population repository.PopulationRepository
 	// trail records lifecycle events (created, status transitions) to the
 	// append-only audit trail. Best-effort; may be nil (recording is then skipped).
 	trail TrailService
 }
 
-func NewControlService(repo repository.ControlRepository, trail TrailService) ControlService {
-	return &controlService{repo: repo, trail: trail}
+func NewControlService(repo repository.ControlRepository, population repository.PopulationRepository, trail TrailService) ControlService {
+	return &controlService{repo: repo, population: population, trail: trail}
 }
 
 // recordTrail appends a best-effort lifecycle entry. A failure here must never
@@ -159,7 +163,39 @@ func (s *controlService) Update(ctx context.Context, auditID, controlID int, req
 	if req.DueDate != nil && strings.TrimSpace(*req.DueDate) == "" {
 		return &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "dueDate cannot be cleared"}
 	}
-	return s.repo.Update(ctx, auditID, controlID, req, updatedBy)
+	// Population is only meaningful for OE controls — silently ignored for
+	// DESIGN controls rather than erroring, since the form simply never sends
+	// it for them.
+	if req.Population != nil && c.RequirementType == "OE" {
+		if strings.TrimSpace(req.Population.Description) == "" {
+			return &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "population.description is required"}
+		}
+		if req.Population.DueDate == nil || strings.TrimSpace(*req.Population.DueDate) == "" {
+			return &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "population.dueDate is required"}
+		}
+	}
+	if err := s.repo.Update(ctx, auditID, controlID, req, updatedBy); err != nil {
+		return err
+	}
+	if req.Population != nil && c.RequirementType == "OE" {
+		// Deliberately not ActivePopulationID here: that only resolves a round
+		// still in PENDING/COMPLIANCE_REJECTED/AUDITOR_REJECTED, so it returns
+		// not-found (silently skipping the edit) for any control whose
+		// population has already advanced past that — approved, in sample
+		// phase, or complete. Editing details should work regardless of phase,
+		// so take the control's most recent round instead.
+		rounds, err := s.population.ListByControl(ctx, auditID, controlID)
+		if err != nil {
+			return err
+		}
+		if len(rounds) > 0 {
+			latest := rounds[len(rounds)-1]
+			if err := s.population.UpdateDetails(ctx, latest.ID, *req.Population, updatedBy); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *controlService) UpdateStatus(ctx context.Context, auditID, controlID int, req model.UpdateStatusRequest, updatedBy string) error {
@@ -258,6 +294,9 @@ func validateAddRequest(req model.AddControlRequest) error {
 	}
 	if req.Description == "" {
 		return &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "description is required"}
+	}
+	if req.EvidenceRequirement == nil || strings.TrimSpace(*req.EvidenceRequirement) == "" {
+		return &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "evidenceRequirement is required"}
 	}
 	if req.DueDate == nil || strings.TrimSpace(*req.DueDate) == "" {
 		return &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "dueDate is required"}

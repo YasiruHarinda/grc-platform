@@ -32,18 +32,18 @@ type CommentHandler struct{ svc service.CommentService }
 // NewCommentHandler constructs a CommentHandler.
 func NewCommentHandler(svc service.CommentService) *CommentHandler { return &CommentHandler{svc: svc} }
 
-// CreateComment handles POST /evidence/{evidenceId}/comments.
+// CreateComment handles POST /audits/{auditId}/controls/{controlId}/comments.
 func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
-	evidenceID, err := strconv.Atoi(r.PathValue("evidenceId"))
+	controlID, err := strconv.Atoi(r.PathValue("controlId"))
 	if err != nil {
-		writeServiceError(w, r, &apierror.ValidationError{Msg: "evidenceId must be a positive integer"})
+		writeServiceError(w, r, &apierror.ValidationError{Msg: "controlId must be a positive integer"})
 		return
 	}
 	var req domain.CreateAuditCommentRequest
 	if !decodeRequest(w, r, &req) {
 		return
 	}
-	c, err := h.svc.CreateComment(r.Context(), evidenceID, req)
+	c, err := h.svc.CreateComment(r.Context(), controlID, req)
 	if err != nil {
 		writeServiceError(w, r, err)
 		return
@@ -53,14 +53,14 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(c)
 }
 
-// ListComments handles GET /evidence/{evidenceId}/comments.
+// ListComments handles GET /audits/{auditId}/controls/{controlId}/comments.
 func (h *CommentHandler) ListComments(w http.ResponseWriter, r *http.Request) {
-	evidenceID, err := strconv.Atoi(r.PathValue("evidenceId"))
+	controlID, err := strconv.Atoi(r.PathValue("controlId"))
 	if err != nil {
-		writeServiceError(w, r, &apierror.ValidationError{Msg: "evidenceId must be a positive integer"})
+		writeServiceError(w, r, &apierror.ValidationError{Msg: "controlId must be a positive integer"})
 		return
 	}
-	resp, err := h.svc.ListCommentsByEvidence(r.Context(), evidenceID)
+	resp, err := h.svc.ListCommentsByControl(r.Context(), controlID)
 	if err != nil {
 		writeServiceError(w, r, err)
 		return

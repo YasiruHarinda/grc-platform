@@ -180,7 +180,7 @@ func (h *evidenceHandler) submitSample(w http.ResponseWriter, r *http.Request) {
 	// UpdateStatusWithSample already records a generic status-change trail row
 	// (statusChangeAction); this adds the same explicit attribution row that
 	// evidence/population submission get, matching population.go's submitPopulation.
-	recordEvidenceTrail(r.Context(), h.trailSvc, auditID, controlID, 0, actor, channelWebApp, user.Issuer)
+	recordEvidenceTrail(r.Context(), h.trailSvc, auditID, controlID, 0, actor, channelWebApp, user.Issuer, nil)
 	response.WriteJSONValue(w, http.StatusCreated, map[string]any{
 		"status":    "SUBMITTED_SAMPLE",
 		"fileCount": fileCount,

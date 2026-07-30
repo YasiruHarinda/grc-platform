@@ -206,4 +206,6 @@ export interface UpdateControlRequest {
   ownerId?: number | null;
   teamId?: number | null;
   auditorId?: number | null;
+  /** OE controls only; omit/null to leave population details unchanged. */
+  population?: PopulationDetails | null;
 }

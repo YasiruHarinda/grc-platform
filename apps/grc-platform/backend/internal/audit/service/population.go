@@ -60,6 +60,15 @@ type PopulationService interface {
 	// comment for why that differs from evidence's DeleteFile.
 	DeleteFile(ctx context.Context, fileID int) error
 
+	// ClearFiles removes every file of the given kind on a population round —
+	// DB record and blob, same as DeleteFile — so that a round sent back to
+	// the team for changes starts empty rather than carrying the rejected
+	// submission's files forward. Population reuses one round for its whole
+	// lifecycle instead of starting a fresh round per resubmission (see
+	// LatestRound), so without this a reject leaves the old files in place and
+	// they resurface in the resubmission UI as if they were still current.
+	ClearFiles(ctx context.Context, populationID int, kind string) error
+
 	// UpdateRoundStatus advances the population round's own status (distinct from
 	// the control's status) — e.g. SUBMITTED → COMPLIANCE_APPROVED.
 	UpdateRoundStatus(ctx context.Context, populationID int, status, updatedBy string) error
@@ -190,6 +199,29 @@ func (s *populationService) DeleteFile(ctx context.Context, fileID int) error {
 	if f != nil {
 		if err := s.storage.Delete(ctx, f.FilePath); err != nil {
 			slog.WarnContext(ctx, "delete population blob failed", "fileId", fileID, "path", f.FilePath, "err", err)
+		}
+	}
+	return nil
+}
+
+// ClearFiles removes every file of the given kind on populationID. Errors
+// deleting a blob are logged and swallowed (same tolerance as DeleteFile) so
+// one bad blob doesn't block the round from being reopened for resubmission;
+// the DB record is still removed either way.
+func (s *populationService) ClearFiles(ctx context.Context, populationID int, kind string) error {
+	files, err := s.repo.ListFiles(ctx, populationID)
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		if !strings.EqualFold(f.FileKind, kind) {
+			continue
+		}
+		if err := s.repo.DeleteFile(ctx, f.ID); err != nil {
+			return err
+		}
+		if err := s.storage.Delete(ctx, f.FilePath); err != nil {
+			slog.WarnContext(ctx, "delete population blob failed", "fileId", f.ID, "path", f.FilePath, "err", err)
 		}
 	}
 	return nil

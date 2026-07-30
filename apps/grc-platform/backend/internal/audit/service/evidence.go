@@ -73,8 +73,30 @@ type EvidenceService interface {
 	// control status afterwards.
 	Submit(ctx context.Context, auditID, controlID int, files []model.EvidenceFileRef, submittedBy string) (*model.AuditEvidence, error)
 
+	// AddFiles appends files to the control's current evidence round instead of
+	// starting a new one — used by "Add Files" while a submission is still
+	// awaiting internal review (round status SUBMITTED). Without this, every
+	// "Add Files" click would create a sibling round via Submit, and a later
+	// reviewer decision (which only closes out the single latest round) would
+	// leave the earlier one stranded in SUBMITTED forever — silently resurfacing
+	// its files alongside every future resubmission. Returns a 404 if there is no
+	// round yet, or a 409 if the current round has already been decided (the
+	// caller should fall back to Submit for a fresh round in that case).
+	AddFiles(ctx context.Context, auditID, controlID int, files []model.EvidenceFileRef, actor string) (*model.AuditEvidence, error)
+
 	// List returns all evidence submissions for a control, newest first.
 	List(ctx context.Context, auditID, controlID int) ([]*model.AuditEvidence, error)
+
+	// LatestRound returns a control's most recently submitted evidence round —
+	// used to record a reviewer's decision against the round they actually looked
+	// at. Returns a 404 apierror if the control has no evidence round yet.
+	LatestRound(ctx context.Context, auditID, controlID int) (*model.AuditEvidence, error)
+
+	// UpdateRoundStatus advances one evidence round's own status (distinct from
+	// the control's status) — e.g. SUBMITTED → COMPLIANCE_REJECTED. This lets the
+	// live evidence view (SubmittedEvidenceList) tell a rejected round apart from
+	// the fresh resubmission that follows it, instead of showing both together.
+	UpdateRoundStatus(ctx context.Context, evidenceID int, status, updatedBy string) error
 
 	// DownloadFile returns one evidence file's bytes (proxied via the Compliance
 	// Entity) plus its name and content type, by file ID.
@@ -309,6 +331,55 @@ func (s *evidenceService) Submit(ctx context.Context, auditID, controlID int, fi
 	}, nil
 }
 
+func (s *evidenceService) AddFiles(ctx context.Context, auditID, controlID int, files []model.EvidenceFileRef, actor string) (*model.AuditEvidence, error) {
+	if len(files) == 0 {
+		return nil, &apierror.Error{
+			StatusCode: http.StatusUnprocessableEntity,
+			Body:       "no files provided — upload files first",
+		}
+	}
+	auditName, controlNumber, err := s.resolveNames(ctx, auditID, controlID)
+	if err != nil {
+		return nil, err
+	}
+	prefix := evidenceFolderPath(auditName, controlNumber)
+	for _, f := range files {
+		if !strings.HasPrefix(f.BlobName, prefix) {
+			return nil, &apierror.Error{StatusCode: http.StatusBadRequest, Body: "blob name does not match this audit/control"}
+		}
+	}
+
+	round, err := s.LatestRound(ctx, auditID, controlID)
+	if err != nil {
+		return nil, err
+	}
+	if round.Status != "SUBMITTED" {
+		return nil, &apierror.Error{
+			StatusCode: http.StatusConflict,
+			Body:       "the current evidence round has already been decided — resubmit to start a new one",
+		}
+	}
+
+	evidenceFiles := make([]*model.AuditEvidenceFile, 0, len(files))
+	for _, f := range files {
+		fileName := f.FileName
+		if fileName == "" {
+			fileName = displayFileName(f.BlobName)
+		}
+		if err := s.repo.AddFile(ctx, round.ID, fileName, f.BlobName, nil, nil, actor); err != nil {
+			return nil, err
+		}
+		evidenceFiles = append(evidenceFiles, &model.AuditEvidenceFile{
+			EvidenceID: round.ID,
+			FileName:   fileName,
+			FilePath:   f.BlobName,
+			CreatedBy:  actor,
+		})
+	}
+	round.Files = append(round.Files, evidenceFiles...)
+	return round, nil
+}
+
 func (s *evidenceService) List(ctx context.Context, auditID, controlID int) ([]*model.AuditEvidence, error) {
 	evidence, err := s.repo.ListByControl(ctx, auditID, controlID)
 	if err != nil {
@@ -331,6 +402,21 @@ func (s *evidenceService) List(ctx context.Context, auditID, controlID int) ([]*
 
 // DownloadFile fetches one evidence file's bytes (proxied via the Compliance
 // Entity) by file ID, for the authenticated download endpoint.
+func (s *evidenceService) LatestRound(ctx context.Context, auditID, controlID int) (*model.AuditEvidence, error) {
+	rounds, err := s.repo.ListByControl(ctx, auditID, controlID)
+	if err != nil {
+		return nil, err
+	}
+	if len(rounds) == 0 {
+		return nil, &apierror.Error{StatusCode: http.StatusNotFound, Body: "no evidence round found for this control"}
+	}
+	return rounds[0], nil // ListByControl returns newest first.
+}
+
+func (s *evidenceService) UpdateRoundStatus(ctx context.Context, evidenceID int, status, updatedBy string) error {
+	return s.repo.UpdateStatus(ctx, evidenceID, status, updatedBy)
+}
+
 func (s *evidenceService) DownloadFile(ctx context.Context, fileID int) (data []byte, fileName, contentType string, err error) {
 	f, err := s.repo.GetFileByID(ctx, fileID)
 	if err != nil {

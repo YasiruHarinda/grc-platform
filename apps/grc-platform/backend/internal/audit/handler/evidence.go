@@ -228,7 +228,7 @@ func (h *evidenceHandler) submitEvidence(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Best-effort audit-trail attribution: this submission came through the web app.
-	recordEvidenceTrail(r.Context(), h.trailSvc, auditID, controlID, evidence.ID, actor, channelWebApp, user.Issuer)
+	recordEvidenceTrail(r.Context(), h.trailSvc, auditID, controlID, evidence.ID, actor, channelWebApp, user.Issuer, fileNamesOf(evidence.Files))
 
 	// Fire-and-forget AI validation. Detached from the request context (a client
 	// disconnect must not cancel it) and best-effort — a failure here never
@@ -236,6 +236,56 @@ func (h *evidenceHandler) submitEvidence(w http.ResponseWriter, r *http.Request)
 	h.triggerAIValidation(auditID, controlID, evidence.ID, actor)
 
 	response.WriteJSONValue(w, http.StatusCreated, evidence)
+}
+
+// addEvidenceFiles handles POST /api/v1/audits/{id}/controls/{controlId}/evidence/files.
+//
+// Appends files to the control's CURRENT evidence round (must still be
+// SUBMITTED, i.e. under internal review) instead of starting a new one via
+// Submit. This is what "Add Files" uses: before this endpoint existed, Add
+// Files called the same submit path as the initial submission, which created
+// a brand-new round every time — and since a reviewer's later decision only
+// closes out the single latest round, any earlier round created by an
+// in-review "Add Files" click was left stranded in SUBMITTED forever,
+// resurfacing its files alongside every future resubmission.
+func (h *evidenceHandler) addEvidenceFiles(w http.ResponseWriter, r *http.Request) {
+	if !auth.RequirePrivilege(r.Context(), w, privilege.SubmitEvidence) {
+		return
+	}
+	auditID, ok := parseIntParam(w, r, "id")
+	if !ok {
+		return
+	}
+	controlID, ok := parseIntParam(w, r, "controlId")
+	if !ok {
+		return
+	}
+	if !h.requireAssignment(w, r, auditID, controlID) {
+		return
+	}
+
+	var req model.SubmitEvidenceRequest
+	if err := response.DecodeJSON(w, r, &req); err != nil {
+		return
+	}
+
+	user := auth.FromContext(r.Context())
+	actor := user.Email
+
+	evidence, err := h.svc.AddFiles(r.Context(), auditID, controlID, req.Files, actor)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+
+	// Best-effort audit-trail attribution: this submission came through the web app.
+	recordEvidenceTrail(r.Context(), h.trailSvc, auditID, controlID, evidence.ID, actor, channelWebApp, user.Issuer, fileNamesOf(evidence.Files))
+
+	// Re-run AI validation now that more files are attached — same best-effort,
+	// fire-and-forget semantics as the initial submission.
+	h.triggerAIValidation(auditID, controlID, evidence.ID, actor)
+
+	response.WriteJSONValue(w, http.StatusOK, evidence)
 }
 
 // withdrawEvidence handles POST /api/v1/audits/{id}/controls/{controlId}/evidence/withdraw.
@@ -296,13 +346,73 @@ func (h *evidenceHandler) withdrawEvidence(w http.ResponseWriter, r *http.Reques
 	response.WriteJSONValue(w, http.StatusOK, map[string]any{"status": "EVIDENCE_PENDING"})
 }
 
+// reviewEvidence handles POST /api/v1/audits/{id}/controls/{controlId}/evidence/review.
+//
+// The internal reviewer's decision on a submission under EVIDENCE_INTERNAL_REVIEW:
+// approve advances it to auditor validation; reject sends the team back to
+// EVIDENCE_PENDING to resubmit. Either way, the reviewed round's own status is
+// recorded (COMPLIANCE_APPROVED/COMPLIANCE_REJECTED) — mirrors reviewPopulation
+// — so a later resubmission's round is never conflated with this one in the
+// live evidence view (see SubmittedEvidenceList, which hides rejected rounds).
+func (h *evidenceHandler) reviewEvidence(w http.ResponseWriter, r *http.Request) {
+	if !auth.RequireAnyPrivilege(r.Context(), w, privilege.ReviewEvidence, privilege.ManageControls) {
+		return
+	}
+	auditID, ok := parseIntParam(w, r, "id")
+	if !ok {
+		return
+	}
+	controlID, ok := parseIntParam(w, r, "controlId")
+	if !ok {
+		return
+	}
+	control, err := h.controlSvc.GetByID(r.Context(), auditID, controlID)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	if control == nil {
+		response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
+		return
+	}
+	if control.Status != "EVIDENCE_INTERNAL_REVIEW" {
+		response.WriteError(w, http.StatusConflict, "evidence can only be reviewed while it is under internal review")
+		return
+	}
+	req, ok := decodeReviewDecision(w, r)
+	if !ok {
+		return
+	}
+
+	round, err := h.svc.LatestRound(r.Context(), auditID, controlID)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+
+	actor := auth.FromContext(r.Context()).Email
+	roundStatus, controlStatus := "COMPLIANCE_APPROVED", "EVIDENCE_UNDER_VALIDATION"
+	if req.Decision == "REJECT" {
+		roundStatus, controlStatus = "COMPLIANCE_REJECTED", "EVIDENCE_PENDING"
+	}
+	if err := h.svc.UpdateRoundStatus(r.Context(), round.ID, roundStatus, actor); err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	statusReq := model.UpdateStatusRequest{Status: controlStatus, Comment: req.Comment}
+	if err := h.controlSvc.UpdateStatus(r.Context(), auditID, controlID, statusReq, actor); err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	response.WriteJSONValue(w, http.StatusOK, map[string]any{"status": controlStatus})
+}
+
 // validateEvidence handles POST /api/v1/audits/{id}/controls/{controlId}/evidence/validate.
 //
 // The assigned auditor's decision on evidence that passed internal review:
-// approve closes the control out; reject sends it back to the team.
-// Auditor-gated (see requireAssignedAuditor) — this is the auditor-facing
-// counterpart to the internal reviewer's PATCH /status decision at
-// EVIDENCE_INTERNAL_REVIEW, which is unaffected by this change.
+// approve closes the control out; reject sends it back to the team. Either way
+// the reviewed round's own status is recorded (APPROVED/AUDITOR_REJECTED), same
+// reasoning as reviewEvidence above. Auditor-gated (see requireAssignedAuditor).
 func (h *evidenceHandler) validateEvidence(w http.ResponseWriter, r *http.Request) {
 	auditID, ok := parseIntParam(w, r, "id")
 	if !ok {
@@ -333,10 +443,20 @@ func (h *evidenceHandler) validateEvidence(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	round, err := h.svc.LatestRound(r.Context(), auditID, controlID)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+
 	actor := auth.FromContext(r.Context()).Email
-	newStatus := "COMPLETE"
+	roundStatus, newStatus := "APPROVED", "COMPLETE"
 	if req.Decision == "REJECT" {
-		newStatus = "EVIDENCE_NEED_CLARIFICATION"
+		roundStatus, newStatus = "AUDITOR_REJECTED", "EVIDENCE_NEED_CLARIFICATION"
+	}
+	if err := h.svc.UpdateRoundStatus(r.Context(), round.ID, roundStatus, actor); err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
 	}
 	statusReq := model.UpdateStatusRequest{Status: newStatus, Comment: req.Comment}
 	if err := h.controlSvc.UpdateStatus(r.Context(), auditID, controlID, statusReq, actor); err != nil {

@@ -39,9 +39,9 @@ func NewCommentService(repo repository.CommentRepository, trail repository.Audit
 	return &commentService{repo: repo, trail: trail}
 }
 
-func (s *commentService) CreateComment(ctx context.Context, evidenceID int, req domain.CreateAuditCommentRequest) (domain.AuditComment, error) {
-	if evidenceID <= 0 {
-		return domain.AuditComment{}, &apierror.ValidationError{Msg: "evidenceId must be a positive integer"}
+func (s *commentService) CreateComment(ctx context.Context, controlID int, req domain.CreateAuditCommentRequest) (domain.AuditComment, error) {
+	if controlID <= 0 {
+		return domain.AuditComment{}, &apierror.ValidationError{Msg: "controlId must be a positive integer"}
 	}
 	if req.Content == "" {
 		return domain.AuditComment{}, &apierror.ValidationError{Msg: "content is required"}
@@ -49,11 +49,11 @@ func (s *commentService) CreateComment(ctx context.Context, evidenceID int, req 
 	if req.CreatedBy == "" {
 		return domain.AuditComment{}, &apierror.ValidationError{Msg: "createdBy is required"}
 	}
-	c, err := s.repo.CreateComment(ctx, evidenceID, req)
+	c, err := s.repo.CreateComment(ctx, controlID, req)
 	if err != nil {
 		return domain.AuditComment{}, err
 	}
-	s.recordCommentTrail(ctx, evidenceID, req)
+	s.recordCommentTrail(ctx, controlID, req)
 	return *c, nil
 }
 
@@ -61,13 +61,13 @@ func (s *commentService) CreateComment(ctx context.Context, evidenceID int, req 
 // failure here must never fail the comment write that triggered it — the trail
 // is advisory history, not part of the write it describes (mirrors the
 // gateway's controlService.recordTrail contract).
-func (s *commentService) recordCommentTrail(ctx context.Context, evidenceID int, req domain.CreateAuditCommentRequest) {
+func (s *commentService) recordCommentTrail(ctx context.Context, controlID int, req domain.CreateAuditCommentRequest) {
 	if s.trail == nil {
 		return
 	}
-	controlID, auditID, err := s.repo.ResolveControlAndAudit(ctx, evidenceID)
+	auditID, err := s.repo.ResolveAuditID(ctx, controlID)
 	if err != nil {
-		log.Printf("comment trail: resolve control/audit for evidence %d: %v", evidenceID, err)
+		log.Printf("comment trail: resolve audit for control %d: %v", controlID, err)
 		return
 	}
 	detailsBytes, err := json.Marshal(map[string]any{
@@ -77,28 +77,27 @@ func (s *commentService) recordCommentTrail(ctx context.Context, evidenceID int,
 		"isInternal": req.IsInternal,
 	})
 	if err != nil {
-		log.Printf("comment trail: marshal details for evidence %d: %v", evidenceID, err)
+		log.Printf("comment trail: marshal details for control %d: %v", controlID, err)
 		return
 	}
 	details := string(detailsBytes)
-	evID := evidenceID
+	cID := controlID
 	trailReq := domain.CreateAuditTrailRequest{
-		ControlID:  &controlID,
-		EvidenceID: &evID,
-		Action:     "COMMENTED",
-		Details:    &details,
-		CreatedBy:  &req.CreatedBy,
+		ControlID: &cID,
+		Action:    "COMMENTED",
+		Details:   &details,
+		CreatedBy: &req.CreatedBy,
 	}
 	if _, err := s.trail.CreateAuditTrail(ctx, auditID, trailReq); err != nil {
-		log.Printf("comment trail: create for evidence %d: %v", evidenceID, err)
+		log.Printf("comment trail: create for control %d: %v", controlID, err)
 	}
 }
 
-func (s *commentService) ListCommentsByEvidence(ctx context.Context, evidenceID int) (domain.ListAuditCommentsResponse, error) {
-	if evidenceID <= 0 {
-		return domain.ListAuditCommentsResponse{}, &apierror.ValidationError{Msg: "evidenceId must be a positive integer"}
+func (s *commentService) ListCommentsByControl(ctx context.Context, controlID int) (domain.ListAuditCommentsResponse, error) {
+	if controlID <= 0 {
+		return domain.ListAuditCommentsResponse{}, &apierror.ValidationError{Msg: "controlId must be a positive integer"}
 	}
-	comments, err := s.repo.ListCommentsByEvidence(ctx, evidenceID)
+	comments, err := s.repo.ListCommentsByControl(ctx, controlID)
 	if err != nil {
 		return domain.ListAuditCommentsResponse{}, err
 	}

@@ -19,6 +19,7 @@ package entity
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/repository"
@@ -32,26 +33,58 @@ func NewCommentRepository(c *entityclient.Client) repository.CommentRepository {
 	return &commentRepo{c: c}
 }
 
-func (r *commentRepo) Create(ctx context.Context, evidenceID int, content string, isInternal bool, parentCommentID *int, createdBy string) (*model.AuditComment, error) {
+// entComment mirrors the entity's AuditComment JSON (createdOn / *createdBy)
+// which differs from the backend model (createdAt / createdBy string) — see
+// entEvidence in evidence.go for the same pattern.
+type entComment struct {
+	ID              int       `json:"id"`
+	ControlID       int       `json:"controlId"`
+	ParentCommentID *int      `json:"parentCommentId"`
+	Content         string    `json:"content"`
+	IsInternal      bool      `json:"isInternal"`
+	CreatedBy       *string   `json:"createdBy"`
+	CreatedOn       time.Time `json:"createdOn"`
+}
+
+func (c entComment) toModel() *model.AuditComment {
+	m := &model.AuditComment{
+		ID:              c.ID,
+		ControlID:       c.ControlID,
+		ParentCommentID: c.ParentCommentID,
+		Content:         c.Content,
+		IsInternal:      c.IsInternal,
+		CreatedAt:       c.CreatedOn,
+	}
+	if c.CreatedBy != nil {
+		m.CreatedBy = *c.CreatedBy
+	}
+	return m
+}
+
+func (r *commentRepo) Create(ctx context.Context, auditID, controlID int, content string, isInternal bool, parentCommentID *int, createdBy string) (*model.AuditComment, error) {
 	body := map[string]any{
 		"content":         content,
 		"isInternal":      isInternal,
 		"parentCommentId": parentCommentID,
 		"createdBy":       createdBy,
 	}
-	var cm model.AuditComment
-	if err := r.c.Post(ctx, fmt.Sprintf("/evidence/%d/comments", evidenceID), body, &cm); err != nil {
+	var ec entComment
+	if err := r.c.Post(ctx, fmt.Sprintf("/audits/%d/controls/%d/comments", auditID, controlID), body, &ec); err != nil {
 		return nil, err
 	}
-	return &cm, nil
+	return ec.toModel(), nil
 }
 
-func (r *commentRepo) ListByEvidence(ctx context.Context, evidenceID int) ([]*model.AuditComment, error) {
+func (r *commentRepo) ListByControl(ctx context.Context, auditID, controlID int) ([]*model.AuditComment, error) {
 	var resp struct {
-		Comments []*model.AuditComment `json:"comments"`
+		Comments []entComment `json:"comments"`
 	}
-	if err := r.c.Get(ctx, fmt.Sprintf("/evidence/%d/comments", evidenceID), &resp); err != nil {
+	if err := r.c.Get(ctx, fmt.Sprintf("/audits/%d/controls/%d/comments", auditID, controlID), &resp); err != nil {
 		return nil, err
 	}
-	return resp.Comments, nil
+	out := make([]*model.AuditComment, 0, len(resp.Comments))
+	for _, c := range resp.Comments {
+		out = append(out, c.toModel())
+	}
+	return out, nil
 }

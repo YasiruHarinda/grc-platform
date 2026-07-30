@@ -220,9 +220,10 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	mux.HandleFunc("GET /evidence-files/{fileId}", evidenceH.GetEvidenceFileByID)
 	mux.HandleFunc("DELETE /evidence-files/{fileId}", evidenceH.DeleteEvidenceFile)
 
-	// Evidence comments (evidence-scoped; flat delete by comment ID)
-	mux.HandleFunc("POST /evidence/{evidenceId}/comments", commentH.CreateComment)
-	mux.HandleFunc("GET /evidence/{evidenceId}/comments", commentH.ListComments)
+	// Control comments (control-scoped — one thread per control, spanning
+	// population + evidence phases; flat delete by comment ID)
+	mux.HandleFunc("POST /audits/{auditId}/controls/{controlId}/comments", commentH.CreateComment)
+	mux.HandleFunc("GET /audits/{auditId}/controls/{controlId}/comments", commentH.ListComments)
 	mux.HandleFunc("DELETE /comments/{commentId}", commentH.DeleteComment)
 
 	// Evidence AI validation log (written by the async validation agent; read as review hints)

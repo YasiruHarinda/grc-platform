@@ -61,13 +61,23 @@ func baseFolderPathFor(phase, auditName, controlNumber string) string {
 	return fmt.Sprintf("%s/%s/%s/", service.SanitizeSegment(auditName), service.SanitizeSegment(controlNumber), sub)
 }
 
+// fileNamesOf extracts file names for RecordEvidenceAction's fileNames param.
+func fileNamesOf(files []*model.AuditEvidenceFile) []string {
+	names := make([]string, 0, len(files))
+	for _, f := range files {
+		names = append(names, f.FileName)
+	}
+	return names
+}
+
 // recordEvidenceTrail appends a best-effort attribution entry. Failures are logged
-// and swallowed — they never affect the submission the user just made.
-func recordEvidenceTrail(ctx context.Context, trailSvc service.TrailService, auditID, controlID, evidenceID int, actor, via, issuer string) {
+// and swallowed — they never affect the submission the user just made. fileNames
+// is nil for calls that have nothing file-shaped to attach (population/sample).
+func recordEvidenceTrail(ctx context.Context, trailSvc service.TrailService, auditID, controlID, evidenceID int, actor, via, issuer string, fileNames []string) {
 	if trailSvc == nil {
 		return
 	}
-	if err := trailSvc.RecordEvidenceAction(ctx, auditID, controlID, evidenceID, "UPLOADED", actor, via, issuer); err != nil {
+	if err := trailSvc.RecordEvidenceAction(ctx, auditID, controlID, evidenceID, "UPLOADED", actor, via, issuer, fileNames); err != nil {
 		slog.WarnContext(ctx, "audit-trail attribution failed", "controlId", controlID, "via", via, "err", err)
 	}
 }
@@ -241,7 +251,7 @@ func (h *evidenceAppHandler) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	recordEvidenceTrail(r.Context(), h.trailSvc, auditID, controlID, evidence.ID, actor, channelEvidenceApp, user.Issuer)
+	recordEvidenceTrail(r.Context(), h.trailSvc, auditID, controlID, evidence.ID, actor, channelEvidenceApp, user.Issuer, fileNamesOf(evidence.Files))
 	triggerAIValidation(h.aiClient, auditID, controlID, evidence.ID, actor)
 
 	response.WriteJSONValue(w, http.StatusCreated, evidence)
@@ -346,7 +356,7 @@ func (h *evidenceAppHandler) populationSubmit(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	recordEvidenceTrail(r.Context(), h.trailSvc, auditID, controlID, 0, actor, channelEvidenceApp, user.Issuer)
+	recordEvidenceTrail(r.Context(), h.trailSvc, auditID, controlID, 0, actor, channelEvidenceApp, user.Issuer, nil)
 
 	response.WriteJSONValue(w, http.StatusCreated, result)
 }

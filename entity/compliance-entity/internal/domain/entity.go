@@ -1417,11 +1417,13 @@ type ListRiskNotificationsResponse struct {
 // Audit Comment (audit_comment) — threaded comments on an evidence submission
 // =============================================================================
 
-// AuditComment is one comment on an evidence submission. Threaded via
-// ParentCommentID; IsInternal hides it from the external auditor.
+// AuditComment is one comment on a control — a single thread spanning both
+// the population and evidence phases, available from the moment the control
+// is opened. Threaded via ParentCommentID; IsInternal hides it from the
+// external auditor.
 type AuditComment struct {
 	ID              int       `json:"id"`
-	EvidenceID      int       `json:"evidenceId"`
+	ControlID       int       `json:"controlId"`
 	AuthorID        *int      `json:"authorId"`
 	ParentCommentID *int      `json:"parentCommentId"`
 	Content         string    `json:"content"`
@@ -1431,7 +1433,7 @@ type AuditComment struct {
 	UpdatedOn       time.Time `json:"updatedOn"`
 }
 
-// CreateAuditCommentRequest is the payload for POST /evidence/{evidenceId}/comments.
+// CreateAuditCommentRequest is the payload for POST /audits/{auditId}/controls/{controlId}/comments.
 type CreateAuditCommentRequest struct {
 	AuthorID        *int   `json:"authorId"`
 	ParentCommentID *int   `json:"parentCommentId"`
@@ -1440,7 +1442,7 @@ type CreateAuditCommentRequest struct {
 	CreatedBy       string `json:"createdBy"`
 }
 
-// ListAuditCommentsResponse is returned by GET /evidence/{evidenceId}/comments.
+// ListAuditCommentsResponse is returned by GET /audits/{auditId}/controls/{controlId}/comments.
 type ListAuditCommentsResponse struct {
 	Comments []AuditComment `json:"comments"`
 }

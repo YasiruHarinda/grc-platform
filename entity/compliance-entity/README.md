@@ -272,8 +272,8 @@ here).
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/evidence/{evidenceId}/comments` | Add comment |
-| `GET` | `/evidence/{evidenceId}/comments` | List comments |
+| `POST` | `/audits/{auditId}/controls/{controlId}/comments` | Add comment |
+| `GET` | `/audits/{auditId}/controls/{controlId}/comments` | List comments |
 | `DELETE` | `/comments/{commentId}` | Delete comment |
 | `POST` | `/audits/{auditId}/trail` | Write trail entry |
 | `GET` | `/audits/{auditId}/trail` | List trail |

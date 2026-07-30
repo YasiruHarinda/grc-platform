@@ -313,6 +313,9 @@ func (r *controlRepo) CreateControl(ctx context.Context, auditID int, req domain
 		controlSource,
 		req.CreatedBy, req.CreatedBy)
 	if err != nil {
+		if isDuplicateKey(err) {
+			return nil, &apierror.ConflictError{Msg: fmt.Sprintf("control number %q already exists in this audit", defCols.controlNumber)}
+		}
 		return nil, fmt.Errorf("control.Create: %w", err)
 	}
 	id, _ := res.LastInsertId()
@@ -321,10 +324,10 @@ func (r *controlRepo) CreateControl(ctx context.Context, auditID int, req domain
 		desc := nullableString(&p.Description)
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO audit_population
-			 (control_id, owner_id, team_id, reference_number, description, due_date, status, created_by, updated_by)
-			 VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
+			 (control_id, owner_id, team_id, reference_number, description, due_date, comments, status, created_by, updated_by)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
 			id, nullableInt(p.OwnerID), nullableInt(p.TeamID),
-			p.ReferenceNumber, desc, p.DueDate,
+			p.ReferenceNumber, desc, p.DueDate, nullableString(p.Comments),
 			req.CreatedBy, req.CreatedBy); err != nil {
 			return nil, fmt.Errorf("control.Create population: %w", err)
 		}
@@ -366,6 +369,9 @@ func (r *controlRepo) BulkCreateControls(ctx context.Context, auditID int, reqs 
 			req.DueDate, initialStatus, controlSource,
 			req.CreatedBy, req.CreatedBy)
 		if err != nil {
+			if isDuplicateKey(err) {
+				return nil, &apierror.ConflictError{Msg: fmt.Sprintf("control number %q already exists in this audit", req.ControlNumber)}
+			}
 			return nil, fmt.Errorf("control.BulkCreate insert %q: %w", req.ControlNumber, err)
 		}
 		id, _ := res.LastInsertId()
@@ -375,10 +381,10 @@ func (r *controlRepo) BulkCreateControls(ctx context.Context, auditID int, reqs 
 			desc := nullableString(&p.Description)
 			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO audit_population
-				 (control_id, owner_id, team_id, reference_number, description, due_date, status, created_by, updated_by)
-				 VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
+				 (control_id, owner_id, team_id, reference_number, description, due_date, comments, status, created_by, updated_by)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
 				id, nullableInt(p.OwnerID), nullableInt(p.TeamID),
-				p.ReferenceNumber, desc, p.DueDate,
+				p.ReferenceNumber, desc, p.DueDate, nullableString(p.Comments),
 				req.CreatedBy, req.CreatedBy); err != nil {
 				return nil, fmt.Errorf("control.BulkCreate population %q: %w", req.ControlNumber, err)
 			}
@@ -426,9 +432,14 @@ func (r *controlRepo) CountDeletionBlockers(ctx context.Context, controlID int) 
 		return 0, 0, fmt.Errorf("control.CountDeletionBlockers evidence(%d): %w", controlID, err)
 	}
 
+	// PENDING is the freshly-created, never-submitted state every OE control's
+	// population round starts in (see CreateControl/BulkCreateControls) — it
+	// must not count as "in progress" or an OE control could never be deleted
+	// before its team submits anything, unlike a DESIGN control (which has no
+	// audit_population row at all until work starts).
 	var activePopulationCount int
 	if err := r.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM audit_population WHERE control_id = ? AND status <> 'APPROVED'", controlID,
+		"SELECT COUNT(*) FROM audit_population WHERE control_id = ? AND status NOT IN ('PENDING', 'APPROVED')", controlID,
 	).Scan(&activePopulationCount); err != nil {
 		return 0, 0, fmt.Errorf("control.CountDeletionBlockers population(%d): %w", controlID, err)
 	}

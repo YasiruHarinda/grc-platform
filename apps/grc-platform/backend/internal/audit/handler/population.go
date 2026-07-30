@@ -164,7 +164,7 @@ func (h *evidenceHandler) submitPopulation(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Best-effort audit-trail attribution: this submission came through the web app.
-	recordEvidenceTrail(r.Context(), h.trailSvc, auditID, controlID, 0, actor, channelWebApp, user.Issuer)
+	recordEvidenceTrail(r.Context(), h.trailSvc, auditID, controlID, 0, actor, channelWebApp, user.Issuer, nil)
 
 	response.WriteJSONValue(w, http.StatusCreated, result)
 }
@@ -421,6 +421,14 @@ func (h *evidenceHandler) reviewPopulation(w http.ResponseWriter, r *http.Reques
 		// separate clarification state. Only the auditor's validate-stage reject
 		// (see validatePopulation below) uses POPULATION_NEED_CLARIFICATION.
 		roundStatus, controlStatus = "COMPLIANCE_REJECTED", "POPULATION_PENDING"
+		// Clear the rejected submission's files so the resubmission form starts
+		// empty, matching how a resubmitted evidence round has no leftover
+		// files (there each resubmission is a fresh round; population reuses
+		// the same round, so this has to clear explicitly).
+		if err := h.popSvc.ClearFiles(r.Context(), round.ID, "POPULATION"); err != nil {
+			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+			return
+		}
 	}
 	if err := h.popSvc.UpdateRoundStatus(r.Context(), round.ID, roundStatus, actor); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
@@ -480,6 +488,12 @@ func (h *evidenceHandler) validatePopulation(w http.ResponseWriter, r *http.Requ
 	roundStatus, controlStatus := "APPROVED", "POPULATION_COMPLETE"
 	if req.Decision == "REJECT" {
 		roundStatus, controlStatus = "AUDITOR_REJECTED", "POPULATION_NEED_CLARIFICATION"
+		// Same as the internal-review reject above: clear the rejected files so
+		// the resubmission starts empty instead of carrying the old ones forward.
+		if err := h.popSvc.ClearFiles(r.Context(), round.ID, "POPULATION"); err != nil {
+			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+			return
+		}
 	}
 	if err := h.popSvc.UpdateRoundStatus(r.Context(), round.ID, roundStatus, actor); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)

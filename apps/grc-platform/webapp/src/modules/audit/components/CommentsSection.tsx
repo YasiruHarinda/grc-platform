@@ -29,13 +29,14 @@ import {
 } from "@wso2/oxygen-ui";
 import { Lock, MessageSquare } from "@wso2/oxygen-ui-icons-react";
 import { useState, type JSX } from "react";
-import { useGetEvidence } from "@modules/audit/api/useGetEvidence";
 import { useAddComment, useGetComments } from "@modules/audit/api/useComments";
 import { formatTimestamp } from "@modules/audit/utils/format";
 
 /**
- * Comments on a control's latest evidence submission. Ticking "Internal only"
- * marks a comment is_internal, so the backend hides it from external auditors.
+ * One comment thread per control, spanning both the population and evidence
+ * phases — available as soon as the control drawer is open, not gated on an
+ * evidence/population round existing yet. Ticking "Internal only" marks a
+ * comment is_internal, so the backend hides it from external auditors.
  */
 export default function CommentsSection({
   auditId,
@@ -46,33 +47,17 @@ export default function CommentsSection({
   controlId: number;
   canComment?: boolean;
 }): JSX.Element {
-  const evidence = useGetEvidence(auditId, controlId, true);
-  // Comments attach to the latest evidence round (list is newest-first).
-  const evidenceId = evidence.data?.[0]?.id ?? null;
-
-  const comments = useGetComments(evidenceId);
+  const comments = useGetComments(auditId, controlId);
   const addComment = useAddComment();
 
   const [text, setText] = useState("");
   const [internal, setInternal] = useState(false);
 
   function handleAdd() {
-    if (evidenceId === null || text.trim() === "") return;
+    if (text.trim() === "") return;
     addComment.mutate(
-      { evidenceId, content: text.trim(), isInternal: internal },
+      { auditId, controlId, content: text.trim(), isInternal: internal },
       { onSuccess: () => { setText(""); setInternal(false); } },
-    );
-  }
-
-  // No evidence submitted yet → nothing to comment on.
-  if (evidence.isLoading) {
-    return <Skeleton variant="rectangular" height={80} sx={{ borderRadius: 1 }} />;
-  }
-  if (evidenceId === null) {
-    return (
-      <Typography variant="body2" color="text.secondary">
-        Comments become available once evidence is submitted for this control.
-      </Typography>
     );
   }
 
@@ -101,9 +86,6 @@ export default function CommentsSection({
                   : theme.palette.mode === "dark" ? "#1d4ed8" : "#93c5fd",
                 pl: 2, py: 0.75,
                 borderRadius: "0 4px 4px 0",
-                bgcolor: c.isInternal
-                  ? theme.palette.mode === "dark" ? "rgba(249,115,22,0.12)" : "rgba(234,88,12,0.06)"
-                  : theme.palette.mode === "dark" ? "rgba(29,78,216,0.08)" : "#eff6ff",
               })}
             >
               <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>

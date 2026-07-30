@@ -32,11 +32,11 @@ import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { useGetTrail, type TrailEntry, type TrailDetails } from "@modules/audit/api/useGetTrail";
 import { useGetEvidence } from "@modules/audit/api/useGetEvidence";
-import { commentsQueryKey, type AuditComment } from "@modules/audit/api/useComments";
+import { useGetComments, type AuditComment } from "@modules/audit/api/useComments";
 import { aiValidationQueryKey, type AIValidationLog } from "@modules/audit/api/useGetAIValidation";
 import ControlStatusChip from "@modules/audit/components/ControlStatusChip";
 import { CONTROL_STATUS_LABELS } from "@modules/audit/utils/controlStatus";
-import { formatTimestamp, relativeTime } from "@modules/audit/utils/format";
+import { formatTimestamp } from "@modules/audit/utils/format";
 import type { ControlStatus } from "@modules/audit/types/audit";
 
 // ─── Event model ──────────────────────────────────────────────────────────────
@@ -97,20 +97,33 @@ const VIA_LABELS: Record<string, string> = {
 
 // ─── Trail → event mapping ────────────────────────────────────────────────────
 
-function trailToEvent(e: TrailEntry): TimelineEvent | null {
+function trailToEvent(e: TrailEntry, fileNamesByEvidenceId: Map<number, string[]>): TimelineEvent | null {
   const d = readDetails(e.details);
   const from = asStatus(d.from);
   const to = asStatus(d.to);
   const viaNote = typeof d.via === "string" && VIA_LABELS[d.via] ? `via ${VIA_LABELS[d.via]}` : undefined;
   const base = { id: `t-${e.id}`, at: e.createdAt, actor: e.createdBy };
 
+  // New UPLOADED/RESUBMITTED entries carry file names directly (d.files);
+  // older ones predate that and only have {via, issuer}, so fall back to
+  // looking the round's files up from the evidence fetched alongside the
+  // trail (see fileNamesByEvidenceId below).
+  function withFiles(note: string | undefined): string | undefined {
+    const names = d.files && d.files.length > 0
+      ? d.files
+      : e.evidenceId !== null ? fileNamesByEvidenceId.get(e.evidenceId) : undefined;
+    if (!names || names.length === 0) return note;
+    const fileList = names.join(", ");
+    return note ? `${note} · ${fileList}` : fileList;
+  }
+
   switch (e.action) {
     case "CREATED":
       return { ...base, tone: "created", title: "Control created" };
     case "UPLOADED":
-      return { ...base, tone: "uploaded", title: "Evidence submitted for internal review", body: viaNote };
+      return { ...base, tone: "uploaded", title: "Evidence submitted for internal review", body: withFiles(viaNote) };
     case "RESUBMITTED":
-      return { ...base, tone: "resubmitted", title: "Evidence resubmitted", body: viaNote };
+      return { ...base, tone: "resubmitted", title: "Evidence resubmitted", body: withFiles(viaNote) };
     case "APPROVED": {
       const title =
         to === "COMPLETE"
@@ -129,7 +142,11 @@ function trailToEvent(e: TrailEntry): TimelineEvent | null {
       return { ...base, tone: "rejected", title, from, to, body: readComment(d) };
     }
     case "COMMENTED":
-      return { ...base, tone: "comment", title: "Comment added", body: readComment(d) };
+      // Every comment is also fetched directly (see commentToEvent below),
+      // which has the richer view (author, internal-only badge). The trail
+      // entry exists only for the audit-wide Activity Log page — folding it
+      // in here too would show the same comment twice.
+      return null;
     case "AI_VALIDATED":
       return { ...base, tone: "ai", title: "AI validation completed", body: readComment(d) };
     default:
@@ -197,21 +214,23 @@ export default function ControlHistoryTimeline({
 }): JSX.Element {
   const authFetch = useAuthApiClient();
   const trail = useGetTrail(auditId, controlId, true);
-  // Evidence rounds give us the evidence ids to pull per-round comments + AI runs,
-  // which are woven into the same timeline as the lifecycle events.
+  // Evidence rounds give us the evidence ids to pull per-round AI runs, which
+  // are woven into the same timeline as the lifecycle events (comments are
+  // control-scoped now, so they're fetched once below, not per round).
   const evidence = useGetEvidence(auditId, controlId, true);
   const evidenceIds = useMemo(() => (evidence.data ?? []).map((e) => e.id), [evidence.data]);
+  // Maps each evidence round to the names of the files submitted in it, so an
+  // UPLOADED/RESUBMITTED trail entry (which itself carries no file names) can
+  // show what was actually submitted.
+  const fileNamesByEvidenceId = useMemo(
+    () => new Map((evidence.data ?? []).map((sub) => [sub.id, (sub.files ?? []).map((f) => f.fileName)])),
+    [evidence.data],
+  );
 
-  const commentResults = useQueries({
-    queries: evidenceIds.map((id) => ({
-      queryKey: commentsQueryKey(id),
-      queryFn: async (): Promise<AuditComment[]> => {
-        const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/evidence/${id}/comments`);
-        if (!res.ok) throw new Error(String(res.status));
-        return ((await res.json()) as { items?: AuditComment[] }).items ?? [];
-      },
-    })),
-  });
+  // Comments are control-scoped (one thread spanning population + evidence
+  // phases), so a single fetch covers the whole timeline — unlike AI
+  // validations below, which are still per-evidence-round.
+  const comments = useGetComments(auditId, controlId);
 
   const aiResults = useQueries({
     queries: evidenceIds.map((id) => ({
@@ -227,12 +246,10 @@ export default function ControlHistoryTimeline({
   const events = useMemo<TimelineEvent[]>(() => {
     const out: TimelineEvent[] = [];
     for (const e of trail.data ?? []) {
-      const ev = trailToEvent(e);
+      const ev = trailToEvent(e, fileNamesByEvidenceId);
       if (ev) out.push(ev);
     }
-    for (const r of commentResults) {
-      for (const c of r.data ?? []) out.push(commentToEvent(c));
-    }
+    for (const c of comments.data ?? []) out.push(commentToEvent(c));
     for (const r of aiResults) {
       for (const a of r.data ?? []) {
         const ev = aiToEvent(a);
@@ -241,7 +258,7 @@ export default function ControlHistoryTimeline({
     }
     // Oldest first: the tab reads as the control's journey from creation onward.
     return out.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
-  }, [trail.data, commentResults, aiResults]);
+  }, [trail.data, comments.data, aiResults, fileNamesByEvidenceId]);
 
   if (trail.isLoading) {
     return (
@@ -303,21 +320,10 @@ export default function ControlHistoryTimeline({
       </Box>
 
       {/* Timeline */}
-      <Box sx={{ position: "relative", pl: 0.5 }}>
-        {/* connecting rail behind the nodes */}
-        <Box
-          sx={{
-            position: "absolute",
-            left: 19,
-            top: 14,
-            bottom: 14,
-            width: "2px",
-            bgcolor: "divider",
-          }}
-        />
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 2.25 }}>
-          {events.map((ev) => (
-            <TimelineRow key={ev.id} event={ev} />
+      <Box sx={{ pl: 0.5 }}>
+        <Box sx={{ display: "flex", flexDirection: "column" }}>
+          {events.map((ev, i) => (
+            <TimelineRow key={ev.id} event={ev} isLast={i === events.length - 1} />
           ))}
         </Box>
       </Box>
@@ -327,32 +333,37 @@ export default function ControlHistoryTimeline({
 
 // ─── Row ──────────────────────────────────────────────────────────────────────
 
-function TimelineRow({ event }: { event: TimelineEvent }): JSX.Element {
+// The connecting rail is drawn per-row (icon, then a line filling the rest of
+// the row's height) instead of one continuous line behind every node — that
+// way it only ever runs through the gap between icons, never through the
+// icon itself, regardless of how tall each row's content is.
+function TimelineRow({ event, isLast }: { event: TimelineEvent; isLast: boolean }): JSX.Element {
   const tone = TONE[event.tone];
   return (
-    <Box sx={{ display: "flex", gap: 1.75, position: "relative" }}>
-      {/* node */}
-      <Box
-        sx={{
-          width: 30,
-          height: 30,
-          borderRadius: "50%",
-          flexShrink: 0,
-          zIndex: 1,
-          bgcolor: (theme) => (theme.palette.mode === "dark" ? "background.paper" : "#fff"),
-          border: "2px solid",
-          borderColor: tone.color,
-          color: tone.color,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        {tone.icon}
+    <Box sx={{ display: "flex", gap: 1.75 }}>
+      <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
+        {/* node — no fill, border matches the icon's own color */}
+        <Box
+          sx={{
+            width: 30,
+            height: 30,
+            borderRadius: "50%",
+            flexShrink: 0,
+            border: "1px solid",
+            borderColor: "text.secondary",
+            color: "text.secondary",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          {tone.icon}
+        </Box>
+        {!isLast && <Box sx={{ width: "2px", flex: 1, bgcolor: "divider", my: 0.5 }} />}
       </Box>
 
       {/* content */}
-      <Box sx={{ flex: 1, minWidth: 0, pt: 0.25 }}>
+      <Box sx={{ flex: 1, minWidth: 0, pt: 0.25, pb: isLast ? 0 : 2.25 }}>
         <Box sx={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 1 }}>
           <Typography variant="body2" fontWeight={600} sx={{ lineHeight: 1.4 }}>
             {event.title}
@@ -360,10 +371,9 @@ function TimelineRow({ event }: { event: TimelineEvent }): JSX.Element {
           <Typography
             variant="caption"
             color="text.secondary"
-            title={formatTimestamp(event.at)}
             sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
           >
-            {relativeTime(event.at)}
+            {formatTimestamp(event.at)}
           </Typography>
         </Box>
 

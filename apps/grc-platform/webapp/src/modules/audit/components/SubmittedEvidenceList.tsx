@@ -106,8 +106,16 @@ export default function SubmittedEvidenceList({
 
   // A resubmission creates a new round, and deleting a round's last file leaves
   // an otherwise-empty round behind. Drop rounds with no files so the list shows
-  // one "Submitted …" header per round that actually holds evidence.
-  const submissions = (data ?? []).filter((s) => (s.files?.length ?? 0) > 0);
+  // one "Submitted …" header per round that actually holds evidence. Also drop
+  // rounds a reviewer/auditor already rejected (COMPLIANCE_REJECTED/
+  // AUDITOR_REJECTED, set by useReviewEvidence/useValidateEvidence): once a round
+  // is rejected it's superseded by whatever the team resubmits next, so showing
+  // it here would conflate old, no-longer-relevant files with the fresh
+  // resubmission. Rejected rounds remain visible in the History tab.
+  const REJECTED_STATUSES = new Set(["COMPLIANCE_REJECTED", "AUDITOR_REJECTED"]);
+  const submissions = (data ?? []).filter(
+    (s) => (s.files?.length ?? 0) > 0 && !REJECTED_STATUSES.has(s.status),
+  );
   const totalFiles = submissions.reduce((n, s) => n + (s.files?.length ?? 0), 0);
 
   if (totalFiles === 0) {

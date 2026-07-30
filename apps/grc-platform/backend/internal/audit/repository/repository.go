@@ -107,6 +107,9 @@ type EvidenceRepository interface {
 	GetFileByID(ctx context.Context, fileID int) (*model.AuditEvidenceFile, error)
 	// DeleteFile removes a single evidence file row by ID.
 	DeleteFile(ctx context.Context, fileID int) error
+	// UpdateStatus advances one evidence round's own status (distinct from the
+	// control's status) — e.g. SUBMITTED → COMPLIANCE_REJECTED.
+	UpdateStatus(ctx context.Context, evidenceID int, status, updatedBy string) error
 }
 
 // PopulationRepository is the data-access contract for OE-control population
@@ -117,6 +120,10 @@ type PopulationRepository interface {
 	AddFile(ctx context.Context, populationID int, fileKind, fileName, filePath string, fileType *string, fileSize *int64, createdBy string) error
 	// UpdateStatus advances the population round's status (e.g. → SUBMITTED).
 	UpdateStatus(ctx context.Context, populationID int, status, updatedBy string) error
+	// UpdateDetails edits a population round's requirement text, due date,
+	// comments, owner, and team — used when a manager edits an OE control's
+	// population details from the same form used to create them.
+	UpdateDetails(ctx context.Context, populationID int, details model.PopulationDetails, updatedBy string) error
 	// ListByControl returns every population round for a control, oldest first.
 	ListByControl(ctx context.Context, auditID, controlID int) ([]*model.AuditPopulation, error)
 	// ListFiles returns all files on a population round, newest first.
@@ -127,10 +134,12 @@ type PopulationRepository interface {
 	DeleteFile(ctx context.Context, fileID int) error
 }
 
-// CommentRepository is the data-access contract for audit_comment (evidence-scoped).
+// CommentRepository is the data-access contract for audit_comment
+// (control-scoped — one thread per control, spanning population and
+// evidence phases).
 type CommentRepository interface {
-	Create(ctx context.Context, evidenceID int, content string, isInternal bool, parentCommentID *int, createdBy string) (*model.AuditComment, error)
-	ListByEvidence(ctx context.Context, evidenceID int) ([]*model.AuditComment, error)
+	Create(ctx context.Context, auditID, controlID int, content string, isInternal bool, parentCommentID *int, createdBy string) (*model.AuditComment, error)
+	ListByControl(ctx context.Context, auditID, controlID int) ([]*model.AuditComment, error)
 }
 type AssignmentRepository interface{}
 type NotificationRepository interface{}

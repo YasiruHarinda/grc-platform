@@ -50,6 +50,19 @@ func (r *populationRepo) UpdateStatus(ctx context.Context, populationID int, sta
 	return r.c.Patch(ctx, fmt.Sprintf("/populations/%d", populationID), body, nil)
 }
 
+func (r *populationRepo) UpdateDetails(ctx context.Context, populationID int, details model.PopulationDetails, updatedBy string) error {
+	body := map[string]any{
+		"description":     details.Description,
+		"dueDate":         details.DueDate,
+		"comments":        details.Comments,
+		"referenceNumber": details.ReferenceNumber,
+		"ownerId":         details.OwnerID,
+		"teamId":          details.TeamID,
+		"updatedBy":       updatedBy,
+	}
+	return r.c.Patch(ctx, fmt.Sprintf("/populations/%d", populationID), body, nil)
+}
+
 // entPopulationRound mirrors the entity's AuditPopulation JSON.
 type entPopulationRound struct {
 	ID              int       `json:"id"`

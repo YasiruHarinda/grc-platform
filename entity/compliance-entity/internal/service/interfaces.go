@@ -178,10 +178,11 @@ type AuditTrailService interface {
 	ListAuditTrail(ctx context.Context, auditID int, filter domain.TrailFilter, limit, offset int) (domain.ListAuditTrailResponse, error)
 }
 
-// CommentService defines operations on audit_comment (evidence-scoped).
+// CommentService defines operations on audit_comment (control-scoped — one
+// thread per control, spanning population and evidence phases).
 type CommentService interface {
-	CreateComment(ctx context.Context, evidenceID int, req domain.CreateAuditCommentRequest) (domain.AuditComment, error)
-	ListCommentsByEvidence(ctx context.Context, evidenceID int) (domain.ListAuditCommentsResponse, error)
+	CreateComment(ctx context.Context, controlID int, req domain.CreateAuditCommentRequest) (domain.AuditComment, error)
+	ListCommentsByControl(ctx context.Context, controlID int) (domain.ListAuditCommentsResponse, error)
 	DeleteComment(ctx context.Context, commentID int) error
 }
 

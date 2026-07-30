@@ -52,7 +52,6 @@ import { useEffect, useRef, useState, type JSX } from "react";
 import ControlStatusChip from "@modules/audit/components/ControlStatusChip";
 import UserAvatar from "@modules/audit/components/UserAvatar";
 import { formatAuditDate } from "@modules/audit/utils/format";
-import { useUpdateControlStatus } from "@modules/audit/api/useUpdateControlStatus";
 import EvidenceUploadBox from "@modules/audit/components/EvidenceUploadBox";
 import SubmittedEvidenceList from "@modules/audit/components/SubmittedEvidenceList";
 import ControlHistoryTimeline from "@modules/audit/components/ControlHistoryTimeline";
@@ -65,6 +64,7 @@ import { usePopulationValidate } from "@modules/audit/api/usePopulationValidate"
 import { useSubmitSample } from "@modules/audit/api/useSubmitSample";
 import { useRequestSampleTime } from "@modules/audit/api/useRequestSampleTime";
 import { useValidateEvidence } from "@modules/audit/api/useValidateEvidence";
+import { useReviewEvidence } from "@modules/audit/api/useReviewEvidence";
 import { useCurrentUserEmail } from "@modules/audit/hooks/useCurrentUserEmail";
 import { isAssignedAuditor } from "@modules/audit/utils/auditor";
 import type { AuditControl, ControlStatus } from "@modules/audit/types/audit";
@@ -91,8 +91,19 @@ const SCOPE_LABELS: Record<string, string> = {
 };
 
 // ─── Info tile ────────────────────────────────────────────────────────────────
+// Fixed grid cell, not a flex-wrap row: a returning user learns "Due Date is
+// top-right, Owner is bottom-left" and that only holds if every field keeps
+// the same slot every time, regardless of content length or drawer width.
 
-function InfoTile({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
+function InfoTile({
+  label,
+  children,
+  accent = false,
+}: {
+  label: string;
+  children: React.ReactNode;
+  accent?: boolean;
+}): JSX.Element {
   return (
     <Box
       sx={{
@@ -100,18 +111,47 @@ function InfoTile({ label, children }: { label: string; children: React.ReactNod
         py: 1,
         borderRadius: 1,
         border: "1px solid",
-        borderColor: "divider",
+        borderColor: accent ? "#dc2626" : "divider",
         bgcolor: "action.hover",
         display: "flex",
         flexDirection: "column",
         gap: 0.4,
       }}
     >
-      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500, fontSize: "0.67rem", lineHeight: 1 }}>
+      <Typography
+        variant="caption"
+        // Matches the header's "Overdue" chip (#dc2626) exactly, rather than
+        // the theme's error.main token which can render a different shade.
+        sx={{ fontWeight: 500, fontSize: "0.67rem", lineHeight: 1, color: accent ? "#dc2626" : "text.secondary" }}
+      >
         {label}
       </Typography>
       {children}
     </Box>
+  );
+}
+
+// Due Date is the one field worth catching at a glance, so it always renders
+// through this tile (red-accented when overdue) rather than a plain value —
+// but it still sits in the same grid cell as every other tile.
+function DueDateTile({
+  label,
+  date,
+  overdue = false,
+}: {
+  label: string;
+  date: string | null;
+  overdue?: boolean;
+}): JSX.Element {
+  return (
+    <InfoTile label={label} accent={overdue}>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+        <CalendarDays size={13} color={overdue ? "#dc2626" : "#64748b"} style={{ flexShrink: 0 }} />
+        <Typography variant="body2" fontWeight={700} fontSize="0.8rem" sx={{ color: overdue ? "#dc2626" : "text.primary" }}>
+          {date ? formatAuditDate(date) : "—"}
+        </Typography>
+      </Box>
+    </InfoTile>
   );
 }
 
@@ -129,7 +169,9 @@ interface SectionCardProps {
 
 function SectionCard({
   icon,
-  iconColor = "#475569",
+  // A theme token, not a fixed hex: "#475569" reads fine in light mode but is
+  // nearly black against a dark background, so it must resolve per-theme.
+  iconColor = "text.secondary",
   iconBg = "#f1f5f9",
   title,
   children,
@@ -208,10 +250,41 @@ function oeActiveStep(status: ControlStatus): number {
     status === "AWAITING_SAMPLE" ||
     status === "SUBMITTED_SAMPLE"
   ) return 1;
-  if (status === "EVIDENCE_PENDING") return 2;
+  // EVIDENCE_NEED_CLARIFICATION (auditor rejected at validation) buckets with
+  // EVIDENCE_PENDING (internal reviewer rejected) — both are "team must
+  // resubmit" and render identically below (driven by control.comments, not
+  // the exact status), the same way designActiveStep treats its own
+  // equivalent statuses identically. Without this, EVIDENCE_NEED_CLARIFICATION
+  // fell into the step-3 bucket below with no matching status check, so
+  // nothing rendered in the Evidence tab after an auditor rejection.
+  if (status === "EVIDENCE_PENDING" || status === "EVIDENCE_NEED_CLARIFICATION") return 2;
   if (status === "COMPLETE") return 4;
   return 3; // EVIDENCE_INTERNAL_REVIEW, EVIDENCE_UNDER_VALIDATION
 }
+
+// Statuses where the OE control is still in the population phase — the
+// Overview tab shows the "Population Requirement" text for these, and
+// switches to "Evidence Requirement" for every status after (sample
+// submitted onward), since the team's job has shifted from describing the
+// population to providing evidence.
+const OE_POPULATION_PHASE_STATUSES = new Set<ControlStatus>([
+  "POPULATION_PENDING",
+  "POPULATION_INTERNAL_REVIEW",
+  "POPULATION_UNDER_VALIDATION",
+  "POPULATION_NEED_CLARIFICATION",
+  "POPULATION_COMPLETE",
+  "AWAITING_SAMPLE",
+]);
+
+// Statuses that render their own review/validate decision card — the
+// population AI Validation placeholder gets its own placement right before
+// that decision for these two (between submission and the decision), instead
+// of the general "after everything" placement every other population
+// sub-state uses.
+const POPULATION_REVIEW_STATUSES = new Set<ControlStatus>([
+  "POPULATION_INTERNAL_REVIEW",
+  "POPULATION_UNDER_VALIDATION",
+]);
 
 // ─── Design evidence section ──────────────────────────────────────────────────
 
@@ -248,12 +321,12 @@ function DesignEvidenceSection({
       {activeStep === 0 && (
         <>
           {control.comments && (
-            <SectionCard icon={<AlertCircle size={16} />} iconBg="#fee2e2" iconColor="#dc2626" title="Evidence Rejected">
+            <SectionCard icon={<AlertCircle size={16} />} iconBg="transparent" title="Evidence Rejected">
               <Typography variant="body2" sx={{ lineHeight: 1.7 }}>{control.comments}</Typography>
             </SectionCard>
           )}
           {canSubmitEvidence && (
-            <SectionCard icon={<FileUp size={16} />} iconBg="#dcfce7" iconColor="#16a34a" title="Evidence Submission" flexContent>
+            <SectionCard icon={<FileUp size={16} />} iconBg="transparent" title="Evidence Submission" flexContent>
               <EvidenceUploadBox
                 auditId={control.auditId}
                 controlId={control.id}
@@ -270,7 +343,7 @@ function DesignEvidenceSection({
           stable. Removing a file and adding another together cover editing a
           submission, so there is no separate withdraw step. */}
       {activeStep === 1 && (
-        <SectionCard icon={<FileUp size={16} />} iconBg="#dcfce7" iconColor="#16a34a" title="Evidence Submission">
+        <SectionCard icon={<FileUp size={16} />} iconBg="transparent" title="Evidence Submission">
           <SubmittedEvidenceList
             auditId={control.auditId}
             controlId={control.id}
@@ -290,6 +363,7 @@ function DesignEvidenceSection({
                 controlId={control.id}
                 hint="PDF, XLSX, PNG up to 25 MB each"
                 buttonLabel="Add Files"
+                evidenceMode="append"
                 onSubmitted={() => onStatusChange("EVIDENCE_INTERNAL_REVIEW")}
               />
             </Box>
@@ -297,23 +371,18 @@ function DesignEvidenceSection({
         </SectionCard>
       )}
 
-      {/* AI validation — always below submission card, consistent position */}
-      {canSubmitEvidence && (
-        <AIValidationCard auditId={control.auditId} controlId={control.id} variant="submitter" />
-      )}
-
       {activeStep === 2 && (
-        <SectionCard icon={<ClipboardCheck size={16} />} iconBg="#f5f3ff" iconColor="#7c3aed" title="Submitted Evidence">
+        <SectionCard icon={<ClipboardCheck size={16} />} iconBg="transparent" title="Submitted Evidence">
           <SubmittedEvidenceList auditId={control.auditId} controlId={control.id} />
           <Box sx={{ mt: 1.5, py: 1, px: 1.5, borderRadius: 1.5, bgcolor: "action.hover", display: "flex", alignItems: "center", gap: 1 }}>
             <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: "#7c3aed", flexShrink: 0 }} />
-            <Typography variant="body2" color="text.secondary">Passed internal review — external auditor is validating.</Typography>
+            <Typography variant="body2" color="text.secondary">Passed internal review. External auditor is validating.</Typography>
           </Box>
         </SectionCard>
       )}
 
       {activeStep === 3 && (
-        <SectionCard icon={<CheckCircle2 size={16} />} iconBg="#f0fdf4" iconColor="#16a34a" title="Submitted Evidence">
+        <SectionCard icon={<CheckCircle2 size={16} />} iconBg="transparent" title="Submitted Evidence">
           <SubmittedEvidenceList auditId={control.auditId} controlId={control.id} />
           <Box sx={{ mt: 1.5, py: 1, px: 1.5, borderRadius: 1.5, bgcolor: "rgba(22,163,74,0.06)", display: "flex", alignItems: "center", gap: 1 }}>
             <CheckCircle2 size={14} color="#16a34a" />
@@ -322,6 +391,13 @@ function DesignEvidenceSection({
             </Typography>
           </Box>
         </SectionCard>
+      )}
+
+      {/* AI validation — always below whichever submission/submitted-evidence
+          card is active for the current step, so it never ends up above it
+          regardless of how far the control has progressed. */}
+      {canSubmitEvidence && (
+        <AIValidationCard auditId={control.auditId} controlId={control.id} variant="submitter" />
       )}
     </>
   );
@@ -352,7 +428,7 @@ function SubmittedPopulationFiles({
   }
 
   return (
-    <SectionCard icon={<FileText size={16} />} iconBg="#f1f5f9" iconColor="#475569" title="Currently Submitted Files">
+    <SectionCard icon={<FileText size={16} />} iconBg="transparent" title="Currently Submitted Files">
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, lineHeight: 1.7 }}>
         Remove a file you no longer need, or add more below before resubmitting.
       </Typography>
@@ -377,8 +453,7 @@ function SampleSelectionCard({
   return (
     <SectionCard
       icon={<ClipboardCheck size={16} />}
-      iconBg="#dbeafe"
-      iconColor="#1d4ed8"
+      iconBg="transparent"
       title="Sample Selected by Auditor"
     >
       {!hasNote && sampleFiles.length === 0 && !population.isLoading && (
@@ -402,10 +477,12 @@ function SampleSelectionCard({
   );
 }
 
-// PopulationReviewCard renders the internal-reviewer or auditor decision surface
-// for a submitted population round: the team's files plus Approve/Reject. Shared
-// between POPULATION_INTERNAL_REVIEW ("review" mode) and POPULATION_UNDER_VALIDATION
-// ("validate" mode) — only the copy and the mutation used differ.
+// PopulationReviewCard renders the internal-reviewer or auditor decision
+// surface for a submitted population round: description + Approve/Reject
+// only. The files themselves are not repeated here for either mode — they're
+// already shown in the Population Submission card rendered just above this
+// one (editable during review, read-only during validation), so showing them
+// again would just duplicate that list.
 function PopulationReviewCard({
   auditId,
   controlId,
@@ -417,7 +494,6 @@ function PopulationReviewCard({
   mode: "review" | "validate";
   onDecided: (status: ControlStatus) => void;
 }): JSX.Element {
-  const population = useGetPopulation(auditId, controlId, true);
   const review = usePopulationReview();
   const validate = usePopulationValidate();
   const mutation = mode === "review" ? review : validate;
@@ -437,15 +513,10 @@ function PopulationReviewCard({
   }
 
   return (
-    <SectionCard icon={<ClipboardCheck size={16} />} iconBg="#fff7ed" iconColor="#b45309" title={title}>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, lineHeight: 1.7 }}>
+    <SectionCard icon={<ClipboardCheck size={16} />} iconBg="transparent" title={title}>
+      <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.7 }}>
         {description}
       </Typography>
-      {population.isLoading ? (
-        <Skeleton variant="rounded" height={56} />
-      ) : (
-        <PopulationFileList files={population.data?.populationFiles ?? []} emptyText="No population files submitted yet." />
-      )}
       <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, mt: 2, pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
         <Button
           variant="contained"
@@ -453,7 +524,7 @@ function PopulationReviewCard({
           disabled={mutation.isPending}
           startIcon={mutation.isPending ? <CircularProgress size={15} color="inherit" /> : <CheckCircle2 size={15} />}
           onClick={() => decide("APPROVE")}
-          sx={{ textTransform: "none", fontWeight: 600, bgcolor: color, "&:hover": { bgcolor: hoverColor } }}
+          sx={{ textTransform: "none", fontWeight: 600, bgcolor: color, color: "#fff", "&:hover": { bgcolor: hoverColor } }}
         >
           Approve
         </Button>
@@ -479,7 +550,7 @@ function PopulationReviewCard({
 function SampleWaitingCard({ status }: { status: ControlStatus }): JSX.Element {
   const preparing = status === "AWAITING_SAMPLE";
   return (
-    <SectionCard icon={<Clock size={16} />} iconBg="#eff6ff" iconColor="#1d4ed8" title="Auditor Selecting Sample">
+    <SectionCard icon={<Clock size={16} />} iconBg="transparent" title="Auditor Selecting Sample">
       <Box sx={{ py: 2, display: "flex", flexDirection: "column", alignItems: "center", gap: 1.5, textAlign: "center" }}>
         <Box sx={{ width: 52, height: 52, borderRadius: "50%", bgcolor: "#eff6ff", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <Clock size={24} color="#1d4ed8" />
@@ -546,7 +617,7 @@ function SampleUploadCard({
   }
 
   return (
-    <SectionCard icon={<ClipboardCheck size={16} />} iconBg="#dbeafe" iconColor="#1d4ed8" title={editMode ? "Update Sample" : "Select Sample"} flexContent>
+    <SectionCard icon={<ClipboardCheck size={16} />} iconBg="transparent" title={editMode ? "Update Sample" : "Select Sample"} flexContent>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, lineHeight: 1.7 }}>
         {editMode
           ? "Add more sample files, remove ones no longer needed, or update the note below."
@@ -638,6 +709,67 @@ function SampleUploadCard({
   );
 }
 
+// PopulationSubmissionCard is the one persistent place population files are
+// shown, from the first internal review all the way through Complete — it
+// does not vanish once the auditor approves the population, matching how
+// Design's evidence submission card stays visible for the rest of the
+// control's life. Editable only while `editable` is true (internal review,
+// before the round locks); read-only everywhere after.
+function PopulationSubmissionCard({
+  auditId,
+  controlId,
+  editable,
+  onStatusChange,
+}: {
+  auditId: number;
+  controlId: number;
+  editable: boolean;
+  onStatusChange: (s: ControlStatus) => void;
+}): JSX.Element {
+  const population = useGetPopulation(auditId, controlId, true);
+  return (
+    <SectionCard icon={<FileUp size={16} />} iconBg="transparent" title="Population Submission">
+      {population.isLoading ? (
+        <Skeleton variant="rounded" height={56} />
+      ) : population.isError ? (
+        // A failed fetch must read as an error, not silently fall through to
+        // an empty files array — that would show "No population files
+        // submitted yet" for a round that actually has files, which is
+        // actively misleading rather than just unhelpful.
+        <Alert severity="error" sx={{ fontSize: "0.8rem" }}>
+          {(population.error as Error)?.message ?? "Failed to load the submitted population."}
+        </Alert>
+      ) : (
+        <PopulationFileList
+          files={population.data?.populationFiles ?? []}
+          emptyText="No population files submitted yet."
+          auditId={auditId}
+          controlId={controlId}
+          canDelete={editable}
+        />
+      )}
+      {editable && (
+        <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1.5 }}>
+            <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: "#b45309", flexShrink: 0 }} />
+            <Typography variant="body2" color="text.secondary">
+              Under internal review - you can still add or remove files.
+            </Typography>
+          </Box>
+          <EvidenceUploadBox
+            auditId={auditId}
+            controlId={controlId}
+            phase="population"
+            hint="CSV or XLSX - complete list of in-scope items"
+            buttonLabel="Add Files"
+            onSubmitted={() => onStatusChange("POPULATION_INTERNAL_REVIEW")}
+          />
+        </Box>
+      )}
+    </SectionCard>
+  );
+}
+
 function OEEvidenceSection({
   control,
   onStatusChange,
@@ -652,15 +784,18 @@ function OEEvidenceSection({
   isAuditor: boolean;
 }): JSX.Element {
   const activeStep = oeActiveStep(control.status);
-  // The team can still add/remove POPULATION-kind files while the round is
-  // under internal review (mirrors EVIDENCE_INTERNAL_REVIEW in the Design
-  // flow) — only fetched when that card is actually shown. This is
-  // independent of canReviewEvidence: an account that holds both privileges
-  // (common for admins, or any allowAll/mock-auth account where every
-  // privilege check is true) must still see the submitter's file-management
-  // card, not just the reviewer's read-only one.
-  const showPopulationSubmissionCard = control.status === "POPULATION_INTERNAL_REVIEW" && canSubmitEvidence;
-  const population = useGetPopulation(control.auditId, control.id, showPopulationSubmissionCard);
+  // Population Submission is shown to everyone who can see the control, from
+  // the first internal review all the way through Complete — not just the
+  // team, and not just while it's still under review. It only stays out of
+  // POPULATION_PENDING and POPULATION_NEED_CLARIFICATION, which already show
+  // (now-empty, after a reject clears the round's files) files via their own
+  // resubmit card.
+  const showPopulationSubmissionCard =
+    control.status !== "POPULATION_PENDING" && control.status !== "POPULATION_NEED_CLARIFICATION";
+  // Files can only still be added/removed during internal review — once the
+  // round is approved and moves to auditor validation it's locked, same as
+  // teamEditablePopulationStatuses on the backend (population/handler.go).
+  const canEditPopulationFiles = canSubmitEvidence && control.status === "POPULATION_INTERNAL_REVIEW";
 
   return (
     <>
@@ -672,6 +807,18 @@ function OEEvidenceSection({
         </Stepper>
       </Paper>
 
+      {/* Population Submission — persistent, rendered once here rather than
+          per-status below, so it never disappears once the auditor approves
+          the population (see PopulationSubmissionCard). */}
+      {showPopulationSubmissionCard && (
+        <PopulationSubmissionCard
+          auditId={control.auditId}
+          controlId={control.id}
+          editable={canEditPopulationFiles}
+          onStatusChange={onStatusChange}
+        />
+      )}
+
       {/* ── Step 0: Population phase ── */}
       {activeStep === 0 && (
         <>
@@ -681,30 +828,17 @@ function OEEvidenceSection({
                   clarification state — mirrors EVIDENCE_PENDING in the Design
                   flow), so show the rejection reason when there is one. */}
               {control.comments && (
-                <SectionCard icon={<AlertCircle size={16} />} iconBg="#fee2e2" iconColor="#dc2626" title="Population Clarification Required">
+                <SectionCard icon={<AlertCircle size={16} />} iconBg="transparent" title="Population Clarification Required">
                   <Typography variant="body2" sx={{ lineHeight: 1.7 }}>{control.comments}</Typography>
                 </SectionCard>
               )}
-              {control.populationDescription && (
-                <SectionCard icon={<FileText size={16} />} iconBg="#f1f5f9" iconColor="#475569" title="Population Requirement">
-                  <Typography variant="body2" sx={{ lineHeight: 1.8 }}>{control.populationDescription}</Typography>
-                  {control.populationDueDate && (
-                    <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
-                      Due: {control.populationDueDate}
-                    </Typography>
-                  )}
-                  {control.populationComments && (
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1, lineHeight: 1.7, fontStyle: "italic" }}>
-                      {control.populationComments}
-                    </Typography>
-                  )}
-                </SectionCard>
-              )}
+              {/* Population Requirement is shown on the Overview tab instead
+                  (see ControlDrawer's Overview panel) — kept out of this tab
+                  since it already has a lot going on. */}
               {control.comments && <SubmittedPopulationFiles auditId={control.auditId} controlId={control.id} />}
               <SectionCard
                 icon={<FileUp size={16} />}
-                iconBg="#dcfce7"
-                iconColor="#16a34a"
+                iconBg="transparent"
                 title={control.comments ? "Resubmit Population" : "Submit Population"}
                 flexContent
               >
@@ -722,15 +856,23 @@ function OEEvidenceSection({
 
           {control.status === "POPULATION_INTERNAL_REVIEW" && (
             <>
-              {/* Independent blocks, not an either/or: an account that holds
-                  both SubmitEvidence and ReviewEvidence (e.g. an admin, or any
-                  allowAll/mock-auth account) must see both the review decision
-                  and the file-management card below — not just one. */}
+              {/* Population Submission itself is rendered once, above, for
+                  every applicable status — not repeated here. AI Validation
+                  sits right between that submission and the review decision
+                  below (excluded from the general post-step-0 placement
+                  further down, so it isn't rendered twice). Independent
+                  blocks below it, not an either/or: an account that holds
+                  both SubmitEvidence and ReviewEvidence (e.g. an admin, or
+                  any allowAll/mock-auth account) must see the review decision
+                  regardless of which file-management view it also sees. */}
+              {canSubmitEvidence && (
+                <AIValidationCard auditId={control.auditId} controlId={control.id} variant="submitter" phase="population" />
+              )}
               {canReviewEvidence && (
                 <PopulationReviewCard auditId={control.auditId} controlId={control.id} mode="review" onDecided={onStatusChange} />
               )}
               {!canReviewEvidence && (
-                <SectionCard icon={<Clock size={16} />} iconBg="#fff7ed" iconColor="#b45309" title="Population Under Internal Review">
+                <SectionCard icon={<Clock size={16} />} iconBg="transparent" title="Population Under Internal Review">
                   <Box sx={{ py: 2, display: "flex", flexDirection: "column", alignItems: "center", gap: 1.5, textAlign: "center" }}>
                     <Box sx={{ width: 52, height: 52, borderRadius: "50%", bgcolor: "#fff7ed", display: "flex", alignItems: "center", justifyContent: "center" }}>
                       <Clock size={24} color="#b45309" />
@@ -743,68 +885,50 @@ function OEEvidenceSection({
                   </Box>
                 </SectionCard>
               )}
-              {showPopulationSubmissionCard && (
-                <SectionCard icon={<FileUp size={16} />} iconBg="#dcfce7" iconColor="#16a34a" title="Population Submission">
-                  {population.isLoading ? (
-                    <Skeleton variant="rounded" height={56} />
-                  ) : (
-                    <PopulationFileList
-                      files={population.data?.populationFiles ?? []}
-                      emptyText="No population files submitted yet."
-                      auditId={control.auditId}
-                      controlId={control.id}
-                      canDelete
-                    />
-                  )}
-                  <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1.5 }}>
-                      <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: "#b45309", flexShrink: 0 }} />
-                      <Typography variant="body2" color="text.secondary">
-                        Under internal review — you can still add or remove files.
-                      </Typography>
+            </>
+          )}
+
+          {control.status === "POPULATION_UNDER_VALIDATION" && (
+            <>
+              {/* Population Submission itself is rendered once, above (see
+                  PopulationSubmissionCard) — read-only at this stage since
+                  the round locks once internal review approves it. AI
+                  Validation sits right between that submission and the
+                  auditor's validation decision below (excluded from the
+                  general post-step-0 placement further down, so it isn't
+                  rendered twice — same pattern as POPULATION_INTERNAL_REVIEW
+                  above). */}
+              {canSubmitEvidence && (
+                <AIValidationCard auditId={control.auditId} controlId={control.id} variant="submitter" phase="population" />
+              )}
+              {isAuditor ? (
+                <PopulationReviewCard auditId={control.auditId} controlId={control.id} mode="validate" onDecided={onStatusChange} />
+              ) : (
+                <SectionCard icon={<Clock size={16} />} iconBg="transparent" title="Population Under Auditor Validation">
+                  <Box sx={{ py: 2, display: "flex", flexDirection: "column", alignItems: "center", gap: 1.5, textAlign: "center" }}>
+                    <Box sx={{ width: 52, height: 52, borderRadius: "50%", bgcolor: "#f5f3ff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <Clock size={24} color="#7c3aed" />
                     </Box>
-                    <EvidenceUploadBox
-                      auditId={control.auditId}
-                      controlId={control.id}
-                      phase="population"
-                      hint="CSV or XLSX - complete list of in-scope items"
-                      buttonLabel="Add Files"
-                      onSubmitted={() => onStatusChange("POPULATION_INTERNAL_REVIEW")}
-                    />
+                    <Typography variant="body2" fontWeight={600}>Population passed internal review</Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ maxWidth: 320, lineHeight: 1.65 }}>
+                      The external auditor is reviewing your population and selecting a sample for evidence collection.
+                    </Typography>
+                    <Chip size="small" label="Waiting for auditor sample selection" sx={{ bgcolor: "#f5f3ff", color: "#6d28d9", fontWeight: 500 }} />
                   </Box>
                 </SectionCard>
               )}
             </>
           )}
 
-          {control.status === "POPULATION_UNDER_VALIDATION" && (
-            isAuditor ? (
-              <PopulationReviewCard auditId={control.auditId} controlId={control.id} mode="validate" onDecided={onStatusChange} />
-            ) : (
-              <SectionCard icon={<Clock size={16} />} iconBg="#f5f3ff" iconColor="#7c3aed" title="Population Under Auditor Validation">
-                <Box sx={{ py: 2, display: "flex", flexDirection: "column", alignItems: "center", gap: 1.5, textAlign: "center" }}>
-                  <Box sx={{ width: 52, height: 52, borderRadius: "50%", bgcolor: "#f5f3ff", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <Clock size={24} color="#7c3aed" />
-                  </Box>
-                  <Typography variant="body2" fontWeight={600}>Population passed internal review</Typography>
-                  <Typography variant="caption" color="text.secondary" sx={{ maxWidth: 320, lineHeight: 1.65 }}>
-                    The external auditor is reviewing your population and selecting a sample for evidence collection.
-                  </Typography>
-                  <Chip size="small" label="Waiting for auditor sample selection" sx={{ bgcolor: "#f5f3ff", color: "#6d28d9", fontWeight: 500 }} />
-                </Box>
-              </SectionCard>
-            )
-          )}
-
           {control.status === "POPULATION_NEED_CLARIFICATION" && (
             <>
-              <SectionCard icon={<AlertCircle size={16} />} iconBg="#fee2e2" iconColor="#dc2626" title="Population Clarification Required">
+              <SectionCard icon={<AlertCircle size={16} />} iconBg="transparent" title="Population Clarification Required">
                 <Typography variant="body2" sx={{ lineHeight: 1.7 }}>
                   {control.comments ?? "The auditor has requested clarification. Please review and resubmit your population."}
                 </Typography>
               </SectionCard>
               <SubmittedPopulationFiles auditId={control.auditId} controlId={control.id} />
-              <SectionCard icon={<FileUp size={16} />} iconBg="#dcfce7" iconColor="#16a34a" title="Resubmit Population" flexContent>
+              <SectionCard icon={<FileUp size={16} />} iconBg="transparent" title="Resubmit Population" flexContent>
                 <EvidenceUploadBox
                   auditId={control.auditId}
                   controlId={control.id}
@@ -817,6 +941,21 @@ function OEEvidenceSection({
             </>
           )}
         </>
+      )}
+
+      {/* Population AI Validation — placeholder until the agent exists (see
+          AIValidationCard's phase="population"). Placed after every
+          population-submission surface above (the persistent card, and
+          whichever step-0 sub-state is active) rather than before them, and
+          scoped to the population phase only (the same set the Overview tab
+          uses to decide which requirement text to show) so it steps aside
+          once the job moves to evidence. POPULATION_INTERNAL_REVIEW and
+          POPULATION_UNDER_VALIDATION are excluded here — they each get their
+          own placement right before their review/validate decision instead
+          (see above), between submission and that decision specifically,
+          rather than after both. */}
+      {canSubmitEvidence && OE_POPULATION_PHASE_STATUSES.has(control.status) && !POPULATION_REVIEW_STATUSES.has(control.status) && (
+        <AIValidationCard auditId={control.auditId} controlId={control.id} variant="submitter" phase="population" />
       )}
 
       {/* ── Step 1a: Population approved → auditor selects the sample ── */}
@@ -851,7 +990,7 @@ function OEEvidenceSection({
             <SampleSelectionCard auditId={control.auditId} controlId={control.id} sampleReference={control.sampleReference} />
           )}
           {canSubmitEvidence && (
-            <SectionCard icon={<FileUp size={16} />} iconBg="#dcfce7" iconColor="#16a34a" title="Submit Evidence" flexContent>
+            <SectionCard icon={<FileUp size={16} />} iconBg="transparent" title="Submit Evidence" flexContent>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, lineHeight: 1.7 }}>
                 Upload evidence covering all selected samples listed above.
               </Typography>
@@ -871,13 +1010,13 @@ function OEEvidenceSection({
       {activeStep === 2 && (
         <>
           {control.comments && (
-            <SectionCard icon={<AlertCircle size={16} />} iconBg="#fee2e2" iconColor="#dc2626" title="Evidence Rejected">
+            <SectionCard icon={<AlertCircle size={16} />} iconBg="transparent" title="Evidence Rejected">
               <Typography variant="body2" sx={{ lineHeight: 1.7 }}>{control.comments}</Typography>
             </SectionCard>
           )}
           <SampleSelectionCard auditId={control.auditId} controlId={control.id} sampleReference={control.sampleReference} />
           {canSubmitEvidence && (
-            <SectionCard icon={<FileUp size={16} />} iconBg="#dcfce7" iconColor="#16a34a" title="Resubmit Evidence" flexContent>
+            <SectionCard icon={<FileUp size={16} />} iconBg="transparent" title="Resubmit Evidence" flexContent>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, lineHeight: 1.7 }}>
                 Upload updated evidence addressing the rejection reason above.
               </Typography>
@@ -897,7 +1036,7 @@ function OEEvidenceSection({
       {activeStep >= 3 && control.status === "EVIDENCE_INTERNAL_REVIEW" && (
         <>
           <SampleSelectionCard auditId={control.auditId} controlId={control.id} sampleReference={control.sampleReference} />
-          <SectionCard icon={<FileUp size={16} />} iconBg="#dcfce7" iconColor="#16a34a" title="Evidence Submission">
+          <SectionCard icon={<FileUp size={16} />} iconBg="transparent" title="Evidence Submission">
             <SubmittedEvidenceList
               auditId={control.auditId}
               controlId={control.id}
@@ -917,6 +1056,7 @@ function OEEvidenceSection({
                   controlId={control.id}
                   hint="PDF, XLSX, PNG up to 25 MB each"
                   buttonLabel="Add Files"
+                  evidenceMode="append"
                   onSubmitted={() => onStatusChange("EVIDENCE_INTERNAL_REVIEW")}
                 />
               </Box>
@@ -925,14 +1065,19 @@ function OEEvidenceSection({
         </>
       )}
 
-      {/* ── Step 3+: EVIDENCE_UNDER_VALIDATION ── */}
+      {/* ── Step 3+: EVIDENCE_UNDER_VALIDATION — files + inline status strip,
+          same "Submitted Evidence" card Design uses at this stage (and the OE
+          Complete block below), instead of a bare waiting-message card with
+          no files in it. ── */}
       {activeStep >= 3 && control.status === "EVIDENCE_UNDER_VALIDATION" && (
         <>
           <SampleSelectionCard auditId={control.auditId} controlId={control.id} sampleReference={control.sampleReference} />
-          <SectionCard icon={<Clock size={16} />} iconBg="#f5f3ff" iconColor="#7c3aed" title="Evidence Under Auditor Validation">
-            <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.7 }}>
-              The external auditor is validating the submitted evidence.
-            </Typography>
+          <SectionCard icon={<ClipboardCheck size={16} />} iconBg="transparent" title="Submitted Evidence">
+            <SubmittedEvidenceList auditId={control.auditId} controlId={control.id} />
+            <Box sx={{ mt: 1.5, py: 1, px: 1.5, borderRadius: 1.5, bgcolor: "action.hover", display: "flex", alignItems: "center", gap: 1 }}>
+              <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: "#7c3aed", flexShrink: 0 }} />
+              <Typography variant="body2" color="text.secondary">Passed internal review. External auditor is validating.</Typography>
+            </Box>
           </SectionCard>
         </>
       )}
@@ -941,7 +1086,7 @@ function OEEvidenceSection({
       {control.status === "COMPLETE" && (
         <>
           <SampleSelectionCard auditId={control.auditId} controlId={control.id} sampleReference={control.sampleReference} />
-          <SectionCard icon={<CheckCircle2 size={16} />} iconBg="#f0fdf4" iconColor="#16a34a" title="Submitted Evidence">
+          <SectionCard icon={<CheckCircle2 size={16} />} iconBg="transparent" title="Submitted Evidence">
             <SubmittedEvidenceList auditId={control.auditId} controlId={control.id} />
             <Box sx={{ mt: 1.5, py: 1, px: 1.5, borderRadius: 1.5, bgcolor: "rgba(22,163,74,0.06)", display: "flex", alignItems: "center", gap: 1 }}>
               <CheckCircle2 size={14} color="#16a34a" />
@@ -951,6 +1096,15 @@ function OEEvidenceSection({
             </Box>
           </SectionCard>
         </>
+      )}
+
+      {/* Evidence AI Validation — fully wired (same evidence AI agent Design
+          uses, see AIValidationCard's default phase="evidence"). Scoped to
+          once the job has actually shifted to evidence (sample submitted
+          onward) — showing it during the population/sample phases, before
+          there is any evidence to validate, would just be premature clutter. */}
+      {canSubmitEvidence && !OE_POPULATION_PHASE_STATUSES.has(control.status) && (
+        <AIValidationCard auditId={control.auditId} controlId={control.id} variant="submitter" />
       )}
     </>
   );
@@ -970,6 +1124,7 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
   // evidence validation across both DESIGN and OE controls.
   const isAuditor = Boolean(control) && (isAssignedAuditor(control as AuditControl, currentUserEmail) || canManageControls);
   const validateEvidence = useValidateEvidence();
+  const reviewEvidence = useReviewEvidence();
 
   const [tab, setTab] = useState(0);
   const [localStatus, setLocalStatus] = useState<{ id: number; status: ControlStatus } | null>(null);
@@ -981,24 +1136,11 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setTab(0);
   }, [control?.id]);
-  const updateStatus = useUpdateControlStatus();
-
   // Use local override only when it belongs to the currently open control
   const displayStatus =
     localStatus !== null && control !== null && localStatus.id === control.id
       ? localStatus.status
       : control?.status;
-
-  // Optimistically update the local status for instant UI feedback, then persist via API.
-  // On failure, revert the optimistic value so the UI reflects the real server state.
-  // Reviewer decisions go through here — PATCH /status requires ManageControls.
-  function handleStatusChange(c: AuditControl, newStatus: ControlStatus) {
-    setLocalStatus({ id: c.id, status: newStatus });
-    updateStatus.mutate(
-      { auditId: c.auditId, controlId: c.id, status: newStatus },
-      { onError: () => setLocalStatus(null) },
-    );
-  }
 
   // Reflect a transition the backend has *already* applied (evidence submit,
   // withdraw, deleting the last file). These must not PATCH /status: that
@@ -1091,14 +1233,18 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
           {/* ══ TAB 0 – OVERVIEW ══════════════════════════════════════════════ */}
           <TabPanel value={tab} index={0}>
 
-            {/* Control details grid */}
+            {/* Control details — fixed 3-column grid (not a wrapping flex
+                row): every field keeps the same cell every time, so a
+                returning user can find e.g. Due Date in the same spot
+                regardless of drawer width or value length. 3 columns instead
+                of the old 2 keeps the same recognizable layout while taking
+                less vertical space. */}
             <SectionCard
               icon={<ClipboardCheck size={16} />}
-              iconBg="#f1f5f9"
-              iconColor="#475569"
+              iconBg="transparent"
               title="Control Details"
             >
-              <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1 }}>
+              <Box sx={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 1 }}>
 
                 <InfoTile label="Requirement Type">
                   <Typography variant="body2" fontWeight={600} fontSize="0.8rem">
@@ -1118,14 +1264,7 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
                   </Typography>
                 </InfoTile>
 
-                <InfoTile label="Due Date">
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                    <CalendarDays size={13} color={control.isOverdue ? "#dc2626" : undefined} style={{ flexShrink: 0 }} />
-                    <Typography variant="body2" fontWeight={600} fontSize="0.8rem" color={control.isOverdue ? "error.main" : "text.primary"}>
-                      {control.dueDate ? formatAuditDate(control.dueDate) : "—"}
-                    </Typography>
-                  </Box>
-                </InfoTile>
+                <DueDateTile label="Due Date" date={control.dueDate} overdue={control.isOverdue} />
 
                 <InfoTile label="Team">
                   <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
@@ -1171,19 +1310,83 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
               </Box>
             </SectionCard>
 
-            {/* Evidence / population requirement preview */}
-            {control.evidenceRequirement && (
+            {/* Population Details — OE only, its own box separate from Control
+                Details above, same fixed-grid style. Population Comments is
+                rendered as a plain text block below the grid rather than a
+                tile: comments can run long, and a small tile clips or crams
+                that kind of free text. */}
+            {control.requirementType === "OE" && (
               <SectionCard
-                icon={<FileText size={16} />}
-                iconBg="#f1f5f9"
-                iconColor="#475569"
-                title={control.requirementType === "OE" ? "Population Requirement" : "Evidence Requirement"}
+                icon={<Users size={16} />}
+                iconBg="transparent"
+                title="Population Details"
               >
-                <Typography variant="body2" sx={{ lineHeight: 1.8 }}>
-                  {control.evidenceRequirement}
-                </Typography>
+                <Box sx={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 1 }}>
+                  <DueDateTile label="Population Due Date" date={control.populationDueDate ?? null} />
+
+                  <InfoTile label="Population Owner">
+                    {control.populationOwnerName ? (
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+                        <UserAvatar name={control.populationOwnerName} size={22} />
+                        <Typography variant="body2" fontWeight={600} fontSize="0.8rem" noWrap>
+                          {control.populationOwnerName}
+                        </Typography>
+                      </Box>
+                    ) : (
+                      <Typography variant="body2" color="text.disabled" fontSize="0.8rem">—</Typography>
+                    )}
+                  </InfoTile>
+
+                  <InfoTile label="Population Team">
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                      <Users size={13} style={{ flexShrink: 0, opacity: 0.55 }} />
+                      <Typography variant="body2" fontWeight={600} fontSize="0.8rem">
+                        {control.populationTeamName ?? "—"}
+                      </Typography>
+                    </Box>
+                  </InfoTile>
+                </Box>
+
+                {control.populationComments && (
+                  <Box sx={{ mt: 1.5, pt: 1.5, borderTop: "1px solid", borderColor: "divider" }}>
+                    <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, display: "block", mb: 0.5 }}>
+                      Population Comments
+                    </Typography>
+                    <Typography variant="body2" sx={{ lineHeight: 1.7 }}>
+                      {control.populationComments}
+                    </Typography>
+                  </Box>
+                )}
               </SectionCard>
             )}
+
+            {/* Requirement text — for Design controls this is always the
+                Evidence Requirement. For OE controls it shows the Population
+                Requirement while the control is still in the population phase,
+                then switches to the Evidence Requirement once the auditor has
+                submitted the sample (the team's job has moved from describing
+                the population to providing evidence). Kept here in Overview
+                rather than the Evidence tab, which already has a lot going on. */}
+            {(() => {
+              const status = displayStatus ?? control.status;
+              const showPopulationRequirement =
+                control.requirementType === "OE" && OE_POPULATION_PHASE_STATUSES.has(status);
+              const requirementText = showPopulationRequirement
+                ? control.populationDescription
+                : control.evidenceRequirement;
+              if (!requirementText) return null;
+              return (
+                <SectionCard
+                  icon={<FileText size={16} />}
+                  iconBg="transparent"
+                  title={showPopulationRequirement ? "Population Requirement" : "Evidence Requirement"}
+                >
+                  <Typography variant="body2" sx={{ lineHeight: 1.8 }}>
+                    {requirementText}
+                  </Typography>
+                </SectionCard>
+              );
+            })()}
 
           </TabPanel>
 
@@ -1211,89 +1414,88 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
               <AIValidationCard auditId={control.auditId} controlId={control.id} variant="reviewer" />
             )}
 
-            {/* Internal Review — the whole card is a reviewer surface, so it is
-                gated on the privilege rather than just its buttons: a submitter
-                has nothing to do here and should not see an empty card. */}
-            {canReviewEvidence && (
+            {/* Internal Review — shown only for the exact window it's
+                actionable in (EVIDENCE_INTERNAL_REVIEW): not before evidence
+                exists, and not once the round has moved past internal review,
+                so there's no lingering card with nothing to do. */}
+            {canReviewEvidence && displayStatus === "EVIDENCE_INTERNAL_REVIEW" && (
             <SectionCard
               icon={<ClipboardCheck size={16} />}
-              iconBg="#fff7ed"
-              iconColor="#b45309"
+              iconBg="transparent"
               title="Internal Review"
             >
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2, lineHeight: 1.7 }}>
-                Review the submitted evidence internally before passing it to the auditor.
-              </Typography>
-              {displayStatus === "EVIDENCE_INTERNAL_REVIEW" && (
-                <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
-                  <Button
-                    variant="contained"
-                    disableElevation
-                    startIcon={<CheckCircle2 size={15} />}
-                    onClick={() => handleStatusChange(control, "EVIDENCE_UNDER_VALIDATION")}
-                    sx={{ textTransform: "none", fontWeight: 600, bgcolor: "#b45309", "&:hover": { bgcolor: "#92400e" } }}
-                  >
-                    Approve
-                  </Button>
-                  <Button
-                    variant="outlined"
-                    startIcon={<XCircle size={15} />}
-                    onClick={() => handleStatusChange(control, "EVIDENCE_PENDING")}
-                    sx={{ textTransform: "none", fontWeight: 600, color: "#dc2626", borderColor: "#dc2626", "&:hover": { borderColor: "#b91c1c", bgcolor: "rgba(220,38,38,0.04)" } }}
-                  >
-                    Reject
-                  </Button>
-                </Box>
+              <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
+                <Button
+                  variant="contained"
+                  disableElevation
+                  disabled={reviewEvidence.isPending}
+                  startIcon={reviewEvidence.isPending ? <CircularProgress size={15} color="inherit" /> : <CheckCircle2 size={15} />}
+                  onClick={() => reviewEvidence.mutate(
+                    { auditId: control.auditId, controlId: control.id, decision: "APPROVE" },
+                    { onSuccess: (data) => applyServerStatus(control, data.status as ControlStatus) },
+                  )}
+                  sx={{ textTransform: "none", fontWeight: 600, bgcolor: "#b45309", color: "#fff", "&:hover": { bgcolor: "#92400e" } }}
+                >
+                  Approve
+                </Button>
+                <Button
+                  variant="outlined"
+                  disabled={reviewEvidence.isPending}
+                  startIcon={<XCircle size={15} />}
+                  onClick={() => reviewEvidence.mutate(
+                    { auditId: control.auditId, controlId: control.id, decision: "REJECT" },
+                    { onSuccess: (data) => applyServerStatus(control, data.status as ControlStatus) },
+                  )}
+                  sx={{ textTransform: "none", fontWeight: 600, color: "#dc2626", borderColor: "#dc2626", "&:hover": { borderColor: "#b91c1c", bgcolor: "rgba(220,38,38,0.04)" } }}
+                >
+                  Reject
+                </Button>
+              </Box>
+              {reviewEvidence.isError && (
+                <Alert severity="error" sx={{ mt: 1, fontSize: "0.8rem" }}>{(reviewEvidence.error as Error).message}</Alert>
               )}
             </SectionCard>
             )}
 
             {/* Auditor Validation — the assigned auditor POC only (or admin), not
                 every REVIEW_EVIDENCE holder: this is the external-auditor decision,
-                distinct from the Internal Review card above. */}
-            {isAuditor && (
+                distinct from the Internal Review card above. Same rule: shown
+                only during EVIDENCE_UNDER_VALIDATION, not before or after. */}
+            {isAuditor && displayStatus === "EVIDENCE_UNDER_VALIDATION" && (
             <SectionCard
               icon={<ClipboardCheck size={16} />}
-              iconBg="#f5f3ff"
-              iconColor="#7c3aed"
+              iconBg="transparent"
               title="Auditor Validation"
             >
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2, lineHeight: 1.7 }}>
-                Validate the submitted evidence and take a final decision on this control.
-              </Typography>
-              {displayStatus === "EVIDENCE_UNDER_VALIDATION" && (
-                <>
-                  <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
-                    <Button
-                      variant="contained"
-                      disableElevation
-                      disabled={validateEvidence.isPending}
-                      startIcon={validateEvidence.isPending ? <CircularProgress size={15} color="inherit" /> : <CheckCircle2 size={15} />}
-                      onClick={() => validateEvidence.mutate(
-                        { auditId: control.auditId, controlId: control.id, decision: "APPROVE" },
-                        { onSuccess: (data) => applyServerStatus(control, data.status as ControlStatus) },
-                      )}
-                      sx={{ textTransform: "none", fontWeight: 600, bgcolor: "#7c3aed", "&:hover": { bgcolor: "#6d28d9" } }}
-                    >
-                      Approve
-                    </Button>
-                    <Button
-                      variant="outlined"
-                      disabled={validateEvidence.isPending}
-                      startIcon={<RotateCcw size={15} />}
-                      onClick={() => validateEvidence.mutate(
-                        { auditId: control.auditId, controlId: control.id, decision: "REJECT" },
-                        { onSuccess: (data) => applyServerStatus(control, data.status as ControlStatus) },
-                      )}
-                      sx={{ textTransform: "none", fontWeight: 600 }}
-                    >
-                      Request Resubmission
-                    </Button>
-                  </Box>
-                  {validateEvidence.isError && (
-                    <Alert severity="error" sx={{ mt: 1, fontSize: "0.8rem" }}>{(validateEvidence.error as Error).message}</Alert>
+              <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
+                <Button
+                  variant="contained"
+                  disableElevation
+                  disabled={validateEvidence.isPending}
+                  startIcon={validateEvidence.isPending ? <CircularProgress size={15} color="inherit" /> : <CheckCircle2 size={15} />}
+                  onClick={() => validateEvidence.mutate(
+                    { auditId: control.auditId, controlId: control.id, decision: "APPROVE" },
+                    { onSuccess: (data) => applyServerStatus(control, data.status as ControlStatus) },
                   )}
-                </>
+                  sx={{ textTransform: "none", fontWeight: 600, bgcolor: "#7c3aed", color: "#fff", "&:hover": { bgcolor: "#6d28d9" } }}
+                >
+                  Approve
+                </Button>
+                <Button
+                  variant="outlined"
+                  disabled={validateEvidence.isPending}
+                  startIcon={<RotateCcw size={15} />}
+                  onClick={() => validateEvidence.mutate(
+                    { auditId: control.auditId, controlId: control.id, decision: "REJECT" },
+                    { onSuccess: (data) => applyServerStatus(control, data.status as ControlStatus) },
+                  )}
+                  sx={{ textTransform: "none", fontWeight: 600 }}
+                >
+                  Request Resubmission
+                </Button>
+              </Box>
+              {validateEvidence.isError && (
+                <Alert severity="error" sx={{ mt: 1, fontSize: "0.8rem" }}>{(validateEvidence.error as Error).message}</Alert>
               )}
             </SectionCard>
             )}
@@ -1301,8 +1503,7 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
             {/* Comments */}
             <SectionCard
               icon={<MessageSquare size={16} />}
-              iconBg="#fff7ed"
-              iconColor="#ea580c"
+              iconBg="transparent"
               title="Comments"
             >
               <CommentsSection auditId={control.auditId} controlId={control.id} canComment={canComment} />

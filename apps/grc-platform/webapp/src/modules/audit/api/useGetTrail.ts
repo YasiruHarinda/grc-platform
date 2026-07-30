@@ -50,6 +50,8 @@ export interface TrailDetails {
   via?: string;
   comment?: string;
   isInternal?: boolean;
+  // File names submitted with an UPLOADED/RESUBMITTED evidence action.
+  files?: string[];
   controlNumber?: string;
   // Audit-level CREATED/DELETED carry name; UPDATED carries whichever fields
   // changed (periodStart/periodEnd/scopeDescription/status).

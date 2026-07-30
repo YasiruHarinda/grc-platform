@@ -14,7 +14,7 @@
 --   audit_population        — OE-type control population phase record
 --   audit_evidence          — evidence submission for a control
 --   audit_evidence_file     — files attached to evidence or population
---   audit_comment           — threaded comments on an evidence submission
+--   audit_comment           — threaded comments on a control (population + evidence phases)
 --   audit_ai_validation_log — async AI validation results (hints only, append-only)
 --   audit_notification      — in-app and email notifications
 --   audit_trail             — immutable event log for an audit
@@ -306,12 +306,14 @@ CREATE TABLE IF NOT EXISTS audit_evidence_file (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- =============================================================================
--- audit_comment  (threaded comments on an evidence submission)
+-- audit_comment  (threaded comments on a control — one thread per control,
+-- spanning both the population and evidence phases, available from the
+-- moment the control is opened)
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS audit_comment (
   id                INT          NOT NULL AUTO_INCREMENT,
-  evidence_id       INT          NOT NULL,
+  control_id        INT          NOT NULL,
   author_id         INT          NULL,
   parent_comment_id INT          NULL,
   content           TEXT         NOT NULL,
@@ -321,10 +323,10 @@ CREATE TABLE IF NOT EXISTS audit_comment (
   updated_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   updated_by        VARCHAR(255) NULL,
   PRIMARY KEY (id),
-  KEY idx_comment_evidence (evidence_id),
-  CONSTRAINT fk_comment_evidence FOREIGN KEY (evidence_id)       REFERENCES audit_evidence(id) ON DELETE CASCADE,
-  CONSTRAINT fk_comment_author   FOREIGN KEY (author_id)         REFERENCES `user`(id)         ON DELETE SET NULL,
-  CONSTRAINT fk_comment_parent   FOREIGN KEY (parent_comment_id) REFERENCES audit_comment(id)  ON DELETE SET NULL
+  KEY idx_comment_control (control_id),
+  CONSTRAINT fk_comment_control FOREIGN KEY (control_id)        REFERENCES audit_control(id) ON DELETE CASCADE,
+  CONSTRAINT fk_comment_author  FOREIGN KEY (author_id)         REFERENCES `user`(id)         ON DELETE SET NULL,
+  CONSTRAINT fk_comment_parent  FOREIGN KEY (parent_comment_id) REFERENCES audit_comment(id)  ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- =============================================================================

@@ -18,7 +18,6 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { controlsQueryKey } from "@modules/audit/api/useGetControls";
-import { auditQueryKey } from "@modules/audit/api/useGetAudit";
 import { evidenceQueryKey } from "@modules/audit/api/useGetEvidence";
 import { extractErrorMessage } from "@modules/audit/api/apiError";
 
@@ -30,18 +29,20 @@ interface DecisionPayload {
 }
 
 /**
- * Assigned auditor's decision on evidence that passed internal review (see
- * evidence/validate). This is the auditor-gated counterpart to the internal
- * reviewer's decision at EVIDENCE_INTERNAL_REVIEW (see useReviewEvidence).
+ * Internal reviewer's decision on a submission under EVIDENCE_INTERNAL_REVIEW
+ * (see evidence/review). Unlike the old PATCH /status path this went through
+ * before, the backend also records the reviewed round's own status
+ * (COMPLIANCE_APPROVED/COMPLIANCE_REJECTED), so SubmittedEvidenceList can tell
+ * a rejected round apart from the resubmission that follows it.
  */
-export function useValidateEvidence() {
+export function useReviewEvidence() {
   const authFetch = useAuthApiClient();
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: async ({ auditId, controlId, decision, comment }: DecisionPayload): Promise<{ status: string }> => {
       const res = await authFetch(
-        `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}/evidence/validate`,
+        `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}/evidence/review`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -55,7 +56,6 @@ export function useValidateEvidence() {
     },
     onSuccess: (_data, { auditId, controlId }) => {
       void queryClient.invalidateQueries({ queryKey: controlsQueryKey(auditId) });
-      void queryClient.invalidateQueries({ queryKey: auditQueryKey(auditId) });
       void queryClient.invalidateQueries({ queryKey: evidenceQueryKey(auditId, controlId) });
     },
   });

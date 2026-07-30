@@ -1465,14 +1465,19 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /evidence/{evidenceId}/comments:
+  /audits/{auditId}/controls/{controlId}/comments:
     post:
       tags:
       - Comments
-      summary: Add a comment to an evidence submission
+      summary: Add a comment to a control
       operationId: createComment
       parameters:
-      - name: evidenceId
+      - name: auditId
+        in: path
+        required: true
+        schema:
+          type: integer
+      - name: controlId
         in: path
         required: true
         schema:
@@ -1485,7 +1490,7 @@ paths:
               $ref: '#/components/schemas/CreateAuditCommentRequest'
       responses:
         '201':
-          description: Add a comment to an evidence submission
+          description: Add a comment to a control
           content:
             application/json:
               schema:
@@ -1499,17 +1504,22 @@ paths:
     get:
       tags:
       - Comments
-      summary: List comments for an evidence submission
+      summary: List comments for a control
       operationId: listComments
       parameters:
-      - name: evidenceId
+      - name: auditId
+        in: path
+        required: true
+        schema:
+          type: integer
+      - name: controlId
         in: path
         required: true
         schema:
           type: integer
       responses:
         '200':
-          description: List comments for an evidence submission
+          description: List comments for a control
           content:
             application/json:
               schema:
@@ -3809,7 +3819,7 @@ components:
       properties:
         id:
           type: integer
-        evidenceId:
+        controlId:
           type: integer
         authorId:
           type: integer

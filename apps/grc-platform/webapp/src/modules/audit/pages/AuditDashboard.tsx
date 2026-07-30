@@ -113,7 +113,7 @@ export default function AuditDashboard(): JSX.Element {
   const canApprove = can(AuditPrivilege.ReviewEvidence);
   const hasQueue = canSubmit || canApprove;
   const queueTitle = canApprove ? "Review Queue" : canSubmit ? "My Tasks" : "Action Items";
-  const awaitingCount = hasQueue ? stats.totalActionItems : null;
+  const awaitingCount = hasQueue ? (stats.totalActionItems ?? null) : null;
 
   const dueSoonCount = data.dueSoonItems?.length ?? 0;
 

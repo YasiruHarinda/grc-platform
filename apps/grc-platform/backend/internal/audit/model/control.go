@@ -124,6 +124,9 @@ type UpdateControlRequest struct {
 	TeamID              *int    `json:"teamId"`
 	AuditorID           *int    `json:"auditorId"`
 	DueDate             *string `json:"dueDate"`
+	// Population is set only for OE controls being edited from the same form
+	// used to create them; nil means "leave population details unchanged".
+	Population *PopulationDetails `json:"population"`
 }
 
 // UpdateStatusRequest is the payload for PATCH /api/v1/audits/{id}/controls/{controlId}/status.

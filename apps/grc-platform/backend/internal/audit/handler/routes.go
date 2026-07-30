@@ -110,10 +110,16 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/v1/audits/{id}/controls/{controlId}/evidence/upload-link", eh.getUploadLink)
 	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/evidence/upload", eh.uploadEvidence)
 	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/evidence/submit", eh.submitEvidence)
+	// Appends to the current (still-SUBMITTED) round instead of starting a new
+	// one — what "Add Files" uses while a submission awaits internal review.
+	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/evidence/files", eh.addEvidenceFiles)
 	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/evidence/withdraw", eh.withdrawEvidence)
+	// Internal-reviewer and auditor decisions on the evidence round (mirrors the
+	// population/review + population/validate pair below) — both record the
+	// reviewed round's own status, not just the control's.
+	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/evidence/review", eh.reviewEvidence)
 	// Auditor-gated decision at EVIDENCE_UNDER_VALIDATION (assigned auditor POC only —
-	// see requireAssignedAuditor). Internal review's Approve/Reject at
-	// EVIDENCE_INTERNAL_REVIEW is unaffected and still goes through PATCH /status.
+	// see requireAssignedAuditor).
 	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/evidence/validate", eh.validateEvidence)
 	// Audit-scoped file delete: knows the control, so it can send an emptied
 	// submission back to EVIDENCE_PENDING (see deleteControlEvidenceFile).
@@ -146,9 +152,11 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/sample/submit", eh.submitSample)
 	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/sample/request-time", eh.requestSampleTime)
 
-	// Evidence comments (evidence-scoped; is_internal hides from external auditors)
-	mux.HandleFunc("GET /api/v1/evidence/{evidenceId}/comments", cmh.listComments)
-	mux.HandleFunc("POST /api/v1/evidence/{evidenceId}/comments", cmh.addComment)
+	// Control comments (one thread per control, spanning population + evidence
+	// phases — available as soon as the control drawer is open, not gated on an
+	// evidence/population round existing yet; is_internal hides from external auditors)
+	mux.HandleFunc("GET /api/v1/audits/{id}/controls/{controlId}/comments", cmh.listComments)
+	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/comments", cmh.addComment)
 
 	// AI validation advisory results (read-only hint; SUBMIT or REVIEW evidence).
 	mux.HandleFunc("GET /api/v1/evidence/{evidenceId}/ai-validations", avh.listValidations)

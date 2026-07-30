@@ -29,9 +29,8 @@ import (
 // entity's own max page size (100), so it is the most we can get in one call.
 const defaultTrailLimit = 100
 
-// defaultAuditTrailLimit is the default page size for the audit-wide activity
-// log. Mirrors the frontend's activityLogPageSize.
-const defaultAuditTrailLimit = 50
+// defaultAuditTrailLimit is the default page size for the audit-wide activity log. 
+const defaultAuditTrailLimit = 100
 
 // TrailService defines business operations for the audit trail (append-only log).
 type TrailService interface {
@@ -43,8 +42,12 @@ type TrailService interface {
 	// RecordEvidenceAction appends an attribution entry for an evidence/population
 	// action, tagging the channel it came through (web-app vs evidence-app) and the
 	// token issuer so portal actions stay distinguishable (design §I). evidenceID may
-	// be 0 (population submit) — it is then omitted.
-	RecordEvidenceAction(ctx context.Context, auditID, controlID, evidenceID int, action, actor, via, issuer string) error
+	// be 0 (population submit) — it is then omitted. fileNames is the round's file
+	// names at the time of this action (nil/empty when not applicable, e.g.
+	// population/sample submissions), recorded so the History tab and the
+	// audit-wide Activity Log can show what was actually submitted without a
+	// separate lookup.
+	RecordEvidenceAction(ctx context.Context, auditID, controlID, evidenceID int, action, actor, via, issuer string, fileNames []string) error
 	// RecordControlAction appends a control-scoped lifecycle entry (e.g. CREATED, or
 	// a status transition carrying {"from","to"} in details). details may be nil.
 	RecordControlAction(ctx context.Context, auditID, controlID int, action, actor string, details map[string]any) error
@@ -106,8 +109,12 @@ func (s *trailService) RecordAuditAction(ctx context.Context, auditID int, actio
 	return s.repo.Create(ctx, auditID, nil, nil, action, detailsJSON, actor)
 }
 
-func (s *trailService) RecordEvidenceAction(ctx context.Context, auditID, controlID, evidenceID int, action, actor, via, issuer string) error {
-	details, err := json.Marshal(map[string]string{"via": via, "issuer": issuer})
+func (s *trailService) RecordEvidenceAction(ctx context.Context, auditID, controlID, evidenceID int, action, actor, via, issuer string, fileNames []string) error {
+	payload := map[string]any{"via": via, "issuer": issuer}
+	if len(fileNames) > 0 {
+		payload["files"] = fileNames
+	}
+	details, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}

@@ -22,8 +22,10 @@ import type { TrailEntry } from "@modules/audit/api/useGetTrail";
 
 /** Page size for the audit-wide Activity Log. Mirrors the backend's
  * defaultAuditTrailLimit — kept larger than a typical list page since rows are
- * rendered compact, so fewer "next page" clicks are needed to scan a long log. */
-export const activityLogPageSize = 50;
+ * rendered compact, so fewer "next page" clicks are needed to scan a long log.
+ * 100 is also the entity's own max page size, so it's the most we can get in
+ * one call. */
+export const activityLogPageSize = 100;
 
 export interface AuditActivityFilters {
   /** Multiple values are OR'd, matching the multi-select Control filter. */

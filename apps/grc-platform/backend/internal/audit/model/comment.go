@@ -19,11 +19,12 @@ package model
 
 import "time"
 
-// AuditComment is a comment on an evidence submission (audit_comment).
-// IsInternal hides the comment from external auditors.
+// AuditComment is a comment on a control (audit_comment) — one thread per
+// control, spanning both the population and evidence phases. IsInternal
+// hides the comment from external auditors.
 type AuditComment struct {
 	ID              int       `json:"id"`
-	EvidenceID      int       `json:"evidenceId"`
+	ControlID       int       `json:"controlId"`
 	ParentCommentID *int      `json:"parentCommentId"`
 	Content         string    `json:"content"`
 	IsInternal      bool      `json:"isInternal"`
@@ -31,14 +32,14 @@ type AuditComment struct {
 	CreatedAt       time.Time `json:"createdAt"`
 }
 
-// AddCommentRequest is the payload for POST /evidence/{evidenceId}/comments.
+// AddCommentRequest is the payload for POST /api/v1/audits/{id}/controls/{controlId}/comments.
 type AddCommentRequest struct {
 	Content         string `json:"content"`
 	IsInternal      bool   `json:"isInternal"`
 	ParentCommentID *int   `json:"parentCommentId"`
 }
 
-// CommentListResponse is returned by GET /evidence/{evidenceId}/comments.
+// CommentListResponse is returned by GET /api/v1/audits/{id}/controls/{controlId}/comments.
 type CommentListResponse struct {
 	Items []*AuditComment `json:"items"`
 }

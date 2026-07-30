@@ -362,8 +362,8 @@ function applySorting(
   direction: ListingTableSortDirection,
 ): AuditControl[] {
   return [...controls].sort((a, b) => {
-    const aVal = String((a as Record<string, unknown>)[field] ?? "");
-    const bVal = String((b as Record<string, unknown>)[field] ?? "");
+    const aVal = String((a as unknown as Record<string, unknown>)[field] ?? "");
+    const bVal = String((b as unknown as Record<string, unknown>)[field] ?? "");
     const cmp = aVal.localeCompare(bVal);
     return direction === "asc" ? cmp : -cmp;
   });

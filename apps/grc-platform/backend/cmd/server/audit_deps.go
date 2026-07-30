@@ -51,7 +51,7 @@ func buildAuditDeps(fileSvc *file.Service, ec *entityclient.Client, aiCfg config
 	// lifecycle events through it.
 	trailSvc := auditservice.NewTrailService(trailRepo)
 	auditSvc := auditservice.NewAuditService(auditRepo, frameworkRepo, productRepo, trailSvc)
-	controlSvc := auditservice.NewControlService(controlRepo, trailSvc)
+	controlSvc := auditservice.NewControlService(controlRepo, populationRepo, trailSvc)
 	frameworkSvc := auditservice.NewFrameworkService(frameworkRepo, productRepo, frameworkControlRepo)
 	userSvc := auditservice.NewUserService(userRepo)
 	teamSvc := auditservice.NewTeamService(teamRepo)

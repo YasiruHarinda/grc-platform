@@ -51,27 +51,54 @@ interface AIValidationCardProps {
   auditId: number;
   controlId: number;
   variant: "submitter" | "reviewer";
+  /**
+   * Which submission this card validates. "population" has no AI agent wired
+   * up on the backend yet — it renders a permanent placeholder instead of
+   * fetching anything, so the surface exists ahead of the agent landing later
+   * (swap it for real data the same way "evidence" already works, once the
+   * population AI endpoint exists). Defaults to "evidence", which is fully
+   * wired for both control types.
+   */
+  phase?: "evidence" | "population";
 }
+
+const PHASE_TITLE: Record<"evidence" | "population", string> = {
+  evidence: "AI Validation",
+  population: "Population AI Validation",
+};
+
+const POPULATION_PLACEHOLDER_TEXT =
+  "AI review for population submissions isn't wired up yet this is where it'll appear once it's ready, flagging gaps before internal review.";
 
 /**
  * AIValidationCard renders the advisory AI pre-review for a control's latest
- * evidence submission. It resolves the latest evidence id itself (react-query
- * dedupes the shared evidence query) and polls only while a job is in progress.
- * Advisory only — it never gates the workflow.
+ * evidence submission (phase="evidence", the default), or a placeholder for
+ * the population phase (phase="population") until that agent exists. It
+ * resolves the latest evidence id itself (react-query dedupes the shared
+ * evidence query) and polls only while a job is in progress. Advisory only —
+ * it never gates the workflow.
  */
-export default function AIValidationCard({ auditId, controlId, variant }: AIValidationCardProps): JSX.Element | null {
-  const { data: submissions } = useGetEvidence(auditId, controlId, true);
-  const latestEvidenceId = submissions?.[0]?.id ?? null;
+export default function AIValidationCard({ auditId, controlId, variant, phase = "evidence" }: AIValidationCardProps): JSX.Element | null {
+  const { data: submissions } = useGetEvidence(auditId, controlId, phase === "evidence");
+  const latestEvidenceId = phase === "evidence" ? (submissions?.[0]?.id ?? null) : null;
   const { data: validations, isLoading } = useGetAIValidation(latestEvidenceId);
 
-  const latest = validations?.[0];
+  const latest = phase === "evidence" ? validations?.[0] : undefined;
+
+  // Population has nothing to show for the reviewer yet — only the
+  // submitter-facing placeholder exists until the agent is wired up.
+  if (phase === "population" && variant === "reviewer") {
+    return null;
+  }
 
   // Reviewer variant stays out of the way until there is something to show.
   if (variant === "reviewer" && (latestEvidenceId === null || !latest)) {
     return null;
   }
 
-  const body = renderBody(latest, latestEvidenceId, isLoading, variant);
+  const body = phase === "population"
+    ? <NotValidated text={POPULATION_PLACEHOLDER_TEXT} />
+    : renderBody(latest, latestEvidenceId, isLoading, variant);
 
   if (variant === "reviewer") {
     return (
@@ -100,9 +127,7 @@ export default function AIValidationCard({ auditId, controlId, variant }: AIVali
             width: 30,
             height: 30,
             borderRadius: 1.5,
-            bgcolor: AI_PURPLE_BG,
-            "[data-color-scheme='dark'] &": { bgcolor: `${AI_PURPLE}33` },
-            color: AI_PURPLE,
+            color: "text.secondary",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -112,7 +137,7 @@ export default function AIValidationCard({ auditId, controlId, variant }: AIVali
           <Sparkles size={16} />
         </Box>
         <Typography variant="subtitle2" fontWeight={700} sx={{ flex: 1 }}>
-          AI Validation
+          {PHASE_TITLE[phase]}
         </Typography>
         {latest && VERDICT_STYLE[latest.result] && (
           <Chip
@@ -175,7 +200,11 @@ function renderBody(
   return variant === "reviewer" ? <ReviewerVerdict latest={latest} /> : <SubmitterVerdict latest={latest} />;
 }
 
-function NotValidated(): JSX.Element {
+function NotValidated({
+  text = "AI review runs automatically after you submit evidence, and flags any gaps against the requirement.",
+}: {
+  text?: string;
+}): JSX.Element {
   return (
     <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 1.5, py: 0.5 }}>
       <Box
@@ -183,18 +212,16 @@ function NotValidated(): JSX.Element {
           width: 48,
           height: 48,
           borderRadius: "50%",
-          bgcolor: AI_PURPLE_BG,
-          "[data-color-scheme='dark'] &": { bgcolor: `${AI_PURPLE}33` },
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          color: AI_PURPLE,
+          color: "text.secondary",
         }}
       >
         <Bot size={24} />
       </Box>
       <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.65 }}>
-        AI review runs automatically after you submit evidence, and flags any gaps against the requirement.
+        {text}
       </Typography>
       <Button
         variant="outlined"
