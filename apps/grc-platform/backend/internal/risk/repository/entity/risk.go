@@ -50,6 +50,8 @@ type entRisk struct {
 	AssignerName           string    `json:"assignerName"`
 	OwnerID                int       `json:"ownerId"`
 	OwnerName              string    `json:"ownerName"`
+	ManagementApproverID   int       `json:"managementApproverId"`
+	ManagementApproverName string    `json:"managementApproverName"`
 	WorkflowStatus         string    `json:"workflowStatus"`
 	TreatmentStrategy      *string   `json:"treatmentStrategy"`
 	GrossScoreID           *int      `json:"grossScoreId"`
@@ -193,6 +195,11 @@ func (r *riskRepository) GetByID(ctx context.Context, id int) (*model.RiskDetail
 			Name        string  `json:"name"`
 			Description *string `json:"description"`
 		} `json:"complianceReferences"`
+		RiskCategories []struct {
+			ID          int     `json:"id"`
+			Name        string  `json:"name"`
+			Description *string `json:"description"`
+		} `json:"riskCategories"`
 		ActionPlan *struct {
 			ID            int     `json:"id"`
 			ActionOwnerID *int    `json:"actionOwnerId"`
@@ -226,6 +233,7 @@ func (r *riskRepository) GetByID(ctx context.Context, id int) (*model.RiskDetail
 		IdentifiedByName:       e.IdentifiedByName,
 		AssignerID:             e.AssignerID,
 		OwnerID:                e.OwnerID,
+		ManagementApproverID:   e.ManagementApproverID,
 		ImpactDescription:      e.ImpactDescription,
 		TreatmentStrategy:      e.TreatmentStrategy,
 		SourceRegisterID:       e.SourceRegisterID,
@@ -248,16 +256,24 @@ func (r *riskRepository) GetByID(ctx context.Context, id int) (*model.RiskDetail
 		AssignmentTeamName:     e.AssignmentTeamName,
 		OwnerName:              e.OwnerName,
 		AssignerName:           e.AssignerName,
+		ManagementApproverName: e.ManagementApproverName,
 		ComplianceApproverName: e.ComplianceApproverName,
 		GrossScore:             e.GrossScore.toModel(),
 		EffectiveScore:         e.EffectiveScore.toModel(),
 		ComplianceReferences:   []model.ComplianceReference{},
+		RiskCategories:         []model.RiskCategory{},
 		Assessments:            []model.RiskAssessment{},
 	}
 
 	for _, ref := range e.ComplianceReferences {
 		d.ComplianceReferences = append(d.ComplianceReferences, model.ComplianceReference{
 			ID: ref.ID, Name: ref.Name, Description: ref.Description,
+		})
+	}
+
+	for _, cat := range e.RiskCategories {
+		d.RiskCategories = append(d.RiskCategories, model.RiskCategory{
+			ID: cat.ID, Name: cat.Name, Description: cat.Description,
 		})
 	}
 
@@ -337,6 +353,7 @@ func (r *riskRepository) Create(ctx context.Context, req model.CreateRiskRequest
 		"assignmentTeamId":       req.AssignmentTeamID,
 		"assignerId":             req.AssignerID,
 		"ownerId":                req.OwnerID,
+		"managementApproverId":   req.ManagementApproverID,
 		"riskYear":               req.Year,
 		"riskQuarter":            req.Quarter,
 		"likelihood":             req.Likelihood,
@@ -356,6 +373,7 @@ func (r *riskRepository) Create(ctx context.Context, req model.CreateRiskRequest
 		"actionPlanDescription":  nullableString(req.ActionPlanDescription),
 		"actionSteps":            steps,
 		"complianceReferenceIds": req.ComplianceReferenceIDs,
+		"riskCategoryIds":        req.RiskCategoryIDs,
 		"createdBy":              createdBy,
 	}
 

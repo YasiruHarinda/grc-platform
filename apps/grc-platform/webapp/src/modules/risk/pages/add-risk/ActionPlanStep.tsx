@@ -69,9 +69,16 @@ function SectionHeader({ title }: { title: string }): JSX.Element {
 interface ActionPlanStepProps {
   assignmentTeams: RiskTeam[];
   users: UserOption[];
+  riskOwnerCandidates: UserOption[];
+  managementApprovers: UserOption[];
 }
 
-export default function ActionPlanStep({ assignmentTeams, users }: ActionPlanStepProps): JSX.Element {
+export default function ActionPlanStep({
+  assignmentTeams,
+  users,
+  riskOwnerCandidates,
+  managementApprovers,
+}: ActionPlanStepProps): JSX.Element {
   const { control, setValue, clearErrors } = useFormContext<AddRiskFormValues>();
   const authFetch = useAuthApiClient();
 
@@ -83,14 +90,19 @@ export default function ActionPlanStep({ assignmentTeams, users }: ActionPlanSte
   // either the source register team (picked in Step 1) or this assignment
   // team — unlike Action Owner, Risk Owner must stay a real, already-provisioned
   // grc-platform account (see conversation: HR entity employees don't
-  // automatically get platform access, so they're not eligible here).
+  // automatically get platform access, so they're not eligible here) — AND to
+  // holding the Risk Owner role in Asgardeo (riskOwnerCandidates, sourced live
+  // via SCIM group membership; see fetchRiskOwnerCandidates).
   const sourceRegister = useWatch({ control, name: "sourceRegister" });
   const assignmentTeam = useWatch({ control, name: "assignmentTeam" });
   const eligibleTeamIds = [sourceRegister, assignmentTeam].filter(
     (id): id is number => typeof id === "number",
   );
-  const eligibleRiskOwners = users.filter((u) =>
-    u.risk_team_ids.some((teamId) => eligibleTeamIds.includes(teamId)),
+  const riskOwnerCandidateIds = new Set(riskOwnerCandidates.map((u) => u.id));
+  const eligibleRiskOwners = users.filter(
+    (u) =>
+      u.risk_team_ids.some((teamId) => eligibleTeamIds.includes(teamId)) &&
+      riskOwnerCandidateIds.has(u.id),
   );
 
   // Clear a previously-selected Risk Owner if changing the source register or
@@ -221,6 +233,43 @@ export default function ActionPlanStep({ assignmentTeams, users }: ActionPlanSte
                   </FormHelperText>
                 ) : (
                   <FormHelperText>Person accountable for managing this risk.</FormHelperText>
+                )}
+              </Box>
+            )}
+          />
+
+          {/* Management Approver */}
+          <Controller
+            name="managementApprover"
+            control={control}
+            render={({ field, fieldState }) => (
+              <Box>
+                <FieldLabel>Management Approver</FieldLabel>
+                <ComplexSelect
+                  {...field}
+                  fullWidth
+                  error={!!fieldState.error}
+                  displayEmpty
+                  onChange={(e) => {
+                    field.onChange(e);
+                    if (e.target.value) clearErrors("managementApprover");
+                  }}
+                >
+                  <ComplexSelect.MenuItem value="" disabled sx={{ display: "none" }}>
+                    Select a management approver
+                  </ComplexSelect.MenuItem>
+                  {managementApprovers.map((u) => (
+                    <ComplexSelect.MenuItem key={u.id} value={u.id}>
+                      {u.display_name}
+                    </ComplexSelect.MenuItem>
+                  ))}
+                </ComplexSelect>
+                {fieldState.error ? (
+                  <FormHelperText error>{fieldState.error.message}</FormHelperText>
+                ) : (
+                  <FormHelperText>
+                    Approves this risk if it's High level with Accept treatment, and is who an overdue risk escalates to.
+                  </FormHelperText>
                 )}
               </Box>
             )}

@@ -40,7 +40,10 @@ type RiskService interface {
 
 	// Workflow transitions — each validates the current status before advancing.
 	OwnerApprove(ctx context.Context, id int, byUserEmail string) error
-	ManagementApprove(ctx context.Context, id int, byUserEmail string) error
+	// ManagementApprove additionally requires byUserID to match the risk's
+	// management_approver_id — it is gated by both the RISK_MANAGEMENT_APPROVE
+	// privilege (checked by the handler) and this per-risk identity check.
+	ManagementApprove(ctx context.Context, id int, byUserEmail string, byUserID *int) error
 	Approve(ctx context.Context, id int, byUserEmail string) error
 	Reject(ctx context.Context, id int, req model.RejectRiskRequest, fromStatus, byUserEmail string) error
 	Complete(ctx context.Context, id int, byUserEmail string) error
@@ -116,13 +119,19 @@ func (s *riskService) OwnerApprove(ctx context.Context, id int, byUserEmail stri
 }
 
 // ManagementApprove moves PENDING_MANAGEMENT_APPROVAL → PENDING_COMPLIANCE_REVIEW.
-func (s *riskService) ManagementApprove(ctx context.Context, id int, byUserEmail string) error {
-	status, err := s.repo.GetWorkflowStatus(ctx, id)
+// Only the risk's own management_approver_id may perform this transition —
+// byUserID is the caller's resolved platform user id, nil when the caller has
+// no platform user row at all (which can never match, so it always 403s).
+func (s *riskService) ManagementApprove(ctx context.Context, id int, byUserEmail string, byUserID *int) error {
+	detail, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err
 	}
-	if status != model.StatusPendingManagementApproval {
-		return &apierror.Error{StatusCode: http.StatusConflict, Body: fmt.Sprintf("cannot be management-approved from status: %s", status)}
+	if detail.WorkflowStatus != model.StatusPendingManagementApproval {
+		return &apierror.Error{StatusCode: http.StatusConflict, Body: fmt.Sprintf("cannot be management-approved from status: %s", detail.WorkflowStatus)}
+	}
+	if byUserID == nil || detail.ManagementApproverID != *byUserID {
+		return &apierror.Error{StatusCode: http.StatusForbidden, Body: "only this risk's designated Management Approver may approve it"}
 	}
 	return s.repo.TransitionStatus(ctx, id, model.StatusPendingManagementApproval, model.StatusPendingComplianceReview, byUserEmail)
 }

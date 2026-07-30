@@ -223,6 +223,9 @@ func (s *riskService) CreateRisk(ctx context.Context, req domain.CreateRiskReque
 	if req.OwnerID <= 0 {
 		return domain.Risk{}, &apierror.ValidationError{Msg: "ownerId is required"}
 	}
+	if req.ManagementApproverID <= 0 {
+		return domain.Risk{}, &apierror.ValidationError{Msg: "managementApproverId is required"}
+	}
 	if req.RiskYear <= 0 {
 		return domain.Risk{}, &apierror.ValidationError{Msg: "riskYear is required"}
 	}

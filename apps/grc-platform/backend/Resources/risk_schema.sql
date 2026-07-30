@@ -96,6 +96,26 @@ CREATE TABLE IF NOT EXISTS risk_security_compliance_reference (
 
 
 -- -----------------------------------------------------------------------------
+-- risk_category
+-- Fixed but extensible list of risk categories (e.g. "PII / Sensitive Data
+-- Exposure", "Secrets / Credentials"). Seeded once at schema init via
+-- risk_module_data_schema.sql. Linked to risks via the risk_category_reference
+-- junction table (many-to-many at the schema level — see that table's comment
+-- for why "one category per risk" is an application rule, not a DB constraint).
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS risk_category (
+  id          INT          NOT NULL AUTO_INCREMENT,
+  name        VARCHAR(255) NOT NULL,
+  description TEXT         NULL,
+  created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_by  VARCHAR(255) NULL,
+  updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  updated_by  VARCHAR(255) NULL,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- -----------------------------------------------------------------------------
 -- risk_register_sequence
 -- One row per source register team; tracks the ever-increasing sequence number
 -- used to generate risk codes (format: YEAR-TEAMCODE-QUARTER-NNNN).
@@ -175,6 +195,7 @@ CREATE TABLE IF NOT EXISTS risk (
   identified_by_name       VARCHAR(255)  NULL,
   assigner_id              INT           NOT NULL,
   owner_id                 INT           NOT NULL,
+  management_approver_id   INT           NOT NULL COMMENT 'Named by the Risk Assigner at creation, on every risk regardless of level/treatment; approves PENDING_MANAGEMENT_APPROVAL and is the target an ESCALATED risk conceptually escalates to (no notification wired yet)',
   impact_description       TEXT          NULL,
   gross_score_id           INT           NULL,
   treatment_strategy       ENUM('REMEDIATE','ACCEPT','TRANSFER','VOID') NULL,
@@ -215,12 +236,14 @@ CREATE TABLE IF NOT EXISTS risk (
   KEY idx_risk_status    (workflow_status),
   KEY idx_risk_assigner  (assigner_id),
   KEY idx_risk_owner     (owner_id),
+  KEY idx_risk_mgmt_approver (management_approver_id),
   KEY idx_risk_source    (source_register_id),
   KEY idx_risk_team      (assignment_team_id),
   CONSTRAINT fk_risk_source_register     FOREIGN KEY (source_register_id)     REFERENCES risk_team(id)        ON DELETE RESTRICT,
   CONSTRAINT fk_risk_assignment_team     FOREIGN KEY (assignment_team_id)     REFERENCES risk_team(id)        ON DELETE RESTRICT,
   CONSTRAINT fk_risk_assigner            FOREIGN KEY (assigner_id)            REFERENCES `user`(id)           ON DELETE RESTRICT,
   CONSTRAINT fk_risk_owner               FOREIGN KEY (owner_id)               REFERENCES `user`(id)           ON DELETE RESTRICT,
+  CONSTRAINT fk_risk_management_approver FOREIGN KEY (management_approver_id) REFERENCES `user`(id)           ON DELETE RESTRICT,
   CONSTRAINT fk_risk_compliance_approver FOREIGN KEY (compliance_approval_by)  REFERENCES `user`(id)           ON DELETE SET NULL,
   CONSTRAINT fk_risk_gross_score         FOREIGN KEY (gross_score_id)         REFERENCES risk_score(id)       ON DELETE SET NULL,
   CONSTRAINT fk_risk_action_plan         FOREIGN KEY (action_plan_id)         REFERENCES risk_action_plan(id) ON DELETE SET NULL
@@ -315,6 +338,24 @@ CREATE TABLE IF NOT EXISTS risk_compliance_reference (
   PRIMARY KEY (risk_id, reference_id),
   CONSTRAINT fk_rcr_risk      FOREIGN KEY (risk_id)      REFERENCES risk(id)                              ON DELETE CASCADE,
   CONSTRAINT fk_rcr_reference FOREIGN KEY (reference_id) REFERENCES risk_security_compliance_reference(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- -----------------------------------------------------------------------------
+-- risk_category_reference  (junction table)
+-- Many-to-many between risk and risk_category. Genuinely M2M at the schema
+-- level — there is deliberately no UNIQUE constraint on risk_id alone, so a
+-- risk having more than one category needs no migration later. Today the
+-- application enforces exactly one row per risk (single-select dropdown on
+-- Add Risk), same shape as risk_compliance_reference above.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS risk_category_reference (
+  risk_id     INT      NOT NULL,
+  category_id INT      NOT NULL,
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (risk_id, category_id),
+  CONSTRAINT fk_rcat_risk     FOREIGN KEY (risk_id)     REFERENCES risk(id)          ON DELETE CASCADE,
+  CONSTRAINT fk_rcat_category FOREIGN KEY (category_id) REFERENCES risk_category(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 

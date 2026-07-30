@@ -128,6 +128,11 @@ type RiskScoreService interface {
 	ListRiskScores(ctx context.Context) (domain.ListRiskScoresResponse, error)
 }
 
+// RiskCategoryService defines operations on risk_category.
+type RiskCategoryService interface {
+	ListRiskCategories(ctx context.Context) (domain.ListRiskCategoriesResponse, error)
+}
+
 // RiskReferenceService defines operations on risk_security_compliance_reference.
 type RiskReferenceService interface {
 	SearchRiskReferences(ctx context.Context, req domain.SearchRiskReferencesRequest) (domain.SearchRiskReferencesResponse, error)

@@ -20,6 +20,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
 	riskhandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/handler"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 	riskentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/repository/entity"
 	riskservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/service"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
@@ -44,6 +45,7 @@ func buildRiskDeps(
 	ec *entityclient.Client,
 	fileSvc *file.Service,
 	hrClient *hrentity.Client,
+	scimClient *scim.Client,
 	emailCfg config.EmailConfig,
 ) riskhandler.Deps {
 	userRepo := userentity.NewRepository(ec)
@@ -53,6 +55,7 @@ func buildRiskDeps(
 		Assessment:      riskservice.NewRiskAssessmentService(riskentity.NewAssessmentRepository(ec)),
 		Team:            riskservice.NewTeamService(riskentity.NewTeamRepository(ec)),
 		Score:           riskservice.NewRiskScoreService(riskentity.NewRiskScoreRepository(ec)),
+		Category:        riskservice.NewRiskCategoryService(riskentity.NewRiskCategoryRepository(ec)),
 		ActionPlan:      riskservice.NewActionPlanService(actionPlanRepo, userRepo),
 		Evidence:        riskservice.NewEvidenceService(riskentity.NewRiskEvidenceRepository(ec), fileSvc),
 		Escalation:      riskservice.NewEscalationService(riskentity.NewEscalationRepository(ec)),
@@ -62,6 +65,7 @@ func buildRiskDeps(
 		Dashboard:       riskservice.NewAssembledDashboardService(riskentity.NewDashboardRepository(ec)),
 		Employee:        riskservice.NewEmployeeSearchService(hrClient),
 		Users:           userRepo,
+		SCIM:            scimClient,
 		Email:           emailer.New(emailCfg.ServiceURL, emailCfg.FromAddress, emailCfg.TokenURL, emailCfg.ClientID, emailCfg.ClientSecret),
 		FrontendBaseURL: emailCfg.FrontendBaseURL,
 	}

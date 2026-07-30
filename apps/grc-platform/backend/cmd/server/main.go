@@ -32,6 +32,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/middleware"
 	riskhandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/handler"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/file"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
@@ -79,6 +80,7 @@ func main() {
 	}
 
 	hrClient := hrentity.NewClient(cfg.HREntity.GraphQLURL, cfg.HREntity.TokenURL, cfg.HREntity.ClientID, cfg.HREntity.ClientSecret)
+	scimClient := scim.NewClient(cfg.SCIM.BaseURL, cfg.SCIM.TokenURL, cfg.SCIM.ClientID, cfg.SCIM.ClientSecret, cfg.SCIM.Scopes)
 
 	userDeps := userhandler.Deps{
 		Users:    userentity.NewRepository(entityCli),
@@ -92,7 +94,7 @@ func main() {
 	})
 
 	userhandler.RegisterRoutes(mux, userDeps)
-	riskhandler.RegisterRoutes(mux, buildRiskDeps(entityCli, fileSvc, hrClient, cfg.Email))
+	riskhandler.RegisterRoutes(mux, buildRiskDeps(entityCli, fileSvc, hrClient, scimClient, cfg.Email))
 	audithandler.RegisterRoutes(mux, buildAuditDeps(fileSvc, entityCli, cfg.AIValidation))
 
 	// Scope guard runs just inside Auth: an evidence-app-scoped token (IdP-2) is

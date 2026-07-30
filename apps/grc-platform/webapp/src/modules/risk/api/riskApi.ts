@@ -44,6 +44,12 @@ export interface ComplianceReference {
   description: string | null;
 }
 
+export interface RiskCategory {
+  id: number;
+  name: string;
+  description: string | null;
+}
+
 export interface UserOption {
   id: number;
   display_name: string;
@@ -471,6 +477,24 @@ export async function fetchUsers(authFetch: AuthFetch): Promise<UserOption[]> {
   return handleResponse<UserOption[]>(res);
 }
 
+export async function fetchRiskCategories(authFetch: AuthFetch): Promise<RiskCategory[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk-categories`);
+  return handleResponse<RiskCategory[]>(res);
+}
+
+// fetchManagementApprovers / fetchRiskOwnerCandidates return the subset of
+// platform users who also hold the matching Asgardeo group membership —
+// sourced live via the backend's SCIM integration, not a locally-stored role.
+export async function fetchManagementApprovers(authFetch: AuthFetch): Promise<UserOption[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/management-approvers`);
+  return handleResponse<UserOption[]>(res);
+}
+
+export async function fetchRiskOwnerCandidates(authFetch: AuthFetch): Promise<UserOption[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk-owner-candidates`);
+  return handleResponse<UserOption[]>(res);
+}
+
 // searchEmployees looks up active employees by email substring, live
 // from the HR entity service (never the GRC platform's own database), for
 export async function searchEmployees(authFetch: AuthFetch, query: string): Promise<EmployeeOption[]> {
@@ -525,6 +549,7 @@ export function buildCreateRiskPayload(data: AddRiskFormValues): Record<string, 
     risk_title: data.riskTitle,
     risk_description: data.riskDescription,
     compliance_reference_ids: data.complianceReferences,
+    risk_category_ids: data.riskCategory !== "" ? [data.riskCategory] : undefined,
     identified_by_type: data.identifiedByType,
     identified_by_name: data.identifiedByName !== "" ? data.identifiedByName : undefined,
     // Only meaningful (and only required by the backend) for EMPLOYEE — the
@@ -543,6 +568,7 @@ export function buildCreateRiskPayload(data: AddRiskFormValues): Record<string, 
     reassessment_date: toDateOnlyString(data.reassessmentDate),
     assignment_team_id: data.assignmentTeam !== "" ? data.assignmentTeam : undefined,
     owner_id: data.riskOwner !== "" ? data.riskOwner : undefined,
+    management_approver_id: data.managementApprover !== "" ? data.managementApprover : undefined,
     action_owner_id: data.actionOwner !== "" ? data.actionOwner : undefined,
     action_plan_description: data.actionPlanDescription,
     action_steps: data.actionSteps.map((s) => ({ description: s.description })),

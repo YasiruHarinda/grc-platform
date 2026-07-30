@@ -118,3 +118,8 @@ type NotificationRepository interface {
 type ComplianceReferenceRepository interface {
 	List(ctx context.Context) ([]*model.ComplianceReference, error)
 }
+
+// RiskCategoryRepository is the data-access contract for risk categories.
+type RiskCategoryRepository interface {
+	List(ctx context.Context) ([]*model.RiskCategory, error)
+}

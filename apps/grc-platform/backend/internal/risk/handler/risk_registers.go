@@ -492,7 +492,12 @@ func (d *Deps) handleManagementApproveRisk(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	if err := d.Risk.ManagementApprove(r.Context(), id, by); err != nil {
+	callerID, err := d.callerUserID(r.Context())
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	if err := d.Risk.ManagementApprove(r.Context(), id, by, callerID); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
@@ -553,6 +558,20 @@ func (d *Deps) handleRejectRisk(w http.ResponseWriter, r *http.Request) {
 	}
 	if !auth.RequirePrivilege(r.Context(), w, rejectPrivilegeFor(detail.WorkflowStatus)) {
 		return
+	}
+	// Rejecting at the management stage is further restricted to the risk's
+	// own designated Management Approver, same as approving it — see
+	// handleManagementApproveRisk.
+	if detail.WorkflowStatus == model.StatusPendingManagementApproval {
+		callerID, err := d.callerUserID(r.Context())
+		if err != nil {
+			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+			return
+		}
+		if callerID == nil || detail.ManagementApproverID != *callerID {
+			response.WriteError(w, http.StatusForbidden, "only this risk's designated Management Approver may reject it")
+			return
+		}
 	}
 
 	var req model.RejectRiskRequest

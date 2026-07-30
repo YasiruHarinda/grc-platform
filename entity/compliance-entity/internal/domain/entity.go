@@ -412,6 +412,11 @@ type ListRiskScoresResponse struct {
 	Scores []RiskScore `json:"scores"`
 }
 
+// ListRiskCategoriesResponse is returned by GET /risk/categories.
+type ListRiskCategoriesResponse struct {
+	Categories []RiskCategory `json:"categories"`
+}
+
 // =============================================================================
 // Risk Compliance Reference
 // =============================================================================
@@ -424,6 +429,16 @@ type RiskComplianceReference struct {
 	Description *string   `json:"description"`
 	CreatedOn   time.Time `json:"createdOn"`
 	UpdatedOn   time.Time `json:"updatedOn"`
+}
+
+// RiskCategory represents a risk_category lookup row (e.g. "PII / Sensitive
+// Data Exposure"). Linked to risks via risk_category_reference, which is
+// genuinely many-to-many at the schema level even though only one row is
+// ever written per risk today.
+type RiskCategory struct {
+	ID          int     `json:"id"`
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
 }
 
 // SearchRiskReferencesRequest is the payload for POST /risk/compliance-references/search.
@@ -462,7 +477,13 @@ type Risk struct {
 	AssignerName       string    `json:"assignerName"`
 	OwnerID            int       `json:"ownerId"`
 	OwnerName          string    `json:"ownerName"`
-	WorkflowStatus     string    `json:"workflowStatus"`
+	// ManagementApproverID names the user who approves this risk during
+	// PENDING_MANAGEMENT_APPROVAL and is the target an ESCALATED risk
+	// conceptually escalates to. Required on every risk regardless of level
+	// or treatment strategy.
+	ManagementApproverID   int       `json:"managementApproverId"`
+	ManagementApproverName string    `json:"managementApproverName"`
+	WorkflowStatus         string    `json:"workflowStatus"`
 	TreatmentStrategy  *string   `json:"treatmentStrategy"`
 	GrossScoreID       *int      `json:"grossScoreId"`
 	GrossRiskLevel     *string   `json:"grossRiskLevel"`
@@ -904,8 +925,11 @@ type CreateRiskRequest struct {
 	AssignmentTeamID int     `json:"assignmentTeamId"`
 	AssignerID       int     `json:"assignerId"`
 	OwnerID          int     `json:"ownerId"`
-	RiskYear         int     `json:"riskYear"`
-	RiskQuarter      string  `json:"riskQuarter"` // Q1 | Q2 | Q3 | Q4
+	// ManagementApproverID is required on every risk regardless of level or
+	// treatment strategy — see Risk.ManagementApproverID.
+	ManagementApproverID int    `json:"managementApproverId"`
+	RiskYear             int    `json:"riskYear"`
+	RiskQuarter          string `json:"riskQuarter"` // Q1 | Q2 | Q3 | Q4
 	// Likelihood and impact identify the gross score cell; the score_id is
 	// resolved server-side from risk_score, as it is for assessments. Callers
 	// describe the rating they gave, not the surrogate key behind it.
@@ -935,6 +959,10 @@ type CreateRiskRequest struct {
 	ActionPlanDescription  *string           `json:"actionPlanDescription"`
 	ActionSteps            []ActionStepInput `json:"actionSteps"`
 	ComplianceReferenceIDs []int             `json:"complianceReferenceIds"`
+	// RiskCategoryIDs writes risk_category_reference rows. The schema is
+	// genuinely many-to-many (no DB constraint limits this to one row); the
+	// GRC frontend only ever sends one today via a single-select dropdown.
+	RiskCategoryIDs []int `json:"riskCategoryIds"`
 
 	CreatedBy string `json:"createdBy"`
 }
@@ -961,6 +989,7 @@ type UpdateRiskRequest struct {
 	ComplianceApprovalDate *string `json:"complianceApprovalDate"`
 	AssignmentTeamID       *int    `json:"assignmentTeamId"`
 	OwnerID                *int    `json:"ownerId"`
+	ManagementApproverID   *int    `json:"managementApproverId"`
 	ActionPlanID           *int    `json:"actionPlanId"`
 	GitIssueURL            *string `json:"gitIssueUrl"`
 	Remarks                *string `json:"remarks"`
@@ -999,6 +1028,7 @@ type UpdateRiskRequest struct {
 	// require re-approval, and what belongs in the change log, are workflow
 	// rules owned by the GRC backend, not persistence rules owned here.
 	ComplianceReferenceIDs []int              `json:"complianceReferenceIds"`
+	RiskCategoryIDs        []int              `json:"riskCategoryIds"`
 	ActionPlan             *ActionPlanUpdate  `json:"actionPlan"`
 	ActionSteps            []ActionStepUpdate `json:"actionSteps"`
 	ChangeLog              []ChangeLogEntry   `json:"changeLog"`
@@ -1489,6 +1519,7 @@ type RiskDetail struct {
 	EffectiveScore *RiskScore `json:"effectiveScore"`
 
 	ComplianceReferences []RiskComplianceReference `json:"complianceReferences"`
+	RiskCategories       []RiskCategory            `json:"riskCategories"`
 	ActionPlan           *RiskActionPlanDetail     `json:"actionPlan"`
 	Assessments          []RiskAssessment          `json:"assessments"`
 }

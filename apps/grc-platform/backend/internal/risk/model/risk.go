@@ -33,6 +33,7 @@ type Risk struct {
 	IdentifiedByName       *string   `json:"identified_by_name"`
 	AssignerID             int       `json:"assigner_id"`
 	OwnerID                int       `json:"owner_id"`
+	ManagementApproverID   int       `json:"management_approver_id"`
 	ImpactDescription      *string   `json:"impact_description"`
 	GrossScoreID           *int      `json:"gross_score_id"`
 	TreatmentStrategy      *string   `json:"treatment_strategy"`
@@ -75,6 +76,10 @@ type CreateRiskRequest struct {
 	IdentifiedByEmail  *string `json:"identified_by_email,omitempty"`
 	AssignerID         int     `json:"assigner_id"`
 	RiskIdentifiedDate string  `json:"risk_identified_date"`
+	// RiskCategoryIDs writes risk_category_reference rows. The schema is
+	// genuinely many-to-many (no DB constraint limits this to one row); the
+	// Add Risk form only ever sends one today via a single-select dropdown.
+	RiskCategoryIDs []int `json:"risk_category_ids"`
 
 	// Step 2: Risk Assessment
 	Likelihood         int    `json:"likelihood"`
@@ -86,6 +91,11 @@ type CreateRiskRequest struct {
 	// Step 3: Action Plan
 	AssignmentTeamID      int                       `json:"assignment_team_id"`
 	OwnerID               int                       `json:"owner_id"`
+	// ManagementApproverID is required on every risk regardless of level or
+	// treatment strategy — it names who approves PENDING_MANAGEMENT_APPROVAL
+	// (reached only for ACCEPT+HIGH risks) and who an ESCALATED risk
+	// conceptually escalates to.
+	ManagementApproverID  int                       `json:"management_approver_id"`
 	ActionOwnerID         int                       `json:"action_owner_id"`
 	ActionPlanDescription string                    `json:"action_plan_description"`
 	ActionSteps           []CreateActionStepRequest `json:"action_steps"`
@@ -183,6 +193,7 @@ type RiskDetail struct {
 	IdentifiedByName       *string `json:"identified_by_name"`
 	AssignerID             int     `json:"assigner_id"`
 	OwnerID                int     `json:"owner_id"`
+	ManagementApproverID   int     `json:"management_approver_id"`
 	ImpactDescription      *string `json:"impact_description"`
 	TreatmentStrategy      *string `json:"treatment_strategy"`
 	SourceRegisterID       int     `json:"source_register_id"`
@@ -207,6 +218,7 @@ type RiskDetail struct {
 	AssignmentTeamName     string  `json:"assignment_team_name"`
 	OwnerName              string  `json:"owner_name"`
 	AssignerName           string  `json:"assigner_name"`
+	ManagementApproverName string  `json:"management_approver_name"`
 	ComplianceApproverName *string `json:"compliance_approver_name"`
 
 	// Gross score (from risk_score join) — the original rating assigned at
@@ -222,6 +234,7 @@ type RiskDetail struct {
 
 	// Related entities
 	ComplianceReferences []ComplianceReference `json:"compliance_references"`
+	RiskCategories       []RiskCategory        `json:"risk_categories"`
 	ActionPlan           *ActionPlanDetail     `json:"action_plan"`
 	Assessments          []RiskAssessment      `json:"assessments"`
 }
@@ -256,8 +269,10 @@ type UpdateRiskRequest struct {
 	IdentifiedByEmail      *string `json:"identified_by_email,omitempty"`
 	AssignerID             *int    `json:"assigner_id,omitempty"`
 	OwnerID                *int    `json:"owner_id,omitempty"`
+	ManagementApproverID   *int    `json:"management_approver_id,omitempty"`
 	ImpactDescription      string  `json:"impact_description"`
 	ComplianceReferenceIDs []int   `json:"compliance_reference_ids"`
+	RiskCategoryIDs        []int   `json:"risk_category_ids"`
 	Progress               string  `json:"progress,omitempty"`
 	GitIssueURL            string  `json:"git_issue_url,omitempty"`
 	Remarks                string  `json:"remarks,omitempty"`

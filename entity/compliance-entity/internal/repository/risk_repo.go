@@ -48,6 +48,7 @@ const riskSelectCols = `
   r.assignment_team_id,  asgn.name AS assignment_team_name,
   r.assigner_id,         u_asgn.display_name AS assigner_name,
   r.owner_id,            u_own.display_name  AS owner_name,
+  r.management_approver_id, u_mgmt.display_name AS management_approver_name,
   r.workflow_status, r.treatment_strategy,
   r.gross_score_id, rs.risk_level AS gross_risk_level,
   DATE_FORMAT(r.implementation_date, '%Y-%m-%d'),
@@ -78,6 +79,7 @@ LEFT JOIN risk_team  src   ON src.id   = r.source_register_id
 LEFT JOIN risk_team  asgn  ON asgn.id  = r.assignment_team_id
 LEFT JOIN ` + "`user`" + ` u_asgn ON u_asgn.id = r.assigner_id
 LEFT JOIN ` + "`user`" + ` u_own  ON u_own.id  = r.owner_id
+LEFT JOIN ` + "`user`" + ` u_mgmt ON u_mgmt.id = r.management_approver_id
 LEFT JOIN risk_score rs ON rs.id   = r.gross_score_id` + effectiveScoreJoin
 
 func (r *riskRepo) SearchRisks(ctx context.Context, req domain.SearchRisksRequest) ([]domain.Risk, int, error) {
@@ -289,15 +291,17 @@ func (r *riskRepo) CreateRisk(ctx context.Context, req domain.CreateRiskRequest)
 		`INSERT INTO risk (
 			risk_code, risk_year, risk_quarter, risk_title, risk_description,
 			source_register_id, assignment_team_id, assigner_id, owner_id,
+			management_approver_id,
 			treatment_strategy, gross_score_id, progress,
 			implementation_date, reassessment_date,
 			impact_description, risk_identified_date,
 			identified_by_type, identified_by_name,
 			git_issue_url, email_subject, remarks,
 			workflow_status, created_by, updated_by
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_RISK_OWNER_APPROVAL', ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_RISK_OWNER_APPROVAL', ?, ?)`,
 		riskCode, req.RiskYear, req.RiskQuarter, req.RiskTitle, req.RiskDescription,
 		req.SourceRegisterID, req.AssignmentTeamID, req.AssignerID, req.OwnerID,
+		req.ManagementApproverID,
 		req.TreatmentStrategy, grossScoreID, req.Progress,
 		req.ImplementationDate, req.ReassessmentDate,
 		req.ImpactDescription, req.RiskIdentifiedDate,
@@ -355,6 +359,14 @@ func (r *riskRepo) CreateRisk(ctx context.Context, req domain.CreateRiskRequest)
 			"INSERT INTO risk_compliance_reference (risk_id, reference_id) VALUES (?, ?)",
 			riskID, refID); err != nil {
 			return nil, fmt.Errorf("risk.Create compliance reference %d: %w", refID, err)
+		}
+	}
+
+	for _, categoryID := range req.RiskCategoryIDs {
+		if _, err = tx.ExecContext(ctx,
+			"INSERT INTO risk_category_reference (risk_id, category_id) VALUES (?, ?)",
+			riskID, categoryID); err != nil {
+			return nil, fmt.Errorf("risk.Create risk category %d: %w", categoryID, err)
 		}
 	}
 
@@ -466,6 +478,10 @@ func (r *riskRepo) UpdateRisk(ctx context.Context, id int, req domain.UpdateRisk
 		sets = append(sets, "owner_id = ?")
 		args = append(args, *req.OwnerID)
 	}
+	if req.ManagementApproverID != nil {
+		sets = append(sets, "management_approver_id = ?")
+		args = append(args, *req.ManagementApproverID)
+	}
 	if req.ActionPlanID != nil {
 		sets = append(sets, "action_plan_id = ?")
 		args = append(args, *req.ActionPlanID)
@@ -536,6 +552,22 @@ func (r *riskRepo) UpdateRisk(ctx context.Context, id int, req domain.UpdateRisk
 				"INSERT INTO risk_compliance_reference (risk_id, reference_id) VALUES (?, ?)",
 				id, refID); err != nil {
 				return nil, fmt.Errorf("risk.Update compliance reference %d: %w", refID, err)
+			}
+		}
+	}
+
+	// Risk categories follow the identical nil-means-untouched, wholesale-replace
+	// convention as compliance references above.
+	if req.RiskCategoryIDs != nil {
+		if _, err = tx.ExecContext(ctx,
+			"DELETE FROM risk_category_reference WHERE risk_id = ?", id); err != nil {
+			return nil, fmt.Errorf("risk.Update clear risk categories: %w", err)
+		}
+		for _, categoryID := range req.RiskCategoryIDs {
+			if _, err = tx.ExecContext(ctx,
+				"INSERT INTO risk_category_reference (risk_id, category_id) VALUES (?, ?)",
+				id, categoryID); err != nil {
+				return nil, fmt.Errorf("risk.Update risk category %d: %w", categoryID, err)
 			}
 		}
 	}
@@ -669,6 +701,7 @@ func scanRiskWithExtras(s scanner, extras ...any) (*domain.Risk, error) {
 		&r.AssignmentTeamID, &r.AssignmentTeamName,
 		&r.AssignerID, &r.AssignerName,
 		&r.OwnerID, &r.OwnerName,
+		&r.ManagementApproverID, &r.ManagementApproverName,
 		&r.WorkflowStatus, &treatment,
 		&grossScoreID, &grossLevel,
 		&implDate, &reassDate,
@@ -807,6 +840,9 @@ func (r *riskRepo) GetRiskDetail(ctx context.Context, id int) (*domain.RiskDetai
 	if d.ComplianceReferences, err = r.detailReferences(ctx, id); err != nil {
 		return nil, err
 	}
+	if d.RiskCategories, err = r.detailRiskCategories(ctx, id); err != nil {
+		return nil, err
+	}
 	if d.ActionPlan, err = r.detailActionPlan(ctx, id); err != nil {
 		return nil, err
 	}
@@ -855,6 +891,28 @@ func (r *riskRepo) detailReferences(ctx context.Context, id int) ([]domain.RiskC
 		refs = append(refs, ref)
 	}
 	return refs, rows.Err()
+}
+
+func (r *riskRepo) detailRiskCategories(ctx context.Context, id int) ([]domain.RiskCategory, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT rc.id, rc.name, rc.description
+		FROM risk_category_reference rcr
+		JOIN risk_category rc ON rc.id = rcr.category_id
+		WHERE rcr.risk_id = ? ORDER BY rcr.category_id`, id)
+	if err != nil {
+		return nil, fmt.Errorf("risk.GetDetail risk categories: %w", err)
+	}
+	defer rows.Close()
+
+	cats := []domain.RiskCategory{}
+	for rows.Next() {
+		var c domain.RiskCategory
+		if err := rows.Scan(&c.ID, &c.Name, &c.Description); err != nil {
+			return nil, fmt.Errorf("risk.GetDetail scan risk category: %w", err)
+		}
+		cats = append(cats, c)
+	}
+	return cats, rows.Err()
 }
 
 func (r *riskRepo) detailActionPlan(ctx context.Context, id int) (*domain.RiskActionPlanDetail, error) {

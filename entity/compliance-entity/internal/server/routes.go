@@ -51,6 +51,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	trailRepo := repository.NewTrailRepository(db)
 	riskTeamRepo := repository.NewRiskTeamRepository(db)
 	riskScoreRepo := repository.NewRiskScoreRepository(db)
+	riskCategoryRepo := repository.NewRiskCategoryRepository(db)
 	riskReferenceRepo := repository.NewRiskReferenceRepository(db)
 	riskRepo := repository.NewRiskRepository(db)
 	riskActionPlanRepo := repository.NewRiskActionPlanRepository(db)
@@ -81,6 +82,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	trailSvc := service.NewTrailService(trailRepo)
 	riskTeamSvc := service.NewRiskTeamService(riskTeamRepo)
 	riskScoreSvc := service.NewCachedRiskScoreService(service.NewRiskScoreService(riskScoreRepo))
+	riskCategorySvc := service.NewRiskCategoryService(riskCategoryRepo)
 	riskReferenceSvc := service.NewRiskReferenceService(riskReferenceRepo)
 	riskSvc := service.NewRiskService(riskRepo)
 	riskActionStepSvc := service.NewRiskActionStepService(riskActionStepRepo, riskActionPlanRepo, riskSvc)
@@ -116,6 +118,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	trailH := handler.NewTrailHandler(trailSvc)
 	riskTeamH := handler.NewRiskTeamHandler(riskTeamSvc)
 	riskScoreH := handler.NewRiskScoreHandler(riskScoreSvc)
+	riskCategoryH := handler.NewRiskCategoryHandler(riskCategorySvc)
 	riskReferenceH := handler.NewRiskReferenceHandler(riskReferenceSvc)
 	riskH := handler.NewRiskHandler(riskSvc)
 	riskActionPlanH := handler.NewRiskActionPlanHandler(riskActionPlanSvc)
@@ -246,6 +249,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 
 	// Risk scores (reference data — read only)
 	mux.HandleFunc("GET /risk/scores", riskScoreH.ListRiskScores)
+	mux.HandleFunc("GET /risk/categories", riskCategoryH.ListRiskCategories)
 
 	// Risk compliance references
 	mux.HandleFunc("POST /risk/compliance-references/search", riskReferenceH.SearchRiskReferences)

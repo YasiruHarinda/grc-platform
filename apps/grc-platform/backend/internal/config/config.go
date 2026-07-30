@@ -29,6 +29,7 @@ type Config struct {
 	Auth                    AuthConfig
 	ComplianceEntityBaseURL string
 	HREntity                HREntityConfig
+	SCIM                    SCIMConfig
 	CORSAllowedOrigin       string
 	AIValidation            AIValidationConfig
 	Email                   EmailConfig
@@ -103,6 +104,24 @@ type HREntityConfig struct {
 	ClientSecret string
 }
 
+// SCIMConfig holds the connection details for the internal SCIM Operations
+// Service (digiops-infra/operations/scim-operations-service), used to answer
+// "which users belong to Asgardeo group X" for role-filtered dropdowns
+// (Management Approver, Risk Owner) — this platform has no DB-side
+// user↔role table of its own. Required (mustEnv) like HREntityConfig.
+type SCIMConfig struct {
+	BaseURL      string
+	TokenURL     string
+	ClientID     string
+	ClientSecret string
+	// Scopes is a space-separated OAuth2 scope list requested on every token
+	// exchange (e.g. "org_internal:users:read org_internal:groups:read").
+	// Asgardeo grants only the subset the application is actually authorized
+	// for — an app not authorized for a scope silently gets it omitted from
+	// the issued token rather than an error at token-request time.
+	Scopes string
+}
+
 // Load reads configuration from environment variables.
 //
 // There is no database configuration: the backend reaches all data through the
@@ -147,6 +166,27 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	scimBaseURL, err := mustEnv("SCIM_BASE_URL")
+	if err != nil {
+		return Config{}, err
+	}
+	scimTokenURL, err := mustEnv("SCIM_TOKEN_URL")
+	if err != nil {
+		return Config{}, err
+	}
+	scimClientID, err := mustEnv("SCIM_CLIENT_ID")
+	if err != nil {
+		return Config{}, err
+	}
+	scimClientSecret, err := mustEnv("SCIM_CLIENT_SECRET")
+	if err != nil {
+		return Config{}, err
+	}
+	scimScopes, err := mustEnv("SCIM_SCOPES")
+	if err != nil {
+		return Config{}, err
+	}
+
 	emailServiceURL, err := mustEnv("EMAIL_SERVICE_URL")
 	if err != nil {
 		return Config{}, err
@@ -181,6 +221,13 @@ func Load() (Config, error) {
 			TokenURL:     hrEntityTokenURL,
 			ClientID:     hrEntityClientID,
 			ClientSecret: hrEntityClientSecret,
+		},
+		SCIM: SCIMConfig{
+			BaseURL:      scimBaseURL,
+			TokenURL:     scimTokenURL,
+			ClientID:     scimClientID,
+			ClientSecret: scimClientSecret,
+			Scopes:       scimScopes,
 		},
 		CORSAllowedOrigin: envOrDefault("CORS_ALLOWED_ORIGIN", "http://localhost:3000"),
 		AIValidation: AIValidationConfig{

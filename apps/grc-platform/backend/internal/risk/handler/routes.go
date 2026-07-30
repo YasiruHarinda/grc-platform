@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 	riskservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/service"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
@@ -37,6 +38,7 @@ type Deps struct {
 	Escalation   riskservice.EscalationService
 	Notification riskservice.NotificationService
 	Compliance   riskservice.ComplianceReferenceService
+	Category     riskservice.RiskCategoryService
 	Analytics    riskservice.AnalyticsService
 	Dashboard    riskservice.DashboardService
 	Employee     riskservice.EmployeeSearchService
@@ -44,6 +46,9 @@ type Deps struct {
 	// user.id — used by handleListRisks (Action Owner list scoping) and the
 	// action-plan handlers (ownership checks).
 	Users user.Repository
+	// SCIM answers "which users belong to Asgardeo group X" for role-filtered
+	// pickers (Management Approver, Risk Owner) — see internal/scim.
+	SCIM *scim.Client
 	// Email sends the risk-owner notification fired synchronously right
 	// after a risk is created. A delivery failure is logged but never fails
 	// risk creation itself — see handleCreateRisk.
@@ -65,6 +70,15 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 
 	// Compliance references
 	mux.HandleFunc("GET /api/v1/compliance-references", d.handleListComplianceReferences)
+
+	// Risk categories
+	mux.HandleFunc("GET /api/v1/risk-categories", d.handleListRiskCategories)
+
+	// Role-filtered user pickers, sourced live from Asgardeo group membership
+	// via the SCIM Operations Service (this platform keeps no user<->role
+	// table of its own)
+	mux.HandleFunc("GET /api/v1/management-approvers", d.handleListManagementApprovers)
+	mux.HandleFunc("GET /api/v1/risk-owner-candidates", d.handleListRiskOwnerCandidates)
 
 	// Current user
 	mux.HandleFunc("GET /api/v1/me/privileges", d.handleGetMyPrivileges)
