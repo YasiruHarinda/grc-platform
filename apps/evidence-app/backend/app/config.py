@@ -36,10 +36,6 @@ class Settings(BaseSettings):
     AZURE_STORAGE_CONNECTION_STRING: str
     AZURE_STORAGE_CONTAINER: str = "uploads"
 
-    # Comma-separated allow-list of emails granted the "admin" role. Everyone
-    # else who authenticates gets "engineer". See app/auth.py.
-    ADMIN_EMAILS: str = ""
-
     # Comma-separated CORS allow-list for the web frontend.
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:5174"
 

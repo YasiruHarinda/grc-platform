@@ -6,9 +6,8 @@ which roles may call it with a single line:
     def delete_product(..., user: User = Depends(require_admin)):
         ...
 
-The role comes from User.role, which today is mapped from an ADMIN_EMAILS
-allow-list in auth.py::_role_for. Swap that one function for a real Asgardeo
-group/role claim later — no change needed here.
+The role comes from User.role, which is mapped from Asgardeo's `roles` claim
+in auth.py::_role_for.
 """
 from fastapi import Depends, HTTPException, status
 

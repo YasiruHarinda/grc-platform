@@ -16,8 +16,8 @@ runner. Deployed on Choreo as a REST service (see `.choreo/component.yaml`).
 app/
   main.py              FastAPI app, CORS, blob file serving, router registration
   config.py            Settings loaded from environment (.env)
-  auth.py              Asgardeo bearer-token validation + dev header fallback
-  rbac.py              require_admin / require_engineer_or_admin dependencies
+  auth.py              Asgardeo bearer-token validation (local JWKS verification)
+  rbac.py              require_role / require_admin dependencies
   database.py          SQLAlchemy engine + session
   models/              ORM models
   schemas/             Pydantic request/response models
@@ -45,7 +45,7 @@ the Runner via its own Asgardeo login.
 ## Environment variables
 
 See [`.env.example`](.env.example). All variables there are required except
-`ADMIN_EMAILS` (may be empty) and the ones with defaults.
+the ones with defaults.
 
 ## Database migrations
 
