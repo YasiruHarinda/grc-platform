@@ -12,6 +12,25 @@ class Settings(BaseSettings):
     # validating logins against the wrong tenant.
     ASGARDEO_ORG: str
 
+    # The two Asgardeo client applications that may call this API: the web
+    # frontend and the local Runner. Both feed the token audience allow-list,
+    # but they are NOT interchangeable — only the web app one gates admin, so
+    # they stay two named settings rather than one comma-separated list.
+    #
+    # Why that matters: Asgardeo's role claim is organisation-wide, not
+    # per-application, so a Runner token carries the web-app role names too.
+    # The audience is the only claim that says which application a token was
+    # actually issued to, and therefore the only thing that can stop a Runner
+    # token from granting admin.
+    ASGARDEO_WEBAPP_CLIENT_ID: str
+    ASGARDEO_RUNNER_CLIENT_ID: str
+
+    # Asgardeo role names granting each role in this application. Configuration
+    # rather than constants because role names are environment-specific (staging
+    # and production carry different suffixes).
+    ASGARDEO_ADMIN_ROLE: str
+    ASGARDEO_ENGINEER_ROLE: str
+
     # Azure Blob Storage for evidence files. The connection string is required;
     # the backend has no local-filesystem fallback.
     AZURE_STORAGE_CONNECTION_STRING: str

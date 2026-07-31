@@ -18,10 +18,28 @@ from pydantic import ValidationError
 from app.config import Settings
 
 
-def test_settings_raises_when_asgardeo_org_is_missing(monkeypatch):
-    monkeypatch.delenv("ASGARDEO_ORG", raising=False)
+REQUIRED_ASGARDEO_SETTINGS = [
+    "ASGARDEO_ORG",
+    "ASGARDEO_WEBAPP_CLIENT_ID",
+    "ASGARDEO_RUNNER_CLIENT_ID",
+    "ASGARDEO_ADMIN_ROLE",
+    "ASGARDEO_ENGINEER_ROLE",
+]
 
-    with pytest.raises(ValidationError, match="ASGARDEO_ORG"):
+
+@pytest.mark.parametrize("name", REQUIRED_ASGARDEO_SETTINGS)
+def test_settings_raises_when_an_asgardeo_setting_is_missing(monkeypatch, name):
+    """Every Asgardeo setting is required, one test per setting.
+
+    The client IDs are the audience allow-list and the role names are the
+    authorisation gate, so a deployment that forgets one must not start. An
+    empty allow-list in particular would accept a token minted for any other
+    application in the organisation — an authentication bypass — and it would
+    do so silently, which is exactly the failure a default would hide.
+    """
+    monkeypatch.delenv(name, raising=False)
+
+    with pytest.raises(ValidationError, match=name):
         Settings(_env_file=None)
 
 
