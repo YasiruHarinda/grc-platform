@@ -155,21 +155,23 @@ func (s *evidenceService) resolveNames(ctx context.Context, auditID, controlID i
 	return sanitizeSegment(a.Name), sanitizeSegment(c.ControlNumber), nil
 }
 
-// auditRootFolder is the literal top-level Azure Blob folder for every audit's
+// AuditRootFolder is the literal top-level Azure Blob folder for every audit's
 // evidence, keeping the Audit Hub's storage tree separate from the Risk
-// module's (which owns its own top-level folder).
-const auditRootFolder = "audit"
+// module's (which owns its own top-level folder). Exported so callers deriving
+// a folder path outside this package (e.g. the handler's display-only
+// baseFolderPathFor) stay in sync with evidenceFolderPath/populationFolderPath.
+const AuditRootFolder = "audit"
 
 func evidenceFolderPath(auditName, controlNumber string) string {
-	return auditRootFolder + "/" + auditName + "/" + controlNumber + "/evidence/"
+	return AuditRootFolder + "/" + auditName + "/" + controlNumber + "/evidence/"
 }
 
 func populationFolderPath(auditName, controlNumber string) string {
-	return auditRootFolder + "/" + auditName + "/" + controlNumber + "/population/"
+	return AuditRootFolder + "/" + auditName + "/" + controlNumber + "/population/"
 }
 
 func sampleFolderPath(auditName, controlNumber string) string {
-	return auditRootFolder + "/" + auditName + "/" + controlNumber + "/population/sample/"
+	return AuditRootFolder + "/" + auditName + "/" + controlNumber + "/population/sample/"
 }
 
 func (s *evidenceService) GetUploadLink(ctx context.Context, auditID, controlID int) (*model.UploadLinkResponse, error) {

@@ -152,7 +152,7 @@ func New(ctx context.Context, client *entityclient.Client) (*Store, error) {
 		}
 	}
 	go func() {
-		t := time.NewTicker(1 * time.Minute)
+		t := time.NewTicker(15 * time.Minute)
 		defer t.Stop()
 		for {
 			select {

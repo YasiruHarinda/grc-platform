@@ -16,7 +16,6 @@
 --   audit_evidence_file     — files attached to evidence or population
 --   audit_comment           — threaded comments on a control (population + evidence phases)
 --   audit_ai_validation_log — async AI validation results (hints only, append-only)
---   audit_notification      — in-app and email notifications
 --   audit_trail             — immutable event log for an audit
 -- =============================================================================
 
@@ -355,36 +354,6 @@ CREATE TABLE IF NOT EXISTS audit_ai_validation_log (
   KEY idx_ai_control  (control_id),
   CONSTRAINT fk_ai_evidence FOREIGN KEY (evidence_id) REFERENCES audit_evidence(id) ON DELETE CASCADE,
   CONSTRAINT fk_ai_control  FOREIGN KEY (control_id)  REFERENCES audit_control(id)  ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- =============================================================================
--- audit_notification
---
--- NOTE: MySQL does not allow a CHECK constraint on columns that are used in an
--- ON DELETE SET NULL FK action. Enforce "at least one of audit_id/control_id/
--- evidence_id is non-NULL" at the application layer.
--- =============================================================================
-
-CREATE TABLE IF NOT EXISTS audit_notification (
-  id           BIGINT       NOT NULL AUTO_INCREMENT,
-  recipient_id INT          NOT NULL,
-  audit_id     INT          NULL,
-  control_id   INT          NULL,
-  evidence_id  INT          NULL,
-  type         ENUM('REMINDER','ESCALATION','APPROVAL','REJECTION','COMMENT') NOT NULL,
-  channel      ENUM('EMAIL','IN_APP') NOT NULL,
-  message      TEXT         NULL,
-  is_read      BOOLEAN      NOT NULL DEFAULT FALSE,
-  created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  created_by   VARCHAR(255) NULL,
-  updated_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  updated_by   VARCHAR(255) NULL,
-  PRIMARY KEY (id),
-  KEY idx_notif_recipient_unread (recipient_id, is_read),
-  CONSTRAINT fk_notif_recipient FOREIGN KEY (recipient_id) REFERENCES `user`(id)         ON DELETE CASCADE,
-  CONSTRAINT fk_notif_audit     FOREIGN KEY (audit_id)     REFERENCES audit(id)          ON DELETE SET NULL,
-  CONSTRAINT fk_notif_control   FOREIGN KEY (control_id)   REFERENCES audit_control(id)  ON DELETE SET NULL,
-  CONSTRAINT fk_notif_evidence  FOREIGN KEY (evidence_id)  REFERENCES audit_evidence(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- =============================================================================

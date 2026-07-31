@@ -9,10 +9,6 @@
 --   privilege      — fine-grained privileges used for frontend view rendering
 --   role_privilege — maps roles to privileges (many-to-many)
 --
--- NOTE: user ↔ audit_team membership lives in the user_audit_team junction
---       table (many-to-many), created by audit_schema.sql after audit_team
---       exists — see that file for the table.
---       user.risk_team_id  FK → added by risk_schema.sql  (after risk_team  exists)
 -- =============================================================================
 
 SET FOREIGN_KEY_CHECKS = 0;
@@ -30,7 +26,6 @@ CREATE TABLE IF NOT EXISTS `user` (
   email         VARCHAR(255) NOT NULL,
   display_name  VARCHAR(255) NOT NULL,
   user_type     ENUM('INTERNAL','EXTERNAL') NOT NULL DEFAULT 'INTERNAL',
-  risk_team_id  INT          NULL,
   status        ENUM('ACTIVE','INACTIVE','REMOVED') NOT NULL DEFAULT 'ACTIVE',
   created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by    VARCHAR(255) NULL,

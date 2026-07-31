@@ -154,7 +154,7 @@ func (h *PopulationHandler) ListPopulationFiles(w http.ResponseWriter, r *http.R
 	_ = json.NewEncoder(w).Encode(files)
 }
 
-// GetPopulationFileByID handles GET /populations/files/{fileId}.
+// GetPopulationFileByID handles GET /population-files/{fileId}.
 func (h *PopulationHandler) GetPopulationFileByID(w http.ResponseWriter, r *http.Request) {
 	fileID, err := strconv.Atoi(r.PathValue("fileId"))
 	if err != nil {
@@ -170,7 +170,7 @@ func (h *PopulationHandler) GetPopulationFileByID(w http.ResponseWriter, r *http
 	_ = json.NewEncoder(w).Encode(f)
 }
 
-// DeletePopulationFile handles DELETE /populations/files/{fileId}.
+// DeletePopulationFile handles DELETE /population-files/{fileId}.
 func (h *PopulationHandler) DeletePopulationFile(w http.ResponseWriter, r *http.Request) {
 	fileID, err := strconv.Atoi(r.PathValue("fileId"))
 	if err != nil {

@@ -58,7 +58,7 @@ func baseFolderPathFor(phase, auditName, controlNumber string) string {
 	if phase == "POPULATION" {
 		sub = "population"
 	}
-	return fmt.Sprintf("%s/%s/%s/", service.SanitizeSegment(auditName), service.SanitizeSegment(controlNumber), sub)
+	return fmt.Sprintf("%s/%s/%s/%s/", service.AuditRootFolder, service.SanitizeSegment(auditName), service.SanitizeSegment(controlNumber), sub)
 }
 
 // fileNamesOf extracts file names for RecordEvidenceAction's fileNames param.
