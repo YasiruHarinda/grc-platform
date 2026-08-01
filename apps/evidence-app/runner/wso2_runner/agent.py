@@ -1465,6 +1465,29 @@ async def _azure_total_pages(browser: "BrowserSession") -> tuple[int, int]:
     return total_pages, size
 
 
+# How many times one page step is attempted before the walk stops. Three is
+# enough to ride out a pager caught mid-redraw without letting a genuinely
+# stuck list spin: a step that cannot move will not move on the third try.
+_PAGER_CLICK_ATTEMPTS = 3
+
+
+async def _azure_wait_for_move(browser: "BrowserSession", before_first: int) -> dict | None:
+    """Wait for the range label's first index to change away from
+    `before_first`, and return the new reading. None if it never moved.
+
+    This is the only proof a click did anything. The label is authoritative
+    because it comes from the grid itself, not from whatever the click landed
+    on — so a click into a detached node reads as "did not move" rather than
+    as success.
+    """
+    for _ in range(12):  # up to ~6s — Azure re-renders the grid lazily
+        await asyncio.sleep(0.5)
+        candidate = await _azure_read_range(browser)
+        if candidate and candidate["first"] != before_first:
+            return candidate
+    return None
+
+
 async def _azure_go_to_page(browser: "BrowserSession", target_page: int, page_size: int) -> int:
     """Walk the pager FORWARD to `target_page` and return the page actually
     reached (0 if the pager could not be read at all).
@@ -1476,9 +1499,16 @@ async def _azure_go_to_page(browser: "BrowserSession", target_page: int, page_si
     the forward arrow, one page per press.
 
     Whichever route is used, the range label is re-read after every click until
-    it moves. A click that changed nothing — a disabled control, a grid still
-    rendering, an element that only looked clickable — ends the walk honestly
-    instead of leaving the caller believing it worked.
+    it moves, and a click that changed nothing is RETRIED before the walk gives
+    up. Retrying is not defensive padding here: the strip is a sliding window
+    with no jump-to-last, so page 29 of 29 costs about thirteen clicks in a row
+    and every one of them has to land. A real run died on its second click for
+    exactly this reason — it fired the moment the range label changed, while
+    Azure was still swapping the pager out, so it clicked a button that had
+    already been detached.
+
+    Only when every attempt at the same step fails does the walk stop, and it
+    still returns the page it actually reached rather than the one asked for.
     """
     if page_size <= 0:
         return 0
@@ -1496,34 +1526,49 @@ async def _azure_go_to_page(browser: "BrowserSession", target_page: int, page_si
     while current < target_page and budget > 0:
         budget -= 1
         before = rng["first"]
-
-        clicked = await _azure_click_page_number(browser, target_page)
-        route = f"page number {clicked}" if clicked is not None else ""
-        if clicked is None:
-            try:
-                arrow = await _cdp_eval_in_frames(
-                    browser, _AZURE_NEXT_PAGE_JS.replace("__SHADOW__", _SHADOW_WALK_JS)
-                )
-            except Exception:
-                arrow = None
-            if not arrow:
-                print(f"[runner]   EACH-PAGE: no page numbers and no next arrow on page {current}; stopping there")
-                break
-            route = "next arrow"
-
         moved = None
-        for _ in range(12):  # up to ~6s — Azure re-renders the grid lazily
-            await asyncio.sleep(0.5)
-            candidate = await _azure_read_range(browser)
-            if candidate and candidate["first"] != before:
-                moved = candidate
+        route = ""
+
+        for attempt in range(_PAGER_CLICK_ATTEMPTS):
+            if attempt:
+                # Longer than the settle below: if the first click was lost to
+                # a mid-swap pager, the blade needs time to finish before the
+                # control is found again from scratch.
+                await asyncio.sleep(1.5)
+
+            clicked = await _azure_click_page_number(browser, target_page)
+            if clicked is not None:
+                route = f"page number {clicked}"
+            else:
+                try:
+                    arrow = await _cdp_eval_in_frames(
+                        browser, _AZURE_NEXT_PAGE_JS.replace("__SHADOW__", _SHADOW_WALK_JS)
+                    )
+                except Exception:
+                    arrow = None
+                if not arrow:
+                    continue  # nothing clickable this time round — try again
+                route = "next arrow"
+
+            moved = await _azure_wait_for_move(browser, before)
+            if moved:
                 break
+            print(f"[runner]   EACH-PAGE: clicked {route} on page {current} but the list did not move "
+                  f"(attempt {attempt + 1} of {_PAGER_CLICK_ATTEMPTS})")
+
         if not moved:
-            print(f"[runner]   EACH-PAGE: clicked {route} but the list did not move off page {current}")
+            if route:
+                print(f"[runner]   EACH-PAGE: gave up on page {current} — {route} would not move the list")
+            else:
+                print(f"[runner]   EACH-PAGE: no page numbers and no next arrow on page {current}; stopping there")
             break
+
         rng = moved
         current = page_of(rng["first"])
         print(f"[runner]   EACH-PAGE: clicked {route} → now on page {current}")
+        # The range label updates BEFORE the pager finishes redrawing, so the
+        # next click has to wait for the blade rather than for the label.
+        await asyncio.sleep(1.0)
 
     return current
 
