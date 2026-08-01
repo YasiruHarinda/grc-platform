@@ -112,7 +112,19 @@ _EACH_PAGE_RE = re.compile(r"^\s*EACH-PAGE\s*:\s*(.+)$", re.IGNORECASE | re.DOTA
 # subtask whose CAPTURE step differs: export the page as a PDF (after
 # expanding any "Load more" content) instead of the usual scrolling
 # screenshots. See _capture_evidence_pdf() and its use in execute_task().
+# When the text after "PDF:" is nothing but a link, the step runs with no
+# LLM at all — see _is_http_url() and execute_task().
 _PDF_RE = re.compile(r"^\s*PDF\s*:\s*(.+)$", re.IGNORECASE | re.DOTALL)
+
+# A step's text is "just a link" only if it is one http(s) URL and nothing
+# else. Deliberately strict: "PDF: <url> and expand the comments" carries an
+# instruction a browser call cannot honour, so it must keep the agent.
+_HTTP_URL_RE = re.compile(r"^https?://\S+$", re.IGNORECASE)
+
+
+def _is_http_url(text: str) -> bool:
+    """True when the whole text is a single http(s) link and nothing else."""
+    return bool(_HTTP_URL_RE.match((text or "").strip()))
 
 # "FILTER:" deterministically fills a list's own local filter/search box
 # (never the page's global search bar) via code, before any LLM is involved
@@ -138,7 +150,9 @@ def parse_subtasks(prompt: str) -> list[dict]:
     _expand_template_subtask() once the item count is known.
 
     "PDF: <instruction>" is a literal subtask that gets captured as a PDF
-    instead of scrolling screenshots.
+    instead of scrolling screenshots. If the instruction is nothing but a
+    link, execute_task opens it with a plain browser call and runs no LLM
+    for that step at all.
 
     "FILTER: <text>" deterministically fills the current page's own local
     list filter/search box with <text> — no LLM call for the common case.
@@ -1912,41 +1926,66 @@ async def execute_task(
 
         snap = (counter.input_tokens, counter.output_tokens, counter.calls)
         is_pdf = subtask_obj.get("kind") == "pdf"
-        extra_instructions = PDF_EXPAND_INSTRUCTIONS if is_pdf else ""
 
-        # Azure Portal hardening — gated strictly on the current URL so AWS and
-        # GitHub runs are byte-for-byte unchanged (no extra tools, no extra
-        # instructions, no extra wait). On Azure we (1) hand the agent the two
-        # deterministic helpers (click_menu_item / fill_list_filter) that resolve
-        # their target fresh at click time and so survive Azure's constant
-        # re-rendering, and (2) let the blade settle before the run starts.
-        current_page_url = await _cdp_eval(browser, "window.location.href")
-        azure_tools = None
-        azure_instructions = ""
-        if _is_azure_portal(current_page_url):
-            azure_tools = _build_azure_tools(browser)
-            azure_instructions = AZURE_TOOL_INSTRUCTIONS
-            await asyncio.sleep(1.0)  # let the Ibiza blade finish rendering
+        # "PDF: <link>" needs no model at all. Opening a link is a browser
+        # call, and _capture_evidence_pdf already expands every "Load more"
+        # and closes stray overlays in code before printing — so the agent's
+        # only real job here was already being redone deterministically
+        # afterwards. What it did add was the one risk a read-only capture
+        # cannot take: a stray click on "New issue", "Close issue" or an edit
+        # pencil while it looked around. PDF_EXPAND_INSTRUCTIONS can only ask
+        # it not to; skipping the agent means it cannot.
+        # A "PDF:" step whose text is NOT just a link still needs the agent to
+        # find the page, so that path stays exactly as it was.
+        pdf_link = subtask_obj["text"].strip() if is_pdf else ""
+        skip_agent = bool(pdf_link) and _is_http_url(pdf_link)
 
-        full_task = (
-            AGENT_INSTRUCTIONS + extra_instructions + azure_instructions
-            + context_prefix + subtask_location_note + subtask_obj["text"]
-        )
-        agent_kwargs = dict(
-            task=full_task, llm=llm, browser=browser,
-            use_vision=use_vision, max_actions_per_step=max_actions_per_step,
-        )
-        if azure_tools is not None:
-            agent_kwargs["tools"] = azure_tools
-        agent = Agent(**agent_kwargs)
-        history = await agent.run(max_steps=max_steps)
+        history = None
+        if skip_agent:
+            print(f"[runner]   subtask {idx + 1}: PDF link — opening it directly, no model used")
+            await browser.navigate_to(pdf_link)
+            await asyncio.sleep(1.0)  # let the page settle before capture
+        else:
+            extra_instructions = PDF_EXPAND_INSTRUCTIONS if is_pdf else ""
 
+            # Azure Portal hardening — gated strictly on the current URL so AWS and
+            # GitHub runs are byte-for-byte unchanged (no extra tools, no extra
+            # instructions, no extra wait). On Azure we (1) hand the agent the two
+            # deterministic helpers (click_menu_item / fill_list_filter) that resolve
+            # their target fresh at click time and so survive Azure's constant
+            # re-rendering, and (2) let the blade settle before the run starts.
+            current_page_url = await _cdp_eval(browser, "window.location.href")
+            azure_tools = None
+            azure_instructions = ""
+            if _is_azure_portal(current_page_url):
+                azure_tools = _build_azure_tools(browser)
+                azure_instructions = AZURE_TOOL_INSTRUCTIONS
+                await asyncio.sleep(1.0)  # let the Ibiza blade finish rendering
+
+            full_task = (
+                AGENT_INSTRUCTIONS + extra_instructions + azure_instructions
+                + context_prefix + subtask_location_note + subtask_obj["text"]
+            )
+            agent_kwargs = dict(
+                task=full_task, llm=llm, browser=browser,
+                use_vision=use_vision, max_actions_per_step=max_actions_per_step,
+            )
+            if azure_tools is not None:
+                agent_kwargs["tools"] = azure_tools
+            agent = Agent(**agent_kwargs)
+            history = await agent.run(max_steps=max_steps)
+
+        # Zero on the skip_agent path — the counter never moved, so the step
+        # honestly reports no tokens and no cost rather than a guess.
         in_t = counter.input_tokens - snap[0]
         out_t = counter.output_tokens - snap[1]
         calls = counter.calls - snap[2]
         cost = _compute_cost(in_t, out_t, settings.AGENT_MODEL)
 
-        result_text = str(history.final_result() or f"Subtask {idx + 1} completed")
+        if history is not None:
+            result_text = str(history.final_result() or f"Subtask {idx + 1} completed")
+        else:
+            result_text = f"Opened {pdf_link} directly and captured it as a PDF (no model was used for this step)."
         all_results.append(result_text)
 
         subtask_obj["result"] = result_text
