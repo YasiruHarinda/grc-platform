@@ -112,19 +112,46 @@ _EACH_PAGE_RE = re.compile(r"^\s*EACH-PAGE\s*:\s*(.+)$", re.IGNORECASE | re.DOTA
 # subtask whose CAPTURE step differs: export the page as a PDF (after
 # expanding any "Load more" content) instead of the usual scrolling
 # screenshots. See _capture_evidence_pdf() and its use in execute_task().
-# When the text after "PDF:" is nothing but a link, the step runs with no
-# LLM at all — see _is_http_url() and execute_task().
+# When the text after "PDF:" contains a link, the step runs with no LLM at
+# all — see _first_http_url() and execute_task().
 _PDF_RE = re.compile(r"^\s*PDF\s*:\s*(.+)$", re.IGNORECASE | re.DOTALL)
 
-# A step's text is "just a link" only if it is one http(s) URL and nothing
-# else. Deliberately strict: "PDF: <url> and expand the comments" carries an
-# instruction a browser call cannot honour, so it must keep the agent.
-_HTTP_URL_RE = re.compile(r"^https?://\S+$", re.IGNORECASE)
+_HTTP_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+
+# Characters that end a sentence far more often than they end a link. Without
+# trimming them, "PDF: <url>/issues/61." would open ".../issues/61." — a 404
+# captured as evidence, with no agent around to notice.
+_URL_TAIL_PUNCT = ".,;:!?\"'"
+_URL_TAIL_BRACKETS = {")": "(", "]": "[", "}": "{"}
 
 
-def _is_http_url(text: str) -> bool:
-    """True when the whole text is a single http(s) link and nothing else."""
-    return bool(_HTTP_URL_RE.match((text or "").strip()))
+def _first_http_url(text: str) -> str:
+    """The first http(s) link in `text`, with trailing sentence punctuation
+    trimmed off. Empty string when the text holds no link at all.
+
+    Used to decide whether a "PDF:" step needs an LLM. It does not, whenever
+    a link is present: the capture prints exactly ONE page, so the link is
+    the only part of the step that can change the outcome. Words around it
+    are either things the capture already does in code ("expand all
+    comments", "export as PDF") or things a one-page print cannot honour
+    anyway ("also check the linked PR" would navigate away and capture the
+    wrong page). See execute_task().
+    """
+    match = _HTTP_URL_RE.search(text or "")
+    if not match:
+        return ""
+    url = match.group(0)
+    while url:
+        tail = url[-1]
+        if tail in _URL_TAIL_PUNCT:
+            url = url[:-1]
+        # A closing bracket is only punctuation if nothing inside the url
+        # opened it, so a real link like /wiki/Foo_(bar) keeps its tail.
+        elif tail in _URL_TAIL_BRACKETS and url.count(_URL_TAIL_BRACKETS[tail]) < url.count(tail):
+            url = url[:-1]
+        else:
+            break
+    return url
 
 # "FILTER:" deterministically fills a list's own local filter/search box
 # (never the page's global search bar) via code, before any LLM is involved
@@ -150,9 +177,9 @@ def parse_subtasks(prompt: str) -> list[dict]:
     _expand_template_subtask() once the item count is known.
 
     "PDF: <instruction>" is a literal subtask that gets captured as a PDF
-    instead of scrolling screenshots. If the instruction is nothing but a
-    link, execute_task opens it with a plain browser call and runs no LLM
-    for that step at all.
+    instead of scrolling screenshots. If the instruction names a link,
+    execute_task opens it with a plain browser call and runs no LLM for that
+    step at all.
 
     "FILTER: <text>" deterministically fills the current page's own local
     list filter/search box with <text> — no LLM call for the common case.
@@ -1927,18 +1954,21 @@ async def execute_task(
         snap = (counter.input_tokens, counter.output_tokens, counter.calls)
         is_pdf = subtask_obj.get("kind") == "pdf"
 
-        # "PDF: <link>" needs no model at all. Opening a link is a browser
-        # call, and _capture_evidence_pdf already expands every "Load more"
-        # and closes stray overlays in code before printing — so the agent's
-        # only real job here was already being redone deterministically
-        # afterwards. What it did add was the one risk a read-only capture
-        # cannot take: a stray click on "New issue", "Close issue" or an edit
-        # pencil while it looked around. PDF_EXPAND_INSTRUCTIONS can only ask
-        # it not to; skipping the agent means it cannot.
-        # A "PDF:" step whose text is NOT just a link still needs the agent to
-        # find the page, so that path stays exactly as it was.
-        pdf_link = subtask_obj["text"].strip() if is_pdf else ""
-        skip_agent = bool(pdf_link) and _is_http_url(pdf_link)
+        # A "PDF:" step that names a link needs no model at all. Opening a
+        # link is a browser call, and _capture_evidence_pdf already expands
+        # every "Load more" and closes stray overlays in code before printing
+        # — so the agent's only real job here was already being redone
+        # deterministically afterwards. What it did add was the one risk a
+        # read-only capture cannot take: a stray click on "New issue",
+        # "Close issue" or an edit pencil while it looked around.
+        # PDF_EXPAND_INSTRUCTIONS can only ask it not to; skipping the agent
+        # means it cannot.
+        # Only the link is read, not the words around it — see
+        # _first_http_url() for why the rest of the step cannot matter here.
+        # A "PDF:" step with no link at all still needs the agent to find the
+        # page, so that path stays exactly as it was.
+        pdf_link = _first_http_url(subtask_obj["text"]) if is_pdf else ""
+        skip_agent = bool(pdf_link)
 
         history = None
         if skip_agent:
