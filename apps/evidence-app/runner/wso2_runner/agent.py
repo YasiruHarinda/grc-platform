@@ -393,14 +393,21 @@ async def _expand_template_subtask(
     context_prefix: str,
     max_steps: int,
     base_url: str | None = None,
-) -> list[str]:
-    """Run a discovery agent pass, then expand a template subtask into
-    concrete literal subtask strings.
+) -> list[dict]:
+    """Run a discovery pass, then expand a template subtask into concrete
+    subtask specs — dicts of {"text", "kind", ...} that execute_task splices
+    into its worklist.
 
     kind == "each": discovers a list of item names, substitutes each into
       `template_text` wherever "{item}" appears (or appends the name if the
-      placeholder is missing).
-    kind == "each_page": discovers the total page count, produces one
+      placeholder is missing). Always "literal" — the agent runs them.
+    kind == "each_page" ON AZURE: the page count is read from the grid's own
+      "1 - 10 of 34" label in code, and the generated subtasks are "azure_page"
+      specs carrying their page number, which execute_task walks to with the
+      pager arrows — no model at any point. See _azure_total_pages().
+    kind == "each_page" ELSEWHERE (AWS, GitHub): unchanged. Those consoles
+      render real numbered page links in the top frame, which the agent finds
+      and clicks reliably, so it discovers the total page count, produces one
       subtask for page 1 and one for the last page (or just page 1 if there's
       only one page), substituting "{page}". Each generated subtask is
       prefixed with an explicit instruction to navigate the pagination
@@ -477,12 +484,34 @@ async def _expand_template_subtask(
                 items = by_name
 
         return [
-            template_text.format(item=name) if "{item}" in template_text
-            else f"{template_text} (item: {name})"
+            {
+                "kind": "literal",
+                "text": template_text.format(item=name) if "{item}" in template_text
+                else f"{template_text} (item: {name})",
+            }
             for name in items if str(name).strip()
         ]
 
     if kind == "each_page":
+        def _page_text(p: int) -> str:
+            return template_text.format(page=p) if "{page}" in template_text else f"{template_text} (page: {p})"
+
+        # Azure first: the pager label answers "how many pages" exactly, so no
+        # model is asked to find a control it cannot see or do the division in
+        # its head. Falls through to the model path if the label is absent
+        # (an unpaginated blade, or a grid still showing skeletons).
+        if _is_azure_portal(base_url):
+            total_pages, page_size = await _azure_total_pages(browser)
+            if total_pages:
+                pages = [1] if total_pages <= 1 else [1, total_pages]
+                print(f"[runner]   EACH-PAGE: Azure pager reads {total_pages} page(s) "
+                      f"at {page_size}/page; capturing {pages}")
+                return [
+                    {"kind": "azure_page", "page": p, "page_size": page_size, "text": _page_text(p)}
+                    for p in pages
+                ]
+            print("[runner]   EACH-PAGE: no Azure pager label found; falling back to the model")
+
         discovery_task = DISCOVERY_EACH_PAGE_INSTRUCTIONS + context_prefix + location_note + template_text
         agent = Agent(task=discovery_task, llm=llm, browser=browser, use_vision=True, max_actions_per_step=3)
         history = await agent.run(max_steps=max_steps)
@@ -495,11 +524,13 @@ async def _expand_template_subtask(
             print(f"[runner]   EACH-PAGE: discovery did not return valid JSON, defaulting to 1 page. Got: {raw_result[:2000]!r}")
         pages = [1] if total_pages <= 1 else [1, total_pages]
         return [
-            (
-                f"Use the pagination control (usually at the bottom of the list/table) to navigate to "
-                f"page {p} of the results — if you are not already on it. Then: "
-                + (template_text.format(page=p) if "{page}" in template_text else f"{template_text} (page: {p})")
-            )
+            {
+                "kind": "literal",
+                "text": (
+                    f"Use the pagination control (usually at the bottom of the list/table) to navigate to "
+                    f"page {p} of the results — if you are not already on it. Then: " + _page_text(p)
+                ),
+            }
             for p in pages
         ]
 
@@ -1238,6 +1269,162 @@ async def _read_azure_list_names(browser: "BrowserSession") -> list[str]:
     return names
 
 
+# ── Azure grid pagination (read the range label, walk with the next arrow) ──
+#
+# Azure browse lists have NO numbered page buttons — only a "1 - 10 of 34"
+# range label and previous/next arrows. Asking a model to "navigate to page 4"
+# therefore asks for a control that does not exist, and it burns its whole
+# step budget hunting for it: a real run searched `button[aria-label^='Page ']`,
+# got 0 elements (correct — Azure never renders them), then mis-clicked "More
+# content actions" three times and gave up, and the page-1 screenshot was
+# filed as if it were page 4.
+#
+# The arrows ARE reachable, just not by the agent: they live inside Azure's
+# cross-origin blade iframe, which browser-use's own find_elements cannot see.
+# _cdp_eval_in_frames can. So both halves of EACH-PAGE become code here:
+# the range label gives the page count exactly (no arithmetic in a model's
+# head), and the next arrow gives movement that is VERIFIED by re-reading the
+# label rather than assumed from a click landing.
+_AZURE_RANGE_LABEL_JS = """
+(() => {
+  __SHADOW__
+  // "1 - 10 of 34", "1 – 10 of 1,204", "1-10 of 34" — Azure varies the dash
+  // and thousands-separates the total on large subscriptions.
+  const RE = /(\\d[\\d,]*)\\s*[-\\u2013\\u2014]\\s*(\\d[\\d,]*)\\s+of\\s+(\\d[\\d,]*)/i;
+  const num = s => parseInt(String(s).replace(/,/g, ''), 10);
+  let best = null;
+  for (const el of deepQuery('span, div, p, td, label')) {
+    if (el.children.length > 0) continue;  // leaf nodes only — never a wrapper
+    const txt = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+    if (!txt || txt.length > 60) continue;
+    const m = txt.match(RE);
+    if (!m) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    // The grid's own pager sits at the FOOT of the list, so when more than one
+    // "x of y" is on screen the lowest one is the one that governs this list.
+    if (!best || rect.top > best.top) {
+      best = { first: num(m[1]), last: num(m[2]), total: num(m[3]), top: rect.top };
+    }
+  }
+  return best;
+})()
+"""
+
+# Clicks the pager's forward arrow. Azure labels it "Next page" on aria-label
+# or title; some blades render only a chevron glyph, hence the symbol
+# alternatives. Disabled arrows are skipped so the last page reports "no move"
+# instead of silently looking like a successful click.
+#
+# The match is anchored deliberately — "next page", exactly "next", or a bare
+# chevron. A loose \bnext\b also hits things like "Next steps wizard", and on
+# a read-only capture run clicking that would navigate away from the evidence
+# page entirely. "More content actions" (the button a real run mis-clicked
+# three times) and "Previous page" are both correctly skipped.
+_AZURE_NEXT_PAGE_JS = """
+(() => {
+  __SHADOW__
+  for (const el of deepQuery('button, a, [role="button"]')) {
+    const label = ((el.getAttribute('aria-label') || '') + ' ' +
+                   (el.getAttribute('title') || '') + ' ' +
+                   (el.textContent || '')).replace(/\\s+/g, ' ').trim().toLowerCase();
+    if (!label) continue;
+    if (!/\\bnext\\s*page\\b|^next$|^[>\\u203a\\u00bb]$/.test(label)) continue;
+    if (el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
+    if (el.className && String(el.className).toLowerCase().includes('disabled')) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    el.click();
+    return true;
+  }
+  return false;
+})()
+"""
+
+
+async def _azure_read_range(browser: "BrowserSession") -> dict | None:
+    """Read the Azure grid's "first - last of total" pager label, in code.
+
+    Returns {"first", "last", "total", "size"} or None when this page has no
+    such label (an unpaginated blade, or a list still rendering skeletons).
+    `size` is the rows-per-page implied by the CURRENT window, which is only
+    trustworthy on a full page — the last page is short, so callers must take
+    their page size from the first reading, not a later one.
+    """
+    js = _AZURE_RANGE_LABEL_JS.replace("__SHADOW__", _SHADOW_WALK_JS)
+    try:
+        found = await _cdp_eval_in_frames(browser, js)
+    except Exception:
+        return None
+    if not isinstance(found, dict):
+        return None
+    try:
+        first, last, total = int(found["first"]), int(found["last"]), int(found["total"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if first < 1 or last < first or total < last:
+        return None  # a nonsense reading (mid-render) is worse than no reading
+    return {"first": first, "last": last, "total": total, "size": last - first + 1}
+
+
+async def _azure_total_pages(browser: "BrowserSession") -> tuple[int, int]:
+    """(total_pages, page_size) for the Azure list currently on screen, or
+    (0, 0) if the pager label could not be read. Derived from the label rather
+    than counted, so it costs nothing and cannot be mis-divided."""
+    rng = await _azure_read_range(browser)
+    if not rng or rng["size"] <= 0:
+        return 0, 0
+    size = rng["size"]
+    total_pages = max(1, -(-rng["total"] // size))  # ceil without importing math
+    return total_pages, size
+
+
+async def _azure_go_to_page(browser: "BrowserSession", target_page: int, page_size: int) -> int:
+    """Walk the pager FORWARD to `target_page` and return the page actually
+    reached (0 if the pager could not be read at all).
+
+    Forward only: Azure's pager has no page numbers, so there is nothing to
+    jump to — reaching page 4 means pressing next three times, exactly as a
+    human would. After each press the range label is re-read until it moves,
+    so a press that did nothing (arrow disabled, blade still rendering) ends
+    the walk honestly instead of leaving the caller believing it worked.
+    """
+    if page_size <= 0:
+        return 0
+    rng = await _azure_read_range(browser)
+    if not rng:
+        return 0
+    page_of = lambda first: ((first - 1) // page_size) + 1  # noqa: E731
+    current = page_of(rng["first"])
+
+    while current < target_page:
+        before = rng["first"]
+        try:
+            clicked = await _cdp_eval_in_frames(
+                browser, _AZURE_NEXT_PAGE_JS.replace("__SHADOW__", _SHADOW_WALK_JS)
+            )
+        except Exception:
+            clicked = None
+        if not clicked:
+            print(f"[runner]   EACH-PAGE: no next arrow found on page {current}; stopping there")
+            break
+
+        moved = None
+        for _ in range(12):  # up to ~6s — Azure re-renders the grid lazily
+            await asyncio.sleep(0.5)
+            candidate = await _azure_read_range(browser)
+            if candidate and candidate["first"] != before:
+                moved = candidate
+                break
+        if not moved:
+            print(f"[runner]   EACH-PAGE: next arrow clicked but the list did not move off page {current}")
+            break
+        rng = moved
+        current = page_of(rng["first"])
+
+    return current
+
+
 def _is_azure_portal(url: str | None) -> bool:
     """True only when the browser is on the Azure Portal — the gate that keeps
     all Azure-specific hardening from ever touching AWS/GitHub runs."""
@@ -1480,6 +1667,11 @@ async def _capture_evidence_screenshots(browser: "BrowserSession", history) -> l
         await browser.take_screenshot(path=str(p), full_page=False)
         return [p]
     except Exception:
+        # `history` is None for subtasks that ran without an agent (a "PDF:"
+        # link, an EACH-PAGE Azure page walk), so there is no run to salvage
+        # a frame from — only the two attempts above could have produced one.
+        if history is None:
+            return []
         screenshots = history.screenshots()
         if screenshots:
             return [_save_screenshot_local(screenshots[-1])]
@@ -1858,12 +2050,12 @@ async def execute_task(
             base_url = await _cdp_eval(browser, "window.location.href")
 
             try:
-                expanded_texts = await _expand_template_subtask(
+                expanded = await _expand_template_subtask(
                     subtask_obj["kind"], subtask_obj["text"], llm, browser, context_prefix, max_steps,
                     base_url=base_url,
                 )
             except Exception as exc:
-                expanded_texts = []
+                expanded = []
                 subtask_obj["status"] = "completed"
                 subtask_obj["result"] = f"Discovery failed: {exc}"
                 subtask_obj["completed_at"] = time.time()
@@ -1871,7 +2063,7 @@ async def execute_task(
                 idx += 1
                 continue
 
-            if not expanded_texts:
+            if not expanded:
                 subtask_obj["status"] = "completed"
                 subtask_obj["result"] = "Discovery found no matching items."
                 subtask_obj["completed_at"] = time.time()
@@ -1880,9 +2072,11 @@ async def execute_task(
                 continue
 
             new_entries = [
-                {"index": 0, "text": t, "kind": "literal", "status": "pending", "result": None, "screenshots": [],
+                {"index": 0, "text": spec["text"], "kind": spec.get("kind", "literal"),
+                 "page": spec.get("page"), "page_size": spec.get("page_size"),
+                 "status": "pending", "result": None, "screenshots": [],
                  "usage": None, "base_url": base_url}
-                for t in expanded_texts
+                for spec in expanded
             ]
             subtask_states[idx:idx + 1] = new_entries
             for i, s in enumerate(subtask_states):
@@ -1970,11 +2164,37 @@ async def execute_task(
         pdf_link = _first_http_url(subtask_obj["text"]) if is_pdf else ""
         skip_agent = bool(pdf_link)
 
+        # An "azure_page" subtask was produced by EACH-PAGE against an Azure
+        # grid, whose pager has arrows but no page numbers (see
+        # _azure_go_to_page). Walking it is a handful of verified clicks in
+        # code; there is nothing here for a model to decide.
+        azure_page = subtask_obj.get("page") if subtask_obj.get("kind") == "azure_page" else None
+
         history = None
+        page_note = ""
         if skip_agent:
             print(f"[runner]   subtask {idx + 1}: PDF link — opening it directly, no model used")
             await browser.navigate_to(pdf_link)
             await asyncio.sleep(1.0)  # let the page settle before capture
+        elif azure_page is not None:
+            print(f"[runner]   subtask {idx + 1}: Azure page {azure_page} — walking the pager, no model used")
+            reached = await _azure_go_to_page(browser, azure_page, subtask_obj.get("page_size") or 0)
+            if reached == azure_page:
+                page_note = f"Walked the Azure pager to page {azure_page} (no model was used for this step)."
+            elif reached:
+                # Say which page the screenshot is really of. Filing a page-1
+                # capture as "page 4" is the exact failure this replaced.
+                page_note = (
+                    f"Asked for page {azure_page} but the pager stopped at page {reached}; "
+                    f"the capture below is page {reached}, not page {azure_page}."
+                )
+            else:
+                page_note = (
+                    f"Could not read the Azure pager, so page {azure_page} was never reached; "
+                    f"the capture below is whatever page was already on screen."
+                )
+            print(f"[runner]   {page_note}")
+            await asyncio.sleep(0.6)  # let the grid finish drawing before capture
         else:
             extra_instructions = PDF_EXPAND_INSTRUCTIONS if is_pdf else ""
 
@@ -2014,6 +2234,8 @@ async def execute_task(
 
         if history is not None:
             result_text = str(history.final_result() or f"Subtask {idx + 1} completed")
+        elif page_note:
+            result_text = page_note
         else:
             result_text = f"Opened {pdf_link} directly and captured it as a PDF (no model was used for this step)."
         all_results.append(result_text)
