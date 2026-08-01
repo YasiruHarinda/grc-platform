@@ -1287,29 +1287,39 @@ async def _read_azure_list_names(browser: "BrowserSession") -> list[str]:
 # count exactly, with no arithmetic done in a model's head. The number strip
 # gives movement, VERIFIED by re-reading the label rather than assumed from a
 # click landing.
+# Defined as a FUNCTION rather than run directly, because two scripts need it:
+# the label read itself, and the frame score that decides which frame the pager
+# click should land in (see _AZURE_PAGE_SCORE_JS).
+_AZURE_LABEL_FN_JS = """
+  function findRangeLabel() {
+    // "1 - 10 of 34", "1 – 10 of 1,204", "1-10 of 34" — Azure varies the dash
+    // and thousands-separates the total on large subscriptions.
+    const RE = /(\\d[\\d,]*)\\s*[-\\u2013\\u2014]\\s*(\\d[\\d,]*)\\s+of\\s+(\\d[\\d,]*)/i;
+    const num = s => parseInt(String(s).replace(/,/g, ''), 10);
+    let best = null;
+    for (const el of deepQuery('span, div, p, td, label')) {
+      if (el.children.length > 0) continue;  // leaf nodes only — never a wrapper
+      const txt = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+      if (!txt || txt.length > 60) continue;
+      const m = txt.match(RE);
+      if (!m) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      // The grid's own pager sits at the FOOT of the list, so when more than one
+      // "x of y" is on screen the lowest one is the one that governs this list.
+      if (!best || rect.top > best.top) {
+        best = { first: num(m[1]), last: num(m[2]), total: num(m[3]), top: rect.top };
+      }
+    }
+    return best;
+  }
+"""
+
 _AZURE_RANGE_LABEL_JS = """
 (() => {
   __SHADOW__
-  // "1 - 10 of 34", "1 – 10 of 1,204", "1-10 of 34" — Azure varies the dash
-  // and thousands-separates the total on large subscriptions.
-  const RE = /(\\d[\\d,]*)\\s*[-\\u2013\\u2014]\\s*(\\d[\\d,]*)\\s+of\\s+(\\d[\\d,]*)/i;
-  const num = s => parseInt(String(s).replace(/,/g, ''), 10);
-  let best = null;
-  for (const el of deepQuery('span, div, p, td, label')) {
-    if (el.children.length > 0) continue;  // leaf nodes only — never a wrapper
-    const txt = (el.textContent || '').replace(/\\s+/g, ' ').trim();
-    if (!txt || txt.length > 60) continue;
-    const m = txt.match(RE);
-    if (!m) continue;
-    const rect = el.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) continue;
-    // The grid's own pager sits at the FOOT of the list, so when more than one
-    // "x of y" is on screen the lowest one is the one that governs this list.
-    if (!best || rect.top > best.top) {
-      best = { first: num(m[1]), last: num(m[2]), total: num(m[3]), top: rect.top };
-    }
-  }
-  return best;
+  __LABEL_FN__
+  return findRangeLabel();
 })()
 """
 
@@ -1364,60 +1374,105 @@ _AZURE_NEXT_PAGE_JS = """
 # whose values run consecutively (…4,5,6,7…). That shape occurs in a pager and
 # essentially nowhere else, so the "Display count: 10" dropdown sitting on the
 # same row is not mistaken for a page number — it is a lone value, not a run.
-_AZURE_PAGE_NUMBERS_JS = """
+_AZURE_STRIP_FN_JS = """
+  function findPageStrip() {
+    const cands = [];
+    for (const el of deepQuery('a, button, [role="button"], [role="link"], li, span, div')) {
+      if (el.children.length > 0) continue;  // leaf nodes only
+      const txt = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+      if (!/^\\d{1,4}$/.test(txt)) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      if (rect.width > 80 || rect.height > 60) continue;  // a page chip is small
+      cands.push({ el: el, n: parseInt(txt, 10), top: rect.top, left: rect.left });
+    }
+    let best = null;
+    for (const seed of cands) {
+      const row = cands.filter(c => Math.abs(c.top - seed.top) < 12)
+                       .sort((a, b) => a.left - b.left);
+      const seen = {}, strip = [];
+      for (const c of row) { if (!seen[c.n]) { seen[c.n] = 1; strip.push(c); } }
+      if (strip.length < 2) continue;  // a lone number is not a pager
+      // Longest consecutive RUN inside the row, not the whole row: Azure's
+      // "Display count: 10" sits on the same line as the numbers, and requiring
+      // the entire row to run consecutively would let that one value disqualify
+      // the real strip beside it.
+      let run = [strip[0]], bestRun = run;
+      for (let i = 1; i < strip.length; i++) {
+        run = (strip[i].n === strip[i - 1].n + 1) ? run.concat([strip[i]]) : [strip[i]];
+        if (run.length > bestRun.length) bestRun = run;
+      }
+      if (bestRun.length < 2) continue;
+      if (!best || bestRun.length > best.length) best = bestRun;
+    }
+    return best;
+  }
+"""
+
+_AZURE_PAGE_CLICK_JS = """
 (() => {
   __SHADOW__
+  __STRIP_FN__
+  const strip = findPageStrip();
+  if (!strip) return null;
   const TARGET = __TARGET__;
-  const cands = [];
-  for (const el of deepQuery('a, button, [role="button"], [role="link"], li, span, div')) {
-    if (el.children.length > 0) continue;  // leaf nodes only
-    const txt = (el.textContent || '').replace(/\\s+/g, ' ').trim();
-    if (!/^\\d{1,4}$/.test(txt)) continue;
-    const rect = el.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) continue;
-    if (rect.width > 80 || rect.height > 60) continue;  // a page chip is small
-    cands.push({ el: el, n: parseInt(txt, 10), top: rect.top, left: rect.left });
-  }
-  let best = null;
-  for (const seed of cands) {
-    const row = cands.filter(c => Math.abs(c.top - seed.top) < 12)
-                     .sort((a, b) => a.left - b.left);
-    const seen = {}, strip = [];
-    for (const c of row) { if (!seen[c.n]) { seen[c.n] = 1; strip.push(c); } }
-    if (strip.length < 2) continue;  // a lone number is not a pager
-    // Longest consecutive RUN inside the row, not the whole row: Azure's
-    // "Display count: 10" sits on the same line as the numbers, and requiring
-    // the entire row to run consecutively would let that one value disqualify
-    // the real strip beside it.
-    let run = [strip[0]], bestRun = run;
-    for (let i = 1; i < strip.length; i++) {
-      run = (strip[i].n === strip[i - 1].n + 1) ? run.concat([strip[i]]) : [strip[i]];
-      if (run.length > bestRun.length) bestRun = run;
-    }
-    if (bestRun.length < 2) continue;
-    if (!best || bestRun.length > best.length) best = bestRun;
-  }
-  if (!best) return null;
   // The target if it is on screen, otherwise the largest number there — which
   // slides the window forward without ever moving backwards.
-  const pick = best.find(c => c.n === TARGET) || best[best.length - 1];
+  const pick = strip.find(c => c.n === TARGET) || strip[strip.length - 1];
   const clickable = pick.el.closest('a, button, [role="button"], [role="link"], li') || pick.el;
   clickable.click();
-  return { clicked: pick.n, numbers: best.map(c => c.n) };
+  return { clicked: pick.n, numbers: strip.map(c => c.n) };
+})()
+"""
+
+# Ranks a frame's claim to BE the live pager, so the click lands there and not
+# in a leftover blade frame. Azure keeps old iframes around, and taking the
+# first frame that answers is how a real 29-page walk stuck at page 9: it
+# clicked a dead strip over and over while the live page sat unchanged. The
+# user clicked the same number by hand, the live blade redrew, the stale frame
+# went away — and the runner's own clicks worked again all the way to 29.
+#
+# The range label is the tiebreaker because it comes from the grid itself: the
+# frame whose label agrees with where we currently ARE is the live one.
+_AZURE_PAGE_SCORE_JS = """
+(() => {
+  __SHADOW__
+  __STRIP_FN__
+  __LABEL_FN__
+  if (!findPageStrip()) return 0;          // no pager here at all
+  const label = findRangeLabel();
+  if (!label) return 1;                    // a strip, but nothing to confirm it
+  return label.first === __FIRST__ ? 3 : 2;  // 3 = agrees with where we are
 })()
 """
 
 
-async def _azure_click_page_number(browser: "BrowserSession", target_page: int) -> int | None:
+async def _azure_click_page_number(
+    browser: "BrowserSession", target_page: int, current_first: int
+) -> int | None:
     """Click `target_page` in the pager's number strip, or the largest number
     visible if the target is not on screen yet. Returns the number actually
     clicked, or None when no page-number strip exists on this blade (the caller
-    then falls back to the arrow)."""
-    js = (_AZURE_PAGE_NUMBERS_JS
-          .replace("__SHADOW__", _SHADOW_WALK_JS)
-          .replace("__TARGET__", str(int(target_page))))
+    then falls back to the arrow).
+
+    `current_first` is the range label's first index as we last read it, used
+    only to identify the live frame — see _AZURE_PAGE_SCORE_JS. Scoring every
+    frame instead of taking the first that answers is what `_run_in_best_frame`
+    exists for, and skipping it here is what made a 29-page walk stall on a
+    dead pager.
+    """
+    shadow = _SHADOW_WALK_JS
+    score_js = (_AZURE_PAGE_SCORE_JS
+                .replace("__SHADOW__", shadow)
+                .replace("__STRIP_FN__", _AZURE_STRIP_FN_JS)
+                .replace("__LABEL_FN__", _AZURE_LABEL_FN_JS)
+                .replace("__FIRST__", str(int(current_first))))
+    click_js = (_AZURE_PAGE_CLICK_JS
+                .replace("__SHADOW__", shadow)
+                .replace("__STRIP_FN__", _AZURE_STRIP_FN_JS)
+                .replace("__TARGET__", str(int(target_page))))
     try:
-        result = await _cdp_eval_in_frames(browser, js)
+        result = await _run_in_best_frame(browser, score_js, click_js)
     except Exception:
         return None
     if not isinstance(result, dict):
@@ -1437,7 +1492,9 @@ async def _azure_read_range(browser: "BrowserSession") -> dict | None:
     trustworthy on a full page — the last page is short, so callers must take
     their page size from the first reading, not a later one.
     """
-    js = _AZURE_RANGE_LABEL_JS.replace("__SHADOW__", _SHADOW_WALK_JS)
+    js = (_AZURE_RANGE_LABEL_JS
+          .replace("__SHADOW__", _SHADOW_WALK_JS)
+          .replace("__LABEL_FN__", _AZURE_LABEL_FN_JS))
     try:
         found = await _cdp_eval_in_frames(browser, js)
     except Exception:
@@ -1536,7 +1593,7 @@ async def _azure_go_to_page(browser: "BrowserSession", target_page: int, page_si
                 # control is found again from scratch.
                 await asyncio.sleep(1.5)
 
-            clicked = await _azure_click_page_number(browser, target_page)
+            clicked = await _azure_click_page_number(browser, target_page, before)
             if clicked is not None:
                 route = f"page number {clicked}"
             else:
