@@ -1388,15 +1388,21 @@ _AZURE_STRIP_FN_JS = """
     }
     let best = null;
     for (const seed of cands) {
-      const row = cands.filter(c => Math.abs(c.top - seed.top) < 12)
-                       .sort((a, b) => a.left - b.left);
-      const seen = {}, strip = [];
-      for (const c of row) { if (!seen[c.n]) { seen[c.n] = 1; strip.push(c); } }
+      // Every number on the row, in screen order, duplicates INCLUDED. Removing
+      // duplicates is what jammed a 29-page walk at page 9: "Display count: 10"
+      // sits to the LEFT of the numbers, so it claimed the value 10 and the real
+      // page-10 button was dropped as a repeat. That split 7,8,9,10,11 into
+      // 7,8,9 and 11, leaving 9 as the largest — the page it was already on, so
+      // it clicked itself forever. Only ever bites when the display count is
+      // also a real page number, which is why 20, 50, 100 and 200 per page all
+      // worked and only 10 did not.
+      const strip = cands.filter(c => Math.abs(c.top - seed.top) < 12)
+                         .sort((a, b) => a.left - b.left);
       if (strip.length < 2) continue;  // a lone number is not a pager
-      // Longest consecutive RUN inside the row, not the whole row: Azure's
-      // "Display count: 10" sits on the same line as the numbers, and requiring
-      // the entire row to run consecutively would let that one value disqualify
-      // the real strip beside it.
+      // Longest consecutive RUN inside the row, not the whole row: the display
+      // count is a value on this line that is not a page, and requiring the
+      // entire row to run consecutively would let it disqualify the real strip
+      // beside it. A stray number simply ends one run and starts another.
       let run = [strip[0]], bestRun = run;
       for (let i = 1; i < strip.length; i++) {
         run = (strip[i].n === strip[i - 1].n + 1) ? run.concat([strip[i]]) : [strip[i]];
