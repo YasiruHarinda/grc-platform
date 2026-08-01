@@ -1686,6 +1686,58 @@ def _build_azure_tools(browser: "BrowserSession") -> "Tools":
     return tools
 
 
+# AZURE ONLY (see _capture_scrolling_screenshots). Sums every scroll offset on
+# the page into one number, so "did that wheel event move anything" becomes a
+# measurement rather than a guess about pixels.
+#
+# Why a sum of everything rather than window.scrollY: the Azure blade does not
+# scroll the document at all. The grid scrolls inside its own container, nested
+# in a cross-origin iframe, sometimes inside a shadow root. Adding every
+# element's scrollTop together sidesteps having to identify which container is
+# the real one — if anything anywhere moved, the total changes.
+_SCROLL_POSITION_JS = """
+(() => {
+  __SHADOW__
+  let total = (window.scrollY || 0);
+  const doc = document.scrollingElement;
+  if (doc) total += (doc.scrollTop || 0);
+  for (const el of deepQuery('*')) {
+    const st = el.scrollTop;
+    if (st) total += st;
+  }
+  return total;
+})()
+"""
+
+
+async def _scroll_signature(browser: "BrowserSession") -> float | None:
+    """One number standing for "how far down is everything scrolled", summed
+    across every frame. None when no frame could be read at all.
+
+    Deliberately NOT routed through _cdp_eval_in_frames: that returns the first
+    truthy frame, and at the top of a page every frame legitimately reads 0,
+    which is falsy. Summing every frame also means a page whose scrolling lives
+    in an iframe is measured the same way as one that scrolls its document.
+    """
+    js = _SCROLL_POSITION_JS.replace("__SHADOW__", _SHADOW_WALK_JS)
+    try:
+        client, session_ids = await _cdp_sessions(browser)
+    except Exception:
+        return None
+    if not client:
+        return None
+    total, read_any = 0.0, False
+    for sid in session_ids:
+        try:
+            value = await _cdp_eval_session(client, sid, js)
+        except Exception:
+            continue
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            total += float(value)
+            read_any = True
+    return total if read_any else None
+
+
 def _screens_nearly_identical(a: bytes, b: bytes, threshold: float = 0.015) -> bool:
     """Cheap perceptual comparison: downscale both images to a small grayscale
     thumbnail and compare mean absolute pixel difference. Used to detect
@@ -1758,44 +1810,74 @@ async def _capture_scrolling_screenshots(browser: "BrowserSession", max_shots: i
 
     paths: list[Path] = []
     probes: list[bytes] = []
+    positions: list[float | None] = []
+
+    # AZURE ONLY — everywhere else this stays False and every line below runs
+    # exactly as it always has. Comparing pictures works on AWS, GitHub and
+    # Wikipedia because their whole document scrolls, so every pixel shifts.
+    # It fails on Azure, where the left menu, top bar, command bar, filter row
+    # and pager never move and only a table of small grey text does: shrunk to
+    # a 64x64 grey thumbnail, one row of text averages out the same as the
+    # next, the mean difference lands under the threshold, and the run reads as
+    # "bottom reached" after two scrolls. The user watched the page scroll while
+    # that happened, so the frames were real — captured, then deleted by the
+    # trim below as duplicates. That is evidence loss, not a missing extra shot.
+    #
+    # So on Azure the stop signal is the scroll offset itself. If nothing moved,
+    # nothing moved; there is no judgement involved. Falls back to the pixel
+    # comparison per-step if no frame will report a position.
+    by_scroll = _is_azure_portal(url)
+
+    def _same_place(pos_a: float | None, pos_b: float | None, img_a: bytes, img_b: bytes) -> bool:
+        if by_scroll and pos_a is not None and pos_b is not None:
+            return abs(pos_a - pos_b) < 1.0
+        return _screens_nearly_identical(img_a, img_b)
 
     # First frame — top of the page.
     await _snap_here()
     probes.append(await _probe())
+    positions.append(await _scroll_signature(browser) if by_scroll else None)
 
     # Cover the WHOLE page: scroll ~0.9 viewport each step (≈10% overlap, so no
     # strip is ever skipped between shots) and ALWAYS take a screenshot at the new
     # position — we NEVER skip a capture, so no part of the page can be missed
-    # even if a frame happens to look similar to the previous one. The "looks the
-    # same" check only decides when to STOP: after TWO no-move scrolls in a row we
-    # conclude we've reached the bottom (a single one can be a wheel event that
-    # landed on a fixed/non-scrolling region and moved nothing). The couple of
-    # duplicate frames captured at the very bottom are trimmed afterward.
+    # even if a frame happens to look similar to the previous one. The "same
+    # place" check only decides when to STOP: after TWO no-move scrolls in a row
+    # we conclude we've reached the bottom (a single one can be a wheel event
+    # that landed on a fixed/non-scrolling region and moved nothing). The couple
+    # of duplicate frames captured at the very bottom are trimmed afterward.
     consecutive_same = 0
     for _ in range(max_shots - 1):
         await _wheel_scroll(browser, viewport_h * 0.9)
         await asyncio.sleep(0.5)
         probe = await _probe()
+        pos = await _scroll_signature(browser) if by_scroll else None
         await _snap_here()  # capture BEFORE deciding anything — never skip a strip
-        if _screens_nearly_identical(probes[-1], probe):
+        same = _same_place(positions[-1], pos, probes[-1], probe)
+        probes.append(probe)
+        positions.append(pos)
+        if same:
             consecutive_same += 1
-            probes.append(probe)
             if consecutive_same >= 2:
                 break  # two scrolls in a row moved nothing → bottom reached
             continue
         consecutive_same = 0
-        probes.append(probe)
 
     # Drop the trailing duplicate frames captured at the bottom (where scrolling
     # no longer moved the page), so evidence isn't padded with identical shots —
     # only exact trailing duplicates, never a real content frame.
-    while len(paths) > 1 and _screens_nearly_identical(probes[-1], probes[-2]):
+    while len(paths) > 1 and _same_place(positions[-2], positions[-1], probes[-2], probes[-1]):
         dup = paths.pop()
         probes.pop()
+        positions.pop()
         try:
             dup.unlink()
         except Exception:
             pass
+
+    if by_scroll:
+        print(f"[runner]   capture: {len(paths)} screenshot(s) over scroll "
+              f"{positions[0]} → {positions[-1]}")
 
     return paths
 
