@@ -1271,20 +1271,22 @@ async def _read_azure_list_names(browser: "BrowserSession") -> list[str]:
 
 # ── Azure grid pagination (read the range label, walk with the next arrow) ──
 #
-# Azure browse lists have NO numbered page buttons — only a "1 - 10 of 34"
-# range label and previous/next arrows. Asking a model to "navigate to page 4"
-# therefore asks for a control that does not exist, and it burns its whole
-# step budget hunting for it: a real run searched `button[aria-label^='Page ']`,
-# got 0 elements (correct — Azure never renders them), then mis-clicked "More
-# content actions" three times and gave up, and the page-1 screenshot was
-# filed as if it were page 4.
+# Azure browse lists page with a "1 - 10 of 34" range label, a strip of page
+# numbers, and prev/next chevrons. None of it is reachable by the agent: the
+# whole pager sits inside Azure's cross-origin blade iframe, which
+# browser-use's own find_elements cannot see into. _cdp_eval_in_frames can.
 #
-# The arrows ARE reachable, just not by the agent: they live inside Azure's
-# cross-origin blade iframe, which browser-use's own find_elements cannot see.
-# _cdp_eval_in_frames can. So both halves of EACH-PAGE become code here:
-# the range label gives the page count exactly (no arithmetic in a model's
-# head), and the next arrow gives movement that is VERIFIED by re-reading the
-# label rather than assumed from a click landing.
+# A real run showed what that costs. The agent searched
+# `button[aria-label^='Page ']`, got 0 elements, mis-clicked "More content
+# actions" three times, took two loop-detection nudges, gave up after nine
+# steps — and the page-1 screenshot was still filed as if it were page 4.
+# Its 0-element result was honest, though: the numbers carry no aria-label,
+# only text. They were always there; nothing could see them.
+#
+# So both halves of EACH-PAGE are code here. The range label gives the page
+# count exactly, with no arithmetic done in a model's head. The number strip
+# gives movement, VERIFIED by re-reading the label rather than assumed from a
+# click landing.
 _AZURE_RANGE_LABEL_JS = """
 (() => {
   __SHADOW__
@@ -1311,10 +1313,11 @@ _AZURE_RANGE_LABEL_JS = """
 })()
 """
 
-# Clicks the pager's forward arrow. Azure labels it "Next page" on aria-label
-# or title; some blades render only a chevron glyph, hence the symbol
-# alternatives. Disabled arrows are skipped so the last page reports "no move"
-# instead of silently looking like a successful click.
+# FALLBACK ONLY — see _AZURE_PAGE_NUMBERS_JS for the primary route. A real run
+# proved the forward arrow is not findable this way on the Virtual networks
+# blade: its chevrons are icons with no text, no aria-label and no button role,
+# so all three checks below miss and the walk reported "no next arrow found".
+# Kept for blades that render a labelled arrow and no page numbers at all.
 #
 # The match is anchored deliberately — "next page", exactly "next", or a bare
 # chevron. A loose \bnext\b also hits things like "Next steps wizard", and on
@@ -1340,6 +1343,89 @@ _AZURE_NEXT_PAGE_JS = """
   return false;
 })()
 """
+
+
+# PRIMARY route to another page. The blade renders a strip of page numbers
+# ("1 2 3 4 5") which a person clicks directly. They carry no aria-label — which
+# is why the agent's own `button[aria-label^='Page ']` found nothing and
+# concluded, wrongly, that Azure has no page numbers at all — but their text is
+# real and that is enough to find them.
+#
+# The strip is a WINDOW centred on the current page, not the whole range. Real
+# behaviour, measured by hand on a 25-page list: page 1 shows 1-5; clicking 4
+# shows 2-6; clicking 6 shows 4-8; and so on until 25 appears. So when the
+# target is not on screen, clicking the LARGEST visible number slides the window
+# forward and the target eventually comes into view. Nothing here assumes the
+# window is five wide or that a click advances by two — both are read fresh each
+# time, so a three- or nine-wide strip works unchanged.
+#
+# Picking the strip out of the page: collect small clickable elements whose text
+# is nothing but digits, group them by screen row, and keep the largest group
+# whose values run consecutively (…4,5,6,7…). That shape occurs in a pager and
+# essentially nowhere else, so the "Display count: 10" dropdown sitting on the
+# same row is not mistaken for a page number — it is a lone value, not a run.
+_AZURE_PAGE_NUMBERS_JS = """
+(() => {
+  __SHADOW__
+  const TARGET = __TARGET__;
+  const cands = [];
+  for (const el of deepQuery('a, button, [role="button"], [role="link"], li, span, div')) {
+    if (el.children.length > 0) continue;  // leaf nodes only
+    const txt = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+    if (!/^\\d{1,4}$/.test(txt)) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    if (rect.width > 80 || rect.height > 60) continue;  // a page chip is small
+    cands.push({ el: el, n: parseInt(txt, 10), top: rect.top, left: rect.left });
+  }
+  let best = null;
+  for (const seed of cands) {
+    const row = cands.filter(c => Math.abs(c.top - seed.top) < 12)
+                     .sort((a, b) => a.left - b.left);
+    const seen = {}, strip = [];
+    for (const c of row) { if (!seen[c.n]) { seen[c.n] = 1; strip.push(c); } }
+    if (strip.length < 2) continue;  // a lone number is not a pager
+    // Longest consecutive RUN inside the row, not the whole row: Azure's
+    // "Display count: 10" sits on the same line as the numbers, and requiring
+    // the entire row to run consecutively would let that one value disqualify
+    // the real strip beside it.
+    let run = [strip[0]], bestRun = run;
+    for (let i = 1; i < strip.length; i++) {
+      run = (strip[i].n === strip[i - 1].n + 1) ? run.concat([strip[i]]) : [strip[i]];
+      if (run.length > bestRun.length) bestRun = run;
+    }
+    if (bestRun.length < 2) continue;
+    if (!best || bestRun.length > best.length) best = bestRun;
+  }
+  if (!best) return null;
+  // The target if it is on screen, otherwise the largest number there — which
+  // slides the window forward without ever moving backwards.
+  const pick = best.find(c => c.n === TARGET) || best[best.length - 1];
+  const clickable = pick.el.closest('a, button, [role="button"], [role="link"], li') || pick.el;
+  clickable.click();
+  return { clicked: pick.n, numbers: best.map(c => c.n) };
+})()
+"""
+
+
+async def _azure_click_page_number(browser: "BrowserSession", target_page: int) -> int | None:
+    """Click `target_page` in the pager's number strip, or the largest number
+    visible if the target is not on screen yet. Returns the number actually
+    clicked, or None when no page-number strip exists on this blade (the caller
+    then falls back to the arrow)."""
+    js = (_AZURE_PAGE_NUMBERS_JS
+          .replace("__SHADOW__", _SHADOW_WALK_JS)
+          .replace("__TARGET__", str(int(target_page))))
+    try:
+        result = await _cdp_eval_in_frames(browser, js)
+    except Exception:
+        return None
+    if not isinstance(result, dict):
+        return None
+    clicked = result.get("clicked")
+    if not isinstance(clicked, (int, float)):
+        return None
+    return int(clicked)
 
 
 async def _azure_read_range(browser: "BrowserSession") -> dict | None:
@@ -1383,11 +1469,16 @@ async def _azure_go_to_page(browser: "BrowserSession", target_page: int, page_si
     """Walk the pager FORWARD to `target_page` and return the page actually
     reached (0 if the pager could not be read at all).
 
-    Forward only: Azure's pager has no page numbers, so there is nothing to
-    jump to — reaching page 4 means pressing next three times, exactly as a
-    human would. After each press the range label is re-read until it moves,
-    so a press that did nothing (arrow disabled, blade still rendering) ends
-    the walk honestly instead of leaving the caller believing it worked.
+    Forward only, and by clicking page numbers: the target if it is on screen,
+    otherwise the largest number that is, which slides the window until the
+    target appears. A 2- or 3-page list therefore takes ONE click, because the
+    target is visible from the start. Blades with no number strip fall back to
+    the forward arrow, one page per press.
+
+    Whichever route is used, the range label is re-read after every click until
+    it moves. A click that changed nothing — a disabled control, a grid still
+    rendering, an element that only looked clickable — ends the walk honestly
+    instead of leaving the caller believing it worked.
     """
     if page_size <= 0:
         return 0
@@ -1397,17 +1488,28 @@ async def _azure_go_to_page(browser: "BrowserSession", target_page: int, page_si
     page_of = lambda first: ((first - 1) // page_size) + 1  # noqa: E731
     current = page_of(rng["first"])
 
-    while current < target_page:
+    # Worst case is one page per click (a two-wide strip, or the arrow
+    # fallback), so the target itself bounds the walk. The margin absorbs a
+    # pager that starts part-way through the range.
+    budget = target_page + 5
+
+    while current < target_page and budget > 0:
+        budget -= 1
         before = rng["first"]
-        try:
-            clicked = await _cdp_eval_in_frames(
-                browser, _AZURE_NEXT_PAGE_JS.replace("__SHADOW__", _SHADOW_WALK_JS)
-            )
-        except Exception:
-            clicked = None
-        if not clicked:
-            print(f"[runner]   EACH-PAGE: no next arrow found on page {current}; stopping there")
-            break
+
+        clicked = await _azure_click_page_number(browser, target_page)
+        route = f"page number {clicked}" if clicked is not None else ""
+        if clicked is None:
+            try:
+                arrow = await _cdp_eval_in_frames(
+                    browser, _AZURE_NEXT_PAGE_JS.replace("__SHADOW__", _SHADOW_WALK_JS)
+                )
+            except Exception:
+                arrow = None
+            if not arrow:
+                print(f"[runner]   EACH-PAGE: no page numbers and no next arrow on page {current}; stopping there")
+                break
+            route = "next arrow"
 
         moved = None
         for _ in range(12):  # up to ~6s — Azure re-renders the grid lazily
@@ -1417,10 +1519,11 @@ async def _azure_go_to_page(browser: "BrowserSession", target_page: int, page_si
                 moved = candidate
                 break
         if not moved:
-            print(f"[runner]   EACH-PAGE: next arrow clicked but the list did not move off page {current}")
+            print(f"[runner]   EACH-PAGE: clicked {route} but the list did not move off page {current}")
             break
         rng = moved
         current = page_of(rng["first"])
+        print(f"[runner]   EACH-PAGE: clicked {route} → now on page {current}")
 
     return current
 
