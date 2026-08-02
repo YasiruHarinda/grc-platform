@@ -238,12 +238,21 @@ export default function ControlPicker({
                     </Typography>
                   )}
                 </Box>
+                {/* No onMouseDown handler on these two buttons, on purpose.
+                    Autocomplete's own listbox needs that event so it can call
+                    preventDefault and stop the search box losing focus. Swallow
+                    it and the box blurs, the dropdown closes on blur, the button
+                    unmounts before mouse-up, and the browser never fires a
+                    click at all — the icons look alive but do nothing. Selecting
+                    the row is already prevented by stopPropagation on the click
+                    below, which is all these handlers ever needed.
+                    Product and Framework are unaffected: a Select menu stays
+                    open when focus moves inside it. */}
                 {isAdmin && (
                   <Tooltip title="Edit">
                     <IconButton
                       size="small"
                       aria-label="Edit control"
-                      onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.stopPropagation();
                         e.preventDefault();
@@ -260,7 +269,6 @@ export default function ControlPicker({
                       size="small"
                       color="error"
                       aria-label="Delete control"
-                      onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.stopPropagation();
                         e.preventDefault();
