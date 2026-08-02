@@ -62,15 +62,6 @@ export interface FrameworkControlListResponse {
   total: number;
 }
 
-export interface CreateFrameworkControlRequest {
-  controlNumber: string;
-  description: string;
-  evidenceRequirement?: string | null;
-  requirementType: RequirementType;
-  controlType: ControlType;
-  scope: ControlScope;
-}
-
 export interface AuditProduct {
   id: number;
   name: string;

@@ -84,8 +84,26 @@ func (h *trailHandler) listAuditTrail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query()
-	limit, _ := strconv.Atoi(q.Get("limit"))
-	offset, _ := strconv.Atoi(q.Get("offset"))
+	var limit, offset int
+	if raw := q.Get("limit"); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil {
+			response.WriteError(w, http.StatusBadRequest, "limit must be an integer")
+			return
+		}
+		limit = v
+	}
+	if raw := q.Get("offset"); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil {
+			response.WriteError(w, http.StatusBadRequest, "offset must be an integer")
+			return
+		}
+		if v < 0 {
+			v = 0
+		}
+		offset = v
+	}
 
 	var filter model.TrailFilter
 	for _, raw := range q["controlId"] {

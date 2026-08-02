@@ -22,6 +22,10 @@ import (
 	"strings"
 )
 
+// Keep this file's blocklist in sync with its twin:
+// entity/compliance-entity/internal/handler/upload_filetype.go — the two
+// services are separate Go modules, so nothing enforces this automatically.
+
 // blockedUploadExtensions rejects file extensions that a browser can execute as
 // active content. Evidence/population/sample files are business documents
 // (office formats, PDFs, images, archives, text) — none of them legitimately

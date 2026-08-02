@@ -56,7 +56,7 @@ import {
   Plus,
   Trash2,
 } from "@wso2/oxygen-ui-icons-react";
-import { useState, useRef, useEffect, type JSX, type ChangeEvent } from "react";
+import { useState, useRef, useEffect, useMemo, type JSX, type ChangeEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { useGetAudits } from "@modules/audit/api/useGetAudits";
 import { useGetControls } from "@modules/audit/api/useGetControls";
@@ -1970,7 +1970,7 @@ export default function CreateAuditPage(): JSX.Element {
   // after a bulkAdd failure skips re-creation and avoids duplicate audits.
   const createdAuditIdRef = useRef<number | null>(null);
 
-  const frameworks = frameworksData ?? [];
+  const frameworks = useMemo(() => frameworksData ?? [], [frameworksData]);
   const products = productsData ?? [];
 
   // Pre-select framework when navigating from a framework card (e.g. ?framework=2)

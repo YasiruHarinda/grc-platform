@@ -250,7 +250,7 @@ func (r *userRepo) UpdateUser(ctx context.Context, id int, req domain.UpdateUser
 // loadAuditTeamIDs returns the audit team ids a single user belongs to.
 func (r *userRepo) loadAuditTeamIDs(ctx context.Context, userID int) ([]int, error) {
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT audit_team_id FROM user_audit_team WHERE user_id = ? ORDER BY audit_team_id", userID)
+		"SELECT audit_team_id FROM user_audit_team WHERE user_id = ? AND is_active = TRUE ORDER BY audit_team_id", userID)
 	if err != nil {
 		return nil, fmt.Errorf("user_audit_team.load(%d): %w", userID, err)
 	}
@@ -281,7 +281,7 @@ func (r *userRepo) loadAuditTeamIDsBatch(ctx context.Context, userIDs []int) (ma
 		args[i] = id
 	}
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT user_id, audit_team_id FROM user_audit_team WHERE user_id IN ("+ph[:len(ph)-1]+") ORDER BY user_id, audit_team_id",
+		"SELECT user_id, audit_team_id FROM user_audit_team WHERE user_id IN ("+ph[:len(ph)-1]+") AND is_active = TRUE ORDER BY user_id, audit_team_id",
 		args...)
 	if err != nil {
 		return nil, fmt.Errorf("user_audit_team.loadBatch: %w", err)

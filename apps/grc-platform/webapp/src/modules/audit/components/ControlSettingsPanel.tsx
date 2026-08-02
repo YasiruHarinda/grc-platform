@@ -434,7 +434,7 @@ function DeleteDialog({
       <DialogContent>
         {error && <Alert severity="error" sx={{ mb: 1 }}>{error}</Alert>}
         <Typography variant="body2">
-          Remove <strong>{control?.controlNumber}</strong>  {control?.description}?
+          Remove <strong>{control?.controlNumber}</strong> - {control?.description}?
           This cannot be undone.
         </Typography>
       </DialogContent>

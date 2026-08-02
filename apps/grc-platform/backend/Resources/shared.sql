@@ -19,13 +19,15 @@ SET FOREIGN_KEY_CHECKS = 0;
 -- Role assignment lives in Asgardeo JWT claims, not here.
 -- Audit team membership is many-to-many (see user_audit_team in
 -- audit_schema.sql), not a column here. risk_team_id remains a single-value
--- column; its FK constraint is wired in by risk_schema.sql.
+-- column until the risk-side junction table replaces it; user_repo.go in
+-- the compliance-entity service still reads/writes it directly.
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `user` (
   id            INT          NOT NULL AUTO_INCREMENT,
   email         VARCHAR(255) NOT NULL,
   display_name  VARCHAR(255) NOT NULL,
   user_type     ENUM('INTERNAL','EXTERNAL') NOT NULL DEFAULT 'INTERNAL',
+  risk_team_id  INT          NULL,
   status        ENUM('ACTIVE','INACTIVE','REMOVED') NOT NULL DEFAULT 'ACTIVE',
   created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by    VARCHAR(255) NULL,
@@ -33,7 +35,7 @@ CREATE TABLE IF NOT EXISTS `user` (
   updated_by    VARCHAR(255) NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_user_email (email),
-  KEY idx_user_risk_team  (risk_team_id)
+  KEY idx_user_risk_team (risk_team_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 

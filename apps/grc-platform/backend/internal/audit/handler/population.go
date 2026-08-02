@@ -17,6 +17,7 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"mime"
 	"net/http"
@@ -342,6 +343,15 @@ func (h *evidenceHandler) deletePopulationFile(w http.ResponseWriter, r *http.Re
 				response.WriteError(w, http.StatusConflict, "sample files can only be edited while the sample is being selected or has just been submitted")
 				return
 			}
+			round, err := h.popSvc.LatestRound(r.Context(), auditID, controlID)
+			if err != nil {
+				response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+				return
+			}
+			if round.ID != file.PopulationID {
+				response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
+				return
+			}
 		}
 	} else {
 		if !auth.RequirePrivilege(r.Context(), w, privilege.SubmitEvidence) {
@@ -377,69 +387,33 @@ func (h *evidenceHandler) deletePopulationFile(w http.ResponseWriter, r *http.Re
 // auditor validation; reject sends it back to the team on the same round
 // (see design doc §3.2/§8 — both rejection paths reuse the round).
 func (h *evidenceHandler) reviewPopulation(w http.ResponseWriter, r *http.Request) {
-	if !auth.RequireAnyPrivilege(r.Context(), w, privilege.ReviewEvidence, privilege.ManageControls) {
-		return
-	}
-	auditID, ok := parseIntParam(w, r, "id")
-	if !ok {
-		return
-	}
-	controlID, ok := parseIntParam(w, r, "controlId")
-	if !ok {
-		return
-	}
-	control, err := h.controlSvc.GetByID(r.Context(), auditID, controlID)
-	if err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-		return
-	}
-	if control == nil {
-		response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
-		return
-	}
-	if control.Status != "POPULATION_INTERNAL_REVIEW" {
-		response.WriteError(w, http.StatusConflict, "population can only be reviewed while it is under internal review")
-		return
-	}
-	req, ok := decodeReviewDecision(w, r)
-	if !ok {
-		return
-	}
-
-	round, err := h.popSvc.LatestRound(r.Context(), auditID, controlID)
-	if err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-		return
-	}
-
-	actor := auth.FromContext(r.Context()).Email
-	roundStatus, controlStatus := "COMPLIANCE_APPROVED", "POPULATION_UNDER_VALIDATION"
-	if req.Decision == "REJECT" {
+	h.decideRound(w, r, decideRoundParams{
+		preGate: func(w http.ResponseWriter, r *http.Request) bool {
+			return auth.RequireAnyPrivilege(r.Context(), w, privilege.ReviewEvidence, privilege.ManageControls)
+		},
+		requiredStatus:    "POPULATION_INTERNAL_REVIEW",
+		statusConflictMsg: "population can only be reviewed while it is under internal review",
+		latestRoundID: func(ctx context.Context, auditID, controlID int) (int, error) {
+			round, err := h.popSvc.LatestRound(ctx, auditID, controlID)
+			if err != nil {
+				return 0, err
+			}
+			return round.ID, nil
+		},
+		updateRoundStatus:  h.popSvc.UpdateRoundStatus,
+		approveRoundStatus: "COMPLIANCE_APPROVED",
 		// Internal-review reject sends the team back to POPULATION_PENDING (the
 		// same "team edits and submits" state as the first round), mirroring how
 		// EVIDENCE_INTERNAL_REVIEW reject targets EVIDENCE_PENDING rather than a
 		// separate clarification state. Only the auditor's validate-stage reject
 		// (see validatePopulation below) uses POPULATION_NEED_CLARIFICATION.
-		roundStatus, controlStatus = "COMPLIANCE_REJECTED", "POPULATION_PENDING"
-		// Clear the rejected submission's files so the resubmission form starts
-		// empty, matching how a resubmitted evidence round has no leftover
-		// files (there each resubmission is a fresh round; population reuses
-		// the same round, so this has to clear explicitly).
-		if err := h.popSvc.ClearFiles(r.Context(), round.ID, "POPULATION"); err != nil {
-			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-			return
-		}
-	}
-	if err := h.popSvc.UpdateRoundStatus(r.Context(), round.ID, roundStatus, actor); err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-		return
-	}
-	statusReq := model.UpdateStatusRequest{Status: controlStatus, Comment: req.Comment}
-	if err := h.controlSvc.UpdateStatus(r.Context(), auditID, controlID, statusReq, actor); err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-		return
-	}
-	response.WriteJSONValue(w, http.StatusOK, map[string]any{"status": controlStatus})
+		approveControlStatus: "POPULATION_UNDER_VALIDATION",
+		rejectRoundStatus:    "COMPLIANCE_REJECTED",
+		rejectControlStatus:  "POPULATION_PENDING",
+		clearFilesOnReject: func(ctx context.Context, roundID int) error {
+			return h.popSvc.ClearFiles(ctx, roundID, "POPULATION")
+		},
+	})
 }
 
 // validatePopulation handles
@@ -449,60 +423,24 @@ func (h *evidenceHandler) reviewPopulation(w http.ResponseWriter, r *http.Reques
 // approve moves it to the sample phase; reject sends it back to the team on the
 // same round.
 func (h *evidenceHandler) validatePopulation(w http.ResponseWriter, r *http.Request) {
-	auditID, ok := parseIntParam(w, r, "id")
-	if !ok {
-		return
-	}
-	controlID, ok := parseIntParam(w, r, "controlId")
-	if !ok {
-		return
-	}
-	control, err := h.controlSvc.GetByID(r.Context(), auditID, controlID)
-	if err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-		return
-	}
-	if control == nil {
-		response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
-		return
-	}
-	if !requireAssignedAuditor(w, r, control) {
-		return
-	}
-	if control.Status != "POPULATION_UNDER_VALIDATION" {
-		response.WriteError(w, http.StatusConflict, "population can only be validated while it is under auditor validation")
-		return
-	}
-	req, ok := decodeReviewDecision(w, r)
-	if !ok {
-		return
-	}
-
-	round, err := h.popSvc.LatestRound(r.Context(), auditID, controlID)
-	if err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-		return
-	}
-
-	actor := auth.FromContext(r.Context()).Email
-	roundStatus, controlStatus := "APPROVED", "POPULATION_COMPLETE"
-	if req.Decision == "REJECT" {
-		roundStatus, controlStatus = "AUDITOR_REJECTED", "POPULATION_NEED_CLARIFICATION"
-		// Same as the internal-review reject above: clear the rejected files so
-		// the resubmission starts empty instead of carrying the old ones forward.
-		if err := h.popSvc.ClearFiles(r.Context(), round.ID, "POPULATION"); err != nil {
-			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-			return
-		}
-	}
-	if err := h.popSvc.UpdateRoundStatus(r.Context(), round.ID, roundStatus, actor); err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-		return
-	}
-	statusReq := model.UpdateStatusRequest{Status: controlStatus, Comment: req.Comment}
-	if err := h.controlSvc.UpdateStatus(r.Context(), auditID, controlID, statusReq, actor); err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-		return
-	}
-	response.WriteJSONValue(w, http.StatusOK, map[string]any{"status": controlStatus})
+	h.decideRound(w, r, decideRoundParams{
+		postGate:          requireAssignedAuditor,
+		requiredStatus:    "POPULATION_UNDER_VALIDATION",
+		statusConflictMsg: "population can only be validated while it is under auditor validation",
+		latestRoundID: func(ctx context.Context, auditID, controlID int) (int, error) {
+			round, err := h.popSvc.LatestRound(ctx, auditID, controlID)
+			if err != nil {
+				return 0, err
+			}
+			return round.ID, nil
+		},
+		updateRoundStatus:    h.popSvc.UpdateRoundStatus,
+		approveRoundStatus:   "APPROVED",
+		approveControlStatus: "POPULATION_COMPLETE",
+		rejectRoundStatus:    "AUDITOR_REJECTED",
+		rejectControlStatus:  "POPULATION_NEED_CLARIFICATION",
+		clearFilesOnReject: func(ctx context.Context, roundID int) error {
+			return h.popSvc.ClearFiles(ctx, roundID, "POPULATION")
+		},
+	})
 }

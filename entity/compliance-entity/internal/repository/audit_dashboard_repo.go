@@ -51,7 +51,7 @@ func (r *dashboardRepo) resolveScope(ctx context.Context, req domain.AuditDashbo
 		// single equality check. A user with no team membership simply matches
 		// no rows — no separate "not found" branch is needed the way the old
 		// single-column lookup required.
-		return " AND c.team_id IN (SELECT uat.audit_team_id FROM user_audit_team uat JOIN `user` u ON u.id = uat.user_id WHERE u.email = ?)",
+		return " AND c.team_id IN (SELECT uat.audit_team_id FROM user_audit_team uat JOIN `user` u ON u.id = uat.user_id WHERE u.email = ? AND uat.is_active = TRUE)",
 			[]any{req.UserEmail}, nil
 	case domain.RoleExternalAuditor:
 		var userID sql.NullInt64

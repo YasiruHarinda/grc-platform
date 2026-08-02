@@ -355,56 +355,25 @@ func (h *evidenceHandler) withdrawEvidence(w http.ResponseWriter, r *http.Reques
 // — so a later resubmission's round is never conflated with this one in the
 // live evidence view (see SubmittedEvidenceList, which hides rejected rounds).
 func (h *evidenceHandler) reviewEvidence(w http.ResponseWriter, r *http.Request) {
-	if !auth.RequireAnyPrivilege(r.Context(), w, privilege.ReviewEvidence, privilege.ManageControls) {
-		return
-	}
-	auditID, ok := parseIntParam(w, r, "id")
-	if !ok {
-		return
-	}
-	controlID, ok := parseIntParam(w, r, "controlId")
-	if !ok {
-		return
-	}
-	control, err := h.controlSvc.GetByID(r.Context(), auditID, controlID)
-	if err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-		return
-	}
-	if control == nil {
-		response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
-		return
-	}
-	if control.Status != "EVIDENCE_INTERNAL_REVIEW" {
-		response.WriteError(w, http.StatusConflict, "evidence can only be reviewed while it is under internal review")
-		return
-	}
-	req, ok := decodeReviewDecision(w, r)
-	if !ok {
-		return
-	}
-
-	round, err := h.svc.LatestRound(r.Context(), auditID, controlID)
-	if err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-		return
-	}
-
-	actor := auth.FromContext(r.Context()).Email
-	roundStatus, controlStatus := "COMPLIANCE_APPROVED", "EVIDENCE_UNDER_VALIDATION"
-	if req.Decision == "REJECT" {
-		roundStatus, controlStatus = "COMPLIANCE_REJECTED", "EVIDENCE_PENDING"
-	}
-	if err := h.svc.UpdateRoundStatus(r.Context(), round.ID, roundStatus, actor); err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-		return
-	}
-	statusReq := model.UpdateStatusRequest{Status: controlStatus, Comment: req.Comment}
-	if err := h.controlSvc.UpdateStatus(r.Context(), auditID, controlID, statusReq, actor); err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-		return
-	}
-	response.WriteJSONValue(w, http.StatusOK, map[string]any{"status": controlStatus})
+	h.decideRound(w, r, decideRoundParams{
+		preGate: func(w http.ResponseWriter, r *http.Request) bool {
+			return auth.RequireAnyPrivilege(r.Context(), w, privilege.ReviewEvidence, privilege.ManageControls)
+		},
+		requiredStatus:    "EVIDENCE_INTERNAL_REVIEW",
+		statusConflictMsg: "evidence can only be reviewed while it is under internal review",
+		latestRoundID: func(ctx context.Context, auditID, controlID int) (int, error) {
+			round, err := h.svc.LatestRound(ctx, auditID, controlID)
+			if err != nil {
+				return 0, err
+			}
+			return round.ID, nil
+		},
+		updateRoundStatus:    h.svc.UpdateRoundStatus,
+		approveRoundStatus:   "COMPLIANCE_APPROVED",
+		approveControlStatus: "EVIDENCE_UNDER_VALIDATION",
+		rejectRoundStatus:    "COMPLIANCE_REJECTED",
+		rejectControlStatus:  "EVIDENCE_PENDING",
+	})
 }
 
 // validateEvidence handles POST /api/v1/audits/{id}/controls/{controlId}/evidence/validate.
@@ -414,56 +383,23 @@ func (h *evidenceHandler) reviewEvidence(w http.ResponseWriter, r *http.Request)
 // the reviewed round's own status is recorded (APPROVED/AUDITOR_REJECTED), same
 // reasoning as reviewEvidence above. Auditor-gated (see requireAssignedAuditor).
 func (h *evidenceHandler) validateEvidence(w http.ResponseWriter, r *http.Request) {
-	auditID, ok := parseIntParam(w, r, "id")
-	if !ok {
-		return
-	}
-	controlID, ok := parseIntParam(w, r, "controlId")
-	if !ok {
-		return
-	}
-	control, err := h.controlSvc.GetByID(r.Context(), auditID, controlID)
-	if err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-		return
-	}
-	if control == nil {
-		response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
-		return
-	}
-	if !requireAssignedAuditor(w, r, control) {
-		return
-	}
-	if control.Status != "EVIDENCE_UNDER_VALIDATION" {
-		response.WriteError(w, http.StatusConflict, "evidence can only be validated while it is under auditor validation")
-		return
-	}
-	req, ok := decodeReviewDecision(w, r)
-	if !ok {
-		return
-	}
-
-	round, err := h.svc.LatestRound(r.Context(), auditID, controlID)
-	if err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-		return
-	}
-
-	actor := auth.FromContext(r.Context()).Email
-	roundStatus, newStatus := "APPROVED", "COMPLETE"
-	if req.Decision == "REJECT" {
-		roundStatus, newStatus = "AUDITOR_REJECTED", "EVIDENCE_NEED_CLARIFICATION"
-	}
-	if err := h.svc.UpdateRoundStatus(r.Context(), round.ID, roundStatus, actor); err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-		return
-	}
-	statusReq := model.UpdateStatusRequest{Status: newStatus, Comment: req.Comment}
-	if err := h.controlSvc.UpdateStatus(r.Context(), auditID, controlID, statusReq, actor); err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-		return
-	}
-	response.WriteJSONValue(w, http.StatusOK, map[string]any{"status": newStatus})
+	h.decideRound(w, r, decideRoundParams{
+		postGate:          requireAssignedAuditor,
+		requiredStatus:    "EVIDENCE_UNDER_VALIDATION",
+		statusConflictMsg: "evidence can only be validated while it is under auditor validation",
+		latestRoundID: func(ctx context.Context, auditID, controlID int) (int, error) {
+			round, err := h.svc.LatestRound(ctx, auditID, controlID)
+			if err != nil {
+				return 0, err
+			}
+			return round.ID, nil
+		},
+		updateRoundStatus:    h.svc.UpdateRoundStatus,
+		approveRoundStatus:   "APPROVED",
+		approveControlStatus: "COMPLETE",
+		rejectRoundStatus:    "AUDITOR_REJECTED",
+		rejectControlStatus:  "EVIDENCE_NEED_CLARIFICATION",
+	})
 }
 
 // triggerAIValidation kicks off an advisory AI validation in the background.
@@ -584,14 +520,12 @@ func (h *evidenceHandler) reconcileAfterDelete(ctx context.Context, auditID, con
 		return control.Status, nil
 	}
 
-	evidence, err := h.svc.List(ctx, auditID, controlID)
+	round, err := h.svc.LatestRound(ctx, auditID, controlID)
 	if err != nil {
 		return "", err
 	}
-	for _, e := range evidence {
-		if len(e.Files) > 0 {
-			return control.Status, nil
-		}
+	if len(round.Files) > 0 {
+		return control.Status, nil
 	}
 
 	actor := auth.FromContext(ctx).Email

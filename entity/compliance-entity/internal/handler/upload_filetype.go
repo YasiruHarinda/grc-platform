@@ -22,6 +22,10 @@ import (
 	"strings"
 )
 
+// Keep this file's blocklist in sync with its twin:
+// apps/grc-platform/backend/internal/audit/handler/upload_filetype.go — the two
+// services are separate Go modules, so nothing enforces this automatically.
+
 // blockedUploadExtensions rejects file extensions that a browser can execute as
 // active content. The GRC Backend already rejects these before forwarding; this
 // is the same defensive backstop maxFileUploadBytes provides for size.

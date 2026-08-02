@@ -193,11 +193,11 @@ func (s *controlService) BulkCreateControls(ctx context.Context, auditID int, re
 		req.Controls[i].ControlType = strings.ToUpper(c.ControlType)
 		req.Controls[i].Scope = strings.ToUpper(c.Scope)
 	}
-	if err := s.applyFrameworkPushBacks(ctx, auditID, req.Controls); err != nil {
-		return domain.BulkCreateControlsResponse{}, err
-	}
 	controls, err := s.repo.BulkCreateControls(ctx, auditID, req.Controls)
 	if err != nil {
+		return domain.BulkCreateControlsResponse{}, err
+	}
+	if err := s.applyFrameworkPushBacks(ctx, auditID, req.Controls); err != nil {
 		return domain.BulkCreateControlsResponse{}, err
 	}
 	return domain.BulkCreateControlsResponse{Controls: controls, Created: len(controls)}, nil
@@ -205,10 +205,15 @@ func (s *controlService) BulkCreateControls(ctx context.Context, auditID int, re
 
 // applyFrameworkPushBacks performs the optional §6 framework-catalog side
 // effect for each control in a bulk create that requested it
-// (PushToFramework=true), before any audit_control rows are inserted — so a
-// rejected push-back (e.g. duplicate control number) fails the whole request
-// instead of leaving a half-created audit. Resolves the audit's framework id
-// once and reuses it for every row. No-op if nothing in the batch opted in.
+// (PushToFramework=true). Runs after the audit_control rows are committed:
+// pushControlToFramework writes directly to the catalog (its own commit,
+// outside the control-insert transaction), so running it first risked
+// stranding a committed catalog row if the control insert then failed (e.g.
+// duplicate control number within the audit). A push-back failure here still
+// leaves the audit_control rows in place unlinked from the catalog, which is
+// a valid state on its own (PushToFramework is opt-in). Resolves the audit's
+// framework id once and reuses it for every row. No-op if nothing in the
+// batch opted in.
 func (s *controlService) applyFrameworkPushBacks(ctx context.Context, auditID int, reqs []domain.CreateControlRequest) error {
 	needsFramework := false
 	for _, r := range reqs {
@@ -353,18 +358,20 @@ func (s *controlService) CreateControl(ctx context.Context, auditID int, req dom
 	req.RequirementType = strings.ToUpper(req.RequirementType)
 	req.ControlType = strings.ToUpper(req.ControlType)
 	req.Scope = strings.ToUpper(req.Scope)
+	c, err := s.repo.CreateControl(ctx, auditID, req)
+	if err != nil {
+		return domain.AuditControl{}, err
+	}
 	if req.PushToFramework {
 		audit, err := s.auditRepo.GetAuditByID(ctx, auditID)
 		if err != nil {
 			return domain.AuditControl{}, err
 		}
+		// Runs after the control insert commits (see applyFrameworkPushBacks) so a
+		// rejected push-back can't strand an already-committed catalog row.
 		if err := s.pushControlToFramework(ctx, audit.FrameworkID, req); err != nil {
 			return domain.AuditControl{}, err
 		}
-	}
-	c, err := s.repo.CreateControl(ctx, auditID, req)
-	if err != nil {
-		return domain.AuditControl{}, err
 	}
 	return *c, nil
 }

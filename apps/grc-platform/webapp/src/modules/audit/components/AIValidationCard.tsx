@@ -68,7 +68,7 @@ const PHASE_TITLE: Record<"evidence" | "population", string> = {
 };
 
 const POPULATION_PLACEHOLDER_TEXT =
-  "AI review for population submissions isn't wired up yet this is where it'll appear once it's ready, flagging gaps before internal review.";
+  "AI review for population submissions isn't wired up yet — this is where it'll appear once it's ready, flagging gaps before internal review.";
 
 /**
  * AIValidationCard renders the advisory AI pre-review for a control's latest

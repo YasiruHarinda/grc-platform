@@ -124,9 +124,35 @@ func (s *controlService) GetByID(ctx context.Context, auditID, controlID int) (*
 	return c, nil
 }
 
+// sanitizedControlNumbers returns a lowercased-sanitized-number → original-number
+// index of every control currently in the audit. Blob folders key on
+// sanitizeSegment(ControlNumber) (see evidence.go resolveNames), so raw values
+// like "CA.01" and "CA:01" both collapse to "CA-01" and would otherwise share
+// the same evidence/population/sample folder — this index lets callers reject
+// a new or renamed control whose sanitized number collides with an existing
+// one, mirroring checkNameAvailable's post-sanitization check for audit names.
+func (s *controlService) sanitizedControlNumbers(ctx context.Context, auditID int) (map[string]string, error) {
+	existing, err := s.repo.List(ctx, auditID)
+	if err != nil {
+		return nil, err
+	}
+	index := make(map[string]string, len(existing))
+	for _, c := range existing {
+		index[strings.ToLower(sanitizeSegment(c.ControlNumber))] = c.ControlNumber
+	}
+	return index, nil
+}
+
 func (s *controlService) Add(ctx context.Context, auditID int, req model.AddControlRequest, createdBy string) (*model.AuditControl, error) {
 	if err := validateAddRequest(req); err != nil {
 		return nil, err
+	}
+	index, err := s.sanitizedControlNumbers(ctx, auditID)
+	if err != nil {
+		return nil, err
+	}
+	if orig, ok := index[strings.ToLower(sanitizeSegment(req.ControlNumber))]; ok {
+		return nil, &apierror.Error{StatusCode: http.StatusConflict, Body: "a control numbered \"" + orig + "\" already exists in this audit"}
 	}
 	c, err := s.repo.Create(ctx, auditID, req, createdBy)
 	if err != nil {
@@ -147,6 +173,17 @@ func (s *controlService) BulkAdd(ctx context.Context, auditID int, reqs []model.
 			return nil, err
 		}
 	}
+	index, err := s.sanitizedControlNumbers(ctx, auditID)
+	if err != nil {
+		return nil, err
+	}
+	for _, req := range reqs {
+		key := strings.ToLower(sanitizeSegment(req.ControlNumber))
+		if orig, ok := index[key]; ok {
+			return nil, &apierror.Error{StatusCode: http.StatusConflict, Body: "a control numbered \"" + orig + "\" already exists in this audit (conflicts with \"" + req.ControlNumber + "\")"}
+		}
+		index[key] = req.ControlNumber
+	}
 	return s.repo.BulkCreate(ctx, auditID, reqs, createdBy)
 }
 
@@ -157,6 +194,16 @@ func (s *controlService) Update(ctx context.Context, auditID, controlID int, req
 	}
 	if c == nil {
 		return &apierror.Error{StatusCode: http.StatusNotFound, Body: "control not found"}
+	}
+	if req.ControlNumber != nil && strings.TrimSpace(*req.ControlNumber) != "" {
+		index, err := s.sanitizedControlNumbers(ctx, auditID)
+		if err != nil {
+			return err
+		}
+		delete(index, strings.ToLower(sanitizeSegment(c.ControlNumber))) // exclude this control's current number
+		if orig, ok := index[strings.ToLower(sanitizeSegment(*req.ControlNumber))]; ok {
+			return &apierror.Error{StatusCode: http.StatusConflict, Body: "a control numbered \"" + orig + "\" already exists in this audit"}
+		}
 	}
 	// DueDate is optional here (nil means "leave unchanged"), but a caller that
 	// does send the field may not clear a control's due date to empty.

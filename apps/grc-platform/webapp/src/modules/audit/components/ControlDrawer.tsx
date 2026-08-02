@@ -595,6 +595,20 @@ function SampleUploadCard({
   const existingFiles = editMode ? (population.data?.sampleFiles ?? []) : [];
   const busy = submitSample.isPending || requestTime.isPending;
 
+  // initialNote comes from the parent's (possibly pre-refetch, stale) control
+  // prop — right after the first submit it can still read the old value while
+  // this card mounts in edit mode. Once useGetPopulation's own fetch lands, it
+  // is the authoritative source, so sync note from it exactly once so a save
+  // here can't overwrite the just-stored note with a stale empty string.
+  const noteSyncedRef = useRef(false);
+  useEffect(() => {
+    if (editMode && population.data && !noteSyncedRef.current) {
+      const syncedNote = population.data.sampleReference ?? "";
+      queueMicrotask(() => setNote(syncedNote));
+      noteSyncedRef.current = true;
+    }
+  }, [editMode, population.data]);
+
   function addFiles(list: FileList | null) {
     if (!list) return;
     const incoming = Array.from(list);
@@ -621,7 +635,7 @@ function SampleUploadCard({
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, lineHeight: 1.7 }}>
         {editMode
           ? "Add more sample files, remove ones no longer needed, or update the note below."
-          : "Upload the sample file(s) for the team to provide evidence against, and/or add a short note describing what to sample at least one is required."}
+          : "Upload the sample file(s) for the team to provide evidence against, and/or add a short note describing what to sample — at least one is required."}
       </Typography>
 
       {editMode && existingFiles.length > 0 && (

@@ -77,7 +77,7 @@ func (r *controlRepo) ListAssignedForEvidence(ctx context.Context, userEmail str
 		JOIN audit_product   p ON p.id = a.product_id
 		JOIN audit_framework f ON f.id = a.framework_id
 		JOIN audit_team      t ON t.id = c.team_id
-		JOIN user_audit_team uat ON uat.audit_team_id = t.id
+		JOIN user_audit_team uat ON uat.audit_team_id = t.id AND uat.is_active = TRUE
 		JOIN `+"`user`"+` u ON u.id = uat.user_id
 		WHERE u.email = ?
 		  AND a.status = 'ACTIVE'
@@ -122,7 +122,7 @@ func (r *controlRepo) GetEvidenceAssignment(ctx context.Context, userEmail strin
 		FROM audit_control c
 		JOIN audit      a ON a.id = c.audit_id
 		JOIN audit_team t ON t.id = c.team_id
-		JOIN user_audit_team uat ON uat.audit_team_id = t.id
+		JOIN user_audit_team uat ON uat.audit_team_id = t.id AND uat.is_active = TRUE
 		JOIN `+"`user`"+` u ON u.id = uat.user_id
 		WHERE u.email = ? AND c.id = ?
 		  AND a.status = 'ACTIVE'
@@ -436,10 +436,17 @@ func (r *controlRepo) CountDeletionBlockers(ctx context.Context, controlID int) 
 	// population round starts in (see CreateControl/BulkCreateControls) — it
 	// must not count as "in progress" or an OE control could never be deleted
 	// before its team submits anything, unlike a DESIGN control (which has no
-	// audit_population row at all until work starts).
+	// audit_population row at all until work starts). But uploads land before
+	// submit flips the status away from PENDING, so a PENDING round can still
+	// hold real files — those must block deletion too, same as an APPROVED
+	// round (completed audit evidence), which is never safe to cascade away.
 	var activePopulationCount int
 	if err := r.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM audit_population WHERE control_id = ? AND status NOT IN ('PENDING', 'APPROVED')", controlID,
+		`SELECT COUNT(*) FROM audit_population p
+		 WHERE p.control_id = ?
+		   AND (p.status <> 'PENDING'
+		        OR EXISTS (SELECT 1 FROM audit_evidence_file f WHERE f.population_id = p.id))`,
+		controlID,
 	).Scan(&activePopulationCount); err != nil {
 		return 0, 0, fmt.Errorf("control.CountDeletionBlockers population(%d): %w", controlID, err)
 	}
