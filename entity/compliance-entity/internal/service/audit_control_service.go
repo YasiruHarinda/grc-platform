@@ -28,11 +28,19 @@ import (
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/repository"
 )
 
-type controlService struct{ repo repository.ControlRepository }
+type controlService struct {
+	repo          repository.ControlRepository
+	frameworkRepo repository.FrameworkControlRepository
+	auditRepo     repository.AuditRepository
+}
 
-// NewControlService constructs a ControlService.
-func NewControlService(repo repository.ControlRepository) ControlService {
-	return &controlService{repo: repo}
+// NewControlService constructs a ControlService. frameworkRepo/auditRepo back
+// the optional "push to framework" side effect on control creation (see
+// applyFrameworkPushBack) — resolving the audit's framework id and writing
+// into the catalog are the only things that ever touch audit_framework_control
+// from this service.
+func NewControlService(repo repository.ControlRepository, frameworkRepo repository.FrameworkControlRepository, auditRepo repository.AuditRepository) ControlService {
+	return &controlService{repo: repo, frameworkRepo: frameworkRepo, auditRepo: auditRepo}
 }
 
 // validControlStatuses mirrors the audit_control.status ENUM in audit_schema.sql
@@ -160,11 +168,14 @@ func (s *controlService) BulkCreateControls(ctx context.Context, auditID int, re
 		return domain.BulkCreateControlsResponse{}, &apierror.ValidationError{Msg: "controls must not be empty"}
 	}
 	for i, c := range req.Controls {
-		if c.ControlNumber == "" && c.FrameworkControlID == nil {
+		if c.ControlNumber == "" {
 			return domain.BulkCreateControlsResponse{}, &apierror.ValidationError{Msg: fmt.Sprintf("controls[%d]: controlNumber is required", i)}
 		}
-		if c.Description == "" && c.FrameworkControlID == nil {
+		if c.Description == "" {
 			return domain.BulkCreateControlsResponse{}, &apierror.ValidationError{Msg: fmt.Sprintf("controls[%d]: description is required", i)}
+		}
+		if c.DueDate == nil || strings.TrimSpace(*c.DueDate) == "" {
+			return domain.BulkCreateControlsResponse{}, &apierror.ValidationError{Msg: fmt.Sprintf("controls[%d]: dueDate is required", i)}
 		}
 		if !validRequirementTypes[strings.ToUpper(c.RequirementType)] {
 			return domain.BulkCreateControlsResponse{}, &apierror.ValidationError{Msg: fmt.Sprintf("controls[%d]: invalid requirementType %q", i, c.RequirementType)}
@@ -186,7 +197,84 @@ func (s *controlService) BulkCreateControls(ctx context.Context, auditID int, re
 	if err != nil {
 		return domain.BulkCreateControlsResponse{}, err
 	}
+	if err := s.applyFrameworkPushBacks(ctx, auditID, req.Controls); err != nil {
+		return domain.BulkCreateControlsResponse{}, err
+	}
 	return domain.BulkCreateControlsResponse{Controls: controls, Created: len(controls)}, nil
+}
+
+// applyFrameworkPushBacks performs the optional §6 framework-catalog side
+// effect for each control in a bulk create that requested it
+// (PushToFramework=true). Runs after the audit_control rows are committed:
+// pushControlToFramework writes directly to the catalog (its own commit,
+// outside the control-insert transaction), so running it first risked
+// stranding a committed catalog row if the control insert then failed (e.g.
+// duplicate control number within the audit). A push-back failure here still
+// leaves the audit_control rows in place unlinked from the catalog, which is
+// a valid state on its own (PushToFramework is opt-in). Resolves the audit's
+// framework id once and reuses it for every row. No-op if nothing in the
+// batch opted in.
+func (s *controlService) applyFrameworkPushBacks(ctx context.Context, auditID int, reqs []domain.CreateControlRequest) error {
+	needsFramework := false
+	for _, r := range reqs {
+		if r.PushToFramework {
+			needsFramework = true
+			break
+		}
+	}
+	if !needsFramework {
+		return nil
+	}
+	audit, err := s.auditRepo.GetAuditByID(ctx, auditID)
+	if err != nil {
+		return err
+	}
+	for _, r := range reqs {
+		if !r.PushToFramework {
+			continue
+		}
+		if err := s.pushControlToFramework(ctx, audit.FrameworkID, r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// pushControlToFramework writes one control into the framework catalog: a new
+// version of an existing catalog control (SourceFrameworkControlID set), or a
+// first version of a brand-new one — rejected if that control number already
+// exists in the framework's current catalog under a different id.
+func (s *controlService) pushControlToFramework(ctx context.Context, frameworkID int, r domain.CreateControlRequest) error {
+	if r.SourceFrameworkControlID != nil {
+		_, err := s.frameworkRepo.NewVersion(ctx, *r.SourceFrameworkControlID, domain.UpdateFrameworkControlRequest{
+			Description:         &r.Description,
+			EvidenceRequirement: r.EvidenceRequirement,
+			RequirementType:     &r.RequirementType,
+			ControlType:         &r.ControlType,
+			Scope:               &r.Scope,
+			UpdatedBy:           r.CreatedBy,
+		})
+		return err
+	}
+	existing, err := s.frameworkRepo.GetCurrentByNumber(ctx, frameworkID, r.ControlNumber)
+	if err == nil {
+		return &apierror.ValidationError{Msg: fmt.Sprintf(
+			"control %s already exists in this framework (id %d), uncheck 'add to library' or pick it from the existing list instead",
+			r.ControlNumber, existing.ID)}
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	_, err = s.frameworkRepo.Create(ctx, frameworkID, domain.CreateFrameworkControlRequest{
+		ControlNumber:       r.ControlNumber,
+		Description:         r.Description,
+		EvidenceRequirement: r.EvidenceRequirement,
+		RequirementType:     r.RequirementType,
+		ControlType:         r.ControlType,
+		Scope:               r.Scope,
+		CreatedBy:           r.CreatedBy,
+	})
+	return err
 }
 
 func (s *controlService) DeleteControl(ctx context.Context, auditID, controlID int) error {
@@ -195,6 +283,25 @@ func (s *controlService) DeleteControl(ctx context.Context, auditID, controlID i
 	}
 	if controlID <= 0 {
 		return &apierror.ValidationError{Msg: "controlId must be a positive integer"}
+	}
+	// audit_evidence and audit_population both cascade-delete with the control at
+	// the DB level (see audit_schema.sql), so once work has started on a control
+	// deleting it silently destroys that work. Block it here instead.
+	evidenceCount, activePopulationCount, err := s.repo.CountDeletionBlockers(ctx, controlID)
+	if err != nil {
+		return err
+	}
+	if evidenceCount > 0 || activePopulationCount > 0 {
+		var reasons []string
+		if evidenceCount > 0 {
+			reasons = append(reasons, fmt.Sprintf("%d evidence submission(s)", evidenceCount))
+		}
+		if activePopulationCount > 0 {
+			reasons = append(reasons, fmt.Sprintf("%d population(s) in progress", activePopulationCount))
+		}
+		return &apierror.ConflictError{
+			Msg: fmt.Sprintf("cannot delete control: %s exist for this control", strings.Join(reasons, " and ")),
+		}
 	}
 	return s.repo.DeleteControl(ctx, auditID, controlID)
 }
@@ -217,10 +324,10 @@ func (s *controlService) CreateControl(ctx context.Context, auditID int, req dom
 	if auditID <= 0 {
 		return domain.AuditControl{}, &apierror.ValidationError{Msg: "auditId must be a positive integer"}
 	}
-	if req.ControlNumber == "" && req.FrameworkControlID == nil {
+	if req.ControlNumber == "" {
 		return domain.AuditControl{}, &apierror.ValidationError{Msg: "controlNumber is required"}
 	}
-	if req.Description == "" && req.FrameworkControlID == nil {
+	if req.Description == "" {
 		return domain.AuditControl{}, &apierror.ValidationError{Msg: "description is required"}
 	}
 	if !validRequirementTypes[strings.ToUpper(req.RequirementType)] {
@@ -235,12 +342,36 @@ func (s *controlService) CreateControl(ctx context.Context, auditID int, req dom
 	if req.CreatedBy == "" {
 		return domain.AuditControl{}, &apierror.ValidationError{Msg: "createdBy is required"}
 	}
+	// dueDate is required for every control. OE controls additionally need a
+	// population due date — this was previously only enforced by the standalone
+	// population-create endpoint, which the webapp never calls; the inline
+	// Population block on control creation went completely unvalidated, letting
+	// an OE control end up with no due date anywhere.
+	if req.DueDate == nil || strings.TrimSpace(*req.DueDate) == "" {
+		return domain.AuditControl{}, &apierror.ValidationError{Msg: "dueDate is required"}
+	}
+	if strings.EqualFold(req.RequirementType, "OE") {
+		if req.Population == nil || req.Population.DueDate == nil || strings.TrimSpace(*req.Population.DueDate) == "" {
+			return domain.AuditControl{}, &apierror.ValidationError{Msg: "population.dueDate is required for OE controls"}
+		}
+	}
 	req.RequirementType = strings.ToUpper(req.RequirementType)
 	req.ControlType = strings.ToUpper(req.ControlType)
 	req.Scope = strings.ToUpper(req.Scope)
 	c, err := s.repo.CreateControl(ctx, auditID, req)
 	if err != nil {
 		return domain.AuditControl{}, err
+	}
+	if req.PushToFramework {
+		audit, err := s.auditRepo.GetAuditByID(ctx, auditID)
+		if err != nil {
+			return domain.AuditControl{}, err
+		}
+		// Runs after the control insert commits (see applyFrameworkPushBacks) so a
+		// rejected push-back can't strand an already-committed catalog row.
+		if err := s.pushControlToFramework(ctx, audit.FrameworkID, req); err != nil {
+			return domain.AuditControl{}, err
+		}
 	}
 	return *c, nil
 }
@@ -313,6 +444,12 @@ func (s *controlService) UpdateControl(ctx context.Context, auditID, controlID i
 			return domain.AuditControl{}, &apierror.ValidationError{Msg: "invalid scope: " + *req.Scope}
 		}
 		req.Scope = &upper
+	}
+	// DueDate is optional on update (nil means "leave unchanged" — e.g. a
+	// status-transition PATCH never sends it), but a caller that does send the
+	// field may not clear a control's due date to empty.
+	if req.DueDate != nil && strings.TrimSpace(*req.DueDate) == "" {
+		return domain.AuditControl{}, &apierror.ValidationError{Msg: "dueDate cannot be cleared"}
 	}
 	if req.Status != nil {
 		if !validControlStatuses[strings.ToUpper(*req.Status)] {

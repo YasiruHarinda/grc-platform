@@ -19,18 +19,23 @@ package model
 
 import "time"
 
-// AuditControl represents a control under evaluation within an audit.
+// AuditControl represents a control under evaluation within an audit. Every
+// control owns its full definition text directly — it is never linked to the
+// framework catalog by foreign key.
 type AuditControl struct {
 	ID                  int       `json:"id"`
 	AuditID             int       `json:"auditId"`
-	FrameworkControlID  *int      `json:"frameworkControlId"` // non-nil when sourced from template
-	TemplateVersion     *int      `json:"templateVersion"`    // version of the template row used
 	OwnerID             *int      `json:"ownerId"`
 	OwnerName           *string   `json:"ownerName"`
 	TeamID              *int      `json:"teamId"`
 	TeamName            *string   `json:"teamName"`
 	AuditorID           *int      `json:"auditorId"`
 	AuditorName         *string   `json:"auditorName"`
+	// AuditorEmail backs the assigned-auditor gate: the backend compares it
+	// against the caller's token email to authorize population/sample/evidence
+	// validation, and the frontend compares it against the signed-in user's email
+	// to decide whether to show auditor-only cards and actions.
+	AuditorEmail        *string   `json:"auditorEmail"`
 	ControlNumber       string    `json:"controlNumber"`
 	Description         string    `json:"description"`
 	EvidenceRequirement *string   `json:"evidenceRequirement"`
@@ -77,9 +82,14 @@ type PopulationDetails struct {
 }
 
 // AddControlRequest is the payload for POST /api/v1/audits/{id}/controls.
+// Always creates a standalone control with full definition text.
+// PushToFramework optionally also writes the control into the audit's
+// framework catalog as a side effect (see model/framework_control.go and
+// docs/new/Audit-Control-Framework-Optional-Design.md §6): a first version
+// when SourceFrameworkControlID is nil, or a new version of that existing
+// catalog control when it's set (edited-existing-control push-back).
 type AddControlRequest struct {
-	FrameworkControlID  *int               `json:"frameworkControlId"` // set when adding from framework template
-	ControlSource       string             `json:"controlSource"`      // MANUAL | COPIED | CSV; defaults to MANUAL
+	ControlSource       string             `json:"controlSource"` // MANUAL | COPIED | CSV; defaults to MANUAL
 	ControlNumber       string             `json:"controlNumber"`
 	Description         string             `json:"description"`
 	EvidenceRequirement *string            `json:"evidenceRequirement"`
@@ -91,6 +101,9 @@ type AddControlRequest struct {
 	AuditorID           *int               `json:"auditorId"`
 	DueDate             *string            `json:"dueDate"`
 	Population          *PopulationDetails `json:"population"` // OE controls only
+
+	PushToFramework          bool `json:"pushToFramework"`
+	SourceFrameworkControlID *int `json:"sourceFrameworkControlId"`
 }
 
 // BulkAddControlsRequest is the payload for POST /api/v1/audits/{id}/controls/bulk.
@@ -111,6 +124,9 @@ type UpdateControlRequest struct {
 	TeamID              *int    `json:"teamId"`
 	AuditorID           *int    `json:"auditorId"`
 	DueDate             *string `json:"dueDate"`
+	// Population is set only for OE controls being edited from the same form
+	// used to create them; nil means "leave population details unchanged".
+	Population *PopulationDetails `json:"population"`
 }
 
 // UpdateStatusRequest is the payload for PATCH /api/v1/audits/{id}/controls/{controlId}/status.

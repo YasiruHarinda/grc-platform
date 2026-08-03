@@ -31,23 +31,37 @@ import (
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/storage"
 )
 
+// blobSegment matches one path-safe audit-name or control-number segment, as
+// produced by the GRC Backend's sanitizeSegment (internal/audit/service/pathsafe.go):
+// letters, digits, spaces, "_", and "-" — notably no "/", so it can never itself
+// contain a path separator or "..".
+const blobSegment = `[A-Za-z0-9 _-]+`
+
 // validBlobPath enforces the allowed Azure Blob layouts (defense in depth: even a
 // buggy or compromised backend cannot write outside these trees). The pattern is
-// fully anchored (^ … $) and each numeric segment is digits-only; the final
-// filename segment may contain any character except "/" (real filenames with
-// parentheses, @, commas, +, etc.). Backslash and ".." are rejected explicitly
-// in guardBlobPath. Every current caller of Upload/Read/Delete is enumerated here:
-//   - audit evidence:   audits/{auditId}/controls/{controlId}/evidence/{sessionTs}/{file}
-//   - audit population:  audits/{auditId}/controls/{controlId}/population/{populationId}/{file}
-//   - risk evidence:     risks/{riskId}/evidence/{ts}/{file}
+// fully anchored (^ … $); the final filename segment may contain any character
+// except "/" (real filenames with parentheses, @, commas, +, etc. — the backend
+// sanitizes and UUID-suffixes it before it ever reaches here). Backslash and
+// ".." are rejected explicitly in guardBlobPath. Every current caller of
+// Upload/Read/Delete is enumerated here (see Human-Readable-Evidence-Blob-Paths
+// design in the GRC Backend's Resources/Docs). Audit Hub evidence lives under a
+// literal "audit/" top-level folder, kept separate from the Risk module's own
+// top-level tree (currently "risks/", unaffected by this design):
+//   - audit evidence:    audit/{auditName}/{controlNumber}/evidence/{file}
+//   - audit population:  audit/{auditName}/{controlNumber}/population/{file}
+//   - auditor sample:    audit/{auditName}/{controlNumber}/population/sample/{file}
+//   - risk evidence:     risks/{riskId}/evidence/{ts}/{file} (unaffected; still numeric-ID)
 var validBlobPath = regexp.MustCompile(
-	`^(?:audits/\d+/controls/\d+/(?:evidence|population)/\d+/[^/]+` +
+	`^(?:audit/` + blobSegment + `/` + blobSegment + `/(?:evidence|population)/[^/]+` +
+		`|audit/` + blobSegment + `/` + blobSegment + `/population/sample/[^/]+` +
 		`|risks/\d+/evidence/\d+/[^/]+)$`)
 
 // validBlobPrefix permits the folder prefixes used for listing (they end in "/"):
-//   - audits/{auditId}/controls/{controlId}/evidence/{sessionTs}/
-//   - audits/{auditId}/controls/{controlId}/population/{populationId}/
-var validBlobPrefix = regexp.MustCompile(`^audits/\d+/controls/\d+/(?:evidence|population)/\d+/?$`)
+//   - audit/{auditName}/{controlNumber}/evidence/
+//   - audit/{auditName}/{controlNumber}/population/
+//   - audit/{auditName}/{controlNumber}/population/sample/
+var validBlobPrefix = regexp.MustCompile(
+	`^audit/` + blobSegment + `/` + blobSegment + `/(?:evidence|population(?:/sample)?)/?$`)
 
 func guardBlobPath(path string) bool {
 	return !strings.Contains(path, "..") &&
@@ -108,6 +122,11 @@ func (h *FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	contentType := header.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = http.DetectContentType(data)
+	}
+
+	if err := validateUploadFileType(filepath.Base(header.Filename), contentType); err != nil {
+		apierror.WriteJSON(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	if err := h.storage.UploadBlob(r.Context(), blobName, contentType, data); err != nil {

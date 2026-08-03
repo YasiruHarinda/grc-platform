@@ -186,6 +186,7 @@ here).
 | `PATCH` | `/action-plans/{planId}/steps/{stepId}` | Update action step |
 | `DELETE` | `/action-plans/{planId}/steps/{stepId}` | Delete action step |
 | `POST` | `/action-plans/{planId}/complete` | Complete a plan (all steps must already be COMPLETED); for a MANAGEMENT plan also resolves its escalation and reverts the risk to IN_REMEDIATION |
+| `POST` | `/risks/{riskId}/escalate` | Manually trigger escalation of an overdue IN_REMEDIATION risk (alternative to waiting for the daily job) |
 | `POST` | `/risks/{riskId}/escalations` | Create escalation (created automatically by the daily overdue-risk job — see `internal/job` — not by a user) |
 | `GET` | `/risks/{riskId}/escalations` | List escalations |
 | `GET` | `/risks/{riskId}/escalations/{escalationId}` | Get escalation |
@@ -254,7 +255,8 @@ here).
 | `PATCH` | `/populations/{populationId}` | Update population |
 | `POST` | `/populations/{populationId}/files` | Add population file |
 | `GET` | `/populations/{populationId}/files` | List population files |
-| `DELETE` | `/populations/files/{fileId}` | Delete population file |
+| `GET` | `/population-files/{fileId}` | Get population file |
+| `DELETE` | `/population-files/{fileId}` | Delete population file |
 | `POST` | `/audits/{auditId}/controls/{controlId}/evidence` | Create evidence |
 | `GET` | `/audits/{auditId}/controls/{controlId}/evidence` | List evidence for a control |
 | `GET` | `/evidence/{evidenceId}` | Get evidence |
@@ -270,8 +272,8 @@ here).
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/evidence/{evidenceId}/comments` | Add comment |
-| `GET` | `/evidence/{evidenceId}/comments` | List comments |
+| `POST` | `/audits/{auditId}/controls/{controlId}/comments` | Add comment |
+| `GET` | `/audits/{auditId}/controls/{controlId}/comments` | List comments |
 | `DELETE` | `/comments/{commentId}` | Delete comment |
 | `POST` | `/audits/{auditId}/trail` | Write trail entry |
 | `GET` | `/audits/{auditId}/trail` | List trail |

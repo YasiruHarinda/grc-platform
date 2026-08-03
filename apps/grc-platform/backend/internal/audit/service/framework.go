@@ -33,6 +33,7 @@ type FrameworkService interface {
 	ListProducts(ctx context.Context) ([]*model.AuditProduct, error)
 	CreateProduct(ctx context.Context, req model.CreateProductRequest, createdBy string) (*model.AuditProduct, error)
 	ListFrameworkControls(ctx context.Context, frameworkID int) ([]*model.AuditFrameworkControl, error)
+	CreateFrameworkControl(ctx context.Context, frameworkID int, req model.CreateFrameworkControlRequest, createdBy string) (*model.AuditFrameworkControl, error)
 }
 
 type frameworkService struct {
@@ -69,4 +70,23 @@ func (s *frameworkService) CreateProduct(ctx context.Context, req model.CreatePr
 
 func (s *frameworkService) ListFrameworkControls(ctx context.Context, frameworkID int) ([]*model.AuditFrameworkControl, error) {
 	return s.frameworkControlRepo.ListCurrent(ctx, frameworkID)
+}
+
+func (s *frameworkService) CreateFrameworkControl(ctx context.Context, frameworkID int, req model.CreateFrameworkControlRequest, createdBy string) (*model.AuditFrameworkControl, error) {
+	if req.ControlNumber == "" {
+		return nil, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "controlNumber is required"}
+	}
+	if req.Description == "" {
+		return nil, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "description is required"}
+	}
+	if req.RequirementType != "DESIGN" && req.RequirementType != "OE" {
+		return nil, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "requirementType must be DESIGN or OE"}
+	}
+	if req.ControlType != "CONFIG" && req.ControlType != "NON_CONFIG" {
+		return nil, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "controlType must be CONFIG or NON_CONFIG"}
+	}
+	if req.Scope != "COMMON" && req.Scope != "PRODUCT_SPECIFIC" {
+		return nil, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "scope must be COMMON or PRODUCT_SPECIFIC"}
+	}
+	return s.frameworkControlRepo.Create(ctx, frameworkID, req, createdBy)
 }

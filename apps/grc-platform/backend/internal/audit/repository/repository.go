@@ -35,6 +35,7 @@ type AuditRepository interface {
 // FrameworkControlRepository is the data-access contract for the versioned framework control library.
 type FrameworkControlRepository interface {
 	ListCurrent(ctx context.Context, frameworkID int) ([]*model.AuditFrameworkControl, error)
+	Create(ctx context.Context, frameworkID int, req model.CreateFrameworkControlRequest, createdBy string) (*model.AuditFrameworkControl, error)
 }
 
 // FrameworkRepository is the data-access contract for audit frameworks.
@@ -59,6 +60,10 @@ type ControlRepository interface {
 	BulkCreate(ctx context.Context, auditID int, reqs []model.AddControlRequest, createdBy string) ([]*model.AuditControl, error)
 	Update(ctx context.Context, auditID, controlID int, req model.UpdateControlRequest, updatedBy string) error
 	UpdateStatus(ctx context.Context, auditID, controlID int, status string, comment *string, updatedBy string) error
+	// UpdateStatusWithSample atomically sets the control's status and sample_reference
+	// in one call — used when the auditor submits the sample, so the two can never
+	// be observed out of step with each other.
+	UpdateStatusWithSample(ctx context.Context, auditID, controlID int, status string, sampleReference string, updatedBy string) error
 	Delete(ctx context.Context, auditID, controlID int) error
 	// ListAssignedForEvidence returns all controls assigned to the team of userEmail
 	// that are in a status requiring evidence submission.
@@ -102,30 +107,55 @@ type EvidenceRepository interface {
 	GetFileByID(ctx context.Context, fileID int) (*model.AuditEvidenceFile, error)
 	// DeleteFile removes a single evidence file row by ID.
 	DeleteFile(ctx context.Context, fileID int) error
+	// UpdateStatus advances one evidence round's own status (distinct from the
+	// control's status) — e.g. SUBMITTED → COMPLIANCE_REJECTED.
+	UpdateStatus(ctx context.Context, evidenceID int, status, updatedBy string) error
 }
 
 // PopulationRepository is the data-access contract for OE-control population
-// submissions (used by the Evidence Portal population flow).
+// submissions (used by the Evidence Portal population flow and the population
+// review/validate/sample web-app routes).
 type PopulationRepository interface {
 	// AddFile records one uploaded population blob against a population round.
 	AddFile(ctx context.Context, populationID int, fileKind, fileName, filePath string, fileType *string, fileSize *int64, createdBy string) error
 	// UpdateStatus advances the population round's status (e.g. → SUBMITTED).
 	UpdateStatus(ctx context.Context, populationID int, status, updatedBy string) error
+	// UpdateDetails edits a population round's requirement text, due date,
+	// comments, owner, and team — used when a manager edits an OE control's
+	// population details from the same form used to create them.
+	UpdateDetails(ctx context.Context, populationID int, details model.PopulationDetails, updatedBy string) error
+	// ListByControl returns every population round for a control, oldest first.
+	ListByControl(ctx context.Context, auditID, controlID int) ([]*model.AuditPopulation, error)
+	// ListFiles returns all files on a population round, newest first.
+	ListFiles(ctx context.Context, populationID int) ([]*model.PopulationFile, error)
+	// GetFileByID returns a single population/sample file row by its ID (for downloads).
+	GetFileByID(ctx context.Context, fileID int) (*model.PopulationFile, error)
+	// DeleteFile removes a single population/sample file row by ID.
+	DeleteFile(ctx context.Context, fileID int) error
 }
 
-// CommentRepository is the data-access contract for audit_comment (evidence-scoped).
+// CommentRepository is the data-access contract for audit_comment
+// (control-scoped — one thread per control, spanning population and
+// evidence phases).
 type CommentRepository interface {
-	Create(ctx context.Context, evidenceID int, content string, isInternal bool, parentCommentID *int, createdBy string) (*model.AuditComment, error)
-	ListByEvidence(ctx context.Context, evidenceID int) ([]*model.AuditComment, error)
+	Create(ctx context.Context, auditID, controlID int, content string, isInternal bool, parentCommentID *int, createdBy string) (*model.AuditComment, error)
+	ListByControl(ctx context.Context, auditID, controlID int) ([]*model.AuditComment, error)
 }
 type AssignmentRepository interface{}
 type NotificationRepository interface{}
 
-// TrailRepository appends entries to the append-only audit_trail (via the entity).
+// TrailRepository appends to and reads the append-only audit_trail (via the entity).
 type TrailRepository interface {
 	// Create appends one audit_trail entry under auditID. controlID/evidenceID are
 	// optional; details is a raw JSON string (may be empty).
 	Create(ctx context.Context, auditID int, controlID, evidenceID *int, action, details, createdBy string) error
+	// ListByControl returns the trail entries for one control, newest first, along
+	// with the total count. limit caps the number of entries returned.
+	ListByControl(ctx context.Context, auditID, controlID, limit int) ([]*model.AuditTrailEntry, int, error)
+	// ListByAudit returns the whole audit's trail (audit-level and every control's
+	// events together), newest first, narrowed by filter, for the audit-wide
+	// activity log.
+	ListByAudit(ctx context.Context, auditID int, filter model.TrailFilter, limit, offset int) ([]*model.AuditTrailEntry, int, error)
 }
 
 // AIValidationLogRepository reads AI evidence-validation rows from the

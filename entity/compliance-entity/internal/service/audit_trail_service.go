@@ -40,20 +40,21 @@ func validJSONField(name string, v *string) error {
 	return nil
 }
 
-type trailService struct{ repo repository.TrailRepository }
+type auditTrailService struct{ repo repository.AuditTrailRepository }
 
-// NewTrailService constructs a TrailService.
-func NewTrailService(repo repository.TrailRepository) TrailService {
-	return &trailService{repo: repo}
+// NewAuditTrailService constructs a AuditTrailService.
+func NewAuditTrailService(repo repository.AuditTrailRepository) AuditTrailService {
+	return &auditTrailService{repo: repo}
 }
 
 var validTrailActions = map[string]bool{
 	"CREATED": true, "UPLOADED": true, "RESUBMITTED": true,
 	"APPROVED": true, "REJECTED": true, "COMMENTED": true,
 	"ESCALATED": true, "AI_VALIDATED": true, "EXPORTED": true,
+	"UPDATED": true, "DELETED": true,
 }
 
-func (s *trailService) CreateTrail(ctx context.Context, auditID int, req domain.CreateAuditTrailRequest) (domain.AuditTrail, error) {
+func (s *auditTrailService) CreateAuditTrail(ctx context.Context, auditID int, req domain.CreateAuditTrailRequest) (domain.AuditTrail, error) {
 	if auditID <= 0 {
 		return domain.AuditTrail{}, &apierror.ValidationError{Msg: "auditId must be a positive integer"}
 	}
@@ -64,20 +65,25 @@ func (s *trailService) CreateTrail(ctx context.Context, auditID int, req domain.
 	if err := validJSONField("details", req.Details); err != nil {
 		return domain.AuditTrail{}, err
 	}
-	e, err := s.repo.CreateTrail(ctx, auditID, req)
+	e, err := s.repo.CreateAuditTrail(ctx, auditID, req)
 	if err != nil {
 		return domain.AuditTrail{}, err
 	}
 	return *e, nil
 }
 
-func (s *trailService) ListTrail(ctx context.Context, auditID int, limit, offset int) (domain.ListAuditTrailResponse, error) {
+func (s *auditTrailService) ListAuditTrail(ctx context.Context, auditID int, filter domain.TrailFilter, limit, offset int) (domain.ListAuditTrailResponse, error) {
 	if auditID <= 0 {
 		return domain.ListAuditTrailResponse{}, &apierror.ValidationError{Msg: "auditId must be a positive integer"}
 	}
+	for _, cid := range filter.ControlIDs {
+		if cid <= 0 {
+			return domain.ListAuditTrailResponse{}, &apierror.ValidationError{Msg: "controlId must be a positive integer"}
+		}
+	}
 	p := domain.Pagination{Limit: limit, Offset: offset}
 	normalizePagination(&p)
-	entries, total, err := s.repo.ListTrail(ctx, auditID, p.Limit, p.Offset)
+	entries, total, err := s.repo.ListAuditTrail(ctx, auditID, filter, p.Limit, p.Offset)
 	if err != nil {
 		return domain.ListAuditTrailResponse{}, err
 	}

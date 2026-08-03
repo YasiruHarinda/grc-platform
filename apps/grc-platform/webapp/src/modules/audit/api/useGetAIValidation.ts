@@ -17,6 +17,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
+import { extractErrorMessage } from "@modules/audit/api/apiError";
 
 /** One AI validation run against an evidence submission (advisory only). */
 export interface AIValidationLog {
@@ -108,8 +109,7 @@ export function useGetAIValidation(evidenceId: number | null) {
     queryFn: async (): Promise<AIValidationLog[]> => {
       const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/evidence/${evidenceId}/ai-validations`);
       if (!res.ok) {
-        const msg = await res.text().catch(() => "");
-        throw new Error(msg || `Failed to load AI validation (${res.status})`);
+        throw new Error(await extractErrorMessage(res, `Failed to load AI validation (${res.status})`));
       }
       const body = (await res.json()) as AIValidationListResponse;
       return body.validations ?? [];

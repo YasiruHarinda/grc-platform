@@ -91,14 +91,30 @@ export default function SideBar({
     onSelect?.(id);
   };
 
+  // The sidebar's expand/collapse is a width transition on a flex sibling, not an actual window resize 
+  const pulseResizeDuringTransition = () => {
+    const start = performance.now();
+    const tick = (now: number) => {
+      window.dispatchEvent(new Event("resize"));
+      if (now - start < 350) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  };
+
   // Hovering over the collapsed sidebar expands it temporarily.
   const handleMouseEnter = () => {
-    if (collapsed) setTempExpanded(true);
+    if (collapsed) {
+      setTempExpanded(true);
+      pulseResizeDuringTransition();
+    }
   };
 
   // Mouse leaving collapses it back to icon-only.
   const handleMouseLeave = () => {
-    if (tempExpanded) setTempExpanded(false);
+    if (tempExpanded) {
+      setTempExpanded(false);
+      pulseResizeDuringTransition();
+    }
   };
 
   return (

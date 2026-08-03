@@ -31,6 +31,7 @@ import {
   AlertTriangle,
   CalendarDays,
   ChevronLeft,
+  History,
   Settings,
 } from "@wso2/oxygen-ui-icons-react";
 import { useEffect, useMemo, useState, type JSX } from "react";
@@ -207,7 +208,12 @@ export default function AuditDetailPage(): JSX.Element {
     activeFilterCount(filters) > 0 ||
     search.trim().length > 0;
 
-  const handleBack = () => void navigate("/audit/audits");
+  // Return to the framework-scoped audit list the user likely came from
+  // (AuditsListPage's drilled view, /audit/audits?framework=<id>) rather than
+  // always dropping back to the top-level framework overview — the audit's
+  // own framework id is already loaded, so no navigation state needs threading.
+  const handleBack = () =>
+    void navigate(audit ? `/audit/audits?framework=${audit.framework.id}` : "/audit/audits");
 
   // Days-left pill for active audits.
   const remaining = audit?.status === "ACTIVE" ? daysLeft(audit.periodEnd) : null;
@@ -288,16 +294,26 @@ export default function AuditDetailPage(): JSX.Element {
                   )}
                 </Stack>
               </Box>
-              {canManageControls && (
+              <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
                 <Button
                   variant="outlined"
-                  startIcon={<Settings size={16} />}
-                  onClick={() => setSettingsOpen(true)}
-                  sx={{ textTransform: "none", flexShrink: 0 }}
+                  startIcon={<History size={16} />}
+                  onClick={() => void navigate(`/audit/audits/${auditId}/activity`)}
+                  sx={{ textTransform: "none" }}
                 >
-                  Manage Controls
+                  Activity Log
                 </Button>
-              )}
+                {canManageControls && (
+                  <Button
+                    variant="outlined"
+                    startIcon={<Settings size={16} />}
+                    onClick={() => setSettingsOpen(true)}
+                    sx={{ textTransform: "none" }}
+                  >
+                    Manage Controls
+                  </Button>
+                )}
+              </Stack>
             </Box>
 
             {/* Completion bar */}

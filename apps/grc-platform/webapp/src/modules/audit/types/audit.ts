@@ -107,6 +107,9 @@ export interface AuditControl {
   teamName: string | null;
   auditorId: number | null;
   auditorName: string | null;
+  // Backs the assigned-auditor gate: population validation, sample selection, and
+  // evidence validation are shown only when this matches the signed-in user's email.
+  auditorEmail: string | null;
   controlNumber: string;
   description: string;
   evidenceRequirement: string | null;
@@ -115,8 +118,6 @@ export interface AuditControl {
   scope: ControlScope;
   dueDate: string | null;
   status: ControlStatus;
-  frameworkControlId: number | null;
-  templateVersion: number | null;
   controlSource: ControlSource;
   sampleReference: string | null;
   comments: string | null;
@@ -164,22 +165,13 @@ export interface PopulationDetails {
   teamId?: number | null;
 }
 
-/** Template-linked: backend resolves controlNumber/description from the framework library row. */
-export interface TemplateLinkedControlRequest {
-  frameworkControlId: number;
-  controlSource: "COPIED";
-  requirementType: RequirementType;
-  controlType: ControlType;
-  scope: ControlScope;
-  dueDate?: string | null;
-  ownerId?: number | null;
-  teamId?: number | null;
-  auditorId?: number | null;
-  population?: PopulationDetails | null;
-}
-
-/** Explicit: caller supplies controlNumber + description directly (MANUAL, CSV, or audit-copy). */
-export interface ExplicitControlRequest {
+// Always creates a standalone control with full definition text — there is no
+// framework-linked shape. pushToFramework optionally also writes the control
+// into the framework's catalog as a side effect: a first version when
+// sourceFrameworkControlId is unset, or a new version of that existing
+// catalog control when it's set (edited-existing-control push-back). See
+// docs/new/Audit-Control-Framework-Optional-Design.md §6.
+export interface AddControlRequest {
   controlNumber: string;
   description: string;
   requirementType: RequirementType;
@@ -192,9 +184,9 @@ export interface ExplicitControlRequest {
   auditorId?: number | null;
   controlSource?: ControlSource;
   population?: PopulationDetails | null;
+  pushToFramework?: boolean;
+  sourceFrameworkControlId?: number;
 }
-
-export type AddControlRequest = TemplateLinkedControlRequest | ExplicitControlRequest;
 
 export interface UpdateControlRequest {
   description?: string;
@@ -205,4 +197,6 @@ export interface UpdateControlRequest {
   ownerId?: number | null;
   teamId?: number | null;
   auditorId?: number | null;
+  /** OE controls only; omit/null to leave population details unchanged. */
+  population?: PopulationDetails | null;
 }

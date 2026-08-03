@@ -213,7 +213,7 @@ func Load() (Config, error) {
 	}
 
 	return Config{
-		Port:                    envOrDefault("PORT", ":8080"),
+		Port:                    envOrDefault("PORT", ":8081"),
 		Auth:                    authCfg,
 		ComplianceEntityBaseURL: complianceEntityBaseURL,
 		HREntity: HREntityConfig{

@@ -38,7 +38,7 @@ import type { AuditControl, ControlStatus } from "@modules/audit/types/audit";
 
 // ── Column filter dropdown ──────────────────────────────────────────────────
 
-interface ColumnFilterProps {
+export interface ColumnFilterProps {
   label: string;
   options: { label: string; value: string }[];
   selected: string[];
@@ -46,7 +46,9 @@ interface ColumnFilterProps {
   searchable?: boolean;
 }
 
-function ColumnFilter({ label, options, selected, onChange, searchable = false }: ColumnFilterProps): JSX.Element {
+/** Filter icon + checkbox popover for a table column header. Exported for reuse
+ * by other tables that want the same in-header filter UX (e.g. AuditActivityLogPage). */
+export function ColumnFilter({ label, options, selected, onChange, searchable = false }: ColumnFilterProps): JSX.Element {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [query, setQuery] = useState("");
 
@@ -360,8 +362,8 @@ function applySorting(
   direction: ListingTableSortDirection,
 ): AuditControl[] {
   return [...controls].sort((a, b) => {
-    const aVal = String((a as Record<string, unknown>)[field] ?? "");
-    const bVal = String((b as Record<string, unknown>)[field] ?? "");
+    const aVal = String((a as unknown as Record<string, unknown>)[field] ?? "");
+    const bVal = String((b as unknown as Record<string, unknown>)[field] ?? "");
     const cmp = aVal.localeCompare(bVal);
     return direction === "asc" ? cmp : -cmp;
   });

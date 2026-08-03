@@ -1,4 +1,6 @@
+import logging
 import uuid
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -8,6 +10,8 @@ from azure.storage.blob import BlobSasPermissions, BlobServiceClient, generate_b
 from fastapi import HTTPException, UploadFile
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 # How long a signed link stays valid after it's generated. Chosen per ADR
 # 0003: long enough to browse a gallery of evidence without a link dying
@@ -111,6 +115,37 @@ def delete_file(file_name: str) -> None:
         blob.delete_blob()
     except ResourceNotFoundError:
         pass
+
+
+def delete_files(file_names: Iterable[str]) -> None:
+    """Delete a batch of blobs, e.g. everything under a Control/Framework/
+    Product/Evidence being cascade-deleted, with each file's deletion
+    handled independently.
+
+    Every delete handler in the app calls this only *after* its database
+    commit has already succeeded, so by the time this runs the rows are
+    gone for good -- a storage error here must not turn a delete that
+    already happened into a failed response, and one file's failure must
+    not stop the others from being attempted. So each `delete_file` call is
+    isolated: a failure is logged, with the file name (the only remaining
+    handle on what is now an orphaned blob), and the loop moves on. Nothing
+    here retries -- that's deliberately out of scope, see spec issue #24.
+
+    A missing blob is not a failure: `delete_file` already treats
+    `ResourceNotFoundError` as an already-deleted no-op, so it never
+    reaches the `except` below and is never logged.
+    """
+    for file_name in file_names:
+        try:
+            delete_file(file_name)
+        except Exception:
+            logger.error(
+                "Failed to delete blob %r from storage after its database "
+                "row was already committed as deleted; it may now be "
+                "orphaned in storage.",
+                file_name,
+                exc_info=True,
+            )
 
 
 def get_signed_url(file_ref: str, expiry_minutes: int = SIGNED_URL_EXPIRY_MINUTES) -> str:

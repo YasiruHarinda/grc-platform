@@ -35,6 +35,7 @@ type PopulationRepository interface {
 	UpdatePopulation(ctx context.Context, populationID int, req domain.UpdatePopulationRequest) (*domain.AuditPopulation, error)
 	AddPopulationFile(ctx context.Context, populationID int, req domain.CreatePopulationFileRequest) (*domain.AuditEvidenceFile, error)
 	ListPopulationFiles(ctx context.Context, populationID int) ([]domain.AuditEvidenceFile, error)
+	GetPopulationFileByID(ctx context.Context, fileID int) (*domain.AuditEvidenceFile, error)
 	DeletePopulationFile(ctx context.Context, fileID int) error
 }
 
@@ -195,6 +196,12 @@ func (r *populationRepo) AddPopulationFile(ctx context.Context, populationID int
 	return r.getPopulationFileByID(ctx, int(id))
 }
 
+// GetPopulationFileByID returns a single population/sample file row by ID (used
+// for downloads — the caller reads the actual blob bytes via FilePath).
+func (r *populationRepo) GetPopulationFileByID(ctx context.Context, fileID int) (*domain.AuditEvidenceFile, error) {
+	return r.getPopulationFileByID(ctx, fileID)
+}
+
 func (r *populationRepo) getPopulationFileByID(ctx context.Context, fileID int) (*domain.AuditEvidenceFile, error) {
 	var f domain.AuditEvidenceFile
 	var evidenceID, populationID, uploadedBy sql.NullInt64
@@ -203,6 +210,9 @@ func (r *populationRepo) getPopulationFileByID(ctx context.Context, fileID int) 
 	err := r.db.QueryRowContext(ctx,
 		"SELECT id, evidence_id, population_id, file_kind, uploaded_by, file_name, file_path, file_type, file_size, created_at FROM audit_evidence_file WHERE id = ?",
 		fileID).Scan(&f.ID, &evidenceID, &populationID, &fileKind, &uploadedBy, &f.FileName, &f.FilePath, &fileType, &fileSize, &f.CreatedOn)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, &apierror.NotFoundError{Msg: fmt.Sprintf("population file %d not found", fileID)}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("population_file.GetByID(%d): %w", fileID, err)
 	}

@@ -9,11 +9,11 @@ Go backend service for the Governance, Risk & Compliance (GRC) platform. The pla
 set -a && source .env && set +a && go run ./cmd/server
 ```
 
-Backend starts at `http://localhost:8080`.
+Backend starts at `http://localhost:8081`.
 
 ## Overview
 
-- Default port: `:8080`
+- Default port: `:8081`
 - Runtime: Go `1.23+`
 - Entry point: `cmd/server/main.go`
 - Authentication: Asgardeo JWT Bearer token — validated via JWKS endpoint; pass as `Authorization: Bearer <token>` header
@@ -104,7 +104,7 @@ Copy `.env` and fill in the values:
 
 | Variable | Description |
 |---|---|
-| `PORT` | Listen address (default `:8080`) |
+| `PORT` | Listen address (default `:8081`) |
 
 ## Project Structure
 
@@ -245,35 +245,35 @@ When `AUTH_TOKEN_VALIDATOR_ENABLED=false`, JWT signature verification is skipped
 JWT="<your-jwt-token>"
 
 # Health check
-curl http://localhost:8080/health
+curl http://localhost:8081/health
 
 # Get current user profile
-curl -H "Authorization: Bearer $JWT" http://localhost:8080/api/v1/users/me
+curl -H "Authorization: Bearer $JWT" http://localhost:8081/api/v1/users/me
 
 # List risks
-curl -H "Authorization: Bearer $JWT" http://localhost:8080/api/v1/risks
+curl -H "Authorization: Bearer $JWT" http://localhost:8081/api/v1/risks
 
 # Register a risk
-curl -X POST http://localhost:8080/api/v1/risks \
+curl -X POST http://localhost:8081/api/v1/risks \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
   -d '{"title":"Unauthorised data access","category":"SECURITY","likelihood":3,"impact":4}'
 
 # Submit a risk for compliance review
-curl -X POST http://localhost:8080/api/v1/risks/1/submit \
+curl -X POST http://localhost:8081/api/v1/risks/1/submit \
   -H "Authorization: Bearer $JWT"
 
 # List audits
-curl -H "Authorization: Bearer $JWT" http://localhost:8080/api/v1/audits
+curl -H "Authorization: Bearer $JWT" http://localhost:8081/api/v1/audits
 
 # Create an audit
-curl -X POST http://localhost:8080/api/v1/audits \
+curl -X POST http://localhost:8081/api/v1/audits \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
   -d '{"title":"Q2 SOC2 Audit","frameworkId":1,"productId":2,"assignedLeadId":5}'
 
 # Upload evidence for a risk
-curl -X POST http://localhost:8080/api/v1/risks/1/evidence \
+curl -X POST http://localhost:8081/api/v1/risks/1/evidence \
   -H "Authorization: Bearer $JWT" \
   -F "file=@/path/to/document.pdf"
 ```

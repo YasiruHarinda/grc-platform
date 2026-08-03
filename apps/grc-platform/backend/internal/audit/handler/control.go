@@ -185,7 +185,8 @@ func (h *controlHandler) deleteControl(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.svc.Delete(r.Context(), auditID, controlID); err != nil {
+	deletedBy := auth.FromContext(r.Context()).Email
+	if err := h.svc.Delete(r.Context(), auditID, controlID, deletedBy); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}

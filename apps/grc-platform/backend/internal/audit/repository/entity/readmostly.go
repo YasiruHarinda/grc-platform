@@ -191,3 +191,20 @@ func (r *frameworkControlRepo) ListCurrent(ctx context.Context, frameworkID int)
 	}
 	return resp.Controls, nil
 }
+
+func (r *frameworkControlRepo) Create(ctx context.Context, frameworkID int, req model.CreateFrameworkControlRequest, createdBy string) (*model.AuditFrameworkControl, error) {
+	body := map[string]any{
+		"controlNumber":       req.ControlNumber,
+		"description":         req.Description,
+		"evidenceRequirement": req.EvidenceRequirement,
+		"requirementType":     req.RequirementType,
+		"controlType":         req.ControlType,
+		"scope":               req.Scope,
+		"createdBy":           createdBy,
+	}
+	var fc model.AuditFrameworkControl
+	if err := r.c.Post(ctx, fmt.Sprintf("/audit/frameworks/%d/controls", frameworkID), body, &fc); err != nil {
+		return nil, err
+	}
+	return &fc, nil
+}

@@ -17,10 +17,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
+import { extractErrorMessage } from "@modules/audit/api/apiError";
 
 export interface AuditComment {
   id: number;
-  evidenceId: number;
+  controlId: number;
   parentCommentId: number | null;
   content: string;
   isInternal: boolean;
@@ -32,19 +33,22 @@ interface CommentListResponse {
   items: AuditComment[];
 }
 
-export const commentsQueryKey = (evidenceId: number) => ["audit", "comments", evidenceId] as const;
+export const commentsQueryKey = (auditId: number, controlId: number) =>
+  ["audit", "comments", auditId, controlId] as const;
 
-/** Lists comments for an evidence submission (internal ones are hidden from external auditors by the backend). */
-export function useGetComments(evidenceId: number | null) {
+/**
+ * Lists comments for a control — one thread spanning both the population and
+ * evidence phases, available as soon as the control drawer is open (internal
+ * ones are hidden from external auditors by the backend).
+ */
+export function useGetComments(auditId: number, controlId: number) {
   const authFetch = useAuthApiClient();
   return useQuery({
-    queryKey: commentsQueryKey(evidenceId ?? 0),
-    enabled: evidenceId !== null,
+    queryKey: commentsQueryKey(auditId, controlId),
     queryFn: async (): Promise<AuditComment[]> => {
-      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/evidence/${evidenceId}/comments`);
+      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}/comments`);
       if (!res.ok) {
-        const msg = await res.text().catch(() => "");
-        throw new Error(msg || `Failed to load comments (${res.status})`);
+        throw new Error(await extractErrorMessage(res, `Failed to load comments (${res.status})`));
       }
       const body = (await res.json()) as CommentListResponse;
       return body.items ?? [];
@@ -53,30 +57,30 @@ export function useGetComments(evidenceId: number | null) {
 }
 
 interface AddCommentPayload {
-  evidenceId: number;
+  auditId: number;
+  controlId: number;
   content: string;
   isInternal: boolean;
 }
 
-/** Posts a comment on an evidence submission. */
+/** Posts a comment on a control. */
 export function useAddComment() {
   const authFetch = useAuthApiClient();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ evidenceId, content, isInternal }: AddCommentPayload): Promise<AuditComment> => {
-      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/evidence/${evidenceId}/comments`, {
+    mutationFn: async ({ auditId, controlId, content, isInternal }: AddCommentPayload): Promise<AuditComment> => {
+      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}/comments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content, isInternal }),
       });
       if (!res.ok) {
-        const msg = await res.text().catch(() => "");
-        throw new Error(msg || `Failed to add comment (${res.status})`);
+        throw new Error(await extractErrorMessage(res, `Failed to add comment (${res.status})`));
       }
       return res.json() as Promise<AuditComment>;
     },
-    onSuccess: (_data, { evidenceId }) => {
-      void queryClient.invalidateQueries({ queryKey: commentsQueryKey(evidenceId) });
+    onSuccess: (_data, { auditId, controlId }) => {
+      void queryClient.invalidateQueries({ queryKey: commentsQueryKey(auditId, controlId) });
     },
   });
 }

@@ -112,6 +112,7 @@ type PopulationService interface {
 	UpdatePopulation(ctx context.Context, populationID int, req domain.UpdatePopulationRequest) (domain.AuditPopulation, error)
 	AddPopulationFile(ctx context.Context, populationID int, req domain.CreatePopulationFileRequest) (domain.AuditEvidenceFile, error)
 	ListPopulationFiles(ctx context.Context, populationID int) ([]domain.AuditEvidenceFile, error)
+	GetPopulationFileByID(ctx context.Context, fileID int) (domain.AuditEvidenceFile, error)
 	DeletePopulationFile(ctx context.Context, fileID int) error
 }
 
@@ -176,16 +177,17 @@ type RiskAssessmentService interface {
 	ListRiskAssessments(ctx context.Context, riskID int) (domain.ListRiskAssessmentsResponse, error)
 }
 
-// TrailService defines operations on audit_trail.
-type TrailService interface {
-	CreateTrail(ctx context.Context, auditID int, req domain.CreateAuditTrailRequest) (domain.AuditTrail, error)
-	ListTrail(ctx context.Context, auditID int, limit, offset int) (domain.ListAuditTrailResponse, error)
+// AuditTrailService defines operations on audit_trail.
+type AuditTrailService interface {
+	CreateAuditTrail(ctx context.Context, auditID int, req domain.CreateAuditTrailRequest) (domain.AuditTrail, error)
+	ListAuditTrail(ctx context.Context, auditID int, filter domain.TrailFilter, limit, offset int) (domain.ListAuditTrailResponse, error)
 }
 
-// CommentService defines operations on audit_comment (evidence-scoped).
+// CommentService defines operations on audit_comment (control-scoped — one
+// thread per control, spanning population and evidence phases).
 type CommentService interface {
-	CreateComment(ctx context.Context, evidenceID int, req domain.CreateAuditCommentRequest) (domain.AuditComment, error)
-	ListCommentsByEvidence(ctx context.Context, evidenceID int) (domain.ListAuditCommentsResponse, error)
+	CreateComment(ctx context.Context, controlID int, req domain.CreateAuditCommentRequest) (domain.AuditComment, error)
+	ListCommentsByControl(ctx context.Context, controlID int) (domain.ListAuditCommentsResponse, error)
 	DeleteComment(ctx context.Context, commentID int) error
 }
 

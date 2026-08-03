@@ -18,8 +18,12 @@ package entity
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/url"
+	"time"
 
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/repository"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
 )
@@ -42,4 +46,70 @@ func (r *trailRepo) Create(ctx context.Context, auditID int, controlID, evidence
 		body["details"] = details
 	}
 	return r.c.Post(ctx, fmt.Sprintf("/audits/%d/trail", auditID), body, nil)
+}
+
+// entTrail mirrors the entity's AuditTrail JSON. Details is a raw JSON string on
+// the wire (the column is MySQL JSON); we hand it back to the client verbatim.
+type entTrail struct {
+	ID         int64     `json:"id"`
+	ControlID  *int      `json:"controlId"`
+	EvidenceID *int      `json:"evidenceId"`
+	Action     string    `json:"action"`
+	Details    *string   `json:"details"`
+	CreatedBy  *string   `json:"createdBy"`
+	CreatedOn  time.Time `json:"createdOn"`
+}
+
+func (r *trailRepo) ListByControl(ctx context.Context, auditID, controlID, limit int) ([]*model.AuditTrailEntry, int, error) {
+	path := fmt.Sprintf("/audits/%d/trail?controlId=%d&limit=%d", auditID, controlID, limit)
+	return r.list(ctx, path)
+}
+
+// trailDateFormat matches the entity's ?from=/?to= parsing (date-only, no time).
+const trailDateFormat = "2006-01-02"
+
+func (r *trailRepo) ListByAudit(ctx context.Context, auditID int, filter model.TrailFilter, limit, offset int) ([]*model.AuditTrailEntry, int, error) {
+	q := url.Values{}
+	q.Set("limit", fmt.Sprintf("%d", limit))
+	q.Set("offset", fmt.Sprintf("%d", offset))
+	for _, cid := range filter.ControlIDs {
+		q.Add("controlId", fmt.Sprintf("%d", cid))
+	}
+	if filter.From != nil {
+		q.Set("from", filter.From.Format(trailDateFormat))
+	}
+	if filter.To != nil {
+		q.Set("to", filter.To.Format(trailDateFormat))
+	}
+	path := fmt.Sprintf("/audits/%d/trail?%s", auditID, q.Encode())
+	return r.list(ctx, path)
+}
+
+func (r *trailRepo) list(ctx context.Context, path string) ([]*model.AuditTrailEntry, int, error) {
+	var resp struct {
+		Trail []entTrail `json:"trail"`
+		Total int        `json:"total"`
+	}
+	if err := r.c.Get(ctx, path, &resp); err != nil {
+		return nil, 0, err
+	}
+
+	out := make([]*model.AuditTrailEntry, 0, len(resp.Trail))
+	for _, e := range resp.Trail {
+		entry := &model.AuditTrailEntry{
+			ID:         e.ID,
+			Action:     e.Action,
+			ControlID:  e.ControlID,
+			EvidenceID: e.EvidenceID,
+			CreatedAt:  e.CreatedOn,
+		}
+		if e.CreatedBy != nil {
+			entry.CreatedBy = *e.CreatedBy
+		}
+		if e.Details != nil && *e.Details != "" {
+			entry.Details = json.RawMessage(*e.Details)
+		}
+		out = append(out, entry)
+	}
+	return out, resp.Total, nil
 }

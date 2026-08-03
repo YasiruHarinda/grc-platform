@@ -18,6 +18,7 @@ import { Route, Navigate } from "react-router";
 import AuditDashboard from "@modules/audit/pages/AuditDashboard";
 import AuditsListPage from "@modules/audit/pages/AuditsListPage";
 import AuditDetailPage from "@modules/audit/pages/AuditDetailPage";
+import AuditActivityLogPage from "@modules/audit/pages/AuditActivityLogPage";
 import CreateAuditPage from "@modules/audit/pages/CreateAuditPage";
 import AuditPrivilegeGuard from "@modules/audit/components/AuditPrivilegeGuard";
 import { AuditPrivilege } from "@modules/audit/privileges";
@@ -30,6 +31,7 @@ export const auditRoutes = (
     <Route path="audits" element={<AuditsListPage />} />
     <Route path="audits/create" element={<AuditPrivilegeGuard privilege={AuditPrivilege.CreateAudit}><CreateAuditPage /></AuditPrivilegeGuard>} />
     <Route path="audits/:auditId" element={<AuditDetailPage />} />
+    <Route path="audits/:auditId/activity" element={<AuditActivityLogPage />} />
     <Route path="dashboard" element={<AuditDashboard />} />
   </Route>
 );

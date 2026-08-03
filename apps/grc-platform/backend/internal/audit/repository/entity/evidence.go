@@ -147,3 +147,8 @@ func (r *evidenceRepo) GetFileByID(ctx context.Context, fileID int) (*model.Audi
 func (r *evidenceRepo) DeleteFile(ctx context.Context, fileID int) error {
 	return r.c.Delete(ctx, fmt.Sprintf("/evidence-files/%d", fileID))
 }
+
+func (r *evidenceRepo) UpdateStatus(ctx context.Context, evidenceID int, status, updatedBy string) error {
+	body := map[string]any{"status": status, "updatedBy": updatedBy}
+	return r.c.Patch(ctx, fmt.Sprintf("/evidence/%d", evidenceID), body, nil)
+}

@@ -182,6 +182,11 @@ func (r *controlRepo) UpdateStatus(ctx context.Context, auditID, controlID int, 
 	return r.c.Patch(ctx, fmt.Sprintf("/audits/%d/controls/%d", auditID, controlID), body, nil)
 }
 
+func (r *controlRepo) UpdateStatusWithSample(ctx context.Context, auditID, controlID int, status string, sampleReference string, updatedBy string) error {
+	body := map[string]any{"status": status, "sampleReference": sampleReference, "updatedBy": updatedBy}
+	return r.c.Patch(ctx, fmt.Sprintf("/audits/%d/controls/%d", auditID, controlID), body, nil)
+}
+
 func (r *controlRepo) Delete(ctx context.Context, auditID, controlID int) error {
 	return r.c.Delete(ctx, fmt.Sprintf("/audits/%d/controls/%d", auditID, controlID))
 }
