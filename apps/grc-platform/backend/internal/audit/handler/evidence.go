@@ -81,8 +81,8 @@ func (h *evidenceHandler) requireAssignment(w http.ResponseWriter, r *http.Reque
 
 // getUploadLink handles GET /api/v1/audits/{id}/controls/{controlId}/evidence/upload-link.
 //
-// Returns a SAS token + folder path the evidence capture agent uses to upload
-// files directly to Azure Blob Storage. No file bytes pass through the backend.
+// Returns this control's evidence folder path — a human-readable, deterministic
+// prefix the client uses on every subsequent upload/submit call for this round.
 func (h *evidenceHandler) getUploadLink(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.SubmitEvidence) {
 		return
@@ -137,9 +137,9 @@ func (h *evidenceHandler) uploadEvidence(w http.ResponseWriter, r *http.Request)
 	}
 
 	folderPath := r.FormValue("folderPath")
-	// Bind the path exactly to this control's evidence folder (auditID is the
-	// server-derived value; the session segment must be digits-only).
-	if err := service.ValidateEvidenceFolderPath(folderPath, auditID, controlID); err != nil {
+	// Bind the path exactly to this control's evidence folder (auditID/controlID
+	// are server-derived; the folder name comes from the audit/control lookup).
+	if err := h.svc.ValidateEvidenceFolderPath(r.Context(), auditID, controlID, folderPath); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
@@ -167,22 +167,29 @@ func (h *evidenceHandler) uploadEvidence(w http.ResponseWriter, r *http.Request)
 	// Strip any client-supplied path; keep only the base file name.
 	fileName := filepath.Base(header.Filename)
 
-	if err := h.svc.UploadFile(r.Context(), folderPath, fileName, contentType, data); err != nil {
+	if err := validateUploadFileType(fileName, contentType); err != nil {
+		response.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	blobName, err := h.svc.UploadFile(r.Context(), folderPath, fileName, contentType, data)
+	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
 
 	response.WriteJSONValue(w, http.StatusCreated, map[string]any{
 		"fileName": fileName,
+		"blobName": blobName,
 		"size":     len(data),
 	})
 }
 
 // submitEvidence handles POST /api/v1/audits/{id}/controls/{controlId}/evidence/submit.
 //
-// The agent has already uploaded files to Azure using the SAS token from
-// getUploadLink. This endpoint discovers those blobs, records them in the DB,
-// and advances the control status to EVIDENCE_INTERNAL_REVIEW.
+// The client has already uploaded each file via the upload endpoint and
+// accumulated their returned blob names. This endpoint records exactly that
+// list in the DB and advances the control status to EVIDENCE_INTERNAL_REVIEW.
 func (h *evidenceHandler) submitEvidence(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.SubmitEvidence) {
 		return
@@ -203,15 +210,11 @@ func (h *evidenceHandler) submitEvidence(w http.ResponseWriter, r *http.Request)
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
-	if err := service.ValidateEvidenceFolderPath(req.FolderPath, auditID, controlID); err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-		return
-	}
 
 	user := auth.FromContext(r.Context())
 	actor := user.Email
 
-	evidence, err := h.svc.Submit(r.Context(), auditID, controlID, req.FolderPath, actor)
+	evidence, err := h.svc.Submit(r.Context(), auditID, controlID, req.Files, actor)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
@@ -225,7 +228,7 @@ func (h *evidenceHandler) submitEvidence(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Best-effort audit-trail attribution: this submission came through the web app.
-	recordEvidenceTrail(r.Context(), h.trailSvc, auditID, controlID, evidence.ID, actor, channelWebApp, user.Issuer)
+	recordEvidenceTrail(r.Context(), h.trailSvc, auditID, controlID, evidence.ID, actor, channelWebApp, user.Issuer, fileNamesOf(evidence.Files))
 
 	// Fire-and-forget AI validation. Detached from the request context (a client
 	// disconnect must not cancel it) and best-effort — a failure here never
@@ -233,6 +236,56 @@ func (h *evidenceHandler) submitEvidence(w http.ResponseWriter, r *http.Request)
 	h.triggerAIValidation(auditID, controlID, evidence.ID, actor)
 
 	response.WriteJSONValue(w, http.StatusCreated, evidence)
+}
+
+// addEvidenceFiles handles POST /api/v1/audits/{id}/controls/{controlId}/evidence/files.
+//
+// Appends files to the control's CURRENT evidence round (must still be
+// SUBMITTED, i.e. under internal review) instead of starting a new one via
+// Submit. This is what "Add Files" uses: before this endpoint existed, Add
+// Files called the same submit path as the initial submission, which created
+// a brand-new round every time — and since a reviewer's later decision only
+// closes out the single latest round, any earlier round created by an
+// in-review "Add Files" click was left stranded in SUBMITTED forever,
+// resurfacing its files alongside every future resubmission.
+func (h *evidenceHandler) addEvidenceFiles(w http.ResponseWriter, r *http.Request) {
+	if !auth.RequirePrivilege(r.Context(), w, privilege.SubmitEvidence) {
+		return
+	}
+	auditID, ok := parseIntParam(w, r, "id")
+	if !ok {
+		return
+	}
+	controlID, ok := parseIntParam(w, r, "controlId")
+	if !ok {
+		return
+	}
+	if !h.requireAssignment(w, r, auditID, controlID) {
+		return
+	}
+
+	var req model.SubmitEvidenceRequest
+	if err := response.DecodeJSON(w, r, &req); err != nil {
+		return
+	}
+
+	user := auth.FromContext(r.Context())
+	actor := user.Email
+
+	evidence, err := h.svc.AddFiles(r.Context(), auditID, controlID, req.Files, actor)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+
+	// Best-effort audit-trail attribution: this submission came through the web app.
+	recordEvidenceTrail(r.Context(), h.trailSvc, auditID, controlID, evidence.ID, actor, channelWebApp, user.Issuer, fileNamesOf(evidence.Files))
+
+	// Re-run AI validation now that more files are attached — same best-effort,
+	// fire-and-forget semantics as the initial submission.
+	h.triggerAIValidation(auditID, controlID, evidence.ID, actor)
+
+	response.WriteJSONValue(w, http.StatusOK, evidence)
 }
 
 // withdrawEvidence handles POST /api/v1/audits/{id}/controls/{controlId}/evidence/withdraw.
@@ -293,6 +346,62 @@ func (h *evidenceHandler) withdrawEvidence(w http.ResponseWriter, r *http.Reques
 	response.WriteJSONValue(w, http.StatusOK, map[string]any{"status": "EVIDENCE_PENDING"})
 }
 
+// reviewEvidence handles POST /api/v1/audits/{id}/controls/{controlId}/evidence/review.
+//
+// The internal reviewer's decision on a submission under EVIDENCE_INTERNAL_REVIEW:
+// approve advances it to auditor validation; reject sends the team back to
+// EVIDENCE_PENDING to resubmit. Either way, the reviewed round's own status is
+// recorded (COMPLIANCE_APPROVED/COMPLIANCE_REJECTED) — mirrors reviewPopulation
+// — so a later resubmission's round is never conflated with this one in the
+// live evidence view (see SubmittedEvidenceList, which hides rejected rounds).
+func (h *evidenceHandler) reviewEvidence(w http.ResponseWriter, r *http.Request) {
+	h.decideRound(w, r, decideRoundParams{
+		preGate: func(w http.ResponseWriter, r *http.Request) bool {
+			return auth.RequireAnyPrivilege(r.Context(), w, privilege.ReviewEvidence, privilege.ManageControls)
+		},
+		requiredStatus:    "EVIDENCE_INTERNAL_REVIEW",
+		statusConflictMsg: "evidence can only be reviewed while it is under internal review",
+		latestRoundID: func(ctx context.Context, auditID, controlID int) (int, error) {
+			round, err := h.svc.LatestRound(ctx, auditID, controlID)
+			if err != nil {
+				return 0, err
+			}
+			return round.ID, nil
+		},
+		updateRoundStatus:    h.svc.UpdateRoundStatus,
+		approveRoundStatus:   "COMPLIANCE_APPROVED",
+		approveControlStatus: "EVIDENCE_UNDER_VALIDATION",
+		rejectRoundStatus:    "COMPLIANCE_REJECTED",
+		rejectControlStatus:  "EVIDENCE_PENDING",
+	})
+}
+
+// validateEvidence handles POST /api/v1/audits/{id}/controls/{controlId}/evidence/validate.
+//
+// The assigned auditor's decision on evidence that passed internal review:
+// approve closes the control out; reject sends it back to the team. Either way
+// the reviewed round's own status is recorded (APPROVED/AUDITOR_REJECTED), same
+// reasoning as reviewEvidence above. Auditor-gated (see requireAssignedAuditor).
+func (h *evidenceHandler) validateEvidence(w http.ResponseWriter, r *http.Request) {
+	h.decideRound(w, r, decideRoundParams{
+		postGate:          requireAssignedAuditor,
+		requiredStatus:    "EVIDENCE_UNDER_VALIDATION",
+		statusConflictMsg: "evidence can only be validated while it is under auditor validation",
+		latestRoundID: func(ctx context.Context, auditID, controlID int) (int, error) {
+			round, err := h.svc.LatestRound(ctx, auditID, controlID)
+			if err != nil {
+				return 0, err
+			}
+			return round.ID, nil
+		},
+		updateRoundStatus:    h.svc.UpdateRoundStatus,
+		approveRoundStatus:   "APPROVED",
+		approveControlStatus: "COMPLETE",
+		rejectRoundStatus:    "AUDITOR_REJECTED",
+		rejectControlStatus:  "EVIDENCE_NEED_CLARIFICATION",
+	})
+}
+
 // triggerAIValidation kicks off an advisory AI validation in the background.
 // No-op when the AI agent client is not configured (AI_VALIDATION_ENABLED=false).
 func (h *evidenceHandler) triggerAIValidation(auditID, controlID, evidenceID int, actor string) {
@@ -326,6 +435,11 @@ func triggerAIValidation(aiClient *aiagent.Client, auditID, controlID, evidenceI
 // Removes a single file from an evidence submission (DB record only; the blob
 // in Azure is not deleted). The caller must be the file's original uploader or
 // hold ManageControls.
+//
+// This route carries no audit/control context, so it cannot reconcile the
+// control status when the last file is removed. The web app uses the
+// audit-scoped variant below; this one remains for clients that only hold a
+// file id.
 func (h *evidenceHandler) deleteEvidenceFile(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.SubmitEvidence) {
 		return
@@ -334,13 +448,92 @@ func (h *evidenceHandler) deleteEvidenceFile(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	if !h.deleteFile(w, r, fileID) {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteControlEvidenceFile handles
+// DELETE /api/v1/audits/{id}/controls/{controlId}/evidence/files/{fileId}.
+//
+// Same deletion as deleteEvidenceFile, but because the audit and control are in
+// the path it can also keep the control status honest: a submission with no
+// files left is not something a reviewer can act on, so the control drops back
+// to EVIDENCE_PENDING and the submitter can upload again.
+func (h *evidenceHandler) deleteControlEvidenceFile(w http.ResponseWriter, r *http.Request) {
+	if !auth.RequirePrivilege(r.Context(), w, privilege.SubmitEvidence) {
+		return
+	}
+	auditID, ok := parseIntParam(w, r, "id")
+	if !ok {
+		return
+	}
+	controlID, ok := parseIntParam(w, r, "controlId")
+	if !ok {
+		return
+	}
+	fileID, ok := parseIntParam(w, r, "fileId")
+	if !ok {
+		return
+	}
+	if !h.requireAssignment(w, r, auditID, controlID) {
+		return
+	}
+	if !h.deleteFile(w, r, fileID) {
+		return
+	}
+
+	status, err := h.reconcileAfterDelete(r.Context(), auditID, controlID)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	response.WriteJSONValue(w, http.StatusOK, map[string]any{"status": status})
+}
+
+// deleteFile performs the authorization-checked delete shared by both delete
+// routes. It writes the error response and returns false on failure.
+func (h *evidenceHandler) deleteFile(w http.ResponseWriter, r *http.Request, fileID int) bool {
 	actor := auth.FromContext(r.Context()).Email
 	isAdmin := auth.HasPrivilege(r.Context(), privilege.ManageControls)
 	if err := h.svc.DeleteFile(r.Context(), fileID, actor, isAdmin); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-		return
+		return false
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return true
+}
+
+// reconcileAfterDelete sends a control back to EVIDENCE_PENDING when the delete
+// emptied a submission that was awaiting internal review. Any other status is
+// left alone: once the auditor has the evidence the submitter no longer drives
+// the transition. Returns the control's status after reconciliation.
+func (h *evidenceHandler) reconcileAfterDelete(ctx context.Context, auditID, controlID int) (string, error) {
+	control, err := h.controlSvc.GetByID(ctx, auditID, controlID)
+	if err != nil {
+		return "", err
+	}
+	if control == nil {
+		return "", nil
+	}
+	if control.Status != "EVIDENCE_INTERNAL_REVIEW" {
+		return control.Status, nil
+	}
+
+	round, err := h.svc.LatestRound(ctx, auditID, controlID)
+	if err != nil {
+		return "", err
+	}
+	if len(round.Files) > 0 {
+		return control.Status, nil
+	}
+
+	actor := auth.FromContext(ctx).Email
+	statusReq := model.UpdateStatusRequest{Status: "EVIDENCE_PENDING"}
+	if err := h.controlSvc.UpdateStatus(ctx, auditID, controlID, statusReq, actor); err != nil {
+		return "", err
+	}
+	return "EVIDENCE_PENDING", nil
 }
 
 // downloadEvidenceFile handles GET /api/v1/evidence/files/{fileId}/download.

@@ -51,6 +51,7 @@ type Deps struct {
 func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	ah := &auditHandler{svc: deps.Audit}
 	ch := &controlHandler{svc: deps.Control}
+	tlh := &trailHandler{svc: deps.Trail}
 	fh := &frameworkHandler{svc: deps.Framework}
 	uh := &userHandler{svc: deps.User}
 	th := &teamHandler{svc: deps.Team}
@@ -74,6 +75,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/v1/audit/frameworks", fh.listFrameworks)
 	mux.HandleFunc("POST /api/v1/audit/frameworks", fh.createFramework)
 	mux.HandleFunc("GET /api/v1/audit/frameworks/{id}/controls", fh.listFrameworkControls)
+	mux.HandleFunc("POST /api/v1/audit/frameworks/{id}/controls", fh.createFrameworkControl)
 	mux.HandleFunc("GET /api/v1/audit/products", fh.listProducts)
 	mux.HandleFunc("POST /api/v1/audit/products", fh.createProduct)
 	mux.HandleFunc("GET /api/v1/audit/users", uh.listUsers)
@@ -95,6 +97,10 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("PUT /api/v1/audits/{id}/controls/{controlId}", ch.updateControl)
 	mux.HandleFunc("DELETE /api/v1/audits/{id}/controls/{controlId}", ch.deleteControl)
 	mux.HandleFunc("PATCH /api/v1/audits/{id}/controls/{controlId}/status", ch.updateControlStatus)
+	// Immutable per-control history (append-only audit_trail) for the History tab.
+	mux.HandleFunc("GET /api/v1/audits/{id}/controls/{controlId}/trail", tlh.listControlTrail)
+	// Audit-wide activity log (audit-level events + every control's events, filterable).
+	mux.HandleFunc("GET /api/v1/audits/{id}/trail", tlh.listAuditTrail)
 
 	// Evidence submission (backend-proxied upload flow).
 	// Note: /upload-link, /upload and /submit must be registered before the plain
@@ -104,20 +110,53 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/v1/audits/{id}/controls/{controlId}/evidence/upload-link", eh.getUploadLink)
 	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/evidence/upload", eh.uploadEvidence)
 	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/evidence/submit", eh.submitEvidence)
+	// Appends to the current (still-SUBMITTED) round instead of starting a new
+	// one — what "Add Files" uses while a submission awaits internal review.
+	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/evidence/files", eh.addEvidenceFiles)
 	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/evidence/withdraw", eh.withdrawEvidence)
+	// Internal-reviewer and auditor decisions on the evidence round (mirrors the
+	// population/review + population/validate pair below) — both record the
+	// reviewed round's own status, not just the control's.
+	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/evidence/review", eh.reviewEvidence)
+	// Auditor-gated decision at EVIDENCE_UNDER_VALIDATION (assigned auditor POC only —
+	// see requireAssignedAuditor).
+	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/evidence/validate", eh.validateEvidence)
+	// Audit-scoped file delete: knows the control, so it can send an emptied
+	// submission back to EVIDENCE_PENDING (see deleteControlEvidenceFile).
+	mux.HandleFunc("DELETE /api/v1/audits/{id}/controls/{controlId}/evidence/files/{fileId}", eh.deleteControlEvidenceFile)
 	mux.HandleFunc("GET /api/v1/audits/{id}/controls/{controlId}/evidence", eh.listEvidence)
-	// Population submission (OE controls; same proxied upload flow as evidence).
-	mux.HandleFunc("GET /api/v1/audits/{id}/controls/{controlId}/population/upload-link", eh.getPopulationUploadLink)
-	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/population/upload", eh.uploadPopulation)
-	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/population/submit", eh.submitPopulation)
 	// Proxied file download by file ID (bytes streamed via the Compliance Entity).
 	mux.HandleFunc("GET /api/v1/evidence/files/{fileId}/download", eh.downloadEvidenceFile)
 	// Remove a single file from an evidence submission (DB record only).
 	mux.HandleFunc("DELETE /api/v1/evidence/files/{fileId}", eh.deleteEvidenceFile)
 
-	// Evidence comments (evidence-scoped; is_internal hides from external auditors)
-	mux.HandleFunc("GET /api/v1/evidence/{evidenceId}/comments", cmh.listComments)
-	mux.HandleFunc("POST /api/v1/evidence/{evidenceId}/comments", cmh.addComment)
+	// Population submission (OE controls; same proxied upload flow as evidence).
+	mux.HandleFunc("GET /api/v1/audits/{id}/controls/{controlId}/population/upload-link", eh.getPopulationUploadLink)
+	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/population/upload", eh.uploadPopulation)
+	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/population/submit", eh.submitPopulation)
+	// Internal-reviewer and auditor decisions on the population round.
+	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/population/review", eh.reviewPopulation)
+	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/population/validate", eh.validatePopulation)
+	// View the current round + its files (split population[] / sample[]) and the
+	// auditor's sample note — team, reviewer, auditor, or admin (see canViewPopulation).
+	mux.HandleFunc("GET /api/v1/audits/{id}/controls/{controlId}/population", eh.listPopulation)
+	// Remove a population/sample file (see deletePopulationFile for the per-kind gate).
+	mux.HandleFunc("DELETE /api/v1/audits/{id}/controls/{controlId}/population/files/{fileId}", eh.deletePopulationFile)
+	// Proxied file download by file ID (mirrors the evidence download route).
+	mux.HandleFunc("GET /api/v1/population/files/{fileId}/download", eh.downloadPopulationFile)
+
+	// Sample selection (auditor-gated — see requireAssignedAuditor). Reuses the
+	// population round; files land in a "sample/" subfolder of it.
+	mux.HandleFunc("GET /api/v1/audits/{id}/controls/{controlId}/sample/upload-link", eh.getSampleUploadLink)
+	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/sample/upload", eh.uploadSample)
+	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/sample/submit", eh.submitSample)
+	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/sample/request-time", eh.requestSampleTime)
+
+	// Control comments (one thread per control, spanning population + evidence
+	// phases — available as soon as the control drawer is open, not gated on an
+	// evidence/population round existing yet; is_internal hides from external auditors)
+	mux.HandleFunc("GET /api/v1/audits/{id}/controls/{controlId}/comments", cmh.listComments)
+	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/comments", cmh.addComment)
 
 	// AI validation advisory results (read-only hint; SUBMIT or REVIEW evidence).
 	mux.HandleFunc("GET /api/v1/evidence/{evidenceId}/ai-validations", avh.listValidations)

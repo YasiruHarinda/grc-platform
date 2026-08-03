@@ -93,7 +93,7 @@ export default function UserProfile(): JSX.Element {
 
   useEffect(() => {
     if (isMockAuth || !isSignedIn) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- clear stale identity when user signs out
+      // clear stale identity when user signs out
       setEmail("");
       setAsgardeoName("");
       setAsgardeoPicture(null);

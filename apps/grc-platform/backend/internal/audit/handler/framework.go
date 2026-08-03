@@ -120,3 +120,25 @@ func (h *frameworkHandler) listFrameworkControls(w http.ResponseWriter, r *http.
 		Total:    len(controls),
 	})
 }
+
+// createFrameworkControl handles POST /api/v1/audit/frameworks/{id}/controls.
+func (h *frameworkHandler) createFrameworkControl(w http.ResponseWriter, r *http.Request) {
+	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageFrameworks) {
+		return
+	}
+	id, ok := parseIntParam(w, r, "id")
+	if !ok {
+		return
+	}
+	var req model.CreateFrameworkControlRequest
+	if err := response.DecodeJSON(w, r, &req); err != nil {
+		return
+	}
+	actor := auth.FromContext(r.Context()).Email
+	fc, err := h.svc.CreateFrameworkControl(r.Context(), id, req, actor)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	response.WriteJSONValue(w, http.StatusCreated, fc)
+}

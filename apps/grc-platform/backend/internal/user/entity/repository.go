@@ -46,12 +46,13 @@ func NewRepository(c *entityclient.Client) user.Repository {
 
 // entUser mirrors the entity's User JSON (camelCase, createdOn/updatedOn),
 // which differs from the backend's user.User (snake_case, no timestamps).
+// AuditTeamIDs is deliberately not mirrored here — it's a many-to-many slice
+// on the entity side and nothing in the GRC backend or webapp consumes it.
 type entUser struct {
 	ID          int    `json:"id"`
 	Email       string `json:"email"`
 	DisplayName string `json:"displayName"`
 	UserType    string `json:"userType"`
-	AuditTeamID *int   `json:"auditTeamId"`
 	RiskTeamID  *int   `json:"riskTeamId"`
 	Status      string `json:"status"`
 }
@@ -62,7 +63,6 @@ func (u entUser) toModel() *user.User {
 		DisplayName: u.DisplayName,
 		Email:       u.Email,
 		Status:      u.Status,
-		AuditTeamID: u.AuditTeamID,
 		RiskTeamID:  u.RiskTeamID,
 	}
 }

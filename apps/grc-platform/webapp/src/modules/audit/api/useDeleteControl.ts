@@ -19,6 +19,7 @@ import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { controlsQueryKey } from "@modules/audit/api/useGetControls";
 import { auditQueryKey } from "@modules/audit/api/useGetAudit";
+import { extractErrorMessage } from "@modules/audit/api/apiError";
 
 interface DeleteControlPayload {
   auditId: number;
@@ -37,8 +38,7 @@ export function useDeleteControl() {
         { method: "DELETE" },
       );
       if (!res.ok) {
-        const msg = await res.text().catch(() => "");
-        throw new Error(msg || `Failed to delete control (${res.status})`);
+        throw new Error(await extractErrorMessage(res, `Failed to delete control (${res.status})`));
       }
     },
 

@@ -58,7 +58,7 @@ window.config = {
   GRC_PLATFORM_AUTH_SIGN_IN_REDIRECT_URL: "http://localhost:3000/",
   GRC_PLATFORM_AUTH_SIGN_OUT_REDIRECT_URL: "http://localhost:3000/",
 
-  GRC_PLATFORM_BACKEND_BASE_URL: "http://localhost:8080",
+  GRC_PLATFORM_BACKEND_BASE_URL: "http://localhost:8081",
 
   GRC_PLATFORM_THEME: "acrylicOrange",
   GRC_PLATFORM_LOG_LEVEL: "DEBUG",

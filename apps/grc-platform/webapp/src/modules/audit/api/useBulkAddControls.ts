@@ -20,6 +20,7 @@ import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { controlsQueryKey } from "@modules/audit/api/useGetControls";
 import { auditQueryKey } from "@modules/audit/api/useGetAudit";
 import type { AddControlRequest, ControlListResponse } from "@modules/audit/types/audit";
+import { extractErrorMessage } from "@modules/audit/api/apiError";
 
 interface BulkAddPayload {
   auditId: number;
@@ -42,8 +43,7 @@ export function useBulkAddControls() {
         },
       );
       if (!res.ok) {
-        const msg = await res.text().catch(() => "");
-        throw new Error(msg || `Failed to add controls (${res.status})`);
+        throw new Error(await extractErrorMessage(res, `Failed to add controls (${res.status})`));
       }
       return res.json() as Promise<ControlListResponse>;
     },

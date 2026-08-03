@@ -46,18 +46,22 @@ func isExternalAuditor(groups []string) bool {
 	return false
 }
 
-// listComments handles GET /api/v1/evidence/{evidenceId}/comments.
+// listComments handles GET /api/v1/audits/{id}/controls/{controlId}/comments.
 func (h *commentHandler) listComments(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAudits) {
 		return
 	}
-	evidenceID, ok := parseIntParam(w, r, "evidenceId")
+	auditID, ok := parseIntParam(w, r, "id")
+	if !ok {
+		return
+	}
+	controlID, ok := parseIntParam(w, r, "controlId")
 	if !ok {
 		return
 	}
 	// External auditors do not receive internal comments.
 	includeInternal := !isExternalAuditor(auth.FromContext(r.Context()).Groups)
-	comments, err := h.svc.List(r.Context(), evidenceID, includeInternal)
+	comments, err := h.svc.List(r.Context(), auditID, controlID, includeInternal)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
@@ -68,12 +72,16 @@ func (h *commentHandler) listComments(w http.ResponseWriter, r *http.Request) {
 	response.WriteJSONValue(w, http.StatusOK, &model.CommentListResponse{Items: comments})
 }
 
-// addComment handles POST /api/v1/evidence/{evidenceId}/comments.
+// addComment handles POST /api/v1/audits/{id}/controls/{controlId}/comments.
 func (h *commentHandler) addComment(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.AddComment) {
 		return
 	}
-	evidenceID, ok := parseIntParam(w, r, "evidenceId")
+	auditID, ok := parseIntParam(w, r, "id")
+	if !ok {
+		return
+	}
+	controlID, ok := parseIntParam(w, r, "controlId")
 	if !ok {
 		return
 	}
@@ -82,7 +90,7 @@ func (h *commentHandler) addComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := auth.FromContext(r.Context()).Email
-	c, err := h.svc.Add(r.Context(), evidenceID, req, actor)
+	c, err := h.svc.Add(r.Context(), auditID, controlID, req, actor)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return

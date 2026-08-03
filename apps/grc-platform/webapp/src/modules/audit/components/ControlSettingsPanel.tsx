@@ -30,6 +30,7 @@ import {
   IconButton,
   InputLabel,
   MenuItem,
+  Paper,
   Select,
   Skeleton,
   Stack,
@@ -65,6 +66,15 @@ import type {
 } from "@modules/audit/types/audit";
 import type { AuditUser } from "@modules/audit/types/user";
 
+// Local YYYY-MM-DD for today, so a due date can't be set in the past.
+function todayISO(): string {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 // ── Control form state (used for both Add and Edit dialogs) ──────────────────
 
 interface ControlFormState {
@@ -76,6 +86,7 @@ interface ControlFormState {
   evidenceRequirement: string;
   dueDate: string;
   owner: AuditUser | null;
+  team: AuditTeam | null;
   auditor: AuditUser | null;
   populationDescription: string;
   populationDueDate: string;
@@ -93,6 +104,7 @@ const EMPTY_FORM: ControlFormState = {
   evidenceRequirement: "",
   dueDate: "",
   owner: null,
+  team: null,
   auditor: null,
   populationDescription: "",
   populationDueDate: "",
@@ -111,6 +123,7 @@ function controlToForm(c: AuditControl, users: AuditUser[], teams: AuditTeam[]):
     evidenceRequirement: c.evidenceRequirement ?? "",
     dueDate: c.dueDate ?? "",
     owner: users.find((u) => u.id === c.ownerId) ?? null,
+    team: teams.find((t) => t.id === c.teamId) ?? null,
     auditor: users.find((u) => u.id === c.auditorId) ?? null,
     populationDescription: c.populationDescription ?? "",
     populationDueDate: c.populationDueDate ?? "",
@@ -156,10 +169,28 @@ function ControlFormDialog({
     setForm((prev) => ({ ...prev, [key]: val }));
 
   const isOE = form.requirementType === "OE";
+  // A due date can't be moved into the past — but editing a control that's
+  // already overdue must not be blocked as long as its due date is left
+  // untouched (only a newly-picked date is checked against today). An empty
+  // field is caught separately by isValid below (via "required"), not here —
+  // otherwise the past-date message would show before the user has typed
+  // anything.
+  const dueDateInPast =
+    form.dueDate.length > 0 &&
+    form.dueDate < todayISO() &&
+    !(editMode && form.dueDate === initialValues.dueDate);
+  const dueDateValid = form.dueDate.length > 0 && !dueDateInPast;
+  const populationDueDateInPast =
+    form.populationDueDate.length > 0 &&
+    form.populationDueDate < todayISO() &&
+    !(editMode && form.populationDueDate === initialValues.populationDueDate);
+  const populationDueDateValid = form.populationDueDate.length > 0 && !populationDueDateInPast;
   const isValid =
     form.controlNumber.trim().length > 0 &&
     form.description.trim().length > 0 &&
-    (!isOE || editMode || (form.populationDescription.trim().length > 0 && form.populationDueDate.length > 0));
+    form.evidenceRequirement.trim().length > 0 &&
+    dueDateValid &&
+    (!isOE || (form.populationDescription.trim().length > 0 && populationDueDateValid));
 
   return (
     <Dialog
@@ -258,17 +289,32 @@ function ControlFormDialog({
             />
           </Stack>
 
+          <Autocomplete
+            options={teams}
+            getOptionLabel={(t) => t.name}
+            value={form.team}
+            onChange={(_e, val) => set("team", val)}
+            size="small"
+            fullWidth
+            renderInput={(params) => <TextField {...params} label="Team" />}
+          />
+
           <TextField
             label="Due Date"
             type="date"
+            required
             value={form.dueDate}
             onChange={(e) => set("dueDate", e.target.value)}
             size="small"
             InputLabelProps={{ shrink: true }}
+            inputProps={{ min: todayISO() }}
+            error={dueDateInPast}
+            helperText={dueDateInPast ? "Due Date cannot be in the past" : " "}
           />
 
           <TextField
             label="Evidence Requirement"
+            required
             value={form.evidenceRequirement}
             onChange={(e) => set("evidenceRequirement", e.target.value)}
             size="small"
@@ -277,7 +323,7 @@ function ControlFormDialog({
             fullWidth
           />
 
-          {isOE && !editMode && (
+          {isOE && (
             <>
               <Divider>
                 <Typography variant="caption" color="text.secondary" fontWeight={600}>
@@ -306,6 +352,9 @@ function ControlFormDialog({
                 size="small"
                 InputLabelProps={{ shrink: true }}
                 fullWidth
+                inputProps={{ min: todayISO() }}
+                error={populationDueDateInPast}
+                helperText={populationDueDateInPast ? "Population Due Date cannot be in the past" : " "}
               />
 
               <TextField
@@ -385,7 +434,7 @@ function DeleteDialog({
       <DialogContent>
         {error && <Alert severity="error" sx={{ mb: 1 }}>{error}</Alert>}
         <Typography variant="body2">
-          Remove <strong>{control?.controlNumber}</strong> — {control?.description}?
+          Remove <strong>{control?.controlNumber}</strong> - {control?.description}?
           This cannot be undone.
         </Typography>
       </DialogContent>
@@ -459,6 +508,7 @@ export default function ControlSettingsPanel({
       evidenceRequirement: form.evidenceRequirement.trim() || null,
       dueDate: form.dueDate || null,
       ownerId: form.owner?.id ?? null,
+      teamId: form.team?.id ?? null,
       auditorId: form.auditor?.id ?? null,
       controlSource: 'MANUAL' as const,
       population,
@@ -475,6 +525,16 @@ export default function ControlSettingsPanel({
   function handleEdit(form: ControlFormState) {
     if (!editingControl) return;
     setMutationError(null);
+    const population: PopulationDetails | null =
+      form.requirementType === "OE"
+        ? {
+            description: form.populationDescription.trim(),
+            dueDate: form.populationDueDate || null,
+            comments: form.populationComments.trim() || null,
+            ownerId: form.populationOwner?.id ?? null,
+            teamId: form.populationTeam?.id ?? null,
+          }
+        : null;
     const req: UpdateControlRequest = {
       description: form.description.trim(),
       controlType: form.controlType,
@@ -482,7 +542,9 @@ export default function ControlSettingsPanel({
       evidenceRequirement: form.evidenceRequirement.trim() || null,
       dueDate: form.dueDate || null,
       ownerId: form.owner?.id ?? null,
+      teamId: form.team?.id ?? null,
       auditorId: form.auditor?.id ?? null,
+      population,
     };
     updateMutation.mutate(
       { auditId, controlId: editingControl.id, req },
@@ -552,96 +614,86 @@ export default function ControlSettingsPanel({
         </Box>
 
         {/* Body */}
-        <Box sx={{ overflow: "auto", flex: 1 }}>
+        <Box sx={{ overflow: "auto", flex: 1, p: 2.5 }}>
           {controlsLoading ? (
-            <Box sx={{ p: 3 }}>
+            <Paper variant="outlined" sx={{ borderRadius: 2, p: 2.5 }}>
               {Array.from({ length: 4 }).map((_, i) => (
                 <Skeleton key={i} variant="rectangular" height={48} sx={{ mb: 1, borderRadius: 1 }} />
               ))}
-            </Box>
+            </Paper>
           ) : controls.length === 0 ? (
-            <Box sx={{ p: 4, textAlign: "center" }}>
+            <Paper variant="outlined" sx={{ borderRadius: 2, p: 4, textAlign: "center" }}>
               <Typography variant="body2" color="text.secondary">
                 No controls yet. Click "Add Control" to get started.
               </Typography>
-            </Box>
+            </Paper>
           ) : (
-            <TableContainer>
-              <Table size="small" stickyHeader>
-                <TableHead>
-                  <TableRow>
-                    <TableCell sx={{ fontWeight: 600, width: 90 }}>No.</TableCell>
-                    <TableCell sx={{ fontWeight: 600 }}>Description</TableCell>
-                    <TableCell sx={{ fontWeight: 600, width: 90 }}>Req. Type</TableCell>
-                    {canManage && (
-                      <TableCell sx={{ fontWeight: 600, width: 80 }} align="right">
-                        Actions
-                      </TableCell>
-                    )}
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {controls.map((c) => (
-                    <TableRow key={c.id} hover>
-                      <TableCell>
-                        <Typography variant="body2" fontWeight={600} noWrap>
-                          {c.controlNumber}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Typography
-                          variant="body2"
-                          sx={{
-                            maxWidth: 260,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                          title={c.description}
-                        >
-                          {c.description}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {c.requirementType} · {c.scope === "COMMON" ? "Common" : "Product Specific"}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="caption">{c.requirementType === "OE" ? "OE" : "Design"}</Typography>
-                      </TableCell>
+            <Paper variant="outlined" sx={{ borderRadius: 2, overflow: "hidden" }}>
+              <TableContainer>
+                <Table size="small" stickyHeader>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ fontWeight: 600, width: 90, bgcolor: "action.hover" }}>No.</TableCell>
+                      <TableCell sx={{ fontWeight: 600, bgcolor: "action.hover" }}>Description</TableCell>
+                      <TableCell sx={{ fontWeight: 600, width: 90, bgcolor: "action.hover" }}>Req. Type</TableCell>
                       {canManage && (
-                        <TableCell align="right">
-                          <Stack direction="row" spacing={0.5} justifyContent="flex-end">
-                            <Tooltip title="Edit">
-                              <IconButton
-                                size="small"
-                                onClick={() => {
-                                  setMutationError(null);
-                                  setEditingControl(c);
-                                }}
-                              >
-                                <Pencil size={14} />
-                              </IconButton>
-                            </Tooltip>
-                            <Tooltip title="Remove">
-                              <IconButton
-                                size="small"
-                                color="error"
-                                onClick={() => {
-                                  setMutationError(null);
-                                  setDeletingControl(c);
-                                }}
-                              >
-                                <Trash2 size={14} />
-                              </IconButton>
-                            </Tooltip>
-                          </Stack>
+                        <TableCell sx={{ fontWeight: 600, width: 80, bgcolor: "action.hover" }} align="right">
+                          Actions
                         </TableCell>
                       )}
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
+                  </TableHead>
+                  <TableBody>
+                    {controls.map((c) => (
+                      <TableRow key={c.id} hover>
+                        <TableCell>
+                          <Typography variant="body2" fontWeight={600} noWrap>
+                            {c.controlNumber}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ lineHeight: 1.5 }}>
+                            {c.description}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="caption">{c.requirementType === "OE" ? "OE" : "Design"}</Typography>
+                        </TableCell>
+                        {canManage && (
+                          <TableCell align="right">
+                            <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                              <Tooltip title="Edit">
+                                <IconButton
+                                  size="small"
+                                  onClick={() => {
+                                    setMutationError(null);
+                                    setEditingControl(c);
+                                  }}
+                                >
+                                  <Pencil size={14} />
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="Remove">
+                                <IconButton
+                                  size="small"
+                                  color="error"
+                                  onClick={() => {
+                                    setMutationError(null);
+                                    setDeletingControl(c);
+                                  }}
+                                >
+                                  <Trash2 size={14} />
+                                </IconButton>
+                              </Tooltip>
+                            </Stack>
+                          </TableCell>
+                        )}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </Paper>
           )}
         </Box>
 

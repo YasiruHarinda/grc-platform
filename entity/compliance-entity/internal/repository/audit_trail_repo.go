@@ -20,22 +20,37 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/domain"
 )
 
-// TrailRepository defines persistence for audit_trail.
-type TrailRepository interface {
-	CreateTrail(ctx context.Context, auditID int, req domain.CreateAuditTrailRequest) (*domain.AuditTrail, error)
-	ListTrail(ctx context.Context, auditID int, limit, offset int) ([]domain.AuditTrail, int, error)
+// AuditTrailRepository defines persistence for audit_trail.
+type AuditTrailRepository interface {
+	CreateAuditTrail(ctx context.Context, auditID int, req domain.CreateAuditTrailRequest) (*domain.AuditTrail, error)
+	// ListAuditTrail returns the audit's trail, newest first, narrowed by filter
+	// (all fields optional). filter.ControlID non-nil is used by the per-control
+	// History view; filter left zero-value returns the whole audit's trail, used
+	// by the audit-wide activity log.
+	ListAuditTrail(ctx context.Context, auditID int, filter domain.TrailFilter, limit, offset int) ([]domain.AuditTrail, int, error)
 }
 
-type trailRepo struct{ db *sql.DB }
+type auditTrailRepo struct{ db *sql.DB }
 
-// NewTrailRepository constructs a TrailRepository.
-func NewTrailRepository(db *sql.DB) TrailRepository { return &trailRepo{db: db} }
+// NewAuditTrailRepository constructs a AuditTrailRepository.
+func NewAuditTrailRepository(db *sql.DB) AuditTrailRepository { return &auditTrailRepo{db: db} }
 
-func (r *trailRepo) CreateTrail(ctx context.Context, auditID int, req domain.CreateAuditTrailRequest) (*domain.AuditTrail, error) {
+// nilableAny converts a typed pointer to `any`, nil-preserving, for use as a
+// driver arg in an `(? IS NULL OR col = ?)` clause — the driver needs a plain
+// nil (not a nil *int/*string/*time.Time) to bind SQL NULL correctly.
+func nilableAny[T any](v *T) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+func (r *auditTrailRepo) CreateAuditTrail(ctx context.Context, auditID int, req domain.CreateAuditTrailRequest) (*domain.AuditTrail, error) {
 	res, err := r.db.ExecContext(ctx,
 		`INSERT INTO audit_trail
 		 (audit_id, actor_id, control_id, evidence_id, action, details, created_by)
@@ -55,29 +70,60 @@ func (r *trailRepo) CreateTrail(ctx context.Context, auditID int, req domain.Cre
 	if err != nil {
 		return nil, fmt.Errorf("audit_trail.Create last insert id: %w", err)
 	}
-	return r.getTrailByID(ctx, id)
+	return r.getAuditTrailByID(ctx, id)
 }
 
-func (r *trailRepo) getTrailByID(ctx context.Context, id int64) (*domain.AuditTrail, error) {
+func (r *auditTrailRepo) getAuditTrailByID(ctx context.Context, id int64) (*domain.AuditTrail, error) {
 	return scanAuditTrail(r.db.QueryRowContext(ctx,
 		`SELECT id, actor_id, audit_id, control_id, evidence_id, action,
 		        details, created_by, created_at
 		 FROM audit_trail WHERE id = ?`, id))
 }
 
-func (r *trailRepo) ListTrail(ctx context.Context, auditID int, limit, offset int) ([]domain.AuditTrail, int, error) {
+// inClause returns "col IN (?,?,...)" and the values as `any`, or ("", nil) when
+// values is empty (caller skips the clause entirely — no filter).
+func inClause[T any](col string, values []T) (string, []any) {
+	if len(values) == 0 {
+		return "", nil
+	}
+	placeholders := make([]string, len(values))
+	args := make([]any, len(values))
+	for i, v := range values {
+		placeholders[i] = "?"
+		args[i] = v
+	}
+	return col + " IN (" + strings.Join(placeholders, ",") + ")", args
+}
+
+func (r *auditTrailRepo) ListAuditTrail(ctx context.Context, auditID int, filter domain.TrailFilter, limit, offset int) ([]domain.AuditTrail, int, error) {
+	// Control filter uses IN (...), built only when non-empty. Date range keeps
+	// the fixed `(? IS NULL OR col >= /<= ?)` shape so one query serves both the
+	// audit-wide (all filters empty) and narrowed cases.
+	where := "WHERE audit_id = ?"
+	args := []any{auditID}
+
+	if clause, clauseArgs := inClause("control_id", filter.ControlIDs); clause != "" {
+		where += " AND " + clause
+		args = append(args, clauseArgs...)
+	}
+	where += " AND (? IS NULL OR created_at >= ?) AND (? IS NULL OR created_at <= ?)"
+	args = append(args,
+		nilableAny(filter.From), nilableAny(filter.From),
+		nilableAny(filter.To), nilableAny(filter.To),
+	)
+
 	var total int
 	if err := r.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM audit_trail WHERE audit_id = ?", auditID).Scan(&total); err != nil {
+		"SELECT COUNT(*) FROM audit_trail "+where, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("audit_trail.ListCount: %w", err)
 	}
 
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT id, actor_id, audit_id, control_id, evidence_id, action,
 		        details, created_by, created_at
-		 FROM audit_trail WHERE audit_id = ?
-		 ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-		auditID, limit, offset)
+		 FROM audit_trail `+where+
+			" ORDER BY created_at DESC LIMIT ? OFFSET ?",
+		append(append([]any{}, args...), limit, offset)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("audit_trail.List: %w", err)
 	}

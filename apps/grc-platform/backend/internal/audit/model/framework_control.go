@@ -39,3 +39,13 @@ type FrameworkControlListResponse struct {
 	Controls []*AuditFrameworkControl `json:"controls"`
 	Total    int                      `json:"total"`
 }
+
+// CreateFrameworkControlRequest is the payload for POST /api/v1/audit/frameworks/{id}/controls.
+type CreateFrameworkControlRequest struct {
+	ControlNumber       string  `json:"controlNumber"`
+	Description         string  `json:"description"`
+	EvidenceRequirement *string `json:"evidenceRequirement"`
+	RequirementType     string  `json:"requirementType"` // DESIGN | OE
+	ControlType         string  `json:"controlType"`     // CONFIG | NON_CONFIG
+	Scope               string  `json:"scope"`           // COMMON | PRODUCT_SPECIFIC
+}

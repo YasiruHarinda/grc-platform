@@ -1,0 +1,11 @@
+schemaVersion: "1.2"
+endpoints:
+  - name: grc-platform-backend
+    displayName: GRC Platform Backend
+    service:
+      basePath: /
+      port: 8081
+    type: REST
+    networkVisibilities:
+      - Public
+      - Organization

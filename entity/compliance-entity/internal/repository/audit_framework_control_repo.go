@@ -31,6 +31,11 @@ type FrameworkControlRepository interface {
 	ListCurrentControls(ctx context.Context, frameworkID int) ([]domain.AuditFrameworkControl, error)
 	ListAllVersions(ctx context.Context, frameworkID int, controlNumber string) ([]domain.AuditFrameworkControl, error)
 	GetByID(ctx context.Context, id int) (*domain.AuditFrameworkControl, error)
+	// GetCurrentByNumber returns the current (is_current=TRUE) row for a control
+	// number within a framework, else sql.ErrNoRows. Used to detect a collision
+	// when a caller tries to push a brand-new control into the catalog under a
+	// number that's already there.
+	GetCurrentByNumber(ctx context.Context, frameworkID int, controlNumber string) (*domain.AuditFrameworkControl, error)
 	Create(ctx context.Context, frameworkID int, req domain.CreateFrameworkControlRequest) (*domain.AuditFrameworkControl, error)
 	// NewVersion creates a new version row for an existing control and marks the
 	// previous is_current row as superseded. Returns the new row.
@@ -80,6 +85,13 @@ func (r *frameworkControlRepo) GetByID(ctx context.Context, id int) (*domain.Aud
 		return nil, fmt.Errorf("framework_control.GetByID(%d): %w", id, err)
 	}
 	return c, nil
+}
+
+func (r *frameworkControlRepo) GetCurrentByNumber(ctx context.Context, frameworkID int, controlNumber string) (*domain.AuditFrameworkControl, error) {
+	row := r.db.QueryRowContext(ctx,
+		"SELECT "+fwCtlCols+" FROM audit_framework_control WHERE framework_id = ? AND control_number = ? AND is_current = TRUE",
+		frameworkID, controlNumber)
+	return scanFWControl(row)
 }
 
 func (r *frameworkControlRepo) Create(ctx context.Context, frameworkID int, req domain.CreateFrameworkControlRequest) (*domain.AuditFrameworkControl, error) {

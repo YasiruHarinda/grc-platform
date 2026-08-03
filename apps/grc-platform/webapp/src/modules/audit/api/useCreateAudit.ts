@@ -19,6 +19,7 @@ import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { AUDITS_QUERY_KEY } from "@modules/audit/api/useGetAudits";
 import type { Audit, CreateAuditRequest } from "@modules/audit/types/audit";
+import { extractErrorMessage } from "@modules/audit/api/apiError";
 
 /** Creates a new audit engagement. Returns the created audit with its assigned ID. */
 export function useCreateAudit() {
@@ -33,8 +34,7 @@ export function useCreateAudit() {
         body: JSON.stringify(req),
       });
       if (!res.ok) {
-        const msg = await res.text().catch(() => "");
-        throw new Error(msg || `Failed to create audit (${res.status})`);
+        throw new Error(await extractErrorMessage(res, `Failed to create audit (${res.status})`));
       }
       return res.json() as Promise<Audit>;
     },

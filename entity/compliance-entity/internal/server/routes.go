@@ -48,7 +48,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	populationRepo := repository.NewPopulationRepository(db)
 	commentRepo := repository.NewCommentRepository(db)
 	aiValidationRepo := repository.NewAIValidationRepository(db)
-	trailRepo := repository.NewTrailRepository(db)
+	auditTrailRepo := repository.NewAuditTrailRepository(db)
 	riskTeamRepo := repository.NewRiskTeamRepository(db)
 	riskScoreRepo := repository.NewRiskScoreRepository(db)
 	riskReferenceRepo := repository.NewRiskReferenceRepository(db)
@@ -72,13 +72,13 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	frameworkControlSvc := service.NewFrameworkControlService(frameworkControlRepo)
 	auditProductSvc := service.NewAuditProductService(auditProductRepo)
 	auditSvc := service.NewAuditService(auditRepo)
-	controlSvc := service.NewControlService(controlRepo)
+	controlSvc := service.NewControlService(controlRepo, frameworkControlRepo, auditRepo)
 	evidenceSvc := service.NewEvidenceService(evidenceRepo)
 	dashboardSvc := service.NewDashboardService(dashboardRepo)
 	populationSvc := service.NewPopulationService(populationRepo)
-	commentSvc := service.NewCommentService(commentRepo)
+	commentSvc := service.NewCommentService(commentRepo, auditTrailRepo)
 	aiValidationSvc := service.NewAIValidationService(aiValidationRepo)
-	trailSvc := service.NewTrailService(trailRepo)
+	auditTrailSvc := service.NewAuditTrailService(auditTrailRepo)
 	riskTeamSvc := service.NewRiskTeamService(riskTeamRepo)
 	riskScoreSvc := service.NewCachedRiskScoreService(service.NewRiskScoreService(riskScoreRepo))
 	riskReferenceSvc := service.NewRiskReferenceService(riskReferenceRepo)
@@ -113,7 +113,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	populationH := handler.NewPopulationHandler(populationSvc)
 	commentH := handler.NewCommentHandler(commentSvc)
 	aiValidationH := handler.NewAIValidationHandler(aiValidationSvc)
-	trailH := handler.NewTrailHandler(trailSvc)
+	auditTrailH := handler.NewAuditTrailHandler(auditTrailSvc)
 	riskTeamH := handler.NewRiskTeamHandler(riskTeamSvc)
 	riskScoreH := handler.NewRiskScoreHandler(riskScoreSvc)
 	riskReferenceH := handler.NewRiskReferenceHandler(riskReferenceSvc)
@@ -189,8 +189,8 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	mux.HandleFunc("DELETE /audits/{id}", auditH.DeleteAudit)
 
 	// Audit trail (append-only; write from external callers, read for timeline UI)
-	mux.HandleFunc("POST /audits/{auditId}/trail", trailH.CreateTrail)
-	mux.HandleFunc("GET /audits/{auditId}/trail", trailH.ListTrail)
+	mux.HandleFunc("POST /audits/{auditId}/trail", auditTrailH.CreateAuditTrail)
+	mux.HandleFunc("GET /audits/{auditId}/trail", auditTrailH.ListAuditTrail)
 
 	// Controls (cross-audit search; nested CRUD under audits)
 	mux.HandleFunc("POST /audit/dashboard/search", dashboardH.GetDashboard)
@@ -220,9 +220,10 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	mux.HandleFunc("GET /evidence-files/{fileId}", evidenceH.GetEvidenceFileByID)
 	mux.HandleFunc("DELETE /evidence-files/{fileId}", evidenceH.DeleteEvidenceFile)
 
-	// Evidence comments (evidence-scoped; flat delete by comment ID)
-	mux.HandleFunc("POST /evidence/{evidenceId}/comments", commentH.CreateComment)
-	mux.HandleFunc("GET /evidence/{evidenceId}/comments", commentH.ListComments)
+	// Control comments (control-scoped — one thread per control, spanning
+	// population + evidence phases; flat delete by comment ID)
+	mux.HandleFunc("POST /audits/{auditId}/controls/{controlId}/comments", commentH.CreateComment)
+	mux.HandleFunc("GET /audits/{auditId}/controls/{controlId}/comments", commentH.ListComments)
 	mux.HandleFunc("DELETE /comments/{commentId}", commentH.DeleteComment)
 
 	// Evidence AI validation log (written by the async validation agent; read as review hints)
@@ -236,7 +237,10 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	mux.HandleFunc("PATCH /populations/{populationId}", populationH.UpdatePopulation)
 	mux.HandleFunc("POST /populations/{populationId}/files", populationH.AddPopulationFile)
 	mux.HandleFunc("GET /populations/{populationId}/files", populationH.ListPopulationFiles)
-	mux.HandleFunc("DELETE /populations/files/{fileId}", populationH.DeletePopulationFile)
+	// Top-level (not nested under /populations/) so it can never collide with
+	// /populations/{populationId}/files — same shape as /evidence-files/{fileId}.
+	mux.HandleFunc("GET /population-files/{fileId}", populationH.GetPopulationFileByID)
+	mux.HandleFunc("DELETE /population-files/{fileId}", populationH.DeletePopulationFile)
 
 	// Risk teams
 	mux.HandleFunc("POST /risk/teams/search", riskTeamH.SearchRiskTeams)

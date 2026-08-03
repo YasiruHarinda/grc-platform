@@ -43,6 +43,12 @@ type ControlRepository interface {
 	// FindActivePopulation returns the active audit_population id for an OE control
 	// (status PENDING or COMPLIANCE_REJECTED), else sql.ErrNoRows.
 	FindActivePopulation(ctx context.Context, controlID int) (int, error)
+	// CountDeletionBlockers returns how many audit_evidence rows exist for the
+	// control and how many audit_population rows are still in progress (any
+	// status other than the terminal APPROVED). Used to block DeleteControl from
+	// silently cascading away real work (evidence/population records cascade-
+	// delete with the control at the DB level).
+	CountDeletionBlockers(ctx context.Context, controlID int) (evidenceCount int, activePopulationCount int, err error)
 }
 
 // evidenceActionableStatuses lists the control statuses for which a team member
@@ -59,24 +65,20 @@ func NewControlRepository(db *sql.DB) ControlRepository { return &controlRepo{db
 // ListAssignedForEvidence returns the active-audit controls whose team the user
 // belongs to and whose status requires action (population or evidence), enriched
 // with audit/product/framework so the Evidence Portal can render each control in
-// one call. Definition columns resolve from the framework template via COALESCE.
+// one call.
 func (r *controlRepo) ListAssignedForEvidence(ctx context.Context, userEmail string) ([]domain.AssignedControlForEvidence, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT a.id, a.name, p.name AS product, f.name AS framework,
 		       DATE_FORMAT(a.period_start,'%Y-%m-%d'), DATE_FORMAT(a.period_end,'%Y-%m-%d'),
-		       c.id,
-		       COALESCE(fc.control_number,       c.control_number)       AS control_number,
-		       COALESCE(fc.description,          c.description)          AS description,
-		       COALESCE(fc.evidence_requirement, c.evidence_requirement) AS evidence_requirement,
-		       COALESCE(fc.requirement_type,     c.requirement_type)     AS requirement_type,
+		       c.id, c.control_number, c.description, c.evidence_requirement, c.requirement_type,
 		       c.status, DATE_FORMAT(c.due_date,'%Y-%m-%d') AS due_date
 		FROM audit_control c
-		LEFT JOIN audit_framework_control fc ON fc.id = c.framework_control_id
 		JOIN audit           a ON a.id = c.audit_id
 		JOIN audit_product   p ON p.id = a.product_id
 		JOIN audit_framework f ON f.id = a.framework_id
 		JOIN audit_team      t ON t.id = c.team_id
-		JOIN `+"`user`"+` u ON u.audit_team_id = t.id
+		JOIN user_audit_team uat ON uat.audit_team_id = t.id AND uat.is_active = TRUE
+		JOIN `+"`user`"+` u ON u.id = uat.user_id
 		WHERE u.email = ?
 		  AND a.status = 'ACTIVE'
 		  AND c.status IN (`+evidenceActionableStatuses+`)
@@ -120,7 +122,8 @@ func (r *controlRepo) GetEvidenceAssignment(ctx context.Context, userEmail strin
 		FROM audit_control c
 		JOIN audit      a ON a.id = c.audit_id
 		JOIN audit_team t ON t.id = c.team_id
-		JOIN `+"`user`"+` u ON u.audit_team_id = t.id
+		JOIN user_audit_team uat ON uat.audit_team_id = t.id AND uat.is_active = TRUE
+		JOIN `+"`user`"+` u ON u.id = uat.user_id
 		WHERE u.email = ? AND c.id = ?
 		  AND a.status = 'ACTIVE'
 		  AND c.status IN (`+evidenceActionableStatuses+`)
@@ -132,13 +135,16 @@ func (r *controlRepo) GetEvidenceAssignment(ctx context.Context, userEmail strin
 }
 
 // FindActivePopulation returns the active population round for an OE control:
-// PENDING (first submission) or COMPLIANCE_REJECTED (need clarification, re-upload).
+// PENDING (first submission), COMPLIANCE_REJECTED (internal review sent it back),
+// or AUDITOR_REJECTED (auditor sent it back) — all three are states from which the
+// population state machine allows a transition straight back to SUBMITTED on the
+// same round (see allowedPopulationTransitions in audit_population_service.go).
 // Not found (no active population / DESIGN control) → sql.ErrNoRows.
 func (r *controlRepo) FindActivePopulation(ctx context.Context, controlID int) (int, error) {
 	var populationID int
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id FROM audit_population
-		WHERE control_id = ? AND status IN ('PENDING','COMPLIANCE_REJECTED')
+		WHERE control_id = ? AND status IN ('PENDING','COMPLIANCE_REJECTED','AUDITOR_REJECTED')
 		ORDER BY id DESC LIMIT 1`, controlID).Scan(&populationID)
 	if err != nil {
 		return 0, err
@@ -148,17 +154,11 @@ func (r *controlRepo) FindActivePopulation(ctx context.Context, controlID int) (
 
 const controlSelectCols = `
   c.id, c.audit_id,
-  c.framework_control_id,
-  COALESCE(fc.control_number,       c.control_number)       AS control_number,
-  COALESCE(fc.description,          c.description)          AS description,
-  COALESCE(fc.evidence_requirement, c.evidence_requirement) AS evidence_requirement,
-  COALESCE(fc.requirement_type,     c.requirement_type)     AS requirement_type,
-  COALESCE(fc.control_type,         c.control_type)         AS control_type,
-  COALESCE(fc.scope,                c.scope)                AS scope,
-  fc.version                                                AS template_version,
+  c.control_number, c.description, c.evidence_requirement,
+  c.requirement_type, c.control_type, c.scope,
   c.owner_id,   u_owner.display_name AS owner_name,
   c.team_id,    t.name               AS team_name,
-  c.auditor_id, u_aud.display_name   AS auditor_name,
+  c.auditor_id, u_aud.display_name   AS auditor_name, u_aud.email AS auditor_email,
   DATE_FORMAT(c.due_date, '%Y-%m-%d') AS due_date,
   c.status, c.control_source,
   (c.due_date IS NOT NULL AND c.due_date < CURDATE() AND c.status != 'COMPLETE') AS is_overdue,
@@ -171,7 +171,6 @@ const controlSelectCols = `
 
 const controlFromClause = `
 FROM audit_control c
-LEFT JOIN audit_framework_control fc ON fc.id = c.framework_control_id
 LEFT JOIN ` + "`user`" + ` u_owner ON u_owner.id = c.owner_id
 LEFT JOIN audit_team t            ON t.id          = c.team_id
 LEFT JOIN ` + "`user`" + ` u_aud   ON u_aud.id     = c.auditor_id
@@ -301,12 +300,11 @@ func (r *controlRepo) CreateControl(ctx context.Context, auditID int, req domain
 
 	res, err := tx.ExecContext(ctx,
 		`INSERT INTO audit_control
-		 (audit_id, framework_control_id,
+		 (audit_id,
 		  control_number, description, evidence_requirement, requirement_type, control_type, scope,
 		  owner_id, team_id, auditor_id, due_date, status, control_source, created_by, updated_by)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		auditID,
-		nullableInt(req.FrameworkControlID),
 		defCols.controlNumber, defCols.description, defCols.evidenceReq,
 		defCols.requirementType, defCols.controlType, defCols.scope,
 		nullableInt(req.OwnerID), nullableInt(req.TeamID), nullableInt(req.AuditorID),
@@ -315,6 +313,9 @@ func (r *controlRepo) CreateControl(ctx context.Context, auditID int, req domain
 		controlSource,
 		req.CreatedBy, req.CreatedBy)
 	if err != nil {
+		if isDuplicateKey(err) {
+			return nil, &apierror.ConflictError{Msg: fmt.Sprintf("control number %q already exists in this audit", defCols.controlNumber)}
+		}
 		return nil, fmt.Errorf("control.Create: %w", err)
 	}
 	id, _ := res.LastInsertId()
@@ -323,10 +324,10 @@ func (r *controlRepo) CreateControl(ctx context.Context, auditID int, req domain
 		desc := nullableString(&p.Description)
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO audit_population
-			 (control_id, owner_id, team_id, reference_number, description, due_date, status, created_by, updated_by)
-			 VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
+			 (control_id, owner_id, team_id, reference_number, description, due_date, comments, status, created_by, updated_by)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
 			id, nullableInt(p.OwnerID), nullableInt(p.TeamID),
-			p.ReferenceNumber, desc, p.DueDate,
+			p.ReferenceNumber, desc, p.DueDate, nullableString(p.Comments),
 			req.CreatedBy, req.CreatedBy); err != nil {
 			return nil, fmt.Errorf("control.Create population: %w", err)
 		}
@@ -357,18 +358,20 @@ func (r *controlRepo) BulkCreateControls(ctx context.Context, auditID int, reqs 
 		defCols := controlDefinitionCols(req)
 		res, err := tx.ExecContext(ctx,
 			`INSERT INTO audit_control
-			 (audit_id, framework_control_id,
+			 (audit_id,
 			  control_number, description, evidence_requirement, requirement_type, control_type, scope,
 			  owner_id, team_id, auditor_id, due_date, status, control_source, created_by, updated_by)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			auditID,
-			nullableInt(req.FrameworkControlID),
 			defCols.controlNumber, defCols.description, defCols.evidenceReq,
 			defCols.requirementType, defCols.controlType, defCols.scope,
 			nullableInt(req.OwnerID), nullableInt(req.TeamID), nullableInt(req.AuditorID),
 			req.DueDate, initialStatus, controlSource,
 			req.CreatedBy, req.CreatedBy)
 		if err != nil {
+			if isDuplicateKey(err) {
+				return nil, &apierror.ConflictError{Msg: fmt.Sprintf("control number %q already exists in this audit", req.ControlNumber)}
+			}
 			return nil, fmt.Errorf("control.BulkCreate insert %q: %w", req.ControlNumber, err)
 		}
 		id, _ := res.LastInsertId()
@@ -378,10 +381,10 @@ func (r *controlRepo) BulkCreateControls(ctx context.Context, auditID int, reqs 
 			desc := nullableString(&p.Description)
 			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO audit_population
-				 (control_id, owner_id, team_id, reference_number, description, due_date, status, created_by, updated_by)
-				 VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
+				 (control_id, owner_id, team_id, reference_number, description, due_date, comments, status, created_by, updated_by)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
 				id, nullableInt(p.OwnerID), nullableInt(p.TeamID),
-				p.ReferenceNumber, desc, p.DueDate,
+				p.ReferenceNumber, desc, p.DueDate, nullableString(p.Comments),
 				req.CreatedBy, req.CreatedBy); err != nil {
 				return nil, fmt.Errorf("control.BulkCreate population %q: %w", req.ControlNumber, err)
 			}
@@ -419,6 +422,36 @@ func (r *controlRepo) BulkCreateControls(ctx context.Context, auditID int, reqs 
 		return nil, fmt.Errorf("control.BulkCreate fetch rows: %w", err)
 	}
 	return controls, nil
+}
+
+func (r *controlRepo) CountDeletionBlockers(ctx context.Context, controlID int) (int, int, error) {
+	var evidenceCount int
+	if err := r.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM audit_evidence WHERE control_id = ?", controlID,
+	).Scan(&evidenceCount); err != nil {
+		return 0, 0, fmt.Errorf("control.CountDeletionBlockers evidence(%d): %w", controlID, err)
+	}
+
+	// PENDING is the freshly-created, never-submitted state every OE control's
+	// population round starts in (see CreateControl/BulkCreateControls) — it
+	// must not count as "in progress" or an OE control could never be deleted
+	// before its team submits anything, unlike a DESIGN control (which has no
+	// audit_population row at all until work starts). But uploads land before
+	// submit flips the status away from PENDING, so a PENDING round can still
+	// hold real files — those must block deletion too, same as an APPROVED
+	// round (completed audit evidence), which is never safe to cascade away.
+	var activePopulationCount int
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM audit_population p
+		 WHERE p.control_id = ?
+		   AND (p.status <> 'PENDING'
+		        OR EXISTS (SELECT 1 FROM audit_evidence_file f WHERE f.population_id = p.id))`,
+		controlID,
+	).Scan(&activePopulationCount); err != nil {
+		return 0, 0, fmt.Errorf("control.CountDeletionBlockers population(%d): %w", controlID, err)
+	}
+
+	return evidenceCount, activePopulationCount, nil
 }
 
 func (r *controlRepo) DeleteControl(ctx context.Context, auditID, controlID int) error {
@@ -515,18 +548,16 @@ func (r *controlRepo) UpdateControl(ctx context.Context, auditID, controlID int,
 
 func scanControl(s scanner) (*domain.AuditControl, error) {
 	var c domain.AuditControl
-	var frameworkControlID, templateVersion, ownerID, teamID, auditorID sql.NullInt64
-	var evidenceReq, ownerName, teamName, auditorName, dueDate sql.NullString
+	var ownerID, teamID, auditorID sql.NullInt64
+	var evidenceReq, ownerName, teamName, auditorName, auditorEmail, dueDate sql.NullString
 	var popDescription, popComments, popDueDate, popOwnerName, popTeamName sql.NullString
 	err := s.Scan(
 		&c.ID, &c.AuditID,
-		&frameworkControlID,
 		&c.ControlNumber, &c.Description, &evidenceReq,
 		&c.RequirementType, &c.ControlType, &c.Scope,
-		&templateVersion,
 		&ownerID, &ownerName,
 		&teamID, &teamName,
-		&auditorID, &auditorName,
+		&auditorID, &auditorName, &auditorEmail,
 		&dueDate,
 		&c.Status, &c.ControlSource, &c.IsOverdue,
 		&c.CreatedOn, &c.UpdatedOn,
@@ -548,8 +579,6 @@ func scanControl(s scanner) (*domain.AuditControl, error) {
 		}
 		return nil
 	}
-	c.FrameworkControlID = nullIntPtr(frameworkControlID)
-	c.TemplateVersion = nullIntPtr(templateVersion)
 	c.EvidenceRequirement = nullStrPtr(evidenceReq)
 	c.OwnerID = nullIntPtr(ownerID)
 	c.OwnerName = nullStrPtr(ownerName)
@@ -557,6 +586,7 @@ func scanControl(s scanner) (*domain.AuditControl, error) {
 	c.TeamName = nullStrPtr(teamName)
 	c.AuditorID = nullIntPtr(auditorID)
 	c.AuditorName = nullStrPtr(auditorName)
+	c.AuditorEmail = nullStrPtr(auditorEmail)
 	c.DueDate = nullStrPtr(dueDate)
 	c.PopulationDescription = nullStrPtr(popDescription)
 	c.PopulationComments = nullStrPtr(popComments)
@@ -566,26 +596,21 @@ func scanControl(s scanner) (*domain.AuditControl, error) {
 	return &c, nil
 }
 
-// controlDefCols holds the nullable definition values to store in audit_control.
-// When framework_control_id is set these are NULL (resolved via COALESCE on read).
+// controlDefCols holds the definition values to store in audit_control.
+// Every control owns its full definition text; only evidenceReq is optional.
 type controlDefCols struct {
-	controlNumber, description, requirementType, controlType, scope sql.NullString
+	controlNumber, description, requirementType, controlType, scope string
 	evidenceReq                                                     sql.NullString
 }
 
 // controlDefinitionCols returns the definition column values for an INSERT.
-// When FrameworkControlID is set in the request all definition columns become NULL
-// because the COALESCE query reads them from the template table instead.
 func controlDefinitionCols(req domain.CreateControlRequest) controlDefCols {
-	if req.FrameworkControlID != nil {
-		return controlDefCols{} // all NullString{Valid:false} → NULL
-	}
 	d := controlDefCols{
-		controlNumber:   sql.NullString{String: req.ControlNumber, Valid: req.ControlNumber != ""},
-		description:     sql.NullString{String: req.Description, Valid: req.Description != ""},
-		requirementType: sql.NullString{String: req.RequirementType, Valid: req.RequirementType != ""},
-		controlType:     sql.NullString{String: req.ControlType, Valid: req.ControlType != ""},
-		scope:           sql.NullString{String: req.Scope, Valid: req.Scope != ""},
+		controlNumber:   req.ControlNumber,
+		description:     req.Description,
+		requirementType: req.RequirementType,
+		controlType:     req.ControlType,
+		scope:           req.Scope,
 	}
 	if req.EvidenceRequirement != nil {
 		d.evidenceReq = sql.NullString{String: *req.EvidenceRequirement, Valid: true}

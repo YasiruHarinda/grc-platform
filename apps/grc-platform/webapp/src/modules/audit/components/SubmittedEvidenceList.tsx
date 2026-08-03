@@ -19,10 +19,13 @@ import { ExternalLink, FileText, Trash2 } from "@wso2/oxygen-ui-icons-react";
 import { useState, type JSX } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useGetEvidence, evidenceQueryKey } from "@modules/audit/api/useGetEvidence";
+import { controlsQueryKey } from "@modules/audit/api/useGetControls";
 import { aiValidationQueryKey } from "@modules/audit/api/useGetAIValidation";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { formatTimestamp } from "@modules/audit/utils/format";
+import { viewOrDownloadBlob } from "@modules/audit/utils/fileView";
+import { extractErrorMessage } from "@modules/audit/api/apiError";
 
 function sizeLabel(bytes: number | null): string {
   if (bytes === null) return "";
@@ -34,15 +37,21 @@ function sizeLabel(bytes: number | null): string {
 /**
  * Lists the files a team submitted for a control so they can be viewed/downloaded.
  * Pass `canDelete` to show per-file remove buttons (submitter view at step 1).
+ *
+ * Deleting the last file empties the submission, so the backend sends the control
+ * back to EVIDENCE_PENDING; `onStatusChange` lets the caller reflect that without
+ * waiting for a refetch.
  */
 export default function SubmittedEvidenceList({
   auditId,
   controlId,
   canDelete = false,
+  onStatusChange,
 }: {
   auditId: number;
   controlId: number;
   canDelete?: boolean;
+  onStatusChange?: (status: string) => void;
 }): JSX.Element {
   const { data, isLoading, isError } = useGetEvidence(auditId, controlId, true);
   const authFetch = useAuthApiClient();
@@ -51,15 +60,13 @@ export default function SubmittedEvidenceList({
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  async function handleView(readUrl: string): Promise<void> {
+  async function handleView(readUrl: string, fileName: string): Promise<void> {
     setDownloadError(null);
     try {
       const res = await authFetch(`${BACKEND_BASE_URL}${readUrl}`);
       if (!res.ok) throw new Error(`Download failed (${res.status})`);
       const blob = await res.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      window.open(objectUrl, "_blank", "noopener,noreferrer");
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      viewOrDownloadBlob(blob, fileName);
     } catch (err) {
       setDownloadError(err instanceof Error ? err.message : "Failed to download file");
     }
@@ -69,13 +76,20 @@ export default function SubmittedEvidenceList({
     setDeleteError(null);
     setDeletingId(fileId);
     try {
-      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/evidence/files/${fileId}`, { method: "DELETE" });
+      const res = await authFetch(
+        `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}/evidence/files/${fileId}`,
+        { method: "DELETE" },
+      );
       if (!res.ok) {
-        const msg = await res.text().catch(() => "");
-        throw new Error(msg || `Failed to remove file (${res.status})`);
+        throw new Error(await extractErrorMessage(res, `Failed to remove file (${res.status})`));
       }
+      // The backend reports the control status after the delete: removing the
+      // last file sends the submission back to EVIDENCE_PENDING.
+      const { status } = (await res.json().catch(() => ({}))) as { status?: string };
       await queryClient.invalidateQueries({ queryKey: evidenceQueryKey(auditId, controlId) });
+      void queryClient.invalidateQueries({ queryKey: controlsQueryKey(auditId) });
       void queryClient.invalidateQueries({ queryKey: aiValidationQueryKey(evidenceId) });
+      if (status) onStatusChange?.(status);
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : "Failed to remove file");
     } finally {
@@ -90,7 +104,18 @@ export default function SubmittedEvidenceList({
     return <Typography variant="body2" color="error">Failed to load submitted evidence.</Typography>;
   }
 
-  const submissions = data ?? [];
+  // A resubmission creates a new round, and deleting a round's last file leaves
+  // an otherwise-empty round behind. Drop rounds with no files so the list shows
+  // one "Submitted …" header per round that actually holds evidence. Also drop
+  // rounds a reviewer/auditor already rejected (COMPLIANCE_REJECTED/
+  // AUDITOR_REJECTED, set by useReviewEvidence/useValidateEvidence): once a round
+  // is rejected it's superseded by whatever the team resubmits next, so showing
+  // it here would conflate old, no-longer-relevant files with the fresh
+  // resubmission. Rejected rounds remain visible in the History tab.
+  const REJECTED_STATUSES = new Set(["COMPLIANCE_REJECTED", "AUDITOR_REJECTED"]);
+  const submissions = (data ?? []).filter(
+    (s) => (s.files?.length ?? 0) > 0 && !REJECTED_STATUSES.has(s.status),
+  );
   const totalFiles = submissions.reduce((n, s) => n + (s.files?.length ?? 0), 0);
 
   if (totalFiles === 0) {
@@ -128,7 +153,7 @@ export default function SubmittedEvidenceList({
               {f.readUrl ? (
                 <Button
                   size="small"
-                  onClick={() => { void handleView(f.readUrl as string); }}
+                  onClick={() => { void handleView(f.readUrl as string, f.fileName); }}
                   startIcon={<ExternalLink size={13} />}
                   sx={{ textTransform: "none", minWidth: 0 }}
                 >

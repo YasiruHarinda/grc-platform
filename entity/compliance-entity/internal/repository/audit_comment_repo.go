@@ -28,9 +28,13 @@ import (
 
 // CommentRepository defines persistence for audit_comment.
 type CommentRepository interface {
-	CreateComment(ctx context.Context, evidenceID int, req domain.CreateAuditCommentRequest) (*domain.AuditComment, error)
-	ListCommentsByEvidence(ctx context.Context, evidenceID int) ([]domain.AuditComment, error)
+	CreateComment(ctx context.Context, controlID int, req domain.CreateAuditCommentRequest) (*domain.AuditComment, error)
+	ListCommentsByControl(ctx context.Context, controlID int) ([]domain.AuditComment, error)
 	DeleteComment(ctx context.Context, commentID int) error
+	// ResolveAuditID looks up the audit a control belongs to. Used to attribute
+	// a COMMENTED audit_trail row to the right audit, since audit_comment
+	// itself only stores control_id.
+	ResolveAuditID(ctx context.Context, controlID int) (auditID int, err error)
 }
 
 type commentRepo struct{ db *sql.DB }
@@ -38,12 +42,12 @@ type commentRepo struct{ db *sql.DB }
 // NewCommentRepository constructs a CommentRepository.
 func NewCommentRepository(db *sql.DB) CommentRepository { return &commentRepo{db: db} }
 
-func (r *commentRepo) CreateComment(ctx context.Context, evidenceID int, req domain.CreateAuditCommentRequest) (*domain.AuditComment, error) {
+func (r *commentRepo) CreateComment(ctx context.Context, controlID int, req domain.CreateAuditCommentRequest) (*domain.AuditComment, error) {
 	res, err := r.db.ExecContext(ctx,
 		`INSERT INTO audit_comment
-		 (evidence_id, author_id, parent_comment_id, content, is_internal, created_by, updated_by)
+		 (control_id, author_id, parent_comment_id, content, is_internal, created_by, updated_by)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		evidenceID,
+		controlID,
 		nullableInt(req.AuthorID),
 		nullableInt(req.ParentCommentID),
 		req.Content,
@@ -60,17 +64,17 @@ func (r *commentRepo) CreateComment(ctx context.Context, evidenceID int, req dom
 
 func (r *commentRepo) getCommentByID(ctx context.Context, id int) (*domain.AuditComment, error) {
 	return scanAuditComment(r.db.QueryRowContext(ctx,
-		`SELECT id, evidence_id, author_id, parent_comment_id, content, is_internal,
+		`SELECT id, control_id, author_id, parent_comment_id, content, is_internal,
 		        created_by, created_at, updated_at
 		 FROM audit_comment WHERE id = ?`, id))
 }
 
-func (r *commentRepo) ListCommentsByEvidence(ctx context.Context, evidenceID int) ([]domain.AuditComment, error) {
+func (r *commentRepo) ListCommentsByControl(ctx context.Context, controlID int) ([]domain.AuditComment, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, evidence_id, author_id, parent_comment_id, content, is_internal,
+		`SELECT id, control_id, author_id, parent_comment_id, content, is_internal,
 		        created_by, created_at, updated_at
-		 FROM audit_comment WHERE evidence_id = ? ORDER BY created_at ASC`,
-		evidenceID)
+		 FROM audit_comment WHERE control_id = ? ORDER BY created_at ASC`,
+		controlID)
 	if err != nil {
 		return nil, fmt.Errorf("comment.List: %w", err)
 	}
@@ -85,6 +89,19 @@ func (r *commentRepo) ListCommentsByEvidence(ctx context.Context, evidenceID int
 		comments = append(comments, *c)
 	}
 	return comments, rows.Err()
+}
+
+func (r *commentRepo) ResolveAuditID(ctx context.Context, controlID int) (int, error) {
+	var auditID int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT audit_id FROM audit_control WHERE id = ?`, controlID).Scan(&auditID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, &apierror.NotFoundError{Msg: "control not found"}
+	}
+	if err != nil {
+		return 0, fmt.Errorf("comment.ResolveAuditID(%d): %w", controlID, err)
+	}
+	return auditID, nil
 }
 
 func (r *commentRepo) DeleteComment(ctx context.Context, commentID int) error {
@@ -104,7 +121,7 @@ func scanAuditComment(s scanner) (*domain.AuditComment, error) {
 	var authorID, parentID sql.NullInt64
 	var createdBy sql.NullString
 	err := s.Scan(
-		&c.ID, &c.EvidenceID, &authorID, &parentID,
+		&c.ID, &c.ControlID, &authorID, &parentID,
 		&c.Content, &c.IsInternal, &createdBy, &c.CreatedOn, &c.UpdatedOn,
 	)
 	if errors.Is(err, sql.ErrNoRows) {

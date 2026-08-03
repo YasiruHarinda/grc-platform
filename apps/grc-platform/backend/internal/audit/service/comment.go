@@ -26,12 +26,13 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/repository"
 )
 
-// CommentService defines business operations for per-evidence comments.
+// CommentService defines business operations for per-control comments (one
+// thread per control, spanning population and evidence phases).
 type CommentService interface {
-	// List returns comments for an evidence submission. When includeInternal is
-	// false (external auditor), is_internal comments are excluded.
-	List(ctx context.Context, evidenceID int, includeInternal bool) ([]*model.AuditComment, error)
-	Add(ctx context.Context, evidenceID int, req model.AddCommentRequest, createdBy string) (*model.AuditComment, error)
+	// List returns comments for a control. When includeInternal is false
+	// (external auditor), is_internal comments are excluded.
+	List(ctx context.Context, auditID, controlID int, includeInternal bool) ([]*model.AuditComment, error)
+	Add(ctx context.Context, auditID, controlID int, req model.AddCommentRequest, createdBy string) (*model.AuditComment, error)
 }
 
 type commentService struct {
@@ -42,8 +43,8 @@ func NewCommentService(repo repository.CommentRepository) CommentService {
 	return &commentService{repo: repo}
 }
 
-func (s *commentService) List(ctx context.Context, evidenceID int, includeInternal bool) ([]*model.AuditComment, error) {
-	all, err := s.repo.ListByEvidence(ctx, evidenceID)
+func (s *commentService) List(ctx context.Context, auditID, controlID int, includeInternal bool) ([]*model.AuditComment, error) {
+	all, err := s.repo.ListByControl(ctx, auditID, controlID)
 	if err != nil {
 		return nil, err
 	}
@@ -60,9 +61,9 @@ func (s *commentService) List(ctx context.Context, evidenceID int, includeIntern
 	return visible, nil
 }
 
-func (s *commentService) Add(ctx context.Context, evidenceID int, req model.AddCommentRequest, createdBy string) (*model.AuditComment, error) {
+func (s *commentService) Add(ctx context.Context, auditID, controlID int, req model.AddCommentRequest, createdBy string) (*model.AuditComment, error) {
 	if strings.TrimSpace(req.Content) == "" {
 		return nil, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "content is required"}
 	}
-	return s.repo.Create(ctx, evidenceID, req.Content, req.IsInternal, req.ParentCommentID, createdBy)
+	return s.repo.Create(ctx, auditID, controlID, req.Content, req.IsInternal, req.ParentCommentID, createdBy)
 }
