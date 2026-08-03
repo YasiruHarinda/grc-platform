@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/apierror"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
@@ -117,17 +118,47 @@ func (d *Deps) handleCreateRisk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	d.notifyRiskOwnerCreated(r.Context(), result.ID, req.OwnerID, createdBy)
+	d.notifyRiskOwnerCreated(result.ID, req.OwnerID, createdBy)
 
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/risks/%d", result.ID))
 	response.WriteJSONValue(w, http.StatusCreated, result)
 }
 
+// notifyTimeout caps the whole background notification: two Compliance Entity
+// lookups plus an email send that retries once. It has to outlast that retry —
+// sized too tightly, it would cancel the second attempt before it could land,
+// which is the exact failure the retry exists to fix. The individual HTTP
+// clients all have their own timeouts, so this is a backstop against a stuck
+// goroutine rather than the mechanism that bounds any single call.
+const notifyTimeout = 2 * time.Minute
+
 // notifyRiskOwnerCreated emails the risk owner that a new risk has been
-// assigned to them. Best-effort: the risk is already committed by the time
-// this runs, so any failure here is logged and swallowed rather than
-// affecting the 201 response.
-func (d *Deps) notifyRiskOwnerCreated(ctx context.Context, riskID, ownerID int, createdBy string) {
+// assigned to them. Best-effort and detached: the risk is already committed by
+// the time this runs, so any failure here is logged and swallowed rather than
+// affecting the 201 response. It runs in the background on a context of its
+// own — email-service cold starts take tens of seconds and the request context
+// is cancelled the moment the handler returns, so doing this inline would both
+// stall the response and cut the send off midway.
+func (d *Deps) notifyRiskOwnerCreated(riskID, ownerID int, createdBy string) {
+	go func() {
+		// net/http recovers a panic raised on the request path; a bare
+		// goroutine has no such net, so an unguarded panic here would take the
+		// whole process down instead of failing one notification.
+		defer func() {
+			if p := recover(); p != nil {
+				slog.Error("risk creation email: panic", "riskId", riskID, "panic", p)
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), notifyTimeout)
+		defer cancel()
+		d.sendRiskOwnerCreatedEmail(ctx, riskID, ownerID, createdBy)
+	}()
+}
+
+// sendRiskOwnerCreatedEmail resolves the owner and the risk detail, then sends
+// the notification. Split out from notifyRiskOwnerCreated so the work is
+// callable synchronously in a test without the goroutine.
+func (d *Deps) sendRiskOwnerCreatedEmail(ctx context.Context, riskID, ownerID int, createdBy string) {
 	owner, err := d.Users.GetByID(ctx, ownerID)
 	if err != nil {
 		slog.Warn("risk creation email: failed to resolve owner", "riskId", riskID, "ownerId", ownerID, "err", err)

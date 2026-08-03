@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -54,6 +55,15 @@ type Client struct {
 // tokenExpiryBuffer is subtracted from the token's reported lifetime so a
 // near-expiry token is never handed to an in-flight request.
 const tokenExpiryBuffer = 30 * time.Second
+
+// sendAttempts bounds the retry in SendRiskCreated. The Choreo-hosted
+// email-service scales to zero when idle, and the first request after that has
+// to wait out a cold start that regularly outlasts this client's 10s timeout —
+// observed after both a 2-day and a 3-day idle gap, each time a clean 10s
+// "context deadline exceeded" with no email sent. The first attempt is what
+// wakes the container, so the second one lands on a warm instance and there is
+// nothing for a third to fix: hence 2, retried immediately with no backoff.
+const sendAttempts = 2
 
 // New constructs a client pointed at the email-service base URL, sending as
 // from, authenticating via OAuth2 client-credentials at tokenURL using
@@ -159,6 +169,9 @@ var riskCreatedTemplate = template.Must(template.New("riskCreated").Parse(`<html
 
 // SendRiskCreated notifies ownerEmail that a risk was created and assigned to
 // them. ownerEmail is the only recipient — no cc/bcc are ever sent, by design.
+// Retries once on a transport failure to ride out an email-service cold start;
+// see sendAttempts. Callers must expect this to block for up to two full client
+// timeouts and so should not run it on a request path.
 func (c *Client) SendRiskCreated(ctx context.Context, ownerEmail string, info RiskCreated) error {
 	var body bytes.Buffer
 	if err := riskCreatedTemplate.Execute(&body, info); err != nil {
@@ -176,21 +189,44 @@ func (c *Client) SendRiskCreated(ctx context.Context, ownerEmail string, info Ri
 		return fmt.Errorf("emailer: marshal request: %w", err)
 	}
 
+	var lastErr error
+	for attempt := 1; attempt <= sendAttempts; attempt++ {
+		retryable, err := c.sendOnce(ctx, b)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if !retryable || attempt == sendAttempts {
+			break
+		}
+		slog.Warn("emailer: send failed, retrying",
+			"attempt", attempt, "of", sendAttempts, "err", err)
+	}
+	return lastErr
+}
+
+// sendOnce makes a single POST /send-email attempt. retryable is true only
+// when the request never produced a response at all — a timeout or a
+// connection-level failure, the shape a cold start takes. Anything the service
+// actually answered with is a verdict rather than a hiccup (a 400 for an empty
+// recipient or bad base64, a 401/403 for credentials that aren't subscribed to
+// this API) and would fail identically on a second try, so it is not retried.
+func (c *Client) sendOnce(ctx context.Context, body []byte) (retryable bool, err error) {
 	token, err := c.accessToken(ctx)
 	if err != nil {
-		return fmt.Errorf("emailer: get access token: %w", err)
+		return false, fmt.Errorf("emailer: get access token: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/send-email", bytes.NewReader(b))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/send-email", bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("emailer: build request: %w", err)
+		return false, fmt.Errorf("emailer: build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("emailer: send: %w", err)
+		return true, fmt.Errorf("emailer: send: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -199,9 +235,9 @@ func (c *Client) SendRiskCreated(ctx context.Context, ownerEmail string, info Ri
 		var msg responseMessage
 		_ = json.Unmarshal(raw, &msg)
 		if msg.Message != "" {
-			return fmt.Errorf("emailer: email-service returned %d: %s", resp.StatusCode, msg.Message)
+			return false, fmt.Errorf("emailer: email-service returned %d: %s", resp.StatusCode, msg.Message)
 		}
-		return fmt.Errorf("emailer: email-service returned %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return false, fmt.Errorf("emailer: email-service returned %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
-	return nil
+	return false, nil
 }
