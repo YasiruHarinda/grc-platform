@@ -40,14 +40,15 @@ func NewRiskChangeLogRepository(db *sql.DB) RiskChangeLogRepository {
 
 func (r *riskChangeLogRepo) CreateRiskChangeLog(ctx context.Context, riskID int, req domain.CreateRiskChangeLogRequest) (*domain.RiskChangeLog, error) {
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO risk_change_log (risk_id, created_by, action, field_changed, old_value, new_value)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO risk_change_log (risk_id, created_by, action, field_changed, old_value, new_value, details)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		riskID,
 		req.CreatedBy,
 		req.Action,
 		nullableString(req.FieldChanged),
 		nullableString(req.OldValue),
 		nullableString(req.NewValue),
+		nullableString(req.Details),
 	)
 	if err != nil {
 		if isFKViolation(err) {
@@ -61,7 +62,7 @@ func (r *riskChangeLogRepo) CreateRiskChangeLog(ctx context.Context, riskID int,
 
 func (r *riskChangeLogRepo) getByID(ctx context.Context, id int64) (*domain.RiskChangeLog, error) {
 	return scanRiskChangeLog(r.db.QueryRowContext(ctx,
-		`SELECT id, risk_id, created_by, action, field_changed, old_value, new_value, created_at
+		`SELECT id, risk_id, created_by, action, field_changed, old_value, new_value, details, created_at
 		 FROM risk_change_log WHERE id = ?`, id))
 }
 
@@ -73,7 +74,7 @@ func (r *riskChangeLogRepo) ListRiskChangeLog(ctx context.Context, riskID int, l
 	}
 
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, risk_id, created_by, action, field_changed, old_value, new_value, created_at
+		`SELECT id, risk_id, created_by, action, field_changed, old_value, new_value, details, created_at
 		 FROM risk_change_log WHERE risk_id = ?
 		 ORDER BY created_at DESC LIMIT ? OFFSET ?`,
 		riskID, limit, offset)
@@ -98,10 +99,10 @@ func (r *riskChangeLogRepo) ListRiskChangeLog(ctx context.Context, riskID int, l
 
 func scanRiskChangeLog(s scanner) (*domain.RiskChangeLog, error) {
 	var e domain.RiskChangeLog
-	var fieldChanged, oldValue, newValue sql.NullString
+	var fieldChanged, oldValue, newValue, details sql.NullString
 	err := s.Scan(
 		&e.ID, &e.RiskID, &e.CreatedBy, &e.Action,
-		&fieldChanged, &oldValue, &newValue, &e.CreatedOn,
+		&fieldChanged, &oldValue, &newValue, &details, &e.CreatedOn,
 	)
 	if err != nil {
 		return nil, err
@@ -114,6 +115,9 @@ func scanRiskChangeLog(s scanner) (*domain.RiskChangeLog, error) {
 	}
 	if newValue.Valid {
 		e.NewValue = &newValue.String
+	}
+	if details.Valid {
+		e.Details = &details.String
 	}
 	return &e, nil
 }

@@ -116,6 +116,12 @@ func (d *Deps) handleCreateRisk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The entity already writes a bare CREATE row inside the same transaction
+	// that creates the risk; this adds the SUBMIT that follows it, since a risk
+	// is born already awaiting owner approval.
+	d.recordEvent(r.Context(), result.ID, createdBy, model.HistorySubmit, model.HistoryDetails{
+		To: model.StatusPendingOwnerApproval,
+	})
 	// The risk owner is notified by name; compliance admins are a role and stay
 	// suppressed for now — see notifyComplianceAdmins.
 	d.notifyRiskEvent(emailer.EventCreated, result.ID, []int{req.OwnerID}, createdBy, "")

@@ -62,6 +62,7 @@ import {
   createActionPlan,
   commentOnEscalation,
   fetchEscalations,
+  fetchRiskHistory,
   escalateRisk,
   fetchActionPlanSteps,
   fetchActionPlans,
@@ -81,6 +82,7 @@ import {
 import type {
   ComplianceReference,
   Escalation,
+  HistoryEntry,
   RiskDetail,
   RiskListItem,
   RiskScore,
@@ -388,6 +390,9 @@ export default function RiskRegisters(): JSX.Element {
   // Escalation history for the open risk. Drives the drawer's escalation
   // banner and identifies which escalation a comment applies to.
   const [escalations, setEscalations] = useState<Escalation[]>([]);
+  // Full risk history for the open risk, behind the drawer's History tab.
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [historyError, setHistoryError] = useState("");
 
   // Resolves "am I this plan's action_owner_id" for the Action Plan section's
   // step-completion controls — the users list is already fetched for the
@@ -548,6 +553,8 @@ export default function RiskRegisters(): JSX.Element {
     setDrawerDetail(null);
     setActionPlans([]);
     setEscalations([]);
+    setHistory([]);
+    setHistoryError("");
     setDrawerError("");
     setActionPlansError("");
     setDrawerLoading(true);
@@ -572,6 +579,13 @@ export default function RiskRegisters(): JSX.Element {
     } catch {
       setEscalations([]);
     }
+    // Fetched independently of the detail for the same reason action plans are:
+    // a history failure should cost the History tab, not the whole drawer.
+    try {
+      setHistory(await fetchRiskHistory(authFetch, id));
+    } catch (e: unknown) {
+      setHistoryError(e instanceof Error ? e.message : "Failed to load history.");
+    }
   };
 
   const closeDrawer = () => {
@@ -579,6 +593,8 @@ export default function RiskRegisters(): JSX.Element {
     setDrawerDetail(null);
     setActionPlans([]);
     setEscalations([]);
+    setHistory([]);
+    setHistoryError("");
     setDrawerError("");
     setActionPlansError("");
   };
@@ -1031,6 +1047,8 @@ export default function RiskRegisters(): JSX.Element {
         actionPlans={actionPlans}
         actionPlansError={actionPlansError}
         escalations={escalations}
+        history={history}
+        historyError={historyError}
         currentUserId={currentUserId}
         userNames={userNames}
         onCompleteStep={handleCompleteStep}

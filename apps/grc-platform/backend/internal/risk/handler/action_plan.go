@@ -18,9 +18,11 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
@@ -62,6 +64,9 @@ func (d *Deps) handleCreateActionPlan(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.recordEvent(r.Context(), riskID, by, model.HistoryCreate, model.HistoryDetails{
+		Plan: planLabel(plan),
+	})
 	response.WriteJSONValue(w, http.StatusCreated, plan)
 }
 
@@ -200,6 +205,9 @@ func (d *Deps) handleCompleteActionPlan(w http.ResponseWriter, r *http.Request) 
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.recordEvent(r.Context(), riskID, by, model.HistoryComplete, model.HistoryDetails{
+		Plan: planLabel(plan),
+	})
 	// Fires per plan, matching the in-app REASSESSMENT notification the entity
 	// already writes on this same cascade — so both channels say the same thing
 	// at the same time. A risk with several plans therefore sends several.
@@ -216,4 +224,17 @@ func (d *Deps) notifyAssignerOfPlanCompletion(ctx context.Context, riskID int, b
 		return
 	}
 	d.notifyRiskEvent(emailer.EventActionPlanCompleted, riskID, []int{detail.AssignerID}, by, "")
+}
+
+// planLabel names an action plan for the history, falling back to its id when
+// it has no description — a plan is optional-description, and "plan 7" reads
+// better in a timeline than an empty string.
+func planLabel(plan *model.ActionPlan) string {
+	if plan == nil {
+		return ""
+	}
+	if plan.Description != nil && strings.TrimSpace(*plan.Description) != "" {
+		return strings.TrimSpace(*plan.Description)
+	}
+	return fmt.Sprintf("plan %d", plan.ID)
 }

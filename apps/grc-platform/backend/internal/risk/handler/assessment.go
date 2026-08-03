@@ -17,6 +17,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
@@ -51,5 +52,31 @@ func (d *Deps) handleAssessRisk(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	// The reassessment's own row already records the score; the history entry
+	// is what places it in the risk's timeline alongside everything else.
+	details := model.HistoryDetails{Level: result.ResidualLevel}
+	if prev := previousLevel(r.Context(), d, id, result.ID); prev != "" {
+		details.PreviousLevel = prev
+	}
+	d.recordEvent(r.Context(), id, by, model.HistoryAssess, details)
 	response.WriteJSONValue(w, http.StatusCreated, result)
+}
+
+// previousLevel returns the residual level immediately before assessmentID, so
+// a reassessment can render as "HIGH → MEDIUM" rather than just its new level.
+// Returns "" when this is the first reassessment or the lookup fails — the
+// history entry then simply shows the new level on its own.
+func previousLevel(ctx context.Context, d *Deps, riskID, assessmentID int) string {
+	prior, err := d.Assessment.ListByRiskID(ctx, riskID)
+	if err != nil {
+		return ""
+	}
+	// ListByRiskID is newest-first and already includes the one just created,
+	// so the previous level is the next entry along.
+	for i, a := range prior {
+		if a.ID == assessmentID && i+1 < len(prior) {
+			return prior[i+1].ResidualLevel
+		}
+	}
+	return ""
 }

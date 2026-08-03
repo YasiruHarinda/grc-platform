@@ -113,8 +113,15 @@ type EscalationRepository interface {
 	Resolve(ctx context.Context, riskID int, updatedBy string) error
 }
 
-// ChangelogRepository is the data-access contract for the risk audit trail.
-type ChangelogRepository interface{}
+// HistoryRepository is the data-access contract for a risk's history — the
+// risk_change_log table, which holds both field diffs and workflow events.
+type HistoryRepository interface {
+	// List returns a risk's history newest-first.
+	List(ctx context.Context, riskID int) ([]*model.HistoryEntry, error)
+	// Record appends one entry. Callers treat failures as non-fatal: a missing
+	// history row must never fail the action it was recording.
+	Record(ctx context.Context, riskID int, req model.RecordHistoryRequest, createdBy string) error
+}
 
 // NotificationRepository is the data-access contract for risk notifications.
 type NotificationRepository interface {

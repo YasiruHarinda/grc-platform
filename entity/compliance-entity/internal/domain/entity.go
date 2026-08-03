@@ -1098,10 +1098,11 @@ type ActionStepUpdate struct {
 // ChangeLogEntry is one row for risk_change_log, composed by the caller because
 // deciding what counts as a noteworthy change is a workflow question.
 type ChangeLogEntry struct {
-	Action       string  `json:"action"` // CREATE | UPDATE
+	Action       string  `json:"action"`
 	FieldChanged *string `json:"fieldChanged"`
 	OldValue     *string `json:"oldValue"`
 	NewValue     *string `json:"newValue"`
+	Details      *string `json:"details"`
 }
 
 // =============================================================================
@@ -1404,24 +1405,29 @@ type ListRiskEscalationsResponse struct {
 // =============================================================================
 
 // RiskChangeLog is one field-level change entry for a risk.
+// A row is either a field diff (CREATE/UPDATE/DELETE, filling FieldChanged and
+// Old/NewValue) or a workflow event (everything else, filling Details) — never
+// both. Same split as the audit module's audit_trail.
 type RiskChangeLog struct {
 	ID           int64     `json:"id"`
 	RiskID       int       `json:"riskId"`
 	CreatedBy    string    `json:"createdBy"`
-	Action       string    `json:"action"`       // CREATE | UPDATE | DELETE
-	FieldChanged *string   `json:"fieldChanged"` // nil when action is CREATE or DELETE
-	OldValue     *string   `json:"oldValue"`     // raw JSON
-	NewValue     *string   `json:"newValue"`     // raw JSON
+	Action       string    `json:"action"`
+	FieldChanged *string   `json:"fieldChanged"` // diffs only
+	OldValue     *string   `json:"oldValue"`     // raw JSON, diffs only
+	NewValue     *string   `json:"newValue"`     // raw JSON, diffs only
+	Details      *string   `json:"details"`      // raw JSON, events only
 	CreatedOn    time.Time `json:"createdOn"`
 }
 
 // CreateRiskChangeLogRequest is the payload for POST /risks/{riskId}/changes.
 type CreateRiskChangeLogRequest struct {
 	CreatedBy    string  `json:"createdBy"`
-	Action       string  `json:"action"` // CREATE | UPDATE | DELETE
+	Action       string  `json:"action"`
 	FieldChanged *string `json:"fieldChanged"`
 	OldValue     *string `json:"oldValue"` // raw JSON string
 	NewValue     *string `json:"newValue"` // raw JSON string
+	Details      *string `json:"details"`  // raw JSON string
 }
 
 // ListRiskChangeLogResponse is returned by GET /risks/{riskId}/changes.

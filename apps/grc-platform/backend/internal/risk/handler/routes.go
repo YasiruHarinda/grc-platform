@@ -36,6 +36,7 @@ type Deps struct {
 	ActionPlan   riskservice.ActionPlanService
 	Evidence     riskservice.EvidenceService
 	Escalation   riskservice.EscalationService
+	History      riskservice.HistoryService
 	Notification riskservice.NotificationService
 	Compliance   riskservice.ComplianceReferenceService
 	Category     riskservice.RiskCategoryService
@@ -126,12 +127,15 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	// submits for completion approval)
 	mux.HandleFunc("POST /api/v1/risks/{id}/escalate", d.handleEscalateRisk)
 	mux.HandleFunc("GET /api/v1/risks/{id}/escalations", d.handleListEscalations)
+
+	// Full risk history — every workflow event and field edit, behind the
+	// drawer's History tab.
+	mux.HandleFunc("GET /api/v1/risks/{id}/history", d.handleListRiskHistory)
 	// Answering an escalation: a comment returns the risk to its assigner.
 	// Replaces the MANAGEMENT action plan that used to serve this purpose.
 	mux.HandleFunc("POST /api/v1/risks/{id}/escalations/{escalationId}/comment", d.handleEscalationComment)
 
 	// TODO: remaining routes
-	// GET    /api/v1/risks/{id}/changelog
 	// GET/POST/DELETE /api/v1/risks/{id}/evidence
 	// GET/PATCH /api/v1/notifications
 	// POST/PUT /api/v1/teams

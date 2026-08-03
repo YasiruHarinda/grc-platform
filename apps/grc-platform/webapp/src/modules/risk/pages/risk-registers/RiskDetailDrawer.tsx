@@ -45,7 +45,8 @@ import {
   X,
 } from "@wso2/oxygen-ui-icons-react";
 import type { JSX, ReactNode } from "react";
-import type { ActionPlan, ActionPlanStep, Escalation, RiskDetail } from "../../api/riskApi";
+import type { ActionPlan, ActionPlanStep, Escalation, HistoryEntry, RiskDetail } from "../../api/riskApi";
+import RiskHistoryTimeline from "./RiskHistoryTimeline";
 import { RiskPrivilege } from "../../privileges";
 import { dialogPaperSx } from "../cardStyles";
 import { STATUS_CONFIG, calcAge, calcDue, formatDate } from "./utils";
@@ -91,6 +92,9 @@ interface RiskDetailDrawerProps extends DrawerActions {
   // Escalation history, newest first. Drives the banner and whether the
   // "Review Escalation" action is offered.
   escalations: Escalation[];
+  // Full risk history, newest first — every workflow event and field edit.
+  history: HistoryEntry[];
+  historyError: string;
   currentUserId: number | null;
   // id → display_name, resolved at render time so the Action Owner label
   // stays correct even when the drawer opens before the users list finishes
@@ -567,6 +571,8 @@ export default function RiskDetailDrawer({
   actionPlans,
   actionPlansError,
   escalations,
+  history,
+  historyError,
   currentUserId,
   userNames,
   onCompleteStep,
@@ -687,7 +693,7 @@ export default function RiskDetailDrawer({
           <Tab icon={<FileText size={15} />} iconPosition="start" label="Basic Information" sx={{ textTransform: "none", minHeight: 44, fontWeight: 600 }} />
           <Tab icon={<Shield size={15} />} iconPosition="start" label="Risk Treatment" sx={{ textTransform: "none", minHeight: 44, fontWeight: 600 }} />
           <Tab icon={<ListChecks size={15} />} iconPosition="start" label="Action Plans" sx={{ textTransform: "none", minHeight: 44, fontWeight: 600 }} />
-          <Tab icon={<TrendingUp size={15} />} iconPosition="start" label="Assessment History" sx={{ textTransform: "none", minHeight: 44, fontWeight: 600 }} />
+          <Tab icon={<TrendingUp size={15} />} iconPosition="start" label="History" sx={{ textTransform: "none", minHeight: 44, fontWeight: 600 }} />
         </Tabs>
       )}
 
@@ -852,41 +858,17 @@ export default function RiskDetailDrawer({
             </TabPanel>
 
             <TabPanel value={tab} index={3}>
-              {detail.assessments.length > 0 ? (
-                detail.assessments.map((a) => (
-                  <SectionCard
-                    key={a.is_initial ? "initial" : a.id}
-                    icon={<TrendingUp size={16} />}
-                    iconBg="action.hover"
-                    iconColor={a.residual_color_code}
-                    title={a.is_initial ? "Initial Assessment" : `Reassessment — ${formatDate(a.reassessment_date)}`}
-                    headerExtra={
-                      <Chip
-                        label={`${a.residual_level} : Score ${a.residual_rating}`}
-                        size="small"
-                        sx={{ bgcolor: a.residual_color_code, color: "#fff", fontWeight: 700 }}
-                      />
-                    }
-                  >
-                    {a.is_initial ? (
-                      <Typography variant="body2" color="text.secondary">
-                        Gross score recorded at risk creation, before any remediation progress.
-                      </Typography>
-                    ) : (
-                      <Stack gap={0.5}>
-                        <Typography variant="body2">{a.progress}</Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          Assessed by {a.assessed_by}
-                        </Typography>
-                      </Stack>
-                    )}
-                  </SectionCard>
-                ))
+              {historyError ? (
+                <Alert severity="error">{historyError}</Alert>
+              ) : history.length > 0 ? (
+                <SectionCard icon={<TrendingUp size={16} />} iconBg="#f1f5f9" iconColor="#475569" title="History">
+                  <RiskHistoryTimeline entries={history} />
+                </SectionCard>
               ) : (
                 <EmptyState
                   icon={<TrendingUp size={28} />}
-                  title="No reassessments yet"
-                  caption="Residual score history will appear here once this risk is reassessed."
+                  title="No history yet"
+                  caption="Actions taken on this risk will appear here."
                 />
               )}
             </TabPanel>

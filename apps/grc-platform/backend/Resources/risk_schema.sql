@@ -389,10 +389,19 @@ CREATE TABLE IF NOT EXISTS risk_change_log (
   id            BIGINT       NOT NULL AUTO_INCREMENT,
   risk_id       INT          NOT NULL,
   created_by    VARCHAR(255) NOT NULL,
-  action        ENUM('CREATE','UPDATE','DELETE') NOT NULL,
+  -- Field-diff actions (CREATE/UPDATE/DELETE) plus workflow events, mirroring
+  -- audit_trail's shape in audit_schema.sql. A diff row fills field_changed
+  -- and old_value/new_value; an event row leaves those NULL and puts its
+  -- payload in details.
+  action        ENUM('CREATE','UPDATE','DELETE',
+                     'SUBMIT','APPROVE','REJECT','ESCALATE','COMMENT',
+                     'ASSESS','COMPLETE','CLOSE','CANCEL') NOT NULL,
   field_changed VARCHAR(255) NULL,
   old_value     JSON         NULL,
   new_value     JSON         NULL,
+  -- Event payload, e.g. {"from":"...","to":"...","role":"Risk Owner"} on an
+  -- APPROVE, or {"comment":"..."} on a REJECT. NULL on field-diff rows.
+  details       JSON         NULL,
   created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   updated_by    VARCHAR(255) NULL,

@@ -54,6 +54,9 @@ func (d *Deps) handleEscalateRisk(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.recordEvent(r.Context(), riskID, by, model.HistoryEscalate, model.HistoryDetails{
+		From: model.StatusInRemediation, To: model.StatusEscalated,
+	})
 	d.NotifyEscalation(r.Context(), riskID, by)
 	response.WriteJSONValue(w, http.StatusOK, escalation)
 }
@@ -130,6 +133,9 @@ func (d *Deps) handleEscalationComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	d.recordEvent(r.Context(), riskID, by, model.HistoryComment, model.HistoryDetails{
+		From: model.StatusEscalated, To: model.StatusInRemediation, Comment: req.Comment,
+	})
 	// The risk is back with its assigner, who has to act on the comment.
 	detail, err := d.Risk.GetByID(r.Context(), riskID)
 	if err == nil {

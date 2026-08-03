@@ -155,6 +155,34 @@ export interface Escalation {
   created_at: string;
 }
 
+// HistoryEntry is one event in a risk's history. A row is either a field diff
+// (action CREATE/UPDATE/DELETE, with field_changed and old/new values) or a
+// workflow event (every other action, with details) — never both.
+export interface HistoryEntry {
+  id: number;
+  risk_id: number;
+  action: string;
+  field_changed: string | null;
+  old_value: string | null;
+  new_value: string | null;
+  details?: HistoryDetails;
+  created_by: string;
+  created_at: string;
+}
+
+// Every field is optional — each action fills only what it needs.
+export interface HistoryDetails {
+  from?: string;
+  to?: string;
+  role?: string;
+  comment?: string;
+  stage?: string;
+  level?: string;
+  previousLevel?: string;
+  overdueDays?: number;
+  plan?: string;
+}
+
 export interface RiskAssessmentRecord {
   id: number;
   risk_id: number;
@@ -758,6 +786,13 @@ export async function createActionPlan(
     }),
   });
   return handleResponse<ActionPlan>(res);
+}
+
+// fetchRiskHistory returns a risk's full history, newest first — every
+// workflow event and field edit, behind the drawer's History tab.
+export async function fetchRiskHistory(authFetch: AuthFetch, riskId: number): Promise<HistoryEntry[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/history`);
+  return handleResponse<HistoryEntry[]>(res);
 }
 
 // commentOnEscalation answers an escalation. The comment alone returns the risk

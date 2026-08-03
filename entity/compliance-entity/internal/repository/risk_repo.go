@@ -611,9 +611,9 @@ func (r *riskRepo) UpdateRisk(ctx context.Context, id int, req domain.UpdateRisk
 			action = "UPDATE"
 		}
 		if _, err = tx.ExecContext(ctx, `
-			INSERT INTO risk_change_log (risk_id, created_by, action, field_changed, old_value, new_value)
-			VALUES (?, ?, ?, ?, ?, ?)`,
-			id, req.UpdatedBy, action, e.FieldChanged, e.OldValue, e.NewValue); err != nil {
+			INSERT INTO risk_change_log (risk_id, created_by, action, field_changed, old_value, new_value, details)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			id, req.UpdatedBy, action, e.FieldChanged, e.OldValue, e.NewValue, e.Details); err != nil {
 			return nil, fmt.Errorf("risk.Update change log: %w", err)
 		}
 	}

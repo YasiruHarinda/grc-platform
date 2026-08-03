@@ -63,11 +63,15 @@ func (r *riskRepository) Update(ctx context.Context, id int, req model.UpdateRis
 	// field is not an instruction to clear it.
 	var changeLog []map[string]any
 	restrictedChanged := false
-	noteChange := func(field, oldVal, newVal string) {
+
+	// logChange records a field diff for the risk's history. It does not decide
+	// anything about re-approval — noteRestricted does that — so it can be
+	// called for every editable field without widening what forces a risk back
+	// through the approval chain.
+	logChange := func(field, oldVal, newVal string) {
 		if newVal == "" || oldVal == newVal {
 			return
 		}
-		restrictedChanged = true
 		oldJSON, _ := json.Marshal(oldVal)
 		newJSON, _ := json.Marshal(newVal)
 		changeLog = append(changeLog, map[string]any{
@@ -77,8 +81,28 @@ func (r *riskRepository) Update(ctx context.Context, id int, req model.UpdateRis
 			"newValue":     string(newJSON),
 		})
 	}
-	noteChange("implementation_date", derefOr(current.ImplementationDate), req.ImplementationDate)
-	noteChange("email_subject", derefOr(current.EmailSubject), req.EmailSubject)
+	// noteRestricted is logChange plus "this forces re-approval". Only the
+	// fields listed in the design doc's restricted-fields rule use it.
+	noteRestricted := func(field, oldVal, newVal string) {
+		if newVal == "" || oldVal == newVal {
+			return
+		}
+		restrictedChanged = true
+		logChange(field, oldVal, newVal)
+	}
+	noteRestricted("implementation_date", derefOr(current.ImplementationDate), req.ImplementationDate)
+	noteRestricted("email_subject", derefOr(current.EmailSubject), req.EmailSubject)
+
+	// Everything else is free to edit, but still belongs in the history — "who
+	// moved the date" is only half the question an overdue risk raises.
+	logChange("risk_title", current.RiskTitle, req.RiskTitle)
+	logChange("risk_description", current.RiskDescription, req.RiskDescription)
+	logChange("impact_description", derefOr(current.ImpactDescription), req.ImpactDescription)
+	logChange("treatment_strategy", derefOr(current.TreatmentStrategy), req.TreatmentStrategy)
+	logChange("progress", derefOr(current.Progress), req.Progress)
+	logChange("remarks", derefOr(current.Remarks), req.Remarks)
+	logChange("git_issue_url", derefOr(current.GitIssueURL), req.GitIssueURL)
+	logChange("reassessment_date", derefOr(current.ReassessmentDate), req.ReassessmentDate)
 
 	stepsChanged := actionStepsChanged(current, req)
 	if stepsChanged {

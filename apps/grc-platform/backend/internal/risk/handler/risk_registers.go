@@ -560,6 +560,7 @@ func (d *Deps) handleOwnerApproveRisk(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.recordOwnerApprove(r.Context(), id, detail, fromStatus, by)
 	d.notifyAfterOwnerApprove(id, detail, fromStatus, by)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -616,6 +617,7 @@ func (d *Deps) handleManagementApproveRisk(w http.ResponseWriter, r *http.Reques
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.recordEvent(r.Context(), id, by, model.HistoryApprove, model.HistoryDetails{Role: "Management"})
 	// Both management stages hand off to a compliance stage, whose recipient is
 	// a role rather than a named individual — suppressed for now.
 	notifyComplianceAdmins(emailer.EventComplianceApproved, id)
@@ -640,6 +642,9 @@ func (d *Deps) handleApproveRisk(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.recordEvent(r.Context(), id, by, model.HistoryApprove, model.HistoryDetails{
+		Role: "Compliance", From: model.StatusPendingComplianceReview, To: model.StatusInRemediation,
+	})
 	// Remediation can now start, so the two people who have to do it are told:
 	// the assigner who owns the risk's progress and the action plan's owner.
 	d.notifyRiskEvent(emailer.EventComplianceApproved, id, d.remediationRecipients(r.Context(), id), by, "")
@@ -732,6 +737,10 @@ func (d *Deps) handleRejectRisk(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.recordEvent(r.Context(), id, by, model.HistoryReject, model.HistoryDetails{
+		From: detail.WorkflowStatus, To: model.StatusPendingRevision,
+		Stage: rejectionStageFor(detail.WorkflowStatus), Comment: req.RejectionComment,
+	})
 	// One notification covers every rejection stage: whoever rejected it, the
 	// risk lands back with the assigner, who is the one who has to act.
 	d.notifyRiskEvent(emailer.EventRejected, id, []int{detail.AssignerID}, by, req.RejectionComment)
@@ -759,6 +768,9 @@ func (d *Deps) handleCompleteRisk(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.recordEvent(r.Context(), id, by, model.HistoryComplete, model.HistoryDetails{
+		From: model.StatusInRemediation, To: model.StatusPendingOwnerCompletion,
+	})
 	// Submitting for completion approval is what finally closes an escalation:
 	// up to this point the risk stayed in the Overdue tab even while back
 	// IN_REMEDIATION. Best-effort — the risk has already moved on, and failing
@@ -802,6 +814,9 @@ func (d *Deps) handleResubmitRisk(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.recordEvent(r.Context(), id, by, model.HistorySubmit, model.HistoryDetails{
+		From: model.StatusPendingRevision, To: resubmitTargetFor(stage), Stage: stage,
+	})
 	switch stage {
 	case "COMPLETION_OWNER":
 		d.notifyRiskEvent(emailer.EventPendingOwnerClosure, id, []int{detail.OwnerID}, by, "")
@@ -835,6 +850,7 @@ func (d *Deps) handleCancelRisk(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.recordEvent(r.Context(), id, by, model.HistoryCancel, model.HistoryDetails{To: model.StatusCancelled})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -856,6 +872,9 @@ func (d *Deps) handleCloseRisk(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.recordEvent(r.Context(), id, by, model.HistoryClose, model.HistoryDetails{
+		From: model.StatusPendingComplianceClosure, To: model.StatusClosed,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -869,4 +888,58 @@ func (d *Deps) notifyOwnerOfCompletion(ctx context.Context, riskID int, by strin
 		return
 	}
 	d.notifyRiskEvent(emailer.EventPendingOwnerClosure, riskID, []int{detail.OwnerID}, by, "")
+}
+
+// rejectionStageFor mirrors riskservice.Reject's stage mapping, so the history
+// records the same stage the risk row is stamped with.
+func rejectionStageFor(status string) string {
+	switch status {
+	case model.StatusPendingManagementApproval:
+		return "MANAGEMENT"
+	case model.StatusPendingComplianceReview:
+		return "COMPLIANCE"
+	case model.StatusPendingOwnerCompletion:
+		return "COMPLETION_OWNER"
+	case model.StatusPendingManagementClosure:
+		return "COMPLETION_MANAGEMENT"
+	default:
+		return "OWNER"
+	}
+}
+
+// resubmitTargetFor mirrors riskservice.Resubmit's routing.
+func resubmitTargetFor(rejectionStage string) string {
+	switch rejectionStage {
+	case "COMPLETION_OWNER":
+		return model.StatusPendingOwnerCompletion
+	case "COMPLETION_MANAGEMENT":
+		return model.StatusPendingManagementClosure
+	default:
+		return model.StatusPendingOwnerApproval
+	}
+}
+
+// recordOwnerApprove mirrors riskservice.OwnerApprove's routing so the history
+// records where the risk actually went. Kept next to notifyAfterOwnerApprove,
+// which recomputes the same thing for the same reason.
+func (d *Deps) recordOwnerApprove(ctx context.Context, id int, detail *model.RiskDetail, fromStatus, by string) {
+	acceptHigh := detail.TreatmentStrategy != nil && *detail.TreatmentStrategy == "ACCEPT" &&
+		detail.GrossScore != nil && detail.GrossScore.RiskLevel == "HIGH"
+
+	to := ""
+	switch fromStatus {
+	case model.StatusPendingOwnerApproval, model.StatusPendingAmendment:
+		to = model.StatusPendingComplianceReview
+		if acceptHigh {
+			to = model.StatusPendingManagementApproval
+		}
+	case model.StatusPendingOwnerCompletion:
+		to = model.StatusPendingComplianceClosure
+		if acceptHigh {
+			to = model.StatusPendingManagementClosure
+		}
+	}
+	d.recordEvent(ctx, id, by, model.HistoryApprove, model.HistoryDetails{
+		Role: "Risk Owner", From: fromStatus, To: to,
+	})
 }
