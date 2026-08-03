@@ -19,11 +19,9 @@ package handler
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/apierror"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
@@ -118,80 +116,13 @@ func (d *Deps) handleCreateRisk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	d.notifyRiskOwnerCreated(result.ID, req.OwnerID, createdBy)
+	// The risk owner is notified by name; compliance admins are a role and stay
+	// suppressed for now — see notifyComplianceAdmins.
+	d.notifyRiskEvent(emailer.EventCreated, result.ID, []int{req.OwnerID}, createdBy, "")
+	notifyComplianceAdmins(emailer.EventCreated, result.ID)
 
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/risks/%d", result.ID))
 	response.WriteJSONValue(w, http.StatusCreated, result)
-}
-
-// notifyTimeout caps the whole background notification: two Compliance Entity
-// lookups plus an email send that retries once. It has to outlast that retry —
-// sized too tightly, it would cancel the second attempt before it could land,
-// which is the exact failure the retry exists to fix. The individual HTTP
-// clients all have their own timeouts, so this is a backstop against a stuck
-// goroutine rather than the mechanism that bounds any single call.
-const notifyTimeout = 2 * time.Minute
-
-// notifyRiskOwnerCreated emails the risk owner that a new risk has been
-// assigned to them. Best-effort and detached: the risk is already committed by
-// the time this runs, so any failure here is logged and swallowed rather than
-// affecting the 201 response. It runs in the background on a context of its
-// own — email-service cold starts take tens of seconds and the request context
-// is cancelled the moment the handler returns, so doing this inline would both
-// stall the response and cut the send off midway.
-func (d *Deps) notifyRiskOwnerCreated(riskID, ownerID int, createdBy string) {
-	go func() {
-		// net/http recovers a panic raised on the request path; a bare
-		// goroutine has no such net, so an unguarded panic here would take the
-		// whole process down instead of failing one notification.
-		defer func() {
-			if p := recover(); p != nil {
-				slog.Error("risk creation email: panic", "riskId", riskID, "panic", p)
-			}
-		}()
-		ctx, cancel := context.WithTimeout(context.Background(), notifyTimeout)
-		defer cancel()
-		d.sendRiskOwnerCreatedEmail(ctx, riskID, ownerID, createdBy)
-	}()
-}
-
-// sendRiskOwnerCreatedEmail resolves the owner and the risk detail, then sends
-// the notification. Split out from notifyRiskOwnerCreated so the work is
-// callable synchronously in a test without the goroutine.
-func (d *Deps) sendRiskOwnerCreatedEmail(ctx context.Context, riskID, ownerID int, createdBy string) {
-	owner, err := d.Users.GetByID(ctx, ownerID)
-	if err != nil {
-		slog.Warn("risk creation email: failed to resolve owner", "riskId", riskID, "ownerId", ownerID, "err", err)
-		return
-	}
-	if owner == nil || owner.Email == "" {
-		slog.Warn("risk creation email: owner has no email on file", "riskId", riskID, "ownerId", ownerID)
-		return
-	}
-
-	detail, err := d.Risk.GetByID(ctx, riskID)
-	if err != nil {
-		slog.Warn("risk creation email: failed to load risk detail", "riskId", riskID, "err", err)
-		return
-	}
-
-	riskLevel := ""
-	if detail.GrossScore != nil {
-		riskLevel = detail.GrossScore.RiskLevel
-	}
-
-	if err := d.Email.SendRiskCreated(ctx, owner.Email, emailer.RiskCreated{
-		RiskCode:       detail.RiskCode,
-		RiskTitle:      detail.RiskTitle,
-		SourceRegister: detail.SourceRegisterName,
-		RiskLevel:      riskLevel,
-		CreatedBy:      createdBy,
-		DetailURL:      fmt.Sprintf("%s/risk/registers?riskId=%d", d.FrontendBaseURL, riskID),
-	}); err != nil {
-		slog.Warn("risk creation email: send failed", "riskId", riskID, "ownerEmail", owner.Email, "err", err)
-		return
-	}
-	slog.Info("risk creation email sent", "riskId", riskID, "ownerEmail", owner.Email)
 }
 
 // validateCreateRiskRequest performs business validation on the incoming payload.

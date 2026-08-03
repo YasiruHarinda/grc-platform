@@ -167,13 +167,20 @@ function LevelChip({ level, color }: { level: string; color: string }): JSX.Elem
 
 const RISK_CLOSURE_STATUSES = new Set([
   "PENDING_OWNER_COMPLETION_APPROVAL",
+  "PENDING_MANAGEMENT_CLOSURE_APPROVAL",
   "PENDING_COMPLIANCE_CLOSURE",
 ]);
+
+// Rejection stages that mean "this was rejected on the way out, not on the way
+// in" — a risk sent back from either closure approval is still closure work.
+const RISK_CLOSURE_REJECTION_STAGES = new Set(["COMPLETION_OWNER", "COMPLETION_MANAGEMENT"]);
 
 function RiskTypeChip({ riskType, workflowStatus, rejectionStage }: { riskType: string; workflowStatus: string; rejectionStage?: string | null }): JSX.Element {
   const isRiskClosure =
     RISK_CLOSURE_STATUSES.has(workflowStatus) ||
-    (workflowStatus === "PENDING_REVISION" && rejectionStage === "COMPLETION_OWNER");
+    (workflowStatus === "PENDING_REVISION" &&
+      !!rejectionStage &&
+      RISK_CLOSURE_REJECTION_STAGES.has(rejectionStage));
   if (isRiskClosure) {
     return <Chip label="Risk Closure" color="success" size="small" variant="outlined" />;
   }

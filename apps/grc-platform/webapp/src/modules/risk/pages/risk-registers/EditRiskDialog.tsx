@@ -439,11 +439,14 @@ export default function EditRiskDialog({
       fullWidth
       PaperProps={{ sx: dialogPaperSx }}
     >
+      {/* DialogTitle already renders an <h2>, so both children are spans —
+          a nested <h6>/<p> inside a heading is invalid HTML and React warns
+          about it. display:block keeps them on separate lines. */}
       <DialogTitle>
-        <Typography variant="h6" fontWeight={700}>
+        <Typography component="span" variant="h6" fontWeight={700} display="block">
           Edit Risk
         </Typography>
-        <Typography variant="caption" color="text.secondary">
+        <Typography component="span" variant="caption" color="text.secondary" display="block">
           {detail.risk_code}
         </Typography>
       </DialogTitle>

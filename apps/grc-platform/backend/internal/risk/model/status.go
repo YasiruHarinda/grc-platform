@@ -25,7 +25,12 @@ const (
 	StatusPendingComplianceReview   = "PENDING_COMPLIANCE_REVIEW"
 	StatusInRemediation             = "IN_REMEDIATION"
 	StatusPendingOwnerCompletion    = "PENDING_OWNER_COMPLETION_APPROVAL"
-	StatusPendingComplianceClosure  = "PENDING_COMPLIANCE_CLOSURE"
+	// StatusPendingManagementClosure is the closure-path counterpart of
+	// StatusPendingManagementApproval: an ACCEPT + HIGH risk needs the same
+	// named Management Approver to sign off on the finished remediation before
+	// Compliance closes it. Non-ACCEPT/HIGH risks skip it entirely.
+	StatusPendingManagementClosure = "PENDING_MANAGEMENT_CLOSURE_APPROVAL"
+	StatusPendingComplianceClosure = "PENDING_COMPLIANCE_CLOSURE"
 	StatusPendingAmendment          = "PENDING_AMENDMENT"
 	StatusPendingRevision           = "PENDING_REVISION"
 	StatusEscalated                 = "ESCALATED"

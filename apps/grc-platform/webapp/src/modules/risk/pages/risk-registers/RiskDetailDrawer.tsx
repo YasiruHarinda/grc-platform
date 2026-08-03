@@ -99,6 +99,7 @@ const REJECTION_STAGE_LABELS: Record<string, string> = {
   MANAGEMENT: "Management",
   COMPLIANCE: "Compliance",
   COMPLETION_OWNER: "Risk Owner (Completion)",
+  COMPLETION_MANAGEMENT: "Management (Completion)",
 };
 
 // ── Shared visual building blocks (matching Audit's ControlDrawer.tsx —
@@ -421,6 +422,11 @@ function ActionFooter({
     case "PENDING_OWNER_COMPLETION_APPROVAL":
       return rejectAndApprove("Approve Completion", actions.onOwnerApprove, RiskPrivilege.OwnerApproveRisk, RiskPrivilege.OwnerRejectRisk, isRiskOwner);
 
+    // Closure-path management sign-off — reuses the same management approve
+    // endpoint, which routes on the risk's current status.
+    case "PENDING_MANAGEMENT_CLOSURE_APPROVAL":
+      return rejectAndApprove("Approve Closure", actions.onManagementApprove, RiskPrivilege.ManagementApproveRisk, RiskPrivilege.ManagementRejectRisk, isManagementApprover);
+
     case "IN_REMEDIATION": {
       const showEdit = can(RiskPrivilege.UpdateRisk) && isRiskAssigner;
       // Reassessment is deliberately NOT identity-gated — the backend applies
@@ -701,7 +707,7 @@ export default function RiskDetailDrawer({
 
               <SectionCard icon={<Users size={16} />} iconBg="#eff6ff" iconColor="#2563eb" title="Ownership">
                 <InfoGrid>
-                  <InfoTile label="Assigned By">{detail.assigner_name}</InfoTile>
+                  <InfoTile label="Assigned To">{detail.assigner_name}</InfoTile>
                   <InfoTile label="Risk Owner">{detail.owner_name}</InfoTile>
                   <InfoTile label="Management Approver">{detail.management_approver_name || "—"}</InfoTile>
                 </InfoGrid>

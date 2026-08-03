@@ -35,20 +35,21 @@ func NewRiskService(repo repository.RiskRepository) RiskService {
 }
 
 // validRiskStatuses mirrors the risk.workflow_status ENUM in risk_schema.sql
-// exactly (12 statuses). Keep in sync with the schema.
+// exactly (13 statuses). Keep in sync with the schema.
 var validRiskStatuses = map[string]bool{
-	"DRAFT":                             true,
-	"PENDING_RISK_OWNER_APPROVAL":       true,
-	"PENDING_MANAGEMENT_APPROVAL":       true,
-	"PENDING_COMPLIANCE_REVIEW":         true,
-	"IN_REMEDIATION":                    true,
-	"PENDING_OWNER_COMPLETION_APPROVAL": true,
-	"PENDING_COMPLIANCE_CLOSURE":        true,
-	"PENDING_AMENDMENT":                 true,
-	"PENDING_REVISION":                  true,
-	"ESCALATED":                         true,
-	"CLOSED":                            true,
-	"CANCELLED":                         true,
+	"DRAFT":                               true,
+	"PENDING_RISK_OWNER_APPROVAL":         true,
+	"PENDING_MANAGEMENT_APPROVAL":         true,
+	"PENDING_COMPLIANCE_REVIEW":           true,
+	"IN_REMEDIATION":                      true,
+	"PENDING_OWNER_COMPLETION_APPROVAL":   true,
+	"PENDING_MANAGEMENT_CLOSURE_APPROVAL": true,
+	"PENDING_COMPLIANCE_CLOSURE":          true,
+	"PENDING_AMENDMENT":                   true,
+	"PENDING_REVISION":                    true,
+	"ESCALATED":                           true,
+	"CLOSED":                              true,
+	"CANCELLED":                           true,
 }
 
 var validRiskQuarters = map[string]bool{"Q1": true, "Q2": true, "Q3": true, "Q4": true}
@@ -98,13 +99,25 @@ var allowedRiskTransitions = map[string][]string{
 	"PENDING_COMPLIANCE_REVIEW": {
 		"IN_REMEDIATION", "PENDING_REVISION", "ESCALATED", "CANCELLED",
 	},
-	"IN_REMEDIATION": {"PENDING_OWNER_COMPLETION_APPROVAL", "ESCALATED"},
+	// PENDING_AMENDMENT: editing a restricted field (implementation_date or the
+	// action steps) on an in-remediation risk sends it back through the approval
+	// chain. Its absence here rejected a legitimate edit with a 400 — exactly
+	// the "less permissive than the caller" failure this map's comment warns
+	// about.
+	"IN_REMEDIATION": {"PENDING_OWNER_COMPLETION_APPROVAL", "PENDING_AMENDMENT", "ESCALATED"},
 	"PENDING_OWNER_COMPLETION_APPROVAL": {
+		"PENDING_COMPLIANCE_CLOSURE", "PENDING_MANAGEMENT_CLOSURE_APPROVAL",
+		"PENDING_REVISION", "IN_REMEDIATION",
+	},
+	// ACCEPT + HIGH only: the risk's management_approver_id signs off on the
+	// completed remediation before compliance closes it.
+	"PENDING_MANAGEMENT_CLOSURE_APPROVAL": {
 		"PENDING_COMPLIANCE_CLOSURE", "PENDING_REVISION", "IN_REMEDIATION",
 	},
 	"PENDING_COMPLIANCE_CLOSURE": {"CLOSED", "IN_REMEDIATION"},
 	"PENDING_REVISION": {
 		"PENDING_RISK_OWNER_APPROVAL", "PENDING_OWNER_COMPLETION_APPROVAL",
+		"PENDING_MANAGEMENT_CLOSURE_APPROVAL",
 		"PENDING_COMPLIANCE_REVIEW", "CANCELLED",
 	},
 	// IN_REMEDIATION: the daily escalation job (internal/job) reverts a risk

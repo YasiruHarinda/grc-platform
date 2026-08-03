@@ -18,6 +18,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -112,15 +113,20 @@ func TestIsTeamScopedOnly(t *testing.T) {
 // fakeUserRepo resolves exactly one email to one id, so requireRiskActor can be
 // exercised without the Compliance Entity. Every other method is unused here.
 type fakeUserRepo struct {
-	email string
-	id    int
+	email       string
+	id          int
+	displayName string
+	err         error
 }
 
 func (f fakeUserRepo) GetByEmail(_ context.Context, email string) (*user.User, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
 	if email != f.email {
 		return nil, nil // "not found" is a domain condition, not an error
 	}
-	return &user.User{ID: f.id, Email: email}, nil
+	return &user.User{ID: f.id, Email: email, DisplayName: f.displayName}, nil
 }
 func (f fakeUserRepo) GetByID(context.Context, int) (*user.User, error) { return nil, nil }
 func (f fakeUserRepo) Upsert(context.Context, string, string, string) (*user.User, error) {
@@ -192,3 +198,52 @@ func TestRequireRiskActor(t *testing.T) {
 		})
 	}
 }
+
+// describeActor decides how the person who triggered a notification appears in
+// the email. Every failure path must still yield something sendable — a
+// cosmetic lookup is never worth losing a notification over.
+func TestDescribeActor(t *testing.T) {
+	cases := []struct {
+		name string
+		repo fakeUserRepo
+		in   string
+		want string
+	}{
+		{
+			"name and email when resolvable",
+			fakeUserRepo{email: "w@wso2.com", id: 1, displayName: "Wethmi Ranasinghe"},
+			"w@wso2.com",
+			"Wethmi Ranasinghe (w@wso2.com)",
+		},
+		{
+			"bare email when the user has no platform row",
+			fakeUserRepo{email: "someone-else@wso2.com", id: 1, displayName: "Other"},
+			"w@wso2.com",
+			"w@wso2.com",
+		},
+		{
+			"bare email when the row has no display name",
+			fakeUserRepo{email: "w@wso2.com", id: 1, displayName: "   "},
+			"w@wso2.com",
+			"w@wso2.com",
+		},
+		{
+			"bare email when the lookup fails",
+			fakeUserRepo{err: errStub},
+			"w@wso2.com",
+			"w@wso2.com",
+		},
+		{"empty in, empty out", fakeUserRepo{}, "", ""},
+		{"whitespace is trimmed", fakeUserRepo{}, "  ", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			d := &Deps{Users: c.repo}
+			if got := d.describeActor(context.Background(), c.in); got != c.want {
+				t.Errorf("describeActor(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+var errStub = errors.New("entity unavailable")

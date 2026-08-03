@@ -30,6 +30,7 @@ export const STATUS_CONFIG: Record<string, StatusCfg> = {
   PENDING_COMPLIANCE_REVIEW:      { label: "Pending Compliance Approval",  color: "default" },
   IN_REMEDIATION:                 { label: "In Remediation",               color: "info" },
   PENDING_OWNER_COMPLETION_APPROVAL: { label: "Awaiting Owner Sign-off",   color: "warning" },
+  PENDING_MANAGEMENT_CLOSURE_APPROVAL: { label: "Awaiting Management Sign-off", color: "warning" },
   PENDING_COMPLIANCE_CLOSURE:     { label: "Awaiting Closure",             color: "default", sx: { bgcolor: "#c8e6c9", color: "#1b5e20" } },
   PENDING_AMENDMENT:              { label: "Pending Amendment",            color: "warning" },
   PENDING_REVISION:               { label: "Pending Revision",             color: "error" },
@@ -107,6 +108,9 @@ export const PENDING_OWNER_STATUSES = [
 
 export const PENDING_MANAGEMENT_STATUSES = [
   "PENDING_MANAGEMENT_APPROVAL",
+  // Closure-path counterpart, shown in the same tab with a "Risk Closure" chip
+  // — mirroring how PENDING_OWNER_COMPLETION_APPROVAL sits in the owner tab.
+  "PENDING_MANAGEMENT_CLOSURE_APPROVAL",
 ];
 
 export const PENDING_COMPLIANCE_STATUSES = [

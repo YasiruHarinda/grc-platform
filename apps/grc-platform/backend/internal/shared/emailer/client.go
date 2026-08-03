@@ -139,49 +139,321 @@ type responseMessage struct {
 	Message string `json:"message"`
 }
 
-// RiskCreated holds the fields needed to notify a risk owner that a new risk
-// has been assigned to them.
-type RiskCreated struct {
+// RiskEvent identifies a point in the risk lifecycle that notifies someone.
+// The value is only ever used to look up a template — it is never persisted, so
+// renaming one is safe.
+type RiskEvent string
+
+const (
+	EventCreated             RiskEvent = "CREATED"
+	EventPendingMgmtApproval RiskEvent = "PENDING_MGMT_APPROVAL"
+	EventComplianceApproved  RiskEvent = "COMPLIANCE_APPROVED"
+	EventActionPlanCompleted RiskEvent = "ACTION_PLAN_COMPLETED"
+	EventPendingOwnerClosure RiskEvent = "PENDING_OWNER_CLOSURE"
+	EventPendingMgmtClosure  RiskEvent = "PENDING_MGMT_CLOSURE"
+	EventRejected            RiskEvent = "REJECTED"
+	EventEscalated           RiskEvent = "ESCALATED"
+)
+
+// RiskEventInfo carries everything any template might render. Fields not
+// relevant to a given event are left zero and the shared body omits them, which
+// is why there is one struct rather than one per event.
+type RiskEventInfo struct {
 	RiskCode       string
 	RiskTitle      string
 	SourceRegister string
 	RiskLevel      string
-	CreatedBy      string
-	DetailURL      string
+	// Actor is whoever performed the action that triggered this email — the
+	// person who created, approved, rejected, or completed something. It is
+	// NOT the risk's assigner or owner, which are permanent fields on the risk;
+	// the same person may appear here for one event and not the next. Each
+	// event labels it for itself (see eventTemplate.actorLabel), because
+	// "Created by" and "Rejected by" are not interchangeable.
+	Actor string
+	// Comment carries a rejection reason or an escalation note. Omitted from
+	// the body when empty.
+	Comment   string
+	DetailURL string
+	// People maps a role name (RoleRiskAssigner and friends) to the person
+	// filling it, already formatted as "Display Name (email)". Only the roles
+	// this event declares in its template are read; anything else is ignored,
+	// and a role with no entry is skipped rather than rendered blank.
+	//
+	// The event owns *what* each role must do; the caller owns *who* fills it.
+	// That split keeps the instruction copy here, next to the subject and lead,
+	// instead of scattered across handlers.
+	People map[string][]string
 }
 
-// riskCreatedTemplate renders RiskCreated into the email body. html/template
-// (not text/template) is used deliberately so free-text fields like RiskTitle
-// are escaped for HTML/URL context.
-var riskCreatedTemplate = template.Must(template.New("riskCreated").Parse(`<html>
-<body style="font-family: Arial, sans-serif; font-size: 14px; color: #1a1a1a;">
-<p>A new risk has been created and assigned to you.</p>
-<table cellpadding="4" cellspacing="0">
-<tr><td><strong>Risk Code:</strong></td><td>{{.RiskCode}}</td></tr>
-<tr><td><strong>Title:</strong></td><td>{{.RiskTitle}}</td></tr>
-<tr><td><strong>Source Register:</strong></td><td>{{.SourceRegister}}</td></tr>
-<tr><td><strong>Risk Level:</strong></td><td>{{.RiskLevel}}</td></tr>
-<tr><td><strong>Created by:</strong></td><td>{{.CreatedBy}}</td></tr>
+// Role names used as keys in RiskEventInfo.People. They are display strings —
+// they appear verbatim in the email — and are constants only so a caller and a
+// template can't disagree on spelling.
+const (
+	RoleRiskAssigner       = "Risk Assigner"
+	RoleRiskOwner          = "Risk Owner"
+	RoleManagementApprover = "Management Approver"
+	RoleActionOwner        = "Action Owner"
+)
+
+// roleInstruction is one line of the "Who needs to act" block: a role and what
+// that role is expected to do next for this particular event.
+type roleInstruction struct {
+	role        string
+	instruction string
+}
+
+// renderedAction is a roleInstruction joined to the actual people filling it,
+// ready for the template.
+type renderedAction struct {
+	Role        string
+	People      []string
+	Instruction string
+}
+
+// riskCreated is retained as an alias so the original call site and its tests
+// keep compiling; new code should use RiskEventInfo directly.
+type RiskCreated = RiskEventInfo
+
+// eventTemplate is the per-event copy. Everything structural (the field table,
+// the comment block, the link) lives in bodyTemplate below, so adding an event
+// is a subject line and a lead sentence rather than another HTML blob.
+type eventTemplate struct {
+	subject func(RiskEventInfo) string
+	lead    string
+	// actorLabel names what Actor did, for this event specifically — "Created
+	// by" on creation, "Rejected by" on a rejection. A single generic label
+	// would leave the reader guessing which of the several people on a risk
+	// the address belongs to.
+	actorLabel string
+	// actions lists, in order, the roles expected to act once this event has
+	// fired, and what each must do. Empty for events that are purely
+	// informational.
+	actions []roleInstruction
+}
+
+// eventTemplates is the single place to see everything the platform sends.
+// A RiskEvent with no entry here is a programming error and SendRiskEvent
+// rejects it rather than sending a blank email.
+var eventTemplates = map[RiskEvent]eventTemplate{
+	EventCreated: {
+		subject: func(i RiskEventInfo) string {
+			return fmt.Sprintf("New Risk Assigned: %s - %s", i.RiskCode, i.RiskTitle)
+		},
+		lead:       "A new risk has been created and assigned to you.",
+		actorLabel: "Created by",
+		actions: []roleInstruction{
+			{RoleRiskOwner, "Review this risk and approve or reject it."},
+		},
+	},
+	EventPendingMgmtApproval: {
+		subject: func(i RiskEventInfo) string {
+			return fmt.Sprintf("Management Approval Required: %s - %s", i.RiskCode, i.RiskTitle)
+		},
+		lead:       "This risk has been approved by its Risk Owner and now needs your management approval.",
+		actorLabel: "Approved by Risk Owner",
+		actions: []roleInstruction{
+			{RoleManagementApprover, "Review this risk and approve or reject the Accept treatment."},
+		},
+	},
+	EventComplianceApproved: {
+		subject: func(i RiskEventInfo) string {
+			return fmt.Sprintf("Risk Approved — Remediation Can Begin: %s - %s", i.RiskCode, i.RiskTitle)
+		},
+		lead:       "This risk has cleared compliance approval. Remediation can now begin.",
+		actorLabel: "Approved by Compliance",
+		actions: []roleInstruction{
+			{RoleActionOwner, "Complete the action plan steps, then mark the plan complete."},
+			{RoleRiskAssigner, "Track remediation progress, then reassess and submit for approval."},
+		},
+	},
+	EventActionPlanCompleted: {
+		subject: func(i RiskEventInfo) string {
+			return fmt.Sprintf("Action Plan Completed: %s - %s", i.RiskCode, i.RiskTitle)
+		},
+		lead:       "An action plan for this risk has been completed. Please reassess and submit it for approval.",
+		actorLabel: "Completed by",
+		actions: []roleInstruction{
+			{RoleRiskAssigner, "Reassess the risk and submit it for approval."},
+		},
+	},
+	EventPendingOwnerClosure: {
+		subject: func(i RiskEventInfo) string {
+			return fmt.Sprintf("Completion Approval Required: %s - %s", i.RiskCode, i.RiskTitle)
+		},
+		lead:       "Remediation for this risk has been marked complete and needs your sign-off as Risk Owner.",
+		actorLabel: "Submitted by",
+		actions: []roleInstruction{
+			{RoleRiskOwner, "Review the completed remediation and approve or reject the closure."},
+		},
+	},
+	EventPendingMgmtClosure: {
+		subject: func(i RiskEventInfo) string {
+			return fmt.Sprintf("Closure Approval Required: %s - %s", i.RiskCode, i.RiskTitle)
+		},
+		lead:       "This risk's completed remediation has been signed off by its Risk Owner and now needs your management approval before closure.",
+		actorLabel: "Approved by Risk Owner",
+		actions: []roleInstruction{
+			{RoleManagementApprover, "Review the completed remediation and approve or reject the closure."},
+		},
+	},
+	EventRejected: {
+		subject: func(i RiskEventInfo) string {
+			return fmt.Sprintf("Risk Returned for Revision: %s - %s", i.RiskCode, i.RiskTitle)
+		},
+		lead:       "This risk has been rejected and returned to you for revision.",
+		actorLabel: "Rejected by",
+		actions: []roleInstruction{
+			{RoleRiskAssigner, "Review the comment above, make the required changes, and resubmit."},
+		},
+	},
+	EventEscalated: {
+		subject: func(i RiskEventInfo) string {
+			return fmt.Sprintf("Risk Escalated — Remediation Overdue: %s - %s", i.RiskCode, i.RiskTitle)
+		},
+		lead:       "This risk has passed its implementation date without completing remediation and has been escalated.",
+		actorLabel: "Escalated by",
+		actions: []roleInstruction{
+			{RoleActionOwner, "Complete the outstanding action plan steps."},
+			{RoleRiskAssigner, "Bring remediation back on track and keep the risk updated."},
+		},
+	},
+}
+
+// bodyTemplate renders the shared body for every event. html/template (not
+// text/template) is used deliberately so free-text fields like RiskTitle and
+// Comment are escaped for HTML/URL context — several of them are user-supplied.
+// bodyTemplate renders the shared body for every event.
+//
+// Deliberately old-fashioned HTML: tables for layout, inline styles, no
+// stylesheet. Email clients (Outlook especially) ignore <style> blocks, drop
+// flexbox and grid, and collapse margins unpredictably — tables with explicit
+// widths and valign are the only layout that renders consistently across them.
+//
+// html/template (not text/template) is used so free-text fields like RiskTitle
+// and Comment are escaped for HTML/URL context; several are user-supplied.
+var bodyTemplate = template.Must(template.New("riskEvent").Parse(`<html>
+<body style="margin:0; padding:0; background-color:#f4f5f7;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f5f7; padding:24px 12px;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px; background-color:#ffffff; border:1px solid #e1e4e8; border-radius:6px; font-family:Arial,Helvetica,sans-serif; font-size:14px; color:#1a1a1a;">
+
+<tr><td style="padding:20px 24px 8px 24px; font-size:15px; line-height:1.5;">{{.Lead}}</td></tr>
+
+<tr><td style="padding:8px 24px 4px 24px;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:14px;">
+<tr>
+<td width="170" valign="top" style="padding:6px 12px 6px 0; color:#57606a;">Risk Code</td>
+<td valign="top" style="padding:6px 0; font-weight:bold;">{{.Info.RiskCode}}</td>
+</tr>
+<tr>
+<td width="170" valign="top" style="padding:6px 12px 6px 0; color:#57606a;">Title</td>
+<td valign="top" style="padding:6px 0;">{{.Info.RiskTitle}}</td>
+</tr>
+<tr>
+<td width="170" valign="top" style="padding:6px 12px 6px 0; color:#57606a;">Source Register</td>
+<td valign="top" style="padding:6px 0;">{{.Info.SourceRegister}}</td>
+</tr>
+<tr>
+<td width="170" valign="top" style="padding:6px 12px 6px 0; color:#57606a;">Risk Level</td>
+<td valign="top" style="padding:6px 0;">{{.Info.RiskLevel}}</td>
+</tr>
+{{if .Info.Actor}}<tr>
+<td width="170" valign="top" style="padding:6px 12px 6px 0; color:#57606a;">{{.ActorLabel}}</td>
+<td valign="top" style="padding:6px 0;">{{.Info.Actor}}</td>
+</tr>{{end}}
 </table>
-<p><a href="{{.DetailURL}}">View risk</a></p>
+</td></tr>
+
+{{if .Info.Comment}}<tr><td style="padding:12px 24px 4px 24px;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0">
+<tr><td style="padding:12px 14px; background-color:#fff8e1; border-left:3px solid #f0ad4e; font-size:14px; line-height:1.5;">
+<span style="color:#57606a;">Comment</span><br>{{.Info.Comment}}
+</td></tr>
+</table>
+</td></tr>{{end}}
+
+{{if .Actions}}<tr><td style="padding:16px 24px 4px 24px;">
+<div style="font-weight:bold; font-size:14px; padding-bottom:8px; border-bottom:1px solid #e1e4e8;">Who needs to act</div>
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:14px;">
+{{range .Actions}}<tr>
+<td width="170" valign="top" style="padding:10px 12px 10px 0; font-weight:bold;">{{.Role}}</td>
+<td valign="top" style="padding:10px 0;">
+{{range .People}}<div>{{.}}</div>{{end}}
+<div style="color:#57606a; padding-top:2px;">{{.Instruction}}</div>
+</td>
+</tr>{{end}}
+</table>
+</td></tr>{{end}}
+
+<tr><td style="padding:20px 24px 24px 24px;">
+<a href="{{.Info.DetailURL}}" style="display:inline-block; padding:10px 20px; background-color:#ff7300; color:#ffffff; text-decoration:none; border-radius:4px; font-weight:bold; font-size:14px;">View risk</a>
+</td></tr>
+
+</table>
+</td></tr>
+</table>
 </body>
 </html>`))
 
-// SendRiskCreated notifies ownerEmail that a risk was created and assigned to
-// them. ownerEmail is the only recipient — no cc/bcc are ever sent, by design.
-// Retries once on a transport failure to ride out an email-service cold start;
-// see sendAttempts. Callers must expect this to block for up to two full client
-// timeouts and so should not run it on a request path.
+// SendRiskCreated is the original single-purpose entry point, kept so the
+// risk-creation path and its tests are unaffected by the move to SendRiskEvent.
 func (c *Client) SendRiskCreated(ctx context.Context, ownerEmail string, info RiskCreated) error {
+	return c.SendRiskEvent(ctx, EventCreated, []string{ownerEmail}, info)
+}
+
+// SendRiskEvent notifies every address in to about ev. All recipients go in a
+// single To header rather than one message each: the email-service scales to
+// zero, so one send per recipient would multiply the cold-start cost and, for
+// an escalation's several recipients, could outlast the caller's timeout.
+// Recipients therefore see each other, which is intended for an internal
+// notification. No cc/bcc are ever sent.
+//
+// Retries once on a transport failure to ride out a cold start; see
+// sendAttempts. Callers must expect this to block for up to two full client
+// timeouts and so should not run it on a request path.
+func (c *Client) SendRiskEvent(ctx context.Context, ev RiskEvent, to []string, info RiskEventInfo) error {
+	tpl, ok := eventTemplates[ev]
+	if !ok {
+		return fmt.Errorf("emailer: no template for event %q", ev)
+	}
+	// Drop blanks rather than handing the service an empty recipient, which it
+	// answers with a 400 that the retry logic correctly refuses to repeat.
+	recipients := make([]string, 0, len(to))
+	for _, addr := range to {
+		if strings.TrimSpace(addr) != "" {
+			recipients = append(recipients, addr)
+		}
+	}
+	if len(recipients) == 0 {
+		return fmt.Errorf("emailer: no recipients for event %q", ev)
+	}
+
+	// Join the event's declared roles to the people the caller supplied. A role
+	// nobody fills is dropped rather than rendered as an empty row — a risk may
+	// legitimately have no action owner yet.
+	rendered := make([]renderedAction, 0, len(tpl.actions))
+	for _, a := range tpl.actions {
+		people := info.People[a.role]
+		if len(people) == 0 {
+			continue
+		}
+		rendered = append(rendered, renderedAction{Role: a.role, People: people, Instruction: a.instruction})
+	}
+
 	var body bytes.Buffer
-	if err := riskCreatedTemplate.Execute(&body, info); err != nil {
+	if err := bodyTemplate.Execute(&body, struct {
+		Lead       string
+		ActorLabel string
+		Actions    []renderedAction
+		Info       RiskEventInfo
+	}{tpl.lead, tpl.actorLabel, rendered, info}); err != nil {
 		return fmt.Errorf("emailer: render template: %w", err)
 	}
 
 	reqBody := sendEmailRequest{
-		To:       []string{ownerEmail},
+		To:       recipients,
 		From:     c.from,
-		Subject:  fmt.Sprintf("New Risk Assigned: %s - %s", info.RiskCode, info.RiskTitle),
+		Subject:  tpl.subject(info),
 		Template: base64.StdEncoding.EncodeToString(body.Bytes()),
 	}
 	b, err := json.Marshal(reqBody)
@@ -240,4 +512,19 @@ func (c *Client) sendOnce(ctx context.Context, body []byte) (retryable bool, err
 		return false, fmt.Errorf("emailer: email-service returned %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	return false, nil
+}
+
+// ActionRoles returns the roles ev's template will render in its "Who needs to
+// act" block, in order. Callers use it to resolve only the people that event
+// actually needs, instead of looking up every role on every risk.
+func ActionRoles(ev RiskEvent) []string {
+	tpl, ok := eventTemplates[ev]
+	if !ok {
+		return nil
+	}
+	roles := make([]string, 0, len(tpl.actions))
+	for _, a := range tpl.actions {
+		roles = append(roles, a.role)
+	}
+	return roles
 }

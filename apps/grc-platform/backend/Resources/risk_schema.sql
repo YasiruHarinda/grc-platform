@@ -221,6 +221,10 @@ CREATE TABLE IF NOT EXISTS risk (
                                'PENDING_COMPLIANCE_REVIEW',
                                'IN_REMEDIATION',
                                'PENDING_OWNER_COMPLETION_APPROVAL',
+                               -- ACCEPT + HIGH risks need the same management
+                               -- sign-off on the way out as on the way in, so
+                               -- closure mirrors the creation path.
+                               'PENDING_MANAGEMENT_CLOSURE_APPROVAL',
                                'PENDING_COMPLIANCE_CLOSURE',
                                'PENDING_AMENDMENT',
                                'PENDING_REVISION',

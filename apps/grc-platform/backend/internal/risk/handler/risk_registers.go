@@ -19,6 +19,7 @@ package handler
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
@@ -545,15 +547,49 @@ func (d *Deps) handleOwnerApproveRisk(w http.ResponseWriter, r *http.Request) {
 	if !d.requireRiskActor(w, r, detail.OwnerID, "Risk Owner") {
 		return
 	}
+	// Captured before the transition: OwnerApprove decides where the risk goes
+	// from the status it had on entry, and re-reading afterwards would race
+	// with a concurrent action.
+	fromStatus := detail.WorkflowStatus
 	if err := d.Risk.OwnerApprove(r.Context(), id, by); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.notifyAfterOwnerApprove(id, detail, fromStatus, by)
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// notifyAfterOwnerApprove mirrors OwnerApprove's routing to notify whoever the
+// risk just landed on. It recomputes the destination from the same inputs the
+// service used rather than re-reading the risk, so the two must be kept in step
+// — see riskservice.OwnerApprove.
+func (d *Deps) notifyAfterOwnerApprove(id int, detail *model.RiskDetail, fromStatus, by string) {
+	acceptHigh := detail.TreatmentStrategy != nil && *detail.TreatmentStrategy == "ACCEPT" &&
+		detail.GrossScore != nil && detail.GrossScore.RiskLevel == "HIGH"
+
+	switch fromStatus {
+	case model.StatusPendingOwnerApproval, model.StatusPendingAmendment:
+		if acceptHigh {
+			// → PENDING_MANAGEMENT_APPROVAL
+			d.notifyRiskEvent(emailer.EventPendingMgmtApproval, id, []int{detail.ManagementApproverID}, by, "")
+			return
+		}
+		// → PENDING_COMPLIANCE_REVIEW: a role, not a named individual.
+		notifyComplianceAdmins(emailer.EventPendingMgmtApproval, id)
+
+	case model.StatusPendingOwnerCompletion:
+		if acceptHigh {
+			// → PENDING_MANAGEMENT_CLOSURE_APPROVAL
+			d.notifyRiskEvent(emailer.EventPendingMgmtClosure, id, []int{detail.ManagementApproverID}, by, "")
+			return
+		}
+		// → PENDING_COMPLIANCE_CLOSURE: a role, not a named individual.
+		notifyComplianceAdmins(emailer.EventPendingMgmtClosure, id)
+	}
+}
+
 // handleManagementApproveRisk serves POST /api/v1/risks/{id}/management-approve.
-// Transitions PENDING_MANAGEMENT_APPROVAL → PENDING_COMPLIANCE_REVIEW.
+// Serves both management stages — see riskservice.ManagementApprove.
 func (d *Deps) handleManagementApproveRisk(w http.ResponseWriter, r *http.Request) {
 	by, ok := requireUserEmail(w, r)
 	if !ok {
@@ -575,6 +611,9 @@ func (d *Deps) handleManagementApproveRisk(w http.ResponseWriter, r *http.Reques
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	// Both management stages hand off to a compliance stage, whose recipient is
+	// a role rather than a named individual — suppressed for now.
+	notifyComplianceAdmins(emailer.EventComplianceApproved, id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -596,16 +635,46 @@ func (d *Deps) handleApproveRisk(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	// Remediation can now start, so the two people who have to do it are told:
+	// the assigner who owns the risk's progress and the action plan's owner.
+	d.notifyRiskEvent(emailer.EventComplianceApproved, id, d.remediationRecipients(r.Context(), id), by, "")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// remediationRecipients returns the risk's assigner plus every action-plan
+// owner. Action owners come from the plan list rather than detail.action_plan,
+// which only ever embeds the STANDARD plan; a risk may have several. Failures
+// are logged and degrade to "assigner only" rather than losing the whole
+// notification.
+func (d *Deps) remediationRecipients(ctx context.Context, riskID int) []int {
+	ids := []int{}
+	detail, err := d.Risk.GetByID(ctx, riskID)
+	if err != nil {
+		slog.Warn("risk notification: failed to load risk for recipients", "riskId", riskID, "err", err)
+		return ids
+	}
+	ids = append(ids, detail.AssignerID)
+
+	plans, err := d.ActionPlan.List(ctx, riskID)
+	if err != nil {
+		slog.Warn("risk notification: failed to list action plans for recipients", "riskId", riskID, "err", err)
+		return ids
+	}
+	for _, p := range plans {
+		if p.ActionOwnerID != nil {
+			ids = append(ids, *p.ActionOwnerID)
+		}
+	}
+	return ids // notifyRiskEvent de-duplicates
 }
 
 // rejectPrivilegeFor maps a workflow status to the privilege required to reject
 // at that stage. Defaults to OwnerRejectRisk for all owner-stage states.
 func rejectPrivilegeFor(status string) string {
 	switch status {
-	case "PENDING_MANAGEMENT_APPROVAL":
+	case model.StatusPendingManagementApproval, model.StatusPendingManagementClosure:
 		return privilege.ManagementRejectRisk
-	case "PENDING_COMPLIANCE_REVIEW":
+	case model.StatusPendingComplianceReview:
 		return privilege.ComplianceRejectRisk
 	default: // PENDING_RISK_OWNER_APPROVAL, PENDING_AMENDMENT, PENDING_OWNER_COMPLETION_APPROVAL
 		return privilege.OwnerRejectRisk
@@ -639,7 +708,7 @@ func (d *Deps) handleRejectRisk(w http.ResponseWriter, r *http.Request) {
 	// approved. Compliance stages have no named individual and stay
 	// privilege-only.
 	switch detail.WorkflowStatus {
-	case model.StatusPendingManagementApproval:
+	case model.StatusPendingManagementApproval, model.StatusPendingManagementClosure:
 		if !d.requireRiskActor(w, r, detail.ManagementApproverID, "Management Approver") {
 			return
 		}
@@ -658,6 +727,9 @@ func (d *Deps) handleRejectRisk(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	// One notification covers every rejection stage: whoever rejected it, the
+	// risk lands back with the assigner, who is the one who has to act.
+	d.notifyRiskEvent(emailer.EventRejected, id, []int{detail.AssignerID}, by, req.RejectionComment)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -682,6 +754,7 @@ func (d *Deps) handleCompleteRisk(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.notifyOwnerOfCompletion(r.Context(), id, by)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -702,9 +775,29 @@ func (d *Deps) handleResubmitRisk(w http.ResponseWriter, r *http.Request) {
 	if !d.requireRiskAssigner(w, r, id) {
 		return
 	}
+	// Resubmit routes on the rejection stage, so who to notify depends on where
+	// it goes back to — mirroring riskservice.Resubmit.
+	detail, err := d.Risk.GetByID(r.Context(), id)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	stage := ""
+	if detail.RejectionStage != nil {
+		stage = *detail.RejectionStage
+	}
 	if err := d.Risk.Resubmit(r.Context(), id, by); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
+	}
+	switch stage {
+	case "COMPLETION_OWNER":
+		d.notifyRiskEvent(emailer.EventPendingOwnerClosure, id, []int{detail.OwnerID}, by, "")
+	case "COMPLETION_MANAGEMENT":
+		d.notifyRiskEvent(emailer.EventPendingMgmtClosure, id, []int{detail.ManagementApproverID}, by, "")
+	default:
+		// Back to the start of the chain, which is the risk owner again.
+		d.notifyRiskEvent(emailer.EventCreated, id, []int{detail.OwnerID}, by, "")
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -752,4 +845,16 @@ func (d *Deps) handleCloseRisk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// notifyOwnerOfCompletion tells the risk's owner that remediation has been
+// marked complete and is waiting on their sign-off. Split out so both the
+// Complete and Resubmit paths — which land on the same stage — share it.
+func (d *Deps) notifyOwnerOfCompletion(ctx context.Context, riskID int, by string) {
+	detail, err := d.Risk.GetByID(ctx, riskID)
+	if err != nil {
+		slog.Warn("risk notification: failed to load risk for owner completion", "riskId", riskID, "err", err)
+		return
+	}
+	d.notifyRiskEvent(emailer.EventPendingOwnerClosure, riskID, []int{detail.OwnerID}, by, "")
 }

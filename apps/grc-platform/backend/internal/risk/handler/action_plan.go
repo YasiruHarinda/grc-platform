@@ -17,12 +17,15 @@
 package handler
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
 	"strconv"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
@@ -189,5 +192,20 @@ func (d *Deps) handleCompleteActionPlan(w http.ResponseWriter, r *http.Request) 
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	// Fires per plan, matching the in-app REASSESSMENT notification the entity
+	// already writes on this same cascade — so both channels say the same thing
+	// at the same time. A risk with several plans therefore sends several.
+	d.notifyAssignerOfPlanCompletion(r.Context(), riskID, by)
 	response.WriteJSONValue(w, http.StatusOK, plan)
+}
+
+// notifyAssignerOfPlanCompletion tells the risk's assigner that an action plan
+// has finished and the risk is ready to be reassessed and submitted.
+func (d *Deps) notifyAssignerOfPlanCompletion(ctx context.Context, riskID int, by string) {
+	detail, err := d.Risk.GetByID(ctx, riskID)
+	if err != nil {
+		slog.Warn("risk notification: failed to load risk for plan completion", "riskId", riskID, "err", err)
+		return
+	}
+	d.notifyRiskEvent(emailer.EventActionPlanCompleted, riskID, []int{detail.AssignerID}, by, "")
 }
