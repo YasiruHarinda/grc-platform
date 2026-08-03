@@ -31,11 +31,11 @@ const (
 	// Compliance closes it. Non-ACCEPT/HIGH risks skip it entirely.
 	StatusPendingManagementClosure = "PENDING_MANAGEMENT_CLOSURE_APPROVAL"
 	StatusPendingComplianceClosure = "PENDING_COMPLIANCE_CLOSURE"
-	StatusPendingAmendment          = "PENDING_AMENDMENT"
-	StatusPendingRevision           = "PENDING_REVISION"
-	StatusEscalated                 = "ESCALATED"
-	StatusClosed                    = "CLOSED"
-	StatusCancelled                 = "CANCELLED"
+	StatusPendingAmendment         = "PENDING_AMENDMENT"
+	StatusPendingRevision          = "PENDING_REVISION"
+	StatusEscalated                = "ESCALATED"
+	StatusClosed                   = "CLOSED"
+	StatusCancelled                = "CANCELLED"
 )
 
 // RiskTypeNew and RiskTypeUpdated are the two values for the risk_type column.

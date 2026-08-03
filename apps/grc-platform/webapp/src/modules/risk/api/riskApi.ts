@@ -121,9 +121,9 @@ export interface ActionPlanDetail {
 }
 
 // ActionPlan is the standalone shape returned by GET/POST .../action-plans —
-// unlike RiskDetail.action_plan (always the STANDARD plan embedded at risk
-// creation), this is how the MANAGEMENT plan created on an escalated risk is
-// fetched, and how both plans are listed together.
+// unlike RiskDetail.action_plan (always the first plan, embedded at risk
+// creation), this lists every plan on a risk, including ones the assigner added
+// later.
 export interface ActionPlan {
   id: number;
   risk_id: number;
@@ -131,19 +131,26 @@ export interface ActionPlan {
   description: string | null;
   status: string; // PENDING | IN_PROGRESS | COMPLETED
   completed_date: string | null;
-  plan_type: string; // STANDARD | MANAGEMENT
+  // Always STANDARD on new plans; MANAGEMENT is retired and only appears on
+  // historical rows.
+  plan_type: string;
   created_by: string | null;
 }
 
-// Escalation is created automatically by the compliance-entity's daily
-// overdue-risk job — no escalated_to/reason, since it's system-driven, not a
-// human decision. created_at is what "escalated on" shows in the UI.
+// Escalation is created by the backend's daily overdue-risk job, or by a
+// Compliance user clicking Escalate — no escalated_to/reason, since neither
+// path asks a human for one. created_at is what "escalated on" shows in the UI.
 export interface Escalation {
   id: number;
   risk_id: number;
   new_treatment_strategy: string | null;
   action_plan_id: number | null;
+  // The management/lead comment answering this escalation. Null until someone
+  // comments; writing it returns the risk to its assigner.
   decision: string | null;
+  // Stays OPEN through the comment and the assigner's remediation — it is what
+  // keeps the risk in the Overdue tab — and is only resolved when the assigner
+  // submits for completion approval.
   status: string; // OPEN | RESOLVED
   created_at: string;
 }
@@ -233,6 +240,11 @@ export interface ListRisksParams {
   due_from?: string;
   due_to?: string;
   due_overdue?: boolean;
+  // Risks carrying an unresolved escalation — what the Overdue Risks tab
+  // filters on. Not the ESCALATED status: once management comments, the risk
+  // returns to IN_REMEDIATION while the escalation stays open, so it shows in
+  // Approved Risks and Overdue at the same time.
+  open_escalation?: boolean;
   offset?: number;
   limit?: number;
 }
@@ -616,6 +628,7 @@ export async function fetchRisks(
   if (params.due_from) q.set("due_from", params.due_from);
   if (params.due_to) q.set("due_to", params.due_to);
   if (params.due_overdue) q.set("due_overdue", "true");
+  if (params.open_escalation) q.set("open_escalation", "true");
   if (params.offset !== undefined) q.set("offset", String(params.offset));
   if (params.limit !== undefined) q.set("limit", String(params.limit));
   const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks?${q}`);
@@ -726,10 +739,10 @@ export async function fetchActionPlans(authFetch: AuthFetch, riskId: number): Pr
   return handleResponse<ActionPlan[]>(res);
 }
 
-// createManagementActionPlan is MANAGEMENT-only — the backend rejects any
-// other plan_type here, since STANDARD plans are still created inline as
-// part of risk registration (Add Risk's own flow).
-export async function createManagementActionPlan(
+// createActionPlan adds a further plan to a risk that already has one from
+// registration. The backend forces plan_type STANDARD and gates this on the
+// caller being the risk's assigner — MANAGEMENT plans are retired.
+export async function createActionPlan(
   authFetch: AuthFetch,
   riskId: number,
   payload: { description: string; action_owner_id: number | null; steps: string[] },
@@ -739,13 +752,33 @@ export async function createManagementActionPlan(
     body: JSON.stringify({
       description: payload.description,
       action_owner_id: payload.action_owner_id,
-      plan_type: "MANAGEMENT",
       // Steps are created atomically with the plan on the backend, so a
       // failure can't leave an orphaned, stepless plan behind.
       steps: payload.steps,
     }),
   });
   return handleResponse<ActionPlan>(res);
+}
+
+// commentOnEscalation answers an escalation. The comment alone returns the risk
+// to its assigner (ESCALATED → IN_REMEDIATION); the escalation stays open, so
+// the risk remains in the Overdue tab until the assigner submits it for
+// completion approval.
+//
+// Who may call this is decided server-side by risk level: the risk's Management
+// Approver for a HIGH risk, or the assigner's/action owner's line manager for
+// MEDIUM and LOW. A compliance admin may always do it.
+export async function commentOnEscalation(
+  authFetch: AuthFetch,
+  riskId: number,
+  escalationId: number,
+  comment: string,
+): Promise<Escalation> {
+  const res = await authFetch(
+    `${BACKEND_BASE_URL}/api/v1/risks/${riskId}/escalations/${escalationId}/comment`,
+    { method: "POST", body: JSON.stringify({ comment }) },
+  );
+  return handleResponse<Escalation>(res);
 }
 
 export async function fetchActionPlanSteps(

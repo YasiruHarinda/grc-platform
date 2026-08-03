@@ -161,9 +161,23 @@ func (r *riskRepo) SearchRisks(ctx context.Context, req domain.SearchRisksReques
 		where += " AND EXISTS (SELECT 1 FROM risk_action_plan ap WHERE ap.risk_id = r.id AND ap.action_owner_id = ?)"
 		args = append(args, *req.ActionOwnerID)
 	}
+	if req.OpenEscalationOnly {
+		where += " AND EXISTS (SELECT 1 FROM risk_escalation e WHERE e.risk_id = r.id AND e.status = 'OPEN')"
+	}
 	if scopeClause, scopeArgs := teamScopeFilter("r", req.ScopeTeamIDs); scopeClause != "" {
-		where += scopeClause
-		args = append(args, scopeArgs...)
+		// A lead named on an open escalation is granted access to that one risk
+		// regardless of team scoping, so the two are OR-ed rather than AND-ed.
+		// Matching is on email because a lead may have no platform user row.
+		if req.EscalationLeadEmail != "" {
+			where += " AND ((1=1" + scopeClause + ") OR EXISTS (SELECT 1 FROM risk_escalation e" +
+				" WHERE e.risk_id = r.id AND e.status = 'OPEN'" +
+				" AND (e.assigner_lead_email = ? OR e.action_owner_lead_email = ?)))"
+			args = append(args, scopeArgs...)
+			args = append(args, req.EscalationLeadEmail, req.EscalationLeadEmail)
+		} else {
+			where += scopeClause
+			args = append(args, scopeArgs...)
+		}
 	}
 	// created_at is a datetime, so the bounds are widened to whole days;
 	// otherwise "submitted up to the 5th" would exclude everything after

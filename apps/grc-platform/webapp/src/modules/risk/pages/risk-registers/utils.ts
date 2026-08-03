@@ -131,5 +131,16 @@ export const APPROVED_OPEN_STATUSES = ["IN_REMEDIATION"];
 // the only place that shows the real "Escalated" chip.
 export const APPROVED_ALL_STATUSES = [...APPROVED_OPEN_STATUSES, "CLOSED", "ESCALATED"];
 
-// Statuses shown in the "Overdue Risks" tab.
-export const OVERDUE_STATUSES = ["ESCALATED"];
+// Statuses the Overdue Risks tab's Status column filter can offer.
+//
+// The tab itself no longer filters by status — membership is "has an
+// unresolved escalation" (the open_escalation query param), because a
+// commented escalation returns the risk to IN_REMEDIATION while staying open,
+// so it must appear under Approved Risks and Overdue at the same time. These
+// are simply the statuses a risk can realistically be in while escalated.
+export const OVERDUE_STATUSES = [
+  "ESCALATED",
+  "IN_REMEDIATION",
+  "PENDING_AMENDMENT",
+  "PENDING_OWNER_COMPLETION_APPROVAL",
+];

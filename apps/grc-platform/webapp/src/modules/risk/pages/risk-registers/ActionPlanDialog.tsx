@@ -42,16 +42,16 @@ import { dialogPaperSx } from "../cardStyles";
 const MIN_EMPLOYEE_SEARCH_LEN = 2;
 const EMPLOYEE_SEARCH_DEBOUNCE_MS = 300;
 
-export interface ManagementActionPlanPayload {
+export interface ActionPlanPayload {
   description: string;
   actionOwnerId: number | null;
   steps: string[];
 }
 
-interface ManagementActionPlanDialogProps {
+interface ActionPlanDialogProps {
   open: boolean;
   onClose: () => void;
-  onConfirm: (payload: ManagementActionPlanPayload) => Promise<void>;
+  onConfirm: (payload: ActionPlanPayload) => Promise<void>;
 }
 
 // A step row, keyed by a stable local id — see the note by its useState call.
@@ -64,11 +64,11 @@ interface StepRow {
 // a repeatable step list + an unrestricted Action Owner picker — but as a
 // standalone dialog rather than a wizard step, since Management creates this
 // after a risk is already ESCALATED, not at risk-creation time.
-export default function ManagementActionPlanDialog({
+export default function ActionPlanDialog({
   open,
   onClose,
   onConfirm,
-}: ManagementActionPlanDialogProps): JSX.Element {
+}: ActionPlanDialogProps): JSX.Element {
   const authFetch = useAuthApiClient();
 
   const [description, setDescription] = useState("");
@@ -176,7 +176,7 @@ export default function ManagementActionPlanDialog({
             heading-level Typography (its default element for variant="h6")
             is invalid HTML and trips a hydration warning. */}
         <Typography component="span" variant="h6" fontWeight={700} sx={{ display: "block" }}>
-          Create Management Action Plan
+          Create Action Plan
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
           This risk was escalated for being overdue. Lay out how Management wants it remediated.

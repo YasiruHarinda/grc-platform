@@ -20,9 +20,9 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
 	riskhandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/handler"
-	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 	riskentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/repository/entity"
 	riskservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/service"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/file"
@@ -50,15 +50,16 @@ func buildRiskDeps(
 ) riskhandler.Deps {
 	userRepo := userentity.NewRepository(ec)
 	actionPlanRepo := riskentity.NewActionPlanRepository(ec)
+	riskRepo := riskentity.NewRiskRepository(ec)
 	return riskhandler.Deps{
-		Risk:            riskservice.NewRiskService(riskentity.NewRiskRepository(ec), actionPlanRepo),
+		Risk:            riskservice.NewRiskService(riskRepo, actionPlanRepo),
 		Assessment:      riskservice.NewRiskAssessmentService(riskentity.NewAssessmentRepository(ec)),
 		Team:            riskservice.NewTeamService(riskentity.NewTeamRepository(ec)),
 		Score:           riskservice.NewRiskScoreService(riskentity.NewRiskScoreRepository(ec)),
 		Category:        riskservice.NewRiskCategoryService(riskentity.NewRiskCategoryRepository(ec)),
 		ActionPlan:      riskservice.NewActionPlanService(actionPlanRepo, userRepo),
 		Evidence:        riskservice.NewEvidenceService(riskentity.NewRiskEvidenceRepository(ec), fileSvc),
-		Escalation:      riskservice.NewEscalationService(riskentity.NewEscalationRepository(ec)),
+		Escalation:      riskservice.NewEscalationService(riskentity.NewEscalationRepository(ec), riskRepo, actionPlanRepo, userRepo, hrClient),
 		Notification:    riskservice.NewNotificationService(riskentity.NewNotificationRepository(ec)),
 		Compliance:      riskservice.NewComplianceReferenceService(riskentity.NewComplianceReferenceRepository(ec)),
 		Analytics:       riskservice.NewAssembledAnalyticsService(riskentity.NewAnalyticsRepository(ec)),

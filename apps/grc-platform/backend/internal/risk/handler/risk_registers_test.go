@@ -42,9 +42,8 @@ func contextFor(t *testing.T, role string) context.Context {
 			privilege.CompleteActionSteps: true,
 		},
 		"grc-platform-management": {
-			privilege.ViewRisks:                  true,
-			privilege.ManagementApproveRisk:      true,
-			privilege.CreateManagementActionPlan: true,
+			privilege.ViewRisks:             true,
+			privilege.ManagementApproveRisk: true,
 		},
 		"grc-platform-risk-compliance-admin": {
 			privilege.ViewRisks:  true,

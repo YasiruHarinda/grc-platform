@@ -131,10 +131,15 @@ const (
 	// Owner can hold list access without also getting the org-wide dashboard.
 	ViewRiskDashboard = "RISK_VIEW_DASHBOARD"
 
-	// CreateManagementActionPlan gates creating a plan_type=MANAGEMENT action
-	// plan on an ESCALATED risk — distinct from ManageActionPlans (which
-	// Risk Assigners and Admin already hold for STANDARD plans) so Management
-	// can create MANAGEMENT plans without also being able to touch STANDARD ones.
+	// CreateManagementActionPlan is RETIRED. It gated creating a
+	// plan_type=MANAGEMENT action plan, which was how an escalation used to be
+	// answered. Escalations are now answered with a comment
+	// (POST /risks/{id}/escalations/{id}/comment), and additional plans are
+	// created by the Risk Assigner under ManageActionPlans instead.
+	//
+	// The constant is kept so the seed file's INACTIVE marking has something to
+	// refer to and any lingering role_privilege row is recognisable; nothing in
+	// the codebase checks it. Do not reuse it for a new purpose.
 	CreateManagementActionPlan = "RISK_CREATE_MANAGEMENT_ACTION_PLAN"
 
 	// CompleteActionSteps gates viewing/completing the steps of a plan the

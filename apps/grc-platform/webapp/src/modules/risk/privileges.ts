@@ -46,6 +46,10 @@ export const RiskPrivilege = {
   ManageActionPlans:     "RISK_MANAGE_ACTION_PLANS",
   ManageComplianceRefs:  "RISK_MANAGE_COMPLIANCE_REFS",
   ViewAnalytics:         "RISK_VIEW_ANALYTICS",
+  // RETIRED alongside the MANAGEMENT action plan itself: an escalation is now
+  // answered with a comment, and additional plans are created by the Risk
+  // Assigner under ManageActionPlans. Seeded INACTIVE server-side, so it
+  // resolves for nobody — nothing should check it.
   CreateManagementActionPlan: "RISK_CREATE_MANAGEMENT_ACTION_PLAN",
   CompleteActionSteps:        "RISK_COMPLETE_ACTION_STEPS",
 } as const;

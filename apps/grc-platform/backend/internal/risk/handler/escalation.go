@@ -18,9 +18,15 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
+
+	"context"
+	"log/slog"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
@@ -48,6 +54,7 @@ func (d *Deps) handleEscalateRisk(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.NotifyEscalation(r.Context(), riskID, by)
 	response.WriteJSONValue(w, http.StatusOK, escalation)
 }
 
@@ -79,4 +86,111 @@ func (d *Deps) handleListEscalations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.WriteJSONValue(w, http.StatusOK, escalations)
+}
+
+// handleEscalationComment serves
+// POST /api/v1/risks/{id}/escalations/{escalationId}/comment.
+//
+// This replaces the MANAGEMENT action plan as the way an escalation is
+// answered: a comment alone returns the risk to its assigner. The assigner may
+// then add further action plans, but nothing forces them to.
+//
+// Deliberately gated on RISK_VIEW_RISKS rather than a dedicated privilege. For
+// a medium/low risk the entitled commenter is a line manager, who holds no risk
+// role by virtue of managing someone — a privilege gate would lock out exactly
+// the people this endpoint exists for. The real check is the identity one in
+// the service, which matches the caller against the risk's Management Approver
+// (HIGH) or the leads frozen on the escalation row (MEDIUM/LOW).
+func (d *Deps) handleEscalationComment(w http.ResponseWriter, r *http.Request) {
+	by, ok := requireUserEmail(w, r)
+	if !ok {
+		return
+	}
+	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewRisks) {
+		return
+	}
+	riskID, ok := parseRiskID(w, r)
+	if !ok {
+		return
+	}
+	escalationID, err := strconv.Atoi(r.PathValue("escalationId"))
+	if err != nil || escalationID <= 0 {
+		response.WriteError(w, http.StatusBadRequest, "escalationId must be a positive integer")
+		return
+	}
+
+	var req model.EscalationCommentRequest
+	if err := response.DecodeJSON(w, r, &req); err != nil {
+		return
+	}
+
+	escalation, err := d.Escalation.Comment(r.Context(), riskID, escalationID, req.Comment, by, canOverrideAssignee(r.Context()))
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+
+	// The risk is back with its assigner, who has to act on the comment.
+	detail, err := d.Risk.GetByID(r.Context(), riskID)
+	if err == nil {
+		d.notifyRiskEvent(emailer.EventEscalationCommented, riskID, []int{detail.AssignerID}, by, req.Comment)
+	}
+	response.WriteJSONValue(w, http.StatusOK, escalation)
+}
+
+// NotifyEscalation emails the people who need to know a risk has blown its
+// deadline. Who that is depends on the risk's level:
+//
+//   - HIGH:          the Management Approver, plus the assigner, action
+//     owner(s) and risk owner.
+//   - MEDIUM / LOW:  the assigner, action owner(s) and risk owner. Management
+//     is not troubled by a lower-level slip.
+//
+// Three intended recipients are deliberately NOT mailed yet — the compliance
+// admin role, and the assigner's and action owner's line managers. The role
+// would fan out to everyone holding it, and the leads were explicitly deferred;
+// both are logged so the trigger point stays observable. The lead emails are
+// already frozen on the escalation row, so enabling them later is a recipient
+// list change here, not a data change.
+//
+// TODO: notify the compliance admin role, and the two leads recorded on the
+// escalation row (assigner_lead_email / action_owner_lead_email), once it is
+// decided who should be on those lists.
+//
+// Exported because the daily escalation job calls it too — automatic and manual
+// escalations must notify identically, and the surest way to guarantee that is
+// for them to share this one function.
+func (d *Deps) NotifyEscalation(ctx context.Context, riskID int, by string) {
+	detail, err := d.Risk.GetByID(ctx, riskID)
+	if err != nil {
+		slog.Warn("escalation notification: failed to load risk", "riskId", riskID, "err", err)
+		return
+	}
+
+	recipients := []int{detail.AssignerID, detail.OwnerID}
+	if plans, err := d.ActionPlan.List(ctx, riskID); err == nil {
+		for _, p := range plans {
+			if p.ActionOwnerID != nil {
+				recipients = append(recipients, *p.ActionOwnerID)
+			}
+		}
+	} else {
+		slog.Warn("escalation notification: failed to list plans", "riskId", riskID, "err", err)
+	}
+
+	// Effective level, not gross — the same level the registers table shows,
+	// and the same one authorizeComment uses to decide who may respond.
+	level := ""
+	if detail.EffectiveScore != nil {
+		level = detail.EffectiveScore.RiskLevel
+	} else if detail.GrossScore != nil {
+		level = detail.GrossScore.RiskLevel
+	}
+	if level == "HIGH" {
+		recipients = append(recipients, detail.ManagementApproverID)
+	}
+
+	d.notifyRiskEvent(emailer.EventEscalated, riskID, recipients, by, "")
+	notifyComplianceAdmins(emailer.EventEscalated, riskID)
+	notifyEscalationLeads(riskID)
 }

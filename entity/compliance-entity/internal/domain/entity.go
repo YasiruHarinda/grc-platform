@@ -263,30 +263,30 @@ type SearchAuditsResponse struct {
 // audit_framework_control by foreign key. Owner, team, and auditor names are
 // joined in.
 type AuditControl struct {
-	ID                  int       `json:"id"`
-	AuditID             int       `json:"auditId"`
-	ControlNumber       string    `json:"controlNumber"`
-	Description         string    `json:"description"`
-	EvidenceRequirement *string   `json:"evidenceRequirement"`
-	RequirementType     string    `json:"requirementType"`
-	ControlType         string    `json:"controlType"`
-	Scope               string    `json:"scope"`
-	OwnerID             *int      `json:"ownerId"`
-	OwnerName           *string   `json:"ownerName"`
-	TeamID              *int      `json:"teamId"`
-	TeamName            *string   `json:"teamName"`
-	AuditorID           *int      `json:"auditorId"`
-	AuditorName         *string   `json:"auditorName"`
+	ID                  int     `json:"id"`
+	AuditID             int     `json:"auditId"`
+	ControlNumber       string  `json:"controlNumber"`
+	Description         string  `json:"description"`
+	EvidenceRequirement *string `json:"evidenceRequirement"`
+	RequirementType     string  `json:"requirementType"`
+	ControlType         string  `json:"controlType"`
+	Scope               string  `json:"scope"`
+	OwnerID             *int    `json:"ownerId"`
+	OwnerName           *string `json:"ownerName"`
+	TeamID              *int    `json:"teamId"`
+	TeamName            *string `json:"teamName"`
+	AuditorID           *int    `json:"auditorId"`
+	AuditorName         *string `json:"auditorName"`
 	// AuditorEmail identifies the assigned auditor for the assigned-auditor gate
 	// (population validation, sample selection, evidence validation): the caller
 	// is authorized when their token email matches this value.
-	AuditorEmail        *string   `json:"auditorEmail"`
-	DueDate             *string   `json:"dueDate"` // YYYY-MM-DD
-	Status              string    `json:"status"`
-	ControlSource       string    `json:"controlSource"` // MANUAL | COPIED | CSV
-	IsOverdue           bool      `json:"isOverdue"`
-	CreatedOn           time.Time `json:"createdOn"`
-	UpdatedOn           time.Time `json:"updatedOn"`
+	AuditorEmail  *string   `json:"auditorEmail"`
+	DueDate       *string   `json:"dueDate"` // YYYY-MM-DD
+	Status        string    `json:"status"`
+	ControlSource string    `json:"controlSource"` // MANUAL | COPIED | CSV
+	IsOverdue     bool      `json:"isOverdue"`
+	CreatedOn     time.Time `json:"createdOn"`
+	UpdatedOn     time.Time `json:"updatedOn"`
 	// Population-phase fields (OE controls only), from the initial audit_population record.
 	PopulationDescription *string `json:"populationDescription"`
 	PopulationComments    *string `json:"populationComments"`
@@ -469,20 +469,20 @@ type SearchRiskReferencesResponse struct {
 // Joined fields (source register name, assignment team name, assigner/owner names)
 // are included to avoid extra round-trips.
 type Risk struct {
-	ID                 int       `json:"id"`
-	RiskCode           string    `json:"riskCode"`
-	RiskYear           int       `json:"riskYear"`
-	RiskQuarter        string    `json:"riskQuarter"`
-	RiskTitle          string    `json:"riskTitle"`
-	RiskDescription    *string   `json:"riskDescription"`
-	SourceRegisterID   int       `json:"sourceRegisterId"`
-	SourceRegisterName string    `json:"sourceRegisterName"`
-	AssignmentTeamID   int       `json:"assignmentTeamId"`
-	AssignmentTeamName string    `json:"assignmentTeamName"`
-	AssignerID         int       `json:"assignerId"`
-	AssignerName       string    `json:"assignerName"`
-	OwnerID            int       `json:"ownerId"`
-	OwnerName          string    `json:"ownerName"`
+	ID                 int     `json:"id"`
+	RiskCode           string  `json:"riskCode"`
+	RiskYear           int     `json:"riskYear"`
+	RiskQuarter        string  `json:"riskQuarter"`
+	RiskTitle          string  `json:"riskTitle"`
+	RiskDescription    *string `json:"riskDescription"`
+	SourceRegisterID   int     `json:"sourceRegisterId"`
+	SourceRegisterName string  `json:"sourceRegisterName"`
+	AssignmentTeamID   int     `json:"assignmentTeamId"`
+	AssignmentTeamName string  `json:"assignmentTeamName"`
+	AssignerID         int     `json:"assignerId"`
+	AssignerName       string  `json:"assignerName"`
+	OwnerID            int     `json:"ownerId"`
+	OwnerName          string  `json:"ownerName"`
 	// ManagementApproverID names the user who approves this risk during
 	// PENDING_MANAGEMENT_APPROVAL and is the target an ESCALATED risk
 	// conceptually escalates to. Required on every risk regardless of level
@@ -490,13 +490,13 @@ type Risk struct {
 	ManagementApproverID   int       `json:"managementApproverId"`
 	ManagementApproverName string    `json:"managementApproverName"`
 	WorkflowStatus         string    `json:"workflowStatus"`
-	TreatmentStrategy  *string   `json:"treatmentStrategy"`
-	GrossScoreID       *int      `json:"grossScoreId"`
-	GrossRiskLevel     *string   `json:"grossRiskLevel"`
-	ImplementationDate *string   `json:"implementationDate"` // YYYY-MM-DD
-	ReassessmentDate   *string   `json:"reassessmentDate"`   // YYYY-MM-DD
-	CreatedOn          time.Time `json:"createdOn"`
-	UpdatedOn          time.Time `json:"updatedOn"`
+	TreatmentStrategy      *string   `json:"treatmentStrategy"`
+	GrossScoreID           *int      `json:"grossScoreId"`
+	GrossRiskLevel         *string   `json:"grossRiskLevel"`
+	ImplementationDate     *string   `json:"implementationDate"` // YYYY-MM-DD
+	ReassessmentDate       *string   `json:"reassessmentDate"`   // YYYY-MM-DD
+	CreatedOn              time.Time `json:"createdOn"`
+	UpdatedOn              time.Time `json:"updatedOn"`
 
 	// Remaining risk columns. These were absent while nothing consumed this
 	// type; the GRC backend's risk detail and list views need all of them, and
@@ -562,6 +562,23 @@ type SearchRisksRequest struct {
 	// DueOverdueOnly restricts to risks already past their implementation date,
 	// independent of any Due range above.
 	DueOverdueOnly bool `json:"dueOverdueOnly"`
+
+	// OpenEscalationOnly restricts to risks carrying an unresolved escalation.
+	// This is what the Overdue Risks tab filters on, deliberately *not* the
+	// ESCALATED workflow status: management's comment returns the risk to
+	// IN_REMEDIATION while the escalation stays OPEN, so the risk must remain
+	// in the Overdue tab while also appearing under Approved Risks. The
+	// escalation is resolved when the assigner submits for completion approval,
+	// which is what finally drops it out.
+	OpenEscalationOnly bool `json:"openEscalationOnly"`
+
+	// EscalationLeadEmail widens the result set rather than narrowing it: a
+	// risk with an open escalation naming this email as the assigner's or
+	// action owner's lead is included even when ScopeTeamIDs would exclude it.
+	// Leads are frequently outside the risk's team and are not necessarily
+	// platform users at all, so without this they could never reach the risk
+	// they are being asked to comment on.
+	EscalationLeadEmail string `json:"escalationLeadEmail"`
 
 	Pagination Pagination `json:"pagination"`
 }
@@ -1328,11 +1345,18 @@ type ListRiskComplianceRefsResponse struct {
 // human-supplied target or reason; the trigger is always "IN_REMEDIATION past
 // implementation_date".
 type RiskEscalation struct {
-	ID                   int       `json:"id"`
-	RiskID               int       `json:"riskId"`
-	NewTreatmentStrategy *string   `json:"newTreatmentStrategy"`
-	ActionPlanID         *int      `json:"actionPlanId"`
-	Decision             *string   `json:"decision"`
+	ID                   int     `json:"id"`
+	RiskID               int     `json:"riskId"`
+	NewTreatmentStrategy *string `json:"newTreatmentStrategy"`
+	ActionPlanID         *int    `json:"actionPlanId"`
+	Decision             *string `json:"decision"`
+	// Line managers of the risk assigner and the action plan owner, resolved
+	// from the HR entity once when the risk escalated and frozen here. They
+	// drive who may comment on a medium/low escalation and who can see the
+	// risk, so they must not be re-resolved later — a reorg would otherwise
+	// silently change who has access to a historical escalation.
+	AssignerLeadEmail    *string   `json:"assignerLeadEmail"`
+	ActionOwnerLeadEmail *string   `json:"actionOwnerLeadEmail"`
 	Status               string    `json:"status"` // OPEN | RESOLVED
 	CreatedBy            *string   `json:"createdBy"`
 	UpdatedBy            *string   `json:"updatedBy"`
@@ -1344,6 +1368,9 @@ type RiskEscalation struct {
 type CreateRiskEscalationRequest struct {
 	NewTreatmentStrategy *string `json:"newTreatmentStrategy"`
 	ActionPlanID         *int    `json:"actionPlanId"`
+	// Frozen at escalation time — see RiskEscalation's field comment.
+	AssignerLeadEmail    *string `json:"assignerLeadEmail"`
+	ActionOwnerLeadEmail *string `json:"actionOwnerLeadEmail"`
 	CreatedBy            string  `json:"createdBy"`
 }
 
@@ -1352,6 +1379,10 @@ type CreateRiskEscalationRequest struct {
 // as an alternative to waiting for the daily job to reach it.
 type EscalateRiskRequest struct {
 	CreatedBy string `json:"createdBy"`
+	// Resolved by the caller (the GRC backend, which owns the HR client) and
+	// passed in, so this service keeps its single outbound dependency: MySQL.
+	AssignerLeadEmail    *string `json:"assignerLeadEmail"`
+	ActionOwnerLeadEmail *string `json:"actionOwnerLeadEmail"`
 }
 
 // UpdateRiskEscalationRequest is the payload for PATCH /risks/{riskId}/escalations/{escalationId}.

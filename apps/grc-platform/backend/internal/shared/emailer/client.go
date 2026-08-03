@@ -153,6 +153,7 @@ const (
 	EventPendingMgmtClosure  RiskEvent = "PENDING_MGMT_CLOSURE"
 	EventRejected            RiskEvent = "REJECTED"
 	EventEscalated           RiskEvent = "ESCALATED"
+	EventEscalationCommented RiskEvent = "ESCALATION_COMMENTED"
 )
 
 // RiskEventInfo carries everything any template might render. Fields not
@@ -304,6 +305,16 @@ var eventTemplates = map[RiskEvent]eventTemplate{
 		actorLabel: "Rejected by",
 		actions: []roleInstruction{
 			{RoleRiskAssigner, "Review the comment above, make the required changes, and resubmit."},
+		},
+	},
+	EventEscalationCommented: {
+		subject: func(i RiskEventInfo) string {
+			return fmt.Sprintf("Escalation Reviewed — Back With You: %s - %s", i.RiskCode, i.RiskTitle)
+		},
+		lead:       "This escalated risk has been reviewed and returned to you. It stays in the Overdue tab until you submit it for completion approval.",
+		actorLabel: "Reviewed by",
+		actions: []roleInstruction{
+			{RoleRiskAssigner, "Act on the comment above, then reassess and submit for completion approval."},
 		},
 	},
 	EventEscalated: {

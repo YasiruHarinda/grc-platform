@@ -32,6 +32,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/middleware"
 	riskhandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/handler"
+	riskjob "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/job"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/file"
@@ -94,8 +95,18 @@ func main() {
 	})
 
 	userhandler.RegisterRoutes(mux, userDeps)
-	riskhandler.RegisterRoutes(mux, buildRiskDeps(entityCli, fileSvc, hrClient, scimClient, cfg.Email))
+	riskDeps := buildRiskDeps(entityCli, fileSvc, hrClient, scimClient, cfg.Email)
+	riskhandler.RegisterRoutes(mux, riskDeps)
 	audithandler.RegisterRoutes(mux, buildAuditDeps(fileSvc, entityCli, cfg.AIValidation))
+
+	// Daily overdue-risk escalation. This lives here rather than in the
+	// compliance-entity because escalation now resolves line managers from the
+	// HR entity and sends email — neither of which the entity has a client for.
+	// It shares the handler's own notifier so an automatic escalation notifies
+	// exactly as a manual one does.
+	jobCtx, jobCancel := context.WithCancel(context.Background())
+	defer jobCancel()
+	go riskjob.NewEscalationJob(riskDeps.Risk, riskDeps.Escalation, riskDeps.NotifyEscalation).Start(jobCtx)
 
 	// Scope guard runs just inside Auth: an evidence-app-scoped token (IdP-2) is
 	// confined to /api/v1/evidence-app/* — 403 on any other route.

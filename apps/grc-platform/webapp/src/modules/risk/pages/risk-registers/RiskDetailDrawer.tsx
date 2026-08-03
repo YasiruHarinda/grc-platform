@@ -45,7 +45,7 @@ import {
   X,
 } from "@wso2/oxygen-ui-icons-react";
 import type { JSX, ReactNode } from "react";
-import type { ActionPlan, ActionPlanStep, RiskDetail } from "../../api/riskApi";
+import type { ActionPlan, ActionPlanStep, Escalation, RiskDetail } from "../../api/riskApi";
 import { RiskPrivilege } from "../../privileges";
 import { dialogPaperSx } from "../cardStyles";
 import { STATUS_CONFIG, calcAge, calcDue, formatDate } from "./utils";
@@ -66,7 +66,10 @@ export interface DrawerActions {
   onEdit: () => void;
   onAssess: () => void;
   onCancel: () => void;
-  onCreateManagementActionPlan: () => void;
+  // Adds a further action plan (Risk Assigner only).
+  onAddActionPlan: () => void;
+  // Answers an escalation with a comment, returning the risk to its assigner.
+  onCommentEscalation: () => void;
   onEscalate: () => void;
 }
 
@@ -85,6 +88,9 @@ interface RiskDetailDrawerProps extends DrawerActions {
   // action plans doesn't blank out the rest of the drawer — only the Action
   // Plans tab shows this.
   actionPlansError: string;
+  // Escalation history, newest first. Drives the banner and whether the
+  // "Review Escalation" action is offered.
+  escalations: Escalation[];
   currentUserId: number | null;
   // id → display_name, resolved at render time so the Action Owner label
   // stays correct even when the drawer opens before the users list finishes
@@ -325,6 +331,7 @@ function ActionFooter({
   isRiskOwner,
   isRiskAssigner,
   isManagementApprover,
+  hasOpenEscalation,
 }: {
   status: string;
   actions: DrawerActions;
@@ -338,6 +345,7 @@ function ActionFooter({
   isRiskOwner: boolean;
   isRiskAssigner: boolean;
   isManagementApprover: boolean;
+  hasOpenEscalation: boolean;
 }): JSX.Element | null {
   // isActor gates the pair on the named individual for that stage; compliance
   // approval has no named individual, so its callers pass true.
@@ -438,11 +446,14 @@ function ActionFooter({
       // escalation cycle shouldn't permanently block resubmission.
       const showComplete =
         can(RiskPrivilege.CompleteRisk) && isRiskAssigner && actionPlans.some((p) => p.status === "COMPLETED");
+      // Additional plans are the assigner's call — typically after an
+      // escalation review asked for more work.
+      const showAddPlan = can(RiskPrivilege.ManageActionPlans) && isRiskAssigner;
       // Escalation happens automatically within 24h either way (the daily
       // job) — this just lets Compliance/Admin jump the queue for a risk
       // they've already spotted is overdue.
       const showEscalate = isOverdue && can(RiskPrivilege.EscalateRisk);
-      if (!showEdit && !showAssess && !showComplete && !showEscalate) return null;
+      if (!showEdit && !showAssess && !showComplete && !showEscalate && !showAddPlan) return null;
       return (
         <Box sx={{ pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
           {(showEdit || showAssess) && (
@@ -469,6 +480,17 @@ function ActionFooter({
               sx={{ mb: showComplete ? 1 : 0 }}
             >
               Escalate
+            </Button>
+          )}
+          {showAddPlan && (
+            <Button
+              variant="outlined"
+              fullWidth
+              disabled={disabled}
+              onClick={actions.onAddActionPlan}
+              sx={{ mb: showComplete ? 1 : 0 }}
+            >
+              Add Action Plan
             </Button>
           )}
           {showComplete && (
@@ -513,18 +535,17 @@ function ActionFooter({
       );
 
     case "ESCALATED": {
-      // Only one ACTIVE MANAGEMENT plan per escalation cycle. A risk can be
-      // escalated more than once over its life (if it goes overdue again
-      // after a previous escalation resolved), so a COMPLETED MANAGEMENT
-      // plan from an earlier cycle must not block creating a new one now.
-      const hasActiveManagementPlan = actionPlans.some(
-        (p) => p.plan_type === "MANAGEMENT" && p.status !== "COMPLETED",
-      );
-      if (hasActiveManagementPlan || !can(RiskPrivilege.CreateManagementActionPlan)) return null;
+      // An escalation is answered with a comment, which returns the risk to its
+      // assigner. Who may do that is decided server-side from the risk's level
+      // (Management Approver for HIGH, a line manager for MEDIUM/LOW) — and a
+      // lead holds no risk privilege by virtue of managing someone, so there is
+      // nothing meaningful to gate on here. The button is offered to anyone who
+      // can see the risk, and the server refuses if they aren't entitled.
+      if (!hasOpenEscalation) return null;
       return (
         <Box sx={{ pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
-          <Button variant="contained" fullWidth disabled={disabled} onClick={actions.onCreateManagementActionPlan}>
-            Create Management Action Plan
+          <Button variant="contained" fullWidth disabled={disabled} onClick={actions.onCommentEscalation}>
+            Review Escalation
           </Button>
         </Box>
       );
@@ -545,6 +566,7 @@ export default function RiskDetailDrawer({
   onClose,
   actionPlans,
   actionPlansError,
+  escalations,
   currentUserId,
   userNames,
   onCompleteStep,
@@ -563,6 +585,11 @@ export default function RiskDetailDrawer({
   // ComplianceApproveRisk is the same compliance-admin override the backend
   // uses (canOverrideAssignee) — it must stay in step with it, or the UI will
   // hide actions the server would have allowed.
+  // An unresolved escalation is what puts the risk in the Overdue tab and
+  // enables the review action — the workflow status doesn't say, because a
+  // commented escalation is back to IN_REMEDIATION while still open.
+  const openEscalation = escalations.find((e) => e.status === "OPEN") ?? null;
+
   const canOverrideAssignee = can(RiskPrivilege.ComplianceApproveRisk);
   const isRiskOwner = canOverrideAssignee || (!!detail && detail.owner_id === currentUserId);
   const isRiskAssigner = canOverrideAssignee || (!!detail && detail.assigner_id === currentUserId);
@@ -676,6 +703,25 @@ export default function RiskDetailDrawer({
           </Alert>
         ) : detail ? (
           <>
+            {openEscalation && (
+              <Alert severity="warning" sx={{ mb: 2 }}>
+                <Typography variant="caption" fontWeight={700} display="block">
+                  Escalated on {formatDate(openEscalation.created_at)} — remediation passed its
+                  implementation date
+                </Typography>
+                {openEscalation.decision ? (
+                  <>
+                    <Typography variant="caption" fontWeight={700} display="block" sx={{ mt: 0.5 }}>
+                      Review comment
+                    </Typography>
+                    {openEscalation.decision}
+                  </>
+                ) : (
+                  "Awaiting a review comment before this risk returns to its assigner."
+                )}
+              </Alert>
+            )}
+
             {detail.rejection_comment && (
               <Alert severity="error" sx={{ mb: 2 }}>
                 <Typography variant="caption" fontWeight={700} display="block">
@@ -861,6 +907,7 @@ export default function RiskDetailDrawer({
             isRiskOwner={isRiskOwner}
             isRiskAssigner={isRiskAssigner}
             isManagementApprover={isManagementApprover}
+            hasOpenEscalation={!!openEscalation}
           />
         </Box>
       )}

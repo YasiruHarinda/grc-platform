@@ -145,7 +145,11 @@ func (s *riskEscalationService) EscalateRisk(ctx context.Context, riskID int, re
 	// escalation row (an unrecoverable stuck state). The CAS inside also makes
 	// a concurrent escalate (daily job vs. manual click) fail rather than
 	// create a duplicate escalation.
-	e, err := s.repo.Escalate(ctx, riskID, domain.CreateRiskEscalationRequest{CreatedBy: req.CreatedBy})
+	e, err := s.repo.Escalate(ctx, riskID, domain.CreateRiskEscalationRequest{
+		CreatedBy:            req.CreatedBy,
+		AssignerLeadEmail:    req.AssignerLeadEmail,
+		ActionOwnerLeadEmail: req.ActionOwnerLeadEmail,
+	})
 	if err != nil {
 		return domain.RiskEscalation{}, err
 	}

@@ -236,3 +236,18 @@ func notifyComplianceAdmins(ev emailer.RiskEvent, riskID int) {
 	slog.Info("compliance-admin notification suppressed (not yet wired)",
 		"event", ev, "riskId", riskID)
 }
+
+// notifyEscalationLeads is a deliberate no-op, for the same reason as
+// notifyComplianceAdmins: the recipients were explicitly deferred.
+//
+// The assigner's and action owner's line managers are already resolved from the
+// HR entity and frozen on the escalation row at escalation time, so the data is
+// there — only the send is withheld. That ordering is intentional: resolving
+// them later would risk a reorg changing who a historical escalation belonged
+// to.
+//
+// TODO: send to assigner_lead_email / action_owner_lead_email on the risk's
+// open escalation once it is decided that leads should be emailed.
+func notifyEscalationLeads(riskID int) {
+	slog.Info("escalation lead notification suppressed (not yet wired)", "riskId", riskID)
+}

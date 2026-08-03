@@ -89,8 +89,8 @@ type CreateRiskRequest struct {
 	ReassessmentDate   string `json:"reassessment_date"`
 
 	// Step 3: Action Plan
-	AssignmentTeamID      int                       `json:"assignment_team_id"`
-	OwnerID               int                       `json:"owner_id"`
+	AssignmentTeamID int `json:"assignment_team_id"`
+	OwnerID          int `json:"owner_id"`
 	// ManagementApproverID is required on every risk regardless of level or
 	// treatment strategy — it names who approves PENDING_MANAGEMENT_APPROVAL
 	// (reached only for ACCEPT+HIGH risks) and who an ESCALATED risk
@@ -138,6 +138,16 @@ type ListRisksFilter struct {
 	DueFrom        string   // implementation_date >= this date (YYYY-MM-DD); empty = unbounded
 	DueTo          string   // implementation_date <= this date (YYYY-MM-DD); empty = unbounded
 	DueOverdueOnly bool     // implementation_date < today, regardless of the range above
+	// OpenEscalationOnly restricts to risks carrying an unresolved escalation —
+	// what the Overdue Risks tab filters on. Deliberately not the ESCALATED
+	// status: a commented escalation returns the risk to IN_REMEDIATION while
+	// staying OPEN, so it must appear under Approved Risks and Overdue at once.
+	OpenEscalationOnly bool
+	// EscalationLeadEmail widens rather than narrows: a risk whose open
+	// escalation names this email as a lead is included even when ScopeTeamIDs
+	// would exclude it. Set automatically from the caller — never
+	// client-supplied, or anyone could read any escalated risk.
+	EscalationLeadEmail string
 	// ActionOwnerID restricts to risks with an action plan owned by this user.
 	// Set automatically by the handler for callers who only hold
 	// COMPLETE_ACTION_STEPS_RISK (Action Owners) — never client-supplied.
@@ -310,4 +320,6 @@ type EscalateRiskRequest struct {
 
 // TODO: escalation — for MEDIUM/HIGH risks past their implementation_date deadline,
 // compliance can escalate to management via POST /api/v1/risks/{id}/escalate.
-// Management responds by adding a MANAGEMENT action plan. See risk_escalation table.
+// Answered by a comment from the risk's Management Approver (HIGH) or a
+// line manager (MEDIUM/LOW), which returns it to the assigner. See the
+// risk_escalation table.

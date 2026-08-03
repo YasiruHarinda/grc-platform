@@ -132,7 +132,7 @@ func TestEveryRiskEventHasATemplate(t *testing.T) {
 	all := []RiskEvent{
 		EventCreated, EventPendingMgmtApproval, EventComplianceApproved,
 		EventActionPlanCompleted, EventPendingOwnerClosure, EventPendingMgmtClosure,
-		EventRejected, EventEscalated,
+		EventRejected, EventEscalated, EventEscalationCommented,
 	}
 	for _, ev := range all {
 		tpl, ok := eventTemplates[ev]

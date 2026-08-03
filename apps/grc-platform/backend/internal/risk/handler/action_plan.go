@@ -29,19 +29,28 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
-// handleCreateManagementActionPlan serves POST /api/v1/risks/{id}/action-plans.
-// MANAGEMENT-only — see ActionPlanService.Create's comment for why STANDARD
-// plans don't go through this endpoint.
-func (d *Deps) handleCreateManagementActionPlan(w http.ResponseWriter, r *http.Request) {
+// handleCreateActionPlan serves POST /api/v1/risks/{id}/action-plans, adding a
+// further STANDARD plan to a risk that already has one from registration.
+//
+// This endpoint used to create MANAGEMENT plans, which were how an escalation
+// was answered. Escalations are now answered with a comment, so the plan type
+// is gone and remediation planning belongs to the Risk Assigner: the gate moved
+// from RISK_CREATE_MANAGEMENT_ACTION_PLAN (a Management privilege) to
+// RISK_MANAGE_ACTION_PLANS plus the assigner identity check, matching every
+// other assigner-side action.
+func (d *Deps) handleCreateActionPlan(w http.ResponseWriter, r *http.Request) {
 	by, ok := requireUserEmail(w, r)
 	if !ok {
 		return
 	}
-	if !auth.RequirePrivilege(r.Context(), w, privilege.CreateManagementActionPlan) {
+	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageActionPlans) {
 		return
 	}
 	riskID, ok := parseRiskID(w, r)
 	if !ok {
+		return
+	}
+	if !d.requireRiskAssigner(w, r, riskID) {
 		return
 	}
 	var req model.CreateActionPlanRequest
@@ -57,8 +66,8 @@ func (d *Deps) handleCreateManagementActionPlan(w http.ResponseWriter, r *http.R
 }
 
 // handleListActionPlans serves GET /api/v1/risks/{id}/action-plans. Visible to
-// anyone who can view the risk, including MANAGEMENT plans (see the design
-// decision that walked back an earlier team-only view restriction) — except
+// anyone who can view the risk (see the design decision that walked back an
+// earlier team-only view restriction) — except
 // an Action-Owner-only caller, who is further scoped to risks where they own
 // a plan (riskVisibleToCaller), matching handleListRisks' list scoping.
 func (d *Deps) handleListActionPlans(w http.ResponseWriter, r *http.Request) {
@@ -131,8 +140,8 @@ func (d *Deps) handleListActionPlanSteps(w http.ResponseWriter, r *http.Request)
 // handleUpdateActionPlanStep serves
 // PATCH /api/v1/risks/{id}/action-plans/{planId}/steps/{stepId}. This is how
 // an Action Owner marks a step complete — applies uniformly to STANDARD and
-// MANAGEMENT plans. Gated by CompleteActionSteps plus the service-layer
-// ownership check (caller must be the plan's action_owner_id).
+// Gated by CompleteActionSteps plus the service-layer ownership check (caller
+// must be the plan's action_owner_id).
 func (d *Deps) handleUpdateActionPlanStep(w http.ResponseWriter, r *http.Request) {
 	by, ok := requireUserEmail(w, r)
 	if !ok {
@@ -168,8 +177,7 @@ func (d *Deps) handleUpdateActionPlanStep(w http.ResponseWriter, r *http.Request
 
 // handleCompleteActionPlan serves
 // POST /api/v1/risks/{id}/action-plans/{planId}/complete. Requires every step
-// already COMPLETED (enforced entity-side); for a MANAGEMENT plan this also
-// resolves its escalation and reverts the risk to IN_REMEDIATION.
+// already COMPLETED (enforced entity-side).
 func (d *Deps) handleCompleteActionPlan(w http.ResponseWriter, r *http.Request) {
 	by, ok := requireUserEmail(w, r)
 	if !ok {

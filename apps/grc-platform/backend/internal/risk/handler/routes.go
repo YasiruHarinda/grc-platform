@@ -21,8 +21,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 	riskservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/service"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
@@ -112,19 +112,23 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	// Analytics
 	mux.HandleFunc("GET /api/v1/risks/analytics/summary", d.handleAnalyticsSummary)
 
-	// Action plans (MANAGEMENT plans on escalated risks; step completion by
-	// the Action Owner, uniformly for STANDARD and MANAGEMENT plans)
-	mux.HandleFunc("POST /api/v1/risks/{id}/action-plans", d.handleCreateManagementActionPlan)
+	// Action plans (additional plans added by the Risk Assigner; step
+	// completion by the plan's Action Owner)
+	mux.HandleFunc("POST /api/v1/risks/{id}/action-plans", d.handleCreateActionPlan)
 	mux.HandleFunc("GET /api/v1/risks/{id}/action-plans", d.handleListActionPlans)
 	mux.HandleFunc("GET /api/v1/risks/{id}/action-plans/{planId}/steps", d.handleListActionPlanSteps)
 	mux.HandleFunc("PATCH /api/v1/risks/{id}/action-plans/{planId}/steps/{stepId}", d.handleUpdateActionPlanStep)
 	mux.HandleFunc("POST /api/v1/risks/{id}/action-plans/{planId}/complete", d.handleCompleteActionPlan)
 
-	// Escalations (automatic by default — see internal/job in the
-	// compliance-entity — plus a manual trigger for Compliance/Admin, and
-	// resolved automatically by risk_action_plan_service.go's completion cascade)
+	// Escalations (automatic by default — see internal/risk/job — plus a manual
+	// trigger for Compliance/Admin. Answered with a comment, which returns the
+	// risk to its assigner; the escalation itself stays OPEN until the assigner
+	// submits for completion approval)
 	mux.HandleFunc("POST /api/v1/risks/{id}/escalate", d.handleEscalateRisk)
 	mux.HandleFunc("GET /api/v1/risks/{id}/escalations", d.handleListEscalations)
+	// Answering an escalation: a comment returns the risk to its assigner.
+	// Replaces the MANAGEMENT action plan that used to serve this purpose.
+	mux.HandleFunc("POST /api/v1/risks/{id}/escalations/{escalationId}/comment", d.handleEscalationComment)
 
 	// TODO: remaining routes
 	// GET    /api/v1/risks/{id}/changelog

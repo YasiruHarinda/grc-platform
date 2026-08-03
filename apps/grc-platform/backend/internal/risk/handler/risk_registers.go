@@ -117,7 +117,6 @@ func isActionOwnerOnly(ctx context.Context) bool {
 		privilege.ManageRiskScores,
 		privilege.ManageActionPlans,
 		privilege.ManageComplianceRefs,
-		privilege.CreateManagementActionPlan,
 	}
 	for _, p := range broader {
 		if auth.HasPrivilege(ctx, p) {
@@ -144,7 +143,6 @@ var seesEveryRisk = []string{
 	privilege.ManageComplianceRefs,
 	privilege.ManagementApproveRisk,
 	privilege.ManagementRejectRisk,
-	privilege.CreateManagementActionPlan,
 	privilege.ManageTeams,
 	privilege.ManageRiskScores,
 }
@@ -260,7 +258,7 @@ func (d *Deps) requireRiskAssigner(w http.ResponseWriter, r *http.Request, riskI
 func (d *Deps) riskVisibleToCaller(ctx context.Context, riskID int) (bool, error) {
 	if isActionOwnerOnly(ctx) {
 		// Passes only if they're the action_owner_id of one of the risk's
-		// action plans (STANDARD or MANAGEMENT).
+		// action plans.
 		callerID, err := d.callerUserID(ctx)
 		if err != nil || callerID == nil {
 			return false, err
@@ -337,6 +335,13 @@ func (d *Deps) handleListRisks(w http.ResponseWriter, r *http.Request) {
 	filter.DueFrom = q.Get("due_from")
 	filter.DueTo = q.Get("due_to")
 	filter.DueOverdueOnly = q.Get("due_overdue") == "true"
+	filter.OpenEscalationOnly = q.Get("open_escalation") == "true"
+	// Taken from the authenticated caller, never the query string: this widens
+	// visibility, so a client-supplied value would let anyone read any risk
+	// they could name a lead email for.
+	if user := auth.FromContext(r.Context()); user != nil {
+		filter.EscalationLeadEmail = user.Email
+	}
 
 	filter.Limit = 50
 	if l := q.Get("limit"); l != "" {
@@ -753,6 +758,13 @@ func (d *Deps) handleCompleteRisk(w http.ResponseWriter, r *http.Request) {
 	if err := d.Risk.Complete(r.Context(), id, by); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
+	}
+	// Submitting for completion approval is what finally closes an escalation:
+	// up to this point the risk stayed in the Overdue tab even while back
+	// IN_REMEDIATION. Best-effort — the risk has already moved on, and failing
+	// the request here would be worse than leaving it in the Overdue tab.
+	if err := d.Escalation.ResolveOpen(r.Context(), id, by); err != nil {
+		slog.Warn("failed to resolve open escalations on completion", "riskId", id, "err", err)
 	}
 	d.notifyOwnerOfCompletion(r.Context(), id, by)
 	w.WriteHeader(http.StatusNoContent)

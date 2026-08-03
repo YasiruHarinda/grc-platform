@@ -91,9 +91,10 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	riskChangeLogSvc := service.NewRiskChangeLogService(riskChangeLogRepo)
 	riskNotificationSvc := service.NewRiskNotificationService(riskNotificationRepo)
 	// riskActionPlanSvc depends on the services above for its completion
-	// cascade (resolve escalation, notify assigner/creator, revert risk).
+	// cascade, which now only notifies — resolving the escalation and reverting
+	// the risk moved to the escalation comment flow in the GRC backend.
 	riskActionPlanSvc := service.NewRiskActionPlanService(
-		riskActionPlanRepo, riskActionStepRepo, riskEscalationRepo,
+		riskActionPlanRepo, riskActionStepRepo,
 		riskEscalationSvc, riskSvc, riskNotificationSvc, userSvc,
 	)
 	riskEvidenceSvc := service.NewRiskEvidenceService(riskEvidenceRepo)
