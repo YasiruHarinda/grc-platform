@@ -42,8 +42,9 @@ type RiskService interface {
 	OwnerApprove(ctx context.Context, id int, byUserEmail string) error
 	// ManagementApprove additionally requires byUserID to match the risk's
 	// management_approver_id — it is gated by both the RISK_MANAGEMENT_APPROVE
-	// privilege (checked by the handler) and this per-risk identity check.
-	ManagementApprove(ctx context.Context, id int, byUserEmail string, byUserID *int) error
+	// privilege (checked by the handler) and this per-risk identity check,
+	// unless canOverride says the caller is a compliance admin.
+	ManagementApprove(ctx context.Context, id int, byUserEmail string, byUserID *int, canOverride bool) error
 	Approve(ctx context.Context, id int, byUserEmail string) error
 	Reject(ctx context.Context, id int, req model.RejectRiskRequest, fromStatus, byUserEmail string) error
 	Complete(ctx context.Context, id int, byUserEmail string) error
@@ -122,7 +123,12 @@ func (s *riskService) OwnerApprove(ctx context.Context, id int, byUserEmail stri
 // Only the risk's own management_approver_id may perform this transition —
 // byUserID is the caller's resolved platform user id, nil when the caller has
 // no platform user row at all (which can never match, so it always 403s).
-func (s *riskService) ManagementApprove(ctx context.Context, id int, byUserEmail string, byUserID *int) error {
+//
+// canOverride lets a compliance admin approve in the named approver's place, so
+// a departed or unavailable approver can't deadlock a risk. The handler decides
+// it from the caller's privileges (see canOverrideAssignee) and passes the
+// answer in, keeping this package free of any dependency on the auth context.
+func (s *riskService) ManagementApprove(ctx context.Context, id int, byUserEmail string, byUserID *int, canOverride bool) error {
 	detail, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err
@@ -130,7 +136,7 @@ func (s *riskService) ManagementApprove(ctx context.Context, id int, byUserEmail
 	if detail.WorkflowStatus != model.StatusPendingManagementApproval {
 		return &apierror.Error{StatusCode: http.StatusConflict, Body: fmt.Sprintf("cannot be management-approved from status: %s", detail.WorkflowStatus)}
 	}
-	if byUserID == nil || detail.ManagementApproverID != *byUserID {
+	if !canOverride && (byUserID == nil || detail.ManagementApproverID != *byUserID) {
 		return &apierror.Error{StatusCode: http.StatusForbidden, Body: "only this risk's designated Management Approver may approve it"}
 	}
 	return s.repo.TransitionStatus(ctx, id, model.StatusPendingManagementApproval, model.StatusPendingComplianceReview, byUserEmail)

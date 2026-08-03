@@ -45,8 +45,10 @@ type ActionPlanService interface {
 	// CompleteActionSteps privilege the handler already checks: callerEmail
 	// must resolve to the plan's action_owner_id, uniformly for STANDARD and
 	// MANAGEMENT plans.
-	UpdateStep(ctx context.Context, riskID, planID, stepID int, req model.UpdateActionPlanStepRequest, callerEmail string) error
-	Complete(ctx context.Context, riskID, planID int, callerEmail string) (*model.ActionPlan, error)
+	// Both take canOverride so a compliance admin can act in the action
+	// owner's place; the handler derives it from the caller's privileges.
+	UpdateStep(ctx context.Context, riskID, planID, stepID int, req model.UpdateActionPlanStepRequest, callerEmail string, canOverride bool) error
+	Complete(ctx context.Context, riskID, planID int, callerEmail string, canOverride bool) (*model.ActionPlan, error)
 }
 
 type actionPlanService struct {
@@ -117,7 +119,12 @@ func (s *actionPlanService) ListSteps(ctx context.Context, planID int) ([]*model
 }
 
 // requireOwner reports whether callerEmail resolves to plan's action_owner_id.
-func (s *actionPlanService) requireOwner(ctx context.Context, plan *model.ActionPlan, callerEmail string) error {
+// canOverride short-circuits it for compliance admins, matching the identity
+// gates on the approval transitions.
+func (s *actionPlanService) requireOwner(ctx context.Context, plan *model.ActionPlan, callerEmail string, canOverride bool) error {
+	if canOverride {
+		return nil
+	}
 	caller, err := s.userRepo.GetByEmail(ctx, callerEmail)
 	if err != nil {
 		return err
@@ -128,7 +135,7 @@ func (s *actionPlanService) requireOwner(ctx context.Context, plan *model.Action
 	return nil
 }
 
-func (s *actionPlanService) UpdateStep(ctx context.Context, riskID, planID, stepID int, req model.UpdateActionPlanStepRequest, callerEmail string) error {
+func (s *actionPlanService) UpdateStep(ctx context.Context, riskID, planID, stepID int, req model.UpdateActionPlanStepRequest, callerEmail string, canOverride bool) error {
 	if stepID <= 0 {
 		return badRequest("stepId must be a positive integer")
 	}
@@ -139,13 +146,13 @@ func (s *actionPlanService) UpdateStep(ctx context.Context, riskID, planID, step
 	if err != nil {
 		return err
 	}
-	if err := s.requireOwner(ctx, plan, callerEmail); err != nil {
+	if err := s.requireOwner(ctx, plan, callerEmail, canOverride); err != nil {
 		return err
 	}
 	return s.repo.UpdateStep(ctx, planID, stepID, req, callerEmail)
 }
 
-func (s *actionPlanService) Complete(ctx context.Context, riskID, planID int, callerEmail string) (*model.ActionPlan, error) {
+func (s *actionPlanService) Complete(ctx context.Context, riskID, planID int, callerEmail string, canOverride bool) (*model.ActionPlan, error) {
 	if callerEmail == "" {
 		return nil, badRequest("caller email is required")
 	}
@@ -153,7 +160,7 @@ func (s *actionPlanService) Complete(ctx context.Context, riskID, planID int, ca
 	if err != nil {
 		return nil, err
 	}
-	if err := s.requireOwner(ctx, plan, callerEmail); err != nil {
+	if err := s.requireOwner(ctx, plan, callerEmail, canOverride); err != nil {
 		return nil, err
 	}
 	return s.repo.Complete(ctx, planID, callerEmail)

@@ -156,7 +156,7 @@ func (d *Deps) handleUpdateActionPlanStep(w http.ResponseWriter, r *http.Request
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
-	if err := d.ActionPlan.UpdateStep(r.Context(), riskID, planID, stepID, req, by); err != nil {
+	if err := d.ActionPlan.UpdateStep(r.Context(), riskID, planID, stepID, req, by, canOverrideAssignee(r.Context())); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
@@ -184,7 +184,7 @@ func (d *Deps) handleCompleteActionPlan(w http.ResponseWriter, r *http.Request) 
 		response.WriteError(w, http.StatusBadRequest, "planId must be a positive integer")
 		return
 	}
-	plan, err := d.ActionPlan.Complete(r.Context(), riskID, planID, by)
+	plan, err := d.ActionPlan.Complete(r.Context(), riskID, planID, by, canOverrideAssignee(r.Context()))
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return

@@ -321,6 +321,9 @@ function ActionFooter({
   can,
   actionPlans,
   isOverdue,
+  isRiskOwner,
+  isRiskAssigner,
+  isManagementApprover,
 }: {
   status: string;
   actions: DrawerActions;
@@ -328,10 +331,24 @@ function ActionFooter({
   can: (privilege: string) => boolean;
   actionPlans: ActionPlanWithSteps[];
   isOverdue: boolean;
+  // Per-risk identity — each already folds in the compliance-admin override,
+  // so a compliance admin sees every action. See the backend's
+  // requireRiskActor, which enforces the same rule server-side.
+  isRiskOwner: boolean;
+  isRiskAssigner: boolean;
+  isManagementApprover: boolean;
 }): JSX.Element | null {
-  const rejectAndApprove = (approveLabel: string, onApprove: () => void, approvePriv: string, rejectPriv: string) => {
-    const showReject = can(rejectPriv);
-    const showApprove = can(approvePriv);
+  // isActor gates the pair on the named individual for that stage; compliance
+  // approval has no named individual, so its callers pass true.
+  const rejectAndApprove = (
+    approveLabel: string,
+    onApprove: () => void,
+    approvePriv: string,
+    rejectPriv: string,
+    isActor: boolean,
+  ) => {
+    const showReject = can(rejectPriv) && isActor;
+    const showApprove = can(approvePriv) && isActor;
     if (!showReject && !showApprove) return null;
     return (
       <Box sx={{ display: "flex", gap: 1, pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
@@ -351,10 +368,10 @@ function ActionFooter({
 
   switch (status) {
     case "PENDING_RISK_OWNER_APPROVAL": {
-      const showEdit = can(RiskPrivilege.UpdateRisk);
-      const showCancel = can(RiskPrivilege.CancelRisk);
-      const showReject = can(RiskPrivilege.OwnerRejectRisk);
-      const showOwnerApprove = can(RiskPrivilege.OwnerApproveRisk);
+      const showEdit = can(RiskPrivilege.UpdateRisk) && isRiskAssigner;
+      const showCancel = can(RiskPrivilege.CancelRisk) && isRiskAssigner;
+      const showReject = can(RiskPrivilege.OwnerRejectRisk) && isRiskOwner;
+      const showOwnerApprove = can(RiskPrivilege.OwnerApproveRisk) && isRiskOwner;
       if (!showEdit && !showCancel && !showReject && !showOwnerApprove) return null;
       return (
         <Box sx={{ pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
@@ -391,24 +408,30 @@ function ActionFooter({
     }
 
     case "PENDING_AMENDMENT":
-      return rejectAndApprove("Approve as Risk Owner", actions.onOwnerApprove, RiskPrivilege.OwnerApproveRisk, RiskPrivilege.OwnerRejectRisk);
+      return rejectAndApprove("Approve as Risk Owner", actions.onOwnerApprove, RiskPrivilege.OwnerApproveRisk, RiskPrivilege.OwnerRejectRisk, isRiskOwner);
 
     case "PENDING_MANAGEMENT_APPROVAL":
-      return rejectAndApprove("Approve as Management", actions.onManagementApprove, RiskPrivilege.ManagementApproveRisk, RiskPrivilege.ManagementRejectRisk);
+      return rejectAndApprove("Approve as Management", actions.onManagementApprove, RiskPrivilege.ManagementApproveRisk, RiskPrivilege.ManagementRejectRisk, isManagementApprover);
 
+    // Compliance approval is role-wide: any compliance admin may act, so there
+    // is no named individual to check against.
     case "PENDING_COMPLIANCE_REVIEW":
-      return rejectAndApprove("Approve (Compliance)", actions.onApprove, RiskPrivilege.ComplianceApproveRisk, RiskPrivilege.ComplianceRejectRisk);
+      return rejectAndApprove("Approve (Compliance)", actions.onApprove, RiskPrivilege.ComplianceApproveRisk, RiskPrivilege.ComplianceRejectRisk, true);
 
     case "PENDING_OWNER_COMPLETION_APPROVAL":
-      return rejectAndApprove("Approve Completion", actions.onOwnerApprove, RiskPrivilege.OwnerApproveRisk, RiskPrivilege.OwnerRejectRisk);
+      return rejectAndApprove("Approve Completion", actions.onOwnerApprove, RiskPrivilege.OwnerApproveRisk, RiskPrivilege.OwnerRejectRisk, isRiskOwner);
 
     case "IN_REMEDIATION": {
-      const showEdit = can(RiskPrivilege.UpdateRisk);
+      const showEdit = can(RiskPrivilege.UpdateRisk) && isRiskAssigner;
+      // Reassessment is deliberately NOT identity-gated — the backend applies
+      // no assigner check to it either, and keeping the two in step matters
+      // more than tightening one side unilaterally.
       const showAssess = can(RiskPrivilege.AssessRisk);
       // At least one action plan must be COMPLETED first — not necessarily
       // all of them, since an abandoned STANDARD plan from a prior
       // escalation cycle shouldn't permanently block resubmission.
-      const showComplete = can(RiskPrivilege.CompleteRisk) && actionPlans.some((p) => p.status === "COMPLETED");
+      const showComplete =
+        can(RiskPrivilege.CompleteRisk) && isRiskAssigner && actionPlans.some((p) => p.status === "COMPLETED");
       // Escalation happens automatically within 24h either way (the daily
       // job) — this just lets Compliance/Admin jump the queue for a risk
       // they've already spotted is overdue.
@@ -452,8 +475,8 @@ function ActionFooter({
     }
 
     case "PENDING_REVISION": {
-      const showEdit = can(RiskPrivilege.UpdateRisk);
-      const showResubmit = can(RiskPrivilege.SubmitRisk);
+      const showEdit = can(RiskPrivilege.UpdateRisk) && isRiskAssigner;
+      const showResubmit = can(RiskPrivilege.SubmitRisk) && isRiskAssigner;
       if (!showEdit && !showResubmit) return null;
       return (
         <Box sx={{ pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
@@ -525,6 +548,20 @@ export default function RiskDetailDrawer({
   const status = detail?.workflow_status ?? "";
   const statusCfg = STATUS_CONFIG[status] ?? { label: status, color: "default" as const };
   const isOverdue = !!detail && calcDue(detail.implementation_date).daysLeft < 0;
+
+  // Per-risk identity, mirroring the backend's requireRiskActor gate: holding
+  // the privilege only says the caller may act on *some* risk, not that they're
+  // the person *this* risk named. Without these the buttons would render and
+  // then 403 on click.
+  //
+  // ComplianceApproveRisk is the same compliance-admin override the backend
+  // uses (canOverrideAssignee) — it must stay in step with it, or the UI will
+  // hide actions the server would have allowed.
+  const canOverrideAssignee = can(RiskPrivilege.ComplianceApproveRisk);
+  const isRiskOwner = canOverrideAssignee || (!!detail && detail.owner_id === currentUserId);
+  const isRiskAssigner = canOverrideAssignee || (!!detail && detail.assigner_id === currentUserId);
+  const isManagementApprover =
+    canOverrideAssignee || (!!detail && detail.management_approver_id === currentUserId);
 
   const [tab, setTab] = useState(0);
   // Reset to the first tab whenever a different risk is opened, so the
@@ -815,6 +852,9 @@ export default function RiskDetailDrawer({
             can={can}
             actionPlans={actionPlans}
             isOverdue={isOverdue}
+            isRiskOwner={isRiskOwner}
+            isRiskAssigner={isRiskAssigner}
+            isManagementApprover={isManagementApprover}
           />
         </Box>
       )}

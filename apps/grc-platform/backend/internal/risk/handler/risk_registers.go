@@ -18,6 +18,7 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -188,6 +189,64 @@ func (d *Deps) callerUserID(ctx context.Context) (*int, error) {
 		return nil, nil
 	}
 	return &caller.ID, nil
+}
+
+// canOverrideAssignee reports whether the caller may act in place of whoever a
+// risk names for a step — the compliance-admin escape hatch that keeps a risk
+// from deadlocking when its named owner/approver has left or is unavailable.
+//
+// RISK_COMPLIANCE_APPROVE stands in for "is a compliance admin": among the
+// seeded roles it is granted only to grc-platform-risk-compliance-admin (plus
+// wso2-everyone, which holds everything). Testing the privilege rather than the
+// role name keeps this consistent with the rest of the module, which never
+// checks a role name — see seesEveryRisk above.
+func canOverrideAssignee(ctx context.Context) bool {
+	return auth.HasPrivilege(ctx, privilege.ComplianceApproveRisk)
+}
+
+// requireRiskActor enforces a per-risk identity gate. Holding the right
+// privilege only answers "may this user perform this action on *some* risk"; it
+// does not answer "are they the person *this* risk named for it". Both must
+// hold, so callers run this after their auth.RequirePrivilege check.
+//
+// Returns true when the caller is wantUserID or can override. Otherwise it
+// writes the response and returns false. actor names the role in the error
+// message, e.g. "Risk Owner" or "Risk Assigner".
+func (d *Deps) requireRiskActor(w http.ResponseWriter, r *http.Request, wantUserID int, actor string) bool {
+	if canOverrideAssignee(r.Context()) {
+		return true
+	}
+	callerID, err := d.callerUserID(r.Context())
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return false
+	}
+	// A caller with no platform user row can never match, so they always 403 —
+	// same outcome as a mismatch, deliberately not distinguished in the message.
+	if callerID == nil || *callerID != wantUserID {
+		response.WriteError(w, http.StatusForbidden,
+			fmt.Sprintf("only this risk's %s may perform this action", actor))
+		return false
+	}
+	return true
+}
+
+// requireRiskAssigner is requireRiskActor for the assigner-side actions (edit,
+// mark complete, resubmit, cancel), which unlike the approval handlers don't
+// otherwise need the risk detail. It loads the risk itself so each call site
+// stays a single line.
+func (d *Deps) requireRiskAssigner(w http.ResponseWriter, r *http.Request, riskID int) bool {
+	// Short-circuit before the lookup: a compliance admin passes regardless of
+	// who the assigner is, so there is nothing to fetch.
+	if canOverrideAssignee(r.Context()) {
+		return true
+	}
+	detail, err := d.Risk.GetByID(r.Context(), riskID)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return false
+	}
+	return d.requireRiskActor(w, r, detail.AssignerID, "Risk Assigner")
 }
 
 // riskVisibleToCaller reports whether the caller may view riskID's data — the
@@ -402,6 +461,9 @@ func (d *Deps) handleUpdateRisk(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !d.requireRiskAssigner(w, r, id) {
+		return
+	}
 
 	var req model.UpdateRiskRequest
 	if err := response.DecodeJSON(w, r, &req); err != nil {
@@ -459,6 +521,10 @@ func (d *Deps) handleUpdateRisk(w http.ResponseWriter, r *http.Request) {
 
 // handleOwnerApproveRisk serves POST /api/v1/risks/{id}/owner-approve.
 // Handles PENDING_RISK_OWNER_APPROVAL, PENDING_AMENDMENT, and PENDING_OWNER_COMPLETION_APPROVAL.
+//
+// Gated on RISK_OWNER_APPROVE *and* on being this risk's own owner_id: belonging
+// to the Risk Owner role, or to the risk's team, does not make someone the owner
+// of every risk in it. Compliance admins bypass — see requireRiskActor.
 func (d *Deps) handleOwnerApproveRisk(w http.ResponseWriter, r *http.Request) {
 	by, ok := requireUserEmail(w, r)
 	if !ok {
@@ -469,6 +535,14 @@ func (d *Deps) handleOwnerApproveRisk(w http.ResponseWriter, r *http.Request) {
 	}
 	id, ok := parseRiskID(w, r)
 	if !ok {
+		return
+	}
+	detail, err := d.Risk.GetByID(r.Context(), id)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	if !d.requireRiskActor(w, r, detail.OwnerID, "Risk Owner") {
 		return
 	}
 	if err := d.Risk.OwnerApprove(r.Context(), id, by); err != nil {
@@ -497,7 +571,7 @@ func (d *Deps) handleManagementApproveRisk(w http.ResponseWriter, r *http.Reques
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
-	if err := d.Risk.ManagementApprove(r.Context(), id, by, callerID); err != nil {
+	if err := d.Risk.ManagementApprove(r.Context(), id, by, callerID, canOverrideAssignee(r.Context())); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
@@ -559,17 +633,18 @@ func (d *Deps) handleRejectRisk(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, rejectPrivilegeFor(detail.WorkflowStatus)) {
 		return
 	}
-	// Rejecting at the management stage is further restricted to the risk's
-	// own designated Management Approver, same as approving it — see
-	// handleManagementApproveRisk.
-	if detail.WorkflowStatus == model.StatusPendingManagementApproval {
-		callerID, err := d.callerUserID(r.Context())
-		if err != nil {
-			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+	// Rejecting is restricted to the same named individual who would have
+	// approved at this stage — the identity gate mirrors the approve path
+	// exactly, so a rejection can't come from someone who couldn't have
+	// approved. Compliance stages have no named individual and stay
+	// privilege-only.
+	switch detail.WorkflowStatus {
+	case model.StatusPendingManagementApproval:
+		if !d.requireRiskActor(w, r, detail.ManagementApproverID, "Management Approver") {
 			return
 		}
-		if callerID == nil || detail.ManagementApproverID != *callerID {
-			response.WriteError(w, http.StatusForbidden, "only this risk's designated Management Approver may reject it")
+	case model.StatusPendingOwnerApproval, model.StatusPendingAmendment, model.StatusPendingOwnerCompletion:
+		if !d.requireRiskActor(w, r, detail.OwnerID, "Risk Owner") {
 			return
 		}
 	}
@@ -600,6 +675,9 @@ func (d *Deps) handleCompleteRisk(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !d.requireRiskAssigner(w, r, id) {
+		return
+	}
 	if err := d.Risk.Complete(r.Context(), id, by); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
@@ -621,6 +699,9 @@ func (d *Deps) handleResubmitRisk(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !d.requireRiskAssigner(w, r, id) {
+		return
+	}
 	if err := d.Risk.Resubmit(r.Context(), id, by); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
@@ -640,6 +721,9 @@ func (d *Deps) handleCancelRisk(w http.ResponseWriter, r *http.Request) {
 	}
 	id, ok := parseRiskID(w, r)
 	if !ok {
+		return
+	}
+	if !d.requireRiskAssigner(w, r, id) {
 		return
 	}
 	if err := d.Risk.Cancel(r.Context(), id, by); err != nil {
