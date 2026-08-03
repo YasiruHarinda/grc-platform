@@ -208,9 +208,9 @@ func (d *Deps) handleCompleteActionPlan(w http.ResponseWriter, r *http.Request) 
 	d.recordEvent(r.Context(), riskID, by, model.HistoryComplete, model.HistoryDetails{
 		Plan: planLabel(plan),
 	})
-	// Fires per plan, matching the in-app REASSESSMENT notification the entity
-	// already writes on this same cascade — so both channels say the same thing
-	// at the same time. A risk with several plans therefore sends several.
+	// Fires per plan — a risk with several plans therefore sends several. This
+	// is the only channel now: the in-app REASSESSMENT notification the entity
+	// used to write on this same cascade went with the risk_notification table.
 	d.notifyAssignerOfPlanCompletion(r.Context(), riskID, by)
 	response.WriteJSONValue(w, http.StatusOK, plan)
 }

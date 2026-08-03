@@ -18,7 +18,6 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -28,12 +27,11 @@ import (
 )
 
 type riskActionPlanService struct {
-	repo            repository.RiskActionPlanRepository
-	stepRepo        repository.RiskActionStepRepository
-	escalationSvc   RiskEscalationService
-	riskSvc         RiskService
-	notificationSvc RiskNotificationService
-	userSvc         UserService
+	repo          repository.RiskActionPlanRepository
+	stepRepo      repository.RiskActionStepRepository
+	escalationSvc RiskEscalationService
+	riskSvc       RiskService
+	userSvc       UserService
 }
 
 // NewRiskActionPlanService constructs a RiskActionPlanService. The extra
@@ -46,16 +44,14 @@ func NewRiskActionPlanService(
 	stepRepo repository.RiskActionStepRepository,
 	escalationSvc RiskEscalationService,
 	riskSvc RiskService,
-	notificationSvc RiskNotificationService,
 	userSvc UserService,
 ) RiskActionPlanService {
 	return &riskActionPlanService{
-		repo:            repo,
-		stepRepo:        stepRepo,
-		escalationSvc:   escalationSvc,
-		riskSvc:         riskSvc,
-		notificationSvc: notificationSvc,
-		userSvc:         userSvc,
+		repo:          repo,
+		stepRepo:      stepRepo,
+		escalationSvc: escalationSvc,
+		riskSvc:       riskSvc,
+		userSvc:       userSvc,
 	}
 }
 
@@ -188,18 +184,10 @@ func (s *riskActionPlanService) CompleteRiskActionPlan(ctx context.Context, plan
 		}
 		plan = updated
 
-		// Best-effort: the plan is already COMPLETED at this point, so a failed
-		// notification must not fail the whole request — a retry would skip this
-		// block entirely (plan.Status is now COMPLETED) and never send it, making
-		// a hard failure here permanently silence the assigner. Swallow rather
-		// than return, matching resolveEscalation's notification below.
-		_, _ = s.notificationSvc.CreateRiskNotification(ctx, domain.CreateRiskNotificationRequest{
-			RecipientID: risk.AssignerID,
-			RiskID:      &plan.RiskID,
-			Type:        "REASSESSMENT",
-			Message:     fmt.Sprintf("The action plan for risk %s is complete — please reassess and resubmit for approval.", risk.RiskCode),
-			CreatedBy:   req.UpdatedBy,
-		})
+		// The in-app notification that used to be written here is gone with the
+		// risk_notification table. The GRC backend emails the assigner on this
+		// same event (EventActionPlanCompleted), which is the only channel the
+		// platform uses.
 	}
 
 	// Completing a plan no longer resolves an escalation or reverts the risk.

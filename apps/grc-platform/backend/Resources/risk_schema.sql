@@ -5,8 +5,8 @@
 --
 -- Conventions (aligned with audit module schema):
 --   • Primary keys: AUTO_INCREMENT surrogate INT for entity tables,
---     BIGINT for high-volume append-only tables (risk_change_log,
---     risk_notification — same pattern as audit_trail / audit_notification).
+--     BIGINT for high-volume append-only tables (risk_change_log —
+--     same pattern as the audit module's audit_trail).
 --   • All FK columns are INT matching their referenced PK type.
 --   • created_by / updated_by are VARCHAR(255) NULLable — store actor email.
 --   • Roles are NOT stored in the DB — they come from Asgardeo JWT claims.
@@ -412,28 +412,6 @@ CREATE TABLE IF NOT EXISTS risk_change_log (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
--- -----------------------------------------------------------------------------
--- risk_notification
--- In-app and email notifications for risk module events.
--- HIGH-VOLUME → BIGINT id (same pattern as audit_notification).
--- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS risk_notification (
-  id           BIGINT       NOT NULL AUTO_INCREMENT,
-  recipient_id INT          NOT NULL,
-  risk_id      INT          NULL,
-  type         ENUM('REMINDER','ESCALATION','STATUS_CHANGE','APPROVAL','REASSESSMENT','REJECTION') NOT NULL,
-  channel      ENUM('EMAIL','IN_APP') NOT NULL DEFAULT 'IN_APP',
-  message      TEXT         NOT NULL,
-  is_read      BOOLEAN      NOT NULL DEFAULT FALSE,
-  created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  created_by   VARCHAR(255) NULL,
-  updated_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  updated_by   VARCHAR(255) NULL,
-  PRIMARY KEY (id),
-  KEY idx_risk_notif_recipient_unread (recipient_id, is_read),
-  CONSTRAINT fk_risk_notif_recipient FOREIGN KEY (recipient_id) REFERENCES `user`(id) ON DELETE CASCADE,
-  CONSTRAINT fk_risk_notif_risk      FOREIGN KEY (risk_id)      REFERENCES risk(id)   ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
 -- -----------------------------------------------------------------------------

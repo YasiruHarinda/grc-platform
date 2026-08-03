@@ -123,12 +123,6 @@ type HistoryRepository interface {
 	Record(ctx context.Context, riskID int, req model.RecordHistoryRequest, createdBy string) error
 }
 
-// NotificationRepository is the data-access contract for risk notifications.
-type NotificationRepository interface {
-	List(ctx context.Context, recipientID int) ([]*model.Notification, error)
-	MarkRead(ctx context.Context, id, recipientID int) error
-}
-
 // ComplianceReferenceRepository is the data-access contract for compliance references.
 // Read-only, for the same reason as RiskScoreRepository: Create was declared but
 // never routed and never implemented — the service stub returned nil without

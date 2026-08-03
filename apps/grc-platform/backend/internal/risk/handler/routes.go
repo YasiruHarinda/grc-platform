@@ -29,20 +29,19 @@ import (
 
 // Deps holds all service dependencies for Risk Hub handlers.
 type Deps struct {
-	Risk         riskservice.RiskService
-	Assessment   riskservice.RiskAssessmentService
-	Team         riskservice.TeamService
-	Score        riskservice.RiskScoreService
-	ActionPlan   riskservice.ActionPlanService
-	Evidence     riskservice.EvidenceService
-	Escalation   riskservice.EscalationService
-	History      riskservice.HistoryService
-	Notification riskservice.NotificationService
-	Compliance   riskservice.ComplianceReferenceService
-	Category     riskservice.RiskCategoryService
-	Analytics    riskservice.AnalyticsService
-	Dashboard    riskservice.DashboardService
-	Employee     riskservice.EmployeeSearchService
+	Risk       riskservice.RiskService
+	Assessment riskservice.RiskAssessmentService
+	Team       riskservice.TeamService
+	Score      riskservice.RiskScoreService
+	ActionPlan riskservice.ActionPlanService
+	Evidence   riskservice.EvidenceService
+	Escalation riskservice.EscalationService
+	History    riskservice.HistoryService
+	Compliance riskservice.ComplianceReferenceService
+	Category   riskservice.RiskCategoryService
+	Analytics  riskservice.AnalyticsService
+	Dashboard  riskservice.DashboardService
+	Employee   riskservice.EmployeeSearchService
 	// Users resolves an authenticated caller's email to their internal
 	// user.id — used by handleListRisks (Action Owner list scoping) and the
 	// action-plan handlers (ownership checks).
@@ -137,7 +136,6 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 
 	// TODO: remaining routes
 	// GET/POST/DELETE /api/v1/risks/{id}/evidence
-	// GET/PATCH /api/v1/notifications
 	// POST/PUT /api/v1/teams
 	// POST/PUT /api/v1/risk-scores
 	// POST   /api/v1/compliance-references

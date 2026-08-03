@@ -234,13 +234,6 @@ type RiskChangeLogService interface {
 	ListRiskChangeLog(ctx context.Context, riskID int, limit, offset int) (domain.ListRiskChangeLogResponse, error)
 }
 
-// RiskNotificationService defines operations on risk_notification.
-type RiskNotificationService interface {
-	CreateRiskNotification(ctx context.Context, req domain.CreateRiskNotificationRequest) (domain.RiskNotification, error)
-	ListRiskNotifications(ctx context.Context, recipientID int) (domain.ListRiskNotificationsResponse, error)
-	MarkRiskNotificationRead(ctx context.Context, id int64, req domain.MarkRiskNotificationReadRequest) (domain.RiskNotification, error)
-}
-
 // DashboardService defines the read query for the audit dashboard.
 type DashboardService interface {
 	Get(ctx context.Context, req domain.AuditDashboardRequest) (*domain.DashboardData, error)

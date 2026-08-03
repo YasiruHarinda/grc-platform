@@ -1439,54 +1439,6 @@ type ListRiskChangeLogResponse struct {
 }
 
 // =============================================================================
-// Risk Notification (risk_notification)
-// =============================================================================
-
-// RiskNotification is a single in-app/email notification for a risk-module
-// event. Only the write path (create) has a caller so far — the escalation
-// job and the action-plan-completion cascade. There is no notification-center
-// UI yet, so List/MarkRead exist as a real API surface but are unconsumed
-// until that UI is built, the same way risk_change_log's read side sat unused
-// before the changelog viewer existed.
-type RiskNotification struct {
-	ID          int64     `json:"id"`
-	RecipientID int       `json:"recipientId"`
-	RiskID      *int      `json:"riskId"`
-	Type        string    `json:"type"`    // REMINDER | ESCALATION | STATUS_CHANGE | APPROVAL | REASSESSMENT | REJECTION
-	Channel     string    `json:"channel"` // EMAIL | IN_APP
-	Message     string    `json:"message"`
-	IsRead      bool      `json:"isRead"`
-	CreatedBy   *string   `json:"createdBy"`
-	UpdatedBy   *string   `json:"updatedBy"`
-	CreatedOn   time.Time `json:"createdOn"`
-	UpdatedOn   time.Time `json:"updatedOn"`
-}
-
-// CreateRiskNotificationRequest is the payload for POST /notifications.
-// Channel defaults to IN_APP when omitted — no email transport exists yet
-// (see the email-service integration this is deliberately deferred to).
-type CreateRiskNotificationRequest struct {
-	RecipientID int     `json:"recipientId"`
-	RiskID      *int    `json:"riskId"`
-	Type        string  `json:"type"`
-	Channel     *string `json:"channel"`
-	Message     string  `json:"message"`
-	CreatedBy   string  `json:"createdBy"`
-}
-
-// MarkRiskNotificationReadRequest is the payload for PATCH /notifications/{id}/read.
-// RecipientID scopes the update so one recipient cannot mark another's notification read.
-type MarkRiskNotificationReadRequest struct {
-	RecipientID int    `json:"recipientId"`
-	UpdatedBy   string `json:"updatedBy"`
-}
-
-// ListRiskNotificationsResponse is returned by GET /users/{userId}/notifications.
-type ListRiskNotificationsResponse struct {
-	Notifications []RiskNotification `json:"notifications"`
-}
-
-// =============================================================================
 // Audit Comment (audit_comment) — threaded comments on an evidence submission
 // =============================================================================
 

@@ -59,7 +59,6 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	riskComplianceRefRepo := repository.NewRiskComplianceRefRepository(db)
 	riskEscalationRepo := repository.NewRiskEscalationRepository(db)
 	riskChangeLogRepo := repository.NewRiskChangeLogRepository(db)
-	riskNotificationRepo := repository.NewRiskNotificationRepository(db)
 	riskEvidenceRepo := repository.NewRiskEvidenceRepository(db)
 	riskAssessmentRepo := repository.NewRiskAssessmentRepository(db)
 	privilegeRepo := repository.NewPrivilegeRepository(db)
@@ -89,13 +88,12 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	riskComplianceRefSvc := service.NewRiskComplianceRefService(riskComplianceRefRepo)
 	riskEscalationSvc := service.NewRiskEscalationService(riskEscalationRepo, riskSvc)
 	riskChangeLogSvc := service.NewRiskChangeLogService(riskChangeLogRepo)
-	riskNotificationSvc := service.NewRiskNotificationService(riskNotificationRepo)
 	// riskActionPlanSvc depends on the services above for its completion
 	// cascade, which now only notifies — resolving the escalation and reverting
 	// the risk moved to the escalation comment flow in the GRC backend.
 	riskActionPlanSvc := service.NewRiskActionPlanService(
 		riskActionPlanRepo, riskActionStepRepo,
-		riskEscalationSvc, riskSvc, riskNotificationSvc, userSvc,
+		riskEscalationSvc, riskSvc, userSvc,
 	)
 	riskEvidenceSvc := service.NewRiskEvidenceService(riskEvidenceRepo)
 	riskAssessmentSvc := service.NewRiskAssessmentService(riskAssessmentRepo)
@@ -127,7 +125,6 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	riskComplianceRefH := handler.NewRiskComplianceRefHandler(riskComplianceRefSvc)
 	riskEscalationH := handler.NewRiskEscalationHandler(riskEscalationSvc)
 	riskChangeLogH := handler.NewRiskChangeLogHandler(riskChangeLogSvc)
-	riskNotificationH := handler.NewRiskNotificationHandler(riskNotificationSvc)
 	riskEvidenceH := handler.NewRiskEvidenceHandler(riskEvidenceSvc)
 	riskAssessmentH := handler.NewRiskAssessmentHandler(riskAssessmentSvc)
 	privilegeH := handler.NewPrivilegeHandler(privilegeSvc)
@@ -303,12 +300,6 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	mux.HandleFunc("POST /risks/{riskId}/changes", riskChangeLogH.CreateRiskChangeLog)
 	mux.HandleFunc("GET /risks/{riskId}/changes", riskChangeLogH.ListRiskChangeLog)
 
-	// Risk notifications (recipient-scoped via ?recipientId=, not risk-scoped —
-	// nesting under /users/{userId}/notifications collides with the existing
-	// /users/by-email/{email} pattern in net/http's ServeMux)
-	mux.HandleFunc("POST /notifications", riskNotificationH.CreateRiskNotification)
-	mux.HandleFunc("GET /notifications", riskNotificationH.ListRiskNotifications)
-	mux.HandleFunc("PATCH /notifications/{id}/read", riskNotificationH.MarkRiskNotificationRead)
 
 	// Risk evidence files (nested under risks)
 	mux.HandleFunc("POST /risks/{riskId}/evidence", riskEvidenceH.CreateRiskEvidence)

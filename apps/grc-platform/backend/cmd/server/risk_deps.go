@@ -61,7 +61,6 @@ func buildRiskDeps(
 		Evidence:        riskservice.NewEvidenceService(riskentity.NewRiskEvidenceRepository(ec), fileSvc),
 		History:         riskservice.NewHistoryService(riskentity.NewHistoryRepository(ec)),
 		Escalation:      riskservice.NewEscalationService(riskentity.NewEscalationRepository(ec), riskRepo, actionPlanRepo, userRepo, hrClient),
-		Notification:    riskservice.NewNotificationService(riskentity.NewNotificationRepository(ec)),
 		Compliance:      riskservice.NewComplianceReferenceService(riskentity.NewComplianceReferenceRepository(ec)),
 		Analytics:       riskservice.NewAssembledAnalyticsService(riskentity.NewAnalyticsRepository(ec)),
 		Dashboard:       riskservice.NewAssembledDashboardService(riskentity.NewDashboardRepository(ec)),
