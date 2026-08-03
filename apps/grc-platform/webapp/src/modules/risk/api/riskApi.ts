@@ -199,6 +199,11 @@ export interface RiskDetail {
   assignment_team_name: string;
   owner_name: string;
   assigner_name: string;
+  // The specific user named at creation who must approve this risk's
+  // PENDING_MANAGEMENT_APPROVAL stage — holding RISK_MANAGEMENT_APPROVE is not
+  // enough on its own. Set on every risk, not just ACCEPT + HIGH ones.
+  management_approver_id: number;
+  management_approver_name: string;
   compliance_approver_name: string | null;
   // Original rating from creation; immutable once a risk owner has approved
   // the risk. Only EditRiskDialog should read this — for display, use
@@ -208,6 +213,10 @@ export interface RiskDetail {
   // else gross_score. This is what headers/tables should display.
   effective_score: RiskScoreInfo | null;
   compliance_references: ComplianceReference[];
+  // Many-to-many at the schema level even though Add Risk renders a
+  // single-select, so this can come back with zero, one, or several entries —
+  // render it as a list, not a scalar.
+  risk_categories: RiskCategory[];
   action_plan: ActionPlanDetail | null;
   assessments: RiskAssessmentRecord[];
 }

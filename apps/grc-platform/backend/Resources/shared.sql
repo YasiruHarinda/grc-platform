@@ -13,7 +13,19 @@
 --       many-to-many join tables owned by their own module's schema:
 --       user_audit_team (audit_schema.sql) and user_risk_team (risk_schema.sql).
 --       A user may belong to zero or more teams in either module.
+--
+-- Run order (each file is standalone — it selects the database itself, so no
+-- -D/database argument is required):
+--   mysql -u root -p < shared.sql
+--   mysql -u root -p < audit_schema.sql
+--   mysql -u root -p < risk_schema.sql
+--
+-- Seed data lives outside this directory and is applied afterwards.
 -- =============================================================================
+
+CREATE DATABASE IF NOT EXISTS grc_platform
+  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE grc_platform;
 
 SET FOREIGN_KEY_CHECKS = 0;
 

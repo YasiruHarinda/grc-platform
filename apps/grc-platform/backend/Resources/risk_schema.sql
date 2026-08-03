@@ -111,7 +111,12 @@ CREATE TABLE IF NOT EXISTS risk_category (
   created_by  VARCHAR(255) NULL,
   updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   updated_by  VARCHAR(255) NULL,
-  PRIMARY KEY (id)
+  PRIMARY KEY (id),
+  -- Category names are the seed file's natural key: it looks rows up by name to
+  -- rename them and to attach categories to seeded risks. Without this key
+  -- INSERT IGNORE degrades to a plain INSERT, which let every re-run of the
+  -- seed file append a second copy of all nine original categories.
+  UNIQUE KEY uq_risk_category_name (name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 

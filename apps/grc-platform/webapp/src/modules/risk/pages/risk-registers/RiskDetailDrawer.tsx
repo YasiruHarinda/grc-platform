@@ -38,6 +38,7 @@ import {
   ListChecks,
   MessageSquare,
   Shield,
+  Tag,
   TrendingUp,
   Users,
   Wrench,
@@ -665,7 +666,22 @@ export default function RiskDetailDrawer({
                 <InfoGrid>
                   <InfoTile label="Assigned By">{detail.assigner_name}</InfoTile>
                   <InfoTile label="Risk Owner">{detail.owner_name}</InfoTile>
+                  <InfoTile label="Management Approver">{detail.management_approver_name || "—"}</InfoTile>
                 </InfoGrid>
+              </SectionCard>
+
+              <SectionCard icon={<Tag size={16} />} iconBg="#fef2f2" iconColor="#dc2626" title="Risk Category">
+                {detail.risk_categories.length > 0 ? (
+                  <Stack direction="row" flexWrap="wrap" gap={0.75}>
+                    {detail.risk_categories.map((cat) => (
+                      <Chip key={cat.id} label={cat.name} size="small" variant="outlined" />
+                    ))}
+                  </Stack>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    No risk category assigned.
+                  </Typography>
+                )}
               </SectionCard>
 
               <SectionCard icon={<LinkIcon size={16} />} iconBg="#f5f3ff" iconColor="#7c3aed" title="Compliance References">
