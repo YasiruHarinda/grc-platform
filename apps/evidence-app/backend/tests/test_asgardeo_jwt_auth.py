@@ -69,6 +69,7 @@ def _use_fake_jwks(monkeypatch):
 def _make_token(
     *,
     key=None,
+    algorithm="RS256",
     email="engineer@example.com",
     sub="11111111-1111-1111-1111-111111111111",
     roles=(settings.ASGARDEO_ENGINEER_ROLE,),
@@ -96,7 +97,7 @@ def _make_token(
     # attribute is added to the access token — the claim is simply absent.
     if email is not None:
         claims["email"] = email
-    return jwt.encode(claims, key or _TRUSTED_KEY, algorithm="RS256")
+    return jwt.encode(claims, key or _TRUSTED_KEY, algorithm=algorithm)
 
 
 def _whoami(client, token: str):
@@ -155,6 +156,37 @@ def test_identity_comes_from_email_claim_not_sub(client):
 
 def test_token_signed_by_wrong_key_is_rejected(client):
     token = _make_token(key=_WRONG_KEY)
+    assert _whoami(client, token).status_code == 401
+
+
+def test_token_signed_with_a_different_algorithm_is_rejected(client):
+    """`jwt.decode` is given `algorithms=["RS256"]`, and this pins that.
+
+    Nothing is broken today. This guards a change that *looks* harmless:
+    widening the list to `["RS256", "HS256"]` leaves every other test in this
+    file green, because they all sign with RS256, so nothing else would notice.
+
+    What the allow-list buys is a clean rejection. The token's header says
+    HS256, which is not on the list, so PyJWT stops at
+    `InvalidAlgorithmError` before it ever looks at the signature. That is a
+    `PyJWTError`, so `get_current_user` turns it into a 401 like any other bad
+    token.
+
+    Mutation-verified, and the result is worth recording because it is not the
+    textbook one. Widening the list does NOT hand out a bypass here: the key
+    `get_current_user` passes to `jwt.decode` is an RSA public key *object*,
+    and PyJWT's HMAC path cannot use one as a shared secret, so it raises
+    `TypeError`. That is not a `PyJWTError`, so it escapes the handler below
+    and becomes a 500 -- every HS256 token turns into a server error rather
+    than a login. Bad, and a different bug from the one the reader expects.
+
+    The textbook algorithm-confusion attack -- signing with the published
+    public key as the HMAC secret -- needs that key as a PEM string, and PyJWT
+    refuses outright with `InvalidKeyError`, so it cannot even be constructed
+    with this library. That is a second, independent defence. This test covers
+    the first one, which is ours to keep.
+    """
+    token = _make_token(key="a-secret-long-enough-to-avoid-a-warning", algorithm="HS256")
     assert _whoami(client, token).status_code == 401
 
 
