@@ -13,6 +13,7 @@ import jwt
 from fastapi import HTTPException, Request, status
 from jwt import PyJWKClient
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from app.config import settings
 
@@ -27,11 +28,17 @@ _ASGARDEO_ISSUER = f"https://api.asgardeo.io/t/{settings.ASGARDEO_ORG}/oauth2/to
 _ASGARDEO_JWKS_URL = f"https://api.asgardeo.io/t/{settings.ASGARDEO_ORG}/oauth2/jwks"
 
 # Built once, at import time — not inside get_current_user. PyJWKClient
-# fetches Asgardeo's signing keys and caches them, refetching only when it
-# meets a `kid` it hasn't seen before, which is what lets Asgardeo rotate
-# its signing key without a redeploy here. Building this per request would
-# throw that caching away and fetch keys on every single request — exactly
-# the "network call on the request path" problem this module removes.
+# fetches Asgardeo's signing keys and caches them, which is what lets
+# Asgardeo rotate its signing key without a redeploy here. Building this per
+# request would throw that caching away and fetch keys on every single
+# request — exactly the "network call on the request path" problem this
+# module removes.
+#
+# The cache is NOT held until an unknown `kid` turns up: PyJWKClient defaults
+# to `cache_jwk_set=True` with `lifespan=300`, so it also refetches on a
+# five-minute timer. That matters because the fetch is a blocking urllib call
+# with a 30s default timeout — see get_current_user, which keeps it off the
+# event loop.
 jwks = PyJWKClient(_ASGARDEO_JWKS_URL)
 
 
@@ -97,7 +104,16 @@ async def get_current_user(request: Request) -> User:
         token = auth_header[len("Bearer "):]
 
         try:
-            signing_key = jwks.get_signing_key_from_jwt(token)
+            # Off the event loop, deliberately. This looks like a cache read
+            # and usually is, but PyJWKClient refetches whenever its cached
+            # key set is older than `lifespan` (300s by default) as well as
+            # when it meets an unknown `kid`, and that fetch is a blocking
+            # urllib call with a 30s default timeout. Left inline in this
+            # async dependency, a slow or unreachable Asgardeo would stall the
+            # whole event loop for every concurrent request — including the
+            # long-lived SSE task streams, which would simply stop updating
+            # while a run was in progress.
+            signing_key = await run_in_threadpool(jwks.get_signing_key_from_jwt, token)
             claims = jwt.decode(
                 token,
                 signing_key.key,
