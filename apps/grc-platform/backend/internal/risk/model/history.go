@@ -23,10 +23,10 @@ import (
 
 // History actions, mirroring risk_change_log.action in risk_schema.sql.
 //
-// A row is either a field diff or a workflow event, never both:
-//   - HistoryCreate/Update/Delete fill FieldChanged and OldValue/NewValue
-//   - every other action fills Details
+// A row is either a field diff (FieldChanged + OldValue/NewValue) or an event (Details).
 //
+// Note: CREATE is used for both risk creation and action-plan creation; the latter
+// sets Details.Plan, so callers must not assume CREATE implies a field diff.
 // Same split the Audit Hub's audit_trail uses. Adding one here means adding it
 // to the schema ENUM and the entity's validChangeLogActions too, or the write
 // is rejected.

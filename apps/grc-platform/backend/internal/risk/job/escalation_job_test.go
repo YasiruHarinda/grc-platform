@@ -100,11 +100,17 @@ func TestRunOnceStopsWhenNoRowCanBeEscalated(t *testing.T) {
 		NewEscalationJob(risks, esc, nil).runOnce(context.Background())
 		close(done)
 	}()
-	select {
-	case <-done:
-	case <-context.Background().Done():
+	if deadline, ok := t.Deadline(); ok {
+		ctx, cancel := context.WithDeadline(context.Background(), deadline)
+		defer cancel()
+		select {
+		case <-done:
+		case <-ctx.Done():
+			t.Fatal("runOnce did not terminate before the test deadline")
+		}
+	} else {
+		<-done
 	}
-	<-done // completes only if the loop terminated
 
 	if len(esc.escalated) != 0 {
 		t.Errorf("escalated %v, want none", esc.escalated)
