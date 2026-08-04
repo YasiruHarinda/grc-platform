@@ -21,6 +21,7 @@ import (
 	"strconv"
 
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
@@ -98,18 +99,18 @@ func (d *Deps) handleListEscalations(w http.ResponseWriter, r *http.Request) {
 // answered: a comment alone returns the risk to its assigner. The assigner may
 // then add further action plans, but nothing forces them to.
 //
-// Deliberately gated on RISK_VIEW_RISKS rather than a dedicated privilege. For
-// a medium/low risk the entitled commenter is a line manager, who holds no risk
-// role by virtue of managing someone — a privilege gate would lock out exactly
-// the people this endpoint exists for. The real check is the identity one in
-// the service, which matches the caller against the risk's Management Approver
-// (HIGH) or the leads frozen on the escalation row (MEDIUM/LOW).
+// Deliberately not gated on any privilege — requireUserEmail below still
+// requires a valid authenticated session, but nothing more. For a medium/low
+// risk the entitled commenter is a line manager, who holds no risk role by
+// virtue of managing someone, and per authorizeComment's own comment need not
+// even be a platform user — a privilege gate would reject exactly the people
+// this endpoint exists for before the real check ever ran. That real check is
+// the identity one in the service, which matches the caller against the
+// risk's Management Approver (HIGH) or the leads frozen on the escalation row
+// (MEDIUM/LOW), by email.
 func (d *Deps) handleEscalationComment(w http.ResponseWriter, r *http.Request) {
 	by, ok := requireUserEmail(w, r)
 	if !ok {
-		return
-	}
-	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewRisks) {
 		return
 	}
 	riskID, ok := parseRiskID(w, r)
@@ -163,14 +164,53 @@ func (d *Deps) handleEscalationComment(w http.ResponseWriter, r *http.Request) {
 // escalation row (assigner_lead_email / action_owner_lead_email), once it is
 // decided who should be on those lists.
 //
-// Exported because the daily escalation job calls it too — automatic and manual
-// escalations must notify identically, and the surest way to guarantee that is
-// for them to share this one function.
+// Exported because the daily escalation job calls it too (via
+// NotifyEscalationSync below) — automatic and manual escalations must notify
+// identically, and the surest way to guarantee that is for them to share the
+// same recipient resolution.
+//
+// Fire-and-forget: safe here because this runs on the request path, and a
+// caller that never learns the outcome is fine — a human clicked Escalate and
+// can see it worked. The daily job cannot make that assumption; see
+// NotifyEscalationSync.
 func (d *Deps) NotifyEscalation(ctx context.Context, riskID int, by string) {
-	detail, err := d.Risk.GetByID(ctx, riskID)
+	recipients, err := d.escalationRecipients(ctx, riskID)
 	if err != nil {
 		slog.Warn("escalation notification: failed to load risk", "riskId", riskID, "err", err)
 		return
+	}
+	d.notifyRiskEvent(emailer.EventEscalated, riskID, recipients, by, "")
+	notifyComplianceAdmins(emailer.EventEscalated, riskID)
+	notifyEscalationLeads(riskID)
+}
+
+// NotifyEscalationSync is NotifyEscalation's synchronous counterpart, used
+// only by the daily escalation job (internal/risk/job). The job can afford to
+// wait for the actual send to finish — it has no response to protect the way
+// an HTTP handler does — and it needs to: a fire-and-forget notification whose
+// caller never learns whether it succeeded is exactly what let a run of the
+// job log "escalated 40" while silently sending zero emails, with no retry,
+// since Escalate's status flip already made every one of those risks
+// ineligible for the job's query on the next run.
+func (d *Deps) NotifyEscalationSync(ctx context.Context, riskID int, by string) error {
+	recipients, err := d.escalationRecipients(ctx, riskID)
+	if err != nil {
+		return fmt.Errorf("load risk for notification: %w", err)
+	}
+	sendErr := d.sendRiskEventSync(ctx, emailer.EventEscalated, riskID, recipients, by, "")
+	notifyComplianceAdmins(emailer.EventEscalated, riskID)
+	notifyEscalationLeads(riskID)
+	return sendErr
+}
+
+// escalationRecipients resolves who a risk's escalation should notify: the
+// assigner, owner, and action owner(s) always, plus the Management Approver
+// when the risk is HIGH. Shared by NotifyEscalation and NotifyEscalationSync
+// so the two can never resolve a different recipient list for the same risk.
+func (d *Deps) escalationRecipients(ctx context.Context, riskID int) ([]int, error) {
+	detail, err := d.Risk.GetByID(ctx, riskID)
+	if err != nil {
+		return nil, err
 	}
 
 	recipients := []int{detail.AssignerID, detail.OwnerID}
@@ -196,7 +236,5 @@ func (d *Deps) NotifyEscalation(ctx context.Context, riskID int, by string) {
 		recipients = append(recipients, detail.ManagementApproverID)
 	}
 
-	d.notifyRiskEvent(emailer.EventEscalated, riskID, recipients, by, "")
-	notifyComplianceAdmins(emailer.EventEscalated, riskID)
-	notifyEscalationLeads(riskID)
+	return recipients, nil
 }

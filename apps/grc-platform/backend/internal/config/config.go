@@ -229,7 +229,12 @@ func Load() (Config, error) {
 			ClientSecret: scimClientSecret,
 			Scopes:       scimScopes,
 		},
-		CORSAllowedOrigin: envOrDefault("CORS_ALLOWED_ORIGIN", "http://localhost:3000"),
+		// Derived from FRONTEND_BASE_URL rather than its own env var: both are
+		// "the webapp's public origin", and having two meant one could be
+		// correctly set (this one is mustEnv, so a typo fails startup loudly)
+		// while the other silently defaulted to localhost — a deployment
+		// could boot with email links pointing somewhere CORS doesn't trust.
+		CORSAllowedOrigin: frontendBaseURL,
 		AIValidation: AIValidationConfig{
 			Enabled:      os.Getenv("AI_VALIDATION_ENABLED") == "true",
 			AgentBaseURL: envOrDefault("AI_AGENT_BASE_URL", "http://localhost:8090"),

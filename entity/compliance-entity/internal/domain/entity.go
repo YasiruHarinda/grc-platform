@@ -1395,6 +1395,16 @@ type UpdateRiskEscalationRequest struct {
 	UpdatedBy            string  `json:"updatedBy"`
 }
 
+// CommentEscalationRequest is the payload for
+// PATCH /risks/{riskId}/escalations/{escalationId}/comment — records a
+// decision and returns the risk to IN_REMEDIATION as one transaction, unlike
+// the generic UpdateRiskEscalation above, which only ever touches the
+// escalation row and leaves any risk-status change to a separate caller.
+type CommentEscalationRequest struct {
+	Decision  string `json:"decision"`
+	UpdatedBy string `json:"updatedBy"`
+}
+
 // ListRiskEscalationsResponse is returned by GET /risks/{riskId}/escalations.
 type ListRiskEscalationsResponse struct {
 	Escalations []RiskEscalation `json:"escalations"`

@@ -17,8 +17,11 @@
 package job
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
@@ -68,11 +71,12 @@ func TestRunOnceEscalatesEveryOverdueRisk(t *testing.T) {
 	esc := &fakeEscalator{risks: risks, failIDs: map[int]bool{}}
 	var notified []int
 
-	j := NewEscalationJob(risks, esc, func(_ context.Context, id int, by string) {
+	j := NewEscalationJob(risks, esc, func(_ context.Context, id int, by string) error {
 		if by != escalatedBy {
 			t.Errorf("notify by = %q, want %q", by, escalatedBy)
 		}
 		notified = append(notified, id)
+		return nil
 	})
 	j.runOnce(context.Background())
 
@@ -86,6 +90,46 @@ func TestRunOnceEscalatesEveryOverdueRisk(t *testing.T) {
 	}
 	if len(risks.remaining) != 0 {
 		t.Errorf("%d risks left unescalated", len(risks.remaining))
+	}
+}
+
+// A notification failure must not be silently invisible, and must not stop
+// the rest of the batch: the escalation itself already succeeded and the risk
+// has already left the job's query, so there is no retry path — the failure
+// has to surface some other way, which is the summary line's notifyFailed
+// count. Escalation completing regardless (every risk still leaves
+// "remaining", failed notification or not) is deliberate, not a bug this test
+// is guarding against — a mail outage must not stall real work.
+func TestRunOnceCountsNotifyFailuresSeparately(t *testing.T) {
+	risks := &fakeRisks{remaining: []int{1, 2, 3}}
+	esc := &fakeEscalator{risks: risks, failIDs: map[int]bool{}}
+	var notified []int
+
+	var buf bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(restore)
+
+	j := NewEscalationJob(risks, esc, func(_ context.Context, id int, _ string) error {
+		notified = append(notified, id)
+		if id == 2 {
+			return errors.New("email-service unreachable")
+		}
+		return nil
+	})
+	j.runOnce(context.Background())
+
+	if len(esc.escalated) != 3 || len(risks.remaining) != 0 {
+		t.Errorf("escalated %v, remaining %v — a notify failure must not block escalation",
+			esc.escalated, risks.remaining)
+	}
+	if len(notified) != 3 {
+		t.Errorf("notified %v, want all three — a notify failure must not skip the rest of the batch", notified)
+	}
+
+	summary := buf.String()
+	if !strings.Contains(summary, "run complete") || !strings.Contains(summary, "notifyFailed=1") {
+		t.Errorf("summary log = %q, want it to report exactly one notifyFailed", summary)
 	}
 }
 

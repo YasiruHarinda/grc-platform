@@ -95,13 +95,16 @@ func (r *escalationRepository) Escalate(ctx context.Context, riskID int, created
 	return e.toModel(), nil
 }
 
-// Comment writes the decision text via the entity's escalation PATCH. Status is
-// deliberately left alone — the comment returns the risk to the assigner, but
-// the escalation stays OPEN so the risk remains in the Overdue tab.
+// Comment writes the decision text and returns the risk to IN_REMEDIATION via
+// the entity's dedicated comment endpoint — one transaction on the entity
+// side, so the two can't drift out of step if the second write fails. The
+// escalation's own status is deliberately left alone by that endpoint: it
+// stays OPEN so the risk remains in the Overdue tab until the assigner
+// submits for completion approval.
 func (r *escalationRepository) Comment(ctx context.Context, riskID, escalationID int, comment, updatedBy string) (*model.Escalation, error) {
 	body := map[string]any{"decision": comment, "updatedBy": updatedBy}
 	var e entEscalation
-	if err := r.c.Patch(ctx, fmt.Sprintf("/risks/%d/escalations/%d", riskID, escalationID), body, &e); err != nil {
+	if err := r.c.Patch(ctx, fmt.Sprintf("/risks/%d/escalations/%d/comment", riskID, escalationID), body, &e); err != nil {
 		return nil, fmt.Errorf("comment on escalation %d: %w", escalationID, err)
 	}
 	return e.toModel(), nil

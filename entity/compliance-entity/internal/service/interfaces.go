@@ -218,6 +218,9 @@ type RiskEscalationService interface {
 	CreateRiskEscalation(ctx context.Context, riskID int, req domain.CreateRiskEscalationRequest) (domain.RiskEscalation, error)
 	GetRiskEscalationByID(ctx context.Context, riskID, escalationID int) (domain.RiskEscalation, error)
 	UpdateRiskEscalation(ctx context.Context, riskID, escalationID int, req domain.UpdateRiskEscalationRequest) (domain.RiskEscalation, error)
+	// CommentEscalation records a decision and returns the risk to
+	// IN_REMEDIATION as one transaction. See CommentEscalationRequest.
+	CommentEscalation(ctx context.Context, riskID, escalationID int, req domain.CommentEscalationRequest) (domain.RiskEscalation, error)
 	ListRiskEscalations(ctx context.Context, riskID int) (domain.ListRiskEscalationsResponse, error)
 	// EscalateRisk is the single "escalate one risk" operation shared by the
 	// daily job (internal/job) and a manual trigger (Compliance clicking

@@ -295,6 +295,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	mux.HandleFunc("GET /risks/{riskId}/escalations", riskEscalationH.ListRiskEscalations)
 	mux.HandleFunc("GET /risks/{riskId}/escalations/{escalationId}", riskEscalationH.GetRiskEscalationByID)
 	mux.HandleFunc("PATCH /risks/{riskId}/escalations/{escalationId}", riskEscalationH.UpdateRiskEscalation)
+	mux.HandleFunc("PATCH /risks/{riskId}/escalations/{escalationId}/comment", riskEscalationH.CommentEscalation)
 
 	// Risk change log (audit trail for risks; append-only)
 	mux.HandleFunc("POST /risks/{riskId}/changes", riskChangeLogH.CreateRiskChangeLog)

@@ -106,7 +106,7 @@ func main() {
 	// exactly as a manual one does.
 	jobCtx, jobCancel := context.WithCancel(context.Background())
 	defer jobCancel()
-	go riskjob.NewEscalationJob(riskDeps.Risk, riskDeps.Escalation, riskDeps.NotifyEscalation).Start(jobCtx)
+	go riskjob.NewEscalationJob(riskDeps.Risk, riskDeps.Escalation, riskDeps.NotifyEscalationSync).Start(jobCtx)
 
 	// Scope guard runs just inside Auth: an evidence-app-scoped token (IdP-2) is
 	// confined to /api/v1/evidence-app/* — 403 on any other route.

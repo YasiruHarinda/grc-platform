@@ -35,6 +35,19 @@ import (
 // goroutine rather than the mechanism that bounds any single call.
 const notifyTimeout = 2 * time.Minute
 
+// notifyConcurrency bounds how many notifications can be actively doing work
+// (entity lookups + email send) at once, across every call site sharing
+// notifyRiskEvent below — workflow transitions, plan completion, and the daily
+// escalation job alike. Without it, a large batch fans out one goroutine's
+// worth of concurrent entity/email-service load per risk; the realistic case
+// is the escalation job's first sweep after a backlog builds up (e.g. the job
+// was down, or this ships with overdue risks already waiting). A goroutine
+// still spawns immediately either way — this only gates the work inside it —
+// so notifyRiskEvent's callers are never blocked by it.
+const notifyConcurrency = 5
+
+var notifySem = make(chan struct{}, notifyConcurrency)
+
 // notifyRiskEvent emails everyone in recipientUserIDs about ev.
 //
 // Best-effort and detached: the transition it reports is already committed by
@@ -56,16 +69,47 @@ func (d *Deps) notifyRiskEvent(ev emailer.RiskEvent, riskID int, recipientUserID
 				slog.Error("risk notification: panic", "event", ev, "riskId", riskID, "panic", p)
 			}
 		}()
+		// Wait for a slot before doing any work. Not counted against
+		// notifyTimeout below — that timeout bounds the entity/email work
+		// itself, not queueing time behind a large batch, which is expected
+		// backpressure rather than a stuck goroutine.
+		notifySem <- struct{}{}
+		defer func() { <-notifySem }()
 		ctx, cancel := context.WithTimeout(context.Background(), notifyTimeout)
 		defer cancel()
-		d.sendRiskEvent(ctx, ev, riskID, recipientUserIDs, actor, comment)
+		// Error discarded: every failure path below already logs with the
+		// risk id at Warn/Error, which is all a fire-and-forget caller can
+		// act on. A caller that needs to know the outcome wants
+		// sendRiskEventSync instead.
+		_ = d.sendRiskEvent(ctx, ev, riskID, recipientUserIDs, actor, comment)
 	}()
 }
 
+// sendRiskEventSync is sendRiskEvent's counterpart for a caller that runs the
+// work inline rather than detached and needs to know whether it succeeded —
+// currently only NotifyEscalationSync, for the daily escalation job. Goes
+// through the same notifySem bound and gets its own notifyTimeout budget,
+// same as the async path; the panic recovery here converts to a returned
+// error instead of only logging, since a caller running through this path
+// still wants to keep processing the rest of its own batch.
+func (d *Deps) sendRiskEventSync(ctx context.Context, ev emailer.RiskEvent, riskID int, recipientUserIDs []int, actor, comment string) (err error) {
+	notifySem <- struct{}{}
+	defer func() { <-notifySem }()
+	defer func() {
+		if p := recover(); p != nil {
+			slog.Error("risk notification: panic", "event", ev, "riskId", riskID, "panic", p)
+			err = fmt.Errorf("risk notification panic: %v", p)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(ctx, notifyTimeout)
+	defer cancel()
+	return d.sendRiskEvent(ctx, ev, riskID, recipientUserIDs, actor, comment)
+}
+
 // sendRiskEvent resolves recipients and the risk detail, then sends. Split out
-// from notifyRiskEvent so the work is callable synchronously in a test without
-// the goroutine.
-func (d *Deps) sendRiskEvent(ctx context.Context, ev emailer.RiskEvent, riskID int, recipientUserIDs []int, actor, comment string) {
+// from notifyRiskEvent so the work is callable both detached (via the
+// goroutine above) and synchronously (via sendRiskEventSync).
+func (d *Deps) sendRiskEvent(ctx context.Context, ev emailer.RiskEvent, riskID int, recipientUserIDs []int, actor, comment string) error {
 	seen := make(map[int]bool, len(recipientUserIDs))
 	emails := make([]string, 0, len(recipientUserIDs))
 	for _, id := range recipientUserIDs {
@@ -88,13 +132,13 @@ func (d *Deps) sendRiskEvent(ctx context.Context, ev emailer.RiskEvent, riskID i
 	}
 	if len(emails) == 0 {
 		slog.Warn("risk notification: no deliverable recipients", "event", ev, "riskId", riskID)
-		return
+		return fmt.Errorf("no deliverable recipients")
 	}
 
 	detail, err := d.Risk.GetByID(ctx, riskID)
 	if err != nil {
 		slog.Warn("risk notification: failed to load risk detail", "event", ev, "riskId", riskID, "err", err)
-		return
+		return fmt.Errorf("load risk detail: %w", err)
 	}
 	riskLevel := ""
 	if detail.GrossScore != nil {
@@ -111,10 +155,11 @@ func (d *Deps) sendRiskEvent(ctx context.Context, ev emailer.RiskEvent, riskID i
 		People:         d.peopleForEvent(ctx, ev, riskID, detail),
 		DetailURL:      fmt.Sprintf("%s/risk/registers?riskId=%d", d.FrontendBaseURL, riskID),
 	}); err != nil {
-		slog.Warn("risk notification: send failed", "event", ev, "riskId", riskID, "to", emails, "err", err)
-		return
+		slog.Warn("risk notification: send failed", "event", ev, "riskId", riskID, "recipients", len(emails), "userIds", recipientUserIDs, "err", err)
+		return fmt.Errorf("send: %w", err)
 	}
-	slog.Info("risk notification sent", "event", ev, "riskId", riskID, "to", emails)
+	slog.Info("risk notification sent", "event", ev, "riskId", riskID, "recipients", len(emails), "userIds", recipientUserIDs)
+	return nil
 }
 
 // peopleForEvent resolves the roles ev's template will actually render into the

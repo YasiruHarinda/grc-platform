@@ -92,13 +92,21 @@ func (r *riskRepository) Update(ctx context.Context, id int, req model.UpdateRis
 	}
 	noteRestricted("implementation_date", derefOr(current.ImplementationDate), req.ImplementationDate)
 	noteRestricted("email_subject", derefOr(current.EmailSubject), req.EmailSubject)
+	// needsManagementSignOff (risk/service/risk.go) reads treatment_strategy
+	// live, at both the entering-remediation and closure checkpoints — an
+	// ACCEPT+HIGH risk edited to something else mid-remediation would
+	// otherwise route straight past the Management closure stage it was
+	// created to require. Restricting it forces the edit back through
+	// PENDING_AMENDMENT, which re-evaluates needsManagementSignOff against
+	// the new value at the moment it changes rather than silently deferring
+	// the mismatch to closure.
+	noteRestricted("treatment_strategy", derefOr(current.TreatmentStrategy), req.TreatmentStrategy)
 
 	// Everything else is free to edit, but still belongs in the history — "who
 	// moved the date" is only half the question an overdue risk raises.
 	logChange("risk_title", current.RiskTitle, req.RiskTitle)
 	logChange("risk_description", current.RiskDescription, req.RiskDescription)
 	logChange("impact_description", derefOr(current.ImpactDescription), req.ImpactDescription)
-	logChange("treatment_strategy", derefOr(current.TreatmentStrategy), req.TreatmentStrategy)
 	logChange("progress", derefOr(current.Progress), req.Progress)
 	logChange("remarks", derefOr(current.Remarks), req.Remarks)
 	logChange("git_issue_url", derefOr(current.GitIssueURL), req.GitIssueURL)
@@ -143,6 +151,9 @@ func (r *riskRepository) Update(ctx context.Context, id int, req model.UpdateRis
 	if req.OwnerID != nil {
 		body["ownerId"] = *req.OwnerID
 	}
+	if req.ManagementApproverID != nil {
+		body["managementApproverId"] = *req.ManagementApproverID
+	}
 	if req.AssignmentTeamID != nil {
 		body["assignmentTeamId"] = *req.AssignmentTeamID
 	}
@@ -155,6 +166,9 @@ func (r *riskRepository) Update(ctx context.Context, id int, req model.UpdateRis
 
 	if req.ComplianceReferenceIDs != nil {
 		body["complianceReferenceIds"] = req.ComplianceReferenceIDs
+	}
+	if req.RiskCategoryIDs != nil {
+		body["riskCategoryIds"] = req.RiskCategoryIDs
 	}
 	if req.ActionPlanDescription != "" || req.ActionOwnerID != nil {
 		plan := map[string]any{}

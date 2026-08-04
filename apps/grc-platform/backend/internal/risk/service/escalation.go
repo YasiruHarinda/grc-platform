@@ -182,15 +182,14 @@ func (s *escalationService) Comment(ctx context.Context, riskID, escalationID in
 		return nil, err
 	}
 
+	// repo.Comment records the decision and returns the risk to IN_REMEDIATION
+	// in one entity-side transaction — no separate TransitionStatus call here,
+	// since that would be a second, independent HTTP round trip with no way
+	// to roll either back if the other failed. The escalation stays OPEN
+	// deliberately, so the risk remains in the Overdue tab until the assigner
+	// submits for completion approval.
 	updated, err := s.repo.Comment(ctx, riskID, escalationID, strings.TrimSpace(comment), callerEmail)
 	if err != nil {
-		return nil, err
-	}
-
-	// The comment is what returns the risk to its assigner. The escalation
-	// stays OPEN deliberately, so the risk remains in the Overdue tab until
-	// the assigner submits for completion approval.
-	if err := s.riskRepo.TransitionStatus(ctx, riskID, model.StatusEscalated, model.StatusInRemediation, callerEmail); err != nil {
 		return nil, err
 	}
 	return updated, nil

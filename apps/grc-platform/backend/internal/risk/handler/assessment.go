@@ -52,9 +52,14 @@ func (d *Deps) handleAssessRisk(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
-	// The reassessment's own row already records the score; the history entry
-	// is what places it in the risk's timeline alongside everything else.
-	details := model.HistoryDetails{Level: result.ResidualLevel}
+	// Progress carries the assessor's notes into the timeline itself — the
+	// reassessment's own row is the source of truth, but the dedicated
+	// Assessment History view that used to read it directly was replaced by
+	// this unified timeline, so the notes need to travel here too or they're
+	// fetched and never shown anywhere. Level/PreviousLevel already give the
+	// score's before/after, and CreatedBy (set by recordEvent below) already
+	// gives who — Comment is the one piece genuinely missing.
+	details := model.HistoryDetails{Level: result.ResidualLevel, Comment: result.Progress}
 	if prev := previousLevel(r.Context(), d, id, result.ID); prev != "" {
 		details.PreviousLevel = prev
 	}

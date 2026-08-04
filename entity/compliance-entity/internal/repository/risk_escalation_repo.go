@@ -36,6 +36,12 @@ type RiskEscalationRepository interface {
 	Escalate(ctx context.Context, riskID int, req domain.CreateRiskEscalationRequest) (*domain.RiskEscalation, error)
 	GetRiskEscalationByID(ctx context.Context, riskID, escalationID int) (*domain.RiskEscalation, error)
 	UpdateRiskEscalation(ctx context.Context, riskID, escalationID int, req domain.UpdateRiskEscalationRequest) (*domain.RiskEscalation, error)
+	// CommentEscalation records a decision and returns the risk to
+	// IN_REMEDIATION atomically (one transaction), for the same reason
+	// Escalate is atomic: a comment must never appear to save while the risk
+	// stays ESCALATED, or vice versa, and a failure partway must not strand
+	// either write.
+	CommentEscalation(ctx context.Context, riskID, escalationID int, decision, updatedBy string) (*domain.RiskEscalation, error)
 	ListRiskEscalations(ctx context.Context, riskID int) ([]domain.RiskEscalation, error)
 	// GetOpenByActionPlanID finds the still-OPEN escalation linked to a
 	// MANAGEMENT action plan (see CreateRiskActionPlan's linking step). Used
@@ -72,19 +78,37 @@ func (r *riskEscalationRepo) CreateRiskEscalation(ctx context.Context, riskID in
 	return r.GetRiskEscalationByID(ctx, riskID, int(id))
 }
 
-// Escalate performs the whole escalation as one transaction: a CAS flip of the
-// risk from IN_REMEDIATION to ESCALATED, then the OPEN escalation insert. If the
-// insert fails, the flip rolls back — so the risk is never left ESCALATED with
-// no escalation row (a stuck state: the daily job skips non-IN_REMEDIATION
-// risks, manual escalate requires IN_REMEDIATION, and a MANAGEMENT plan needs an
-// open escalation, leaving no recovery path). The CAS also makes a concurrent
-// escalate (daily job vs. manual click) fail here rather than insert a duplicate.
+// Escalate performs the whole escalation as one transaction: reject if the risk
+// already has an OPEN escalation (IN_REMEDIATION alone doesn't rule this out —
+// a commented escalation returns the risk to IN_REMEDIATION without resolving
+// it), then a CAS flip of the risk from IN_REMEDIATION to ESCALATED, then the
+// OPEN escalation insert. If the insert fails, the flip rolls back — so the
+// risk is never left ESCALATED with no escalation row (a stuck state: the
+// daily job skips non-IN_REMEDIATION risks, manual escalate requires
+// IN_REMEDIATION, and a MANAGEMENT plan needs an open escalation, leaving no
+// recovery path). The CAS also makes a concurrent escalate (daily job vs.
+// manual click) fail here rather than insert a duplicate.
 func (r *riskEscalationRepo) Escalate(ctx context.Context, riskID int, req domain.CreateRiskEscalationRequest) (*domain.RiskEscalation, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("risk_escalation.Escalate begin: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
+
+	// A commented escalation returns the risk to IN_REMEDIATION while staying
+	// OPEN (see ListRisksFilter.OpenEscalationOnly), so IN_REMEDIATION alone
+	// doesn't mean this risk is escalate-able — it may already have an open
+	// escalation nobody has resolved yet. Without this check, the daily job
+	// (and a stray manual click) would insert a second OPEN escalation and
+	// re-notify everyone on every subsequent overdue sweep.
+	var openCount int
+	if err := tx.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM risk_escalation WHERE risk_id = ? AND status = 'OPEN'", riskID).Scan(&openCount); err != nil {
+		return nil, fmt.Errorf("risk_escalation.Escalate check open: %w", err)
+	}
+	if openCount > 0 {
+		return nil, &apierror.ConflictError{Msg: fmt.Sprintf("risk %d already has an open escalation", riskID)}
+	}
 
 	res, err := tx.ExecContext(ctx,
 		`UPDATE risk SET workflow_status = 'ESCALATED', updated_by = ?, updated_at = NOW()
@@ -172,6 +196,58 @@ func (r *riskEscalationRepo) UpdateRiskEscalation(ctx context.Context, riskID, e
 	if _, err := r.db.ExecContext(ctx,
 		"UPDATE risk_escalation SET "+strings.Join(sets, ", ")+" WHERE id = ? AND risk_id = ?", args...); err != nil { // #nosec G202
 		return nil, fmt.Errorf("risk_escalation.Update(%d): %w", escalationID, err)
+	}
+	return r.GetRiskEscalationByID(ctx, riskID, escalationID)
+}
+
+// CommentEscalation performs the whole comment-and-resolve as one
+// transaction, mirroring Escalate's shape: verify the escalation exists and
+// is still OPEN, CAS the risk from ESCALATED to IN_REMEDIATION, then write
+// the decision — all inside the transaction, so a failure at any step rolls
+// the rest back rather than leaving the comment saved with the risk still
+// ESCALATED (or the reverse).
+func (r *riskEscalationRepo) CommentEscalation(ctx context.Context, riskID, escalationID int, decision, updatedBy string) (*domain.RiskEscalation, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("risk_escalation.CommentEscalation begin: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var status string
+	if err := tx.QueryRowContext(ctx,
+		"SELECT status FROM risk_escalation WHERE id = ? AND risk_id = ?", escalationID, riskID).Scan(&status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, &apierror.NotFoundError{Msg: fmt.Sprintf("escalation %d not found for risk %d", escalationID, riskID)}
+		}
+		return nil, fmt.Errorf("risk_escalation.CommentEscalation lookup: %w", err)
+	}
+	if status != "OPEN" {
+		return nil, &apierror.ConflictError{Msg: "this escalation is already resolved"}
+	}
+
+	// Existence of the escalation row above guarantees the risk row exists
+	// too (risk_id is a FK), so zero rows here can only mean the risk is no
+	// longer ESCALATED — no need to disambiguate "not found" the way Escalate
+	// does for its own CAS.
+	res, err := tx.ExecContext(ctx,
+		`UPDATE risk SET workflow_status = 'IN_REMEDIATION', updated_by = ?, updated_at = NOW()
+		 WHERE id = ? AND workflow_status = 'ESCALATED'`,
+		updatedBy, riskID)
+	if err != nil {
+		return nil, fmt.Errorf("risk_escalation.CommentEscalation flip: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, &apierror.ConflictError{Msg: "risk is not currently ESCALATED"}
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE risk_escalation SET decision = ?, updated_by = ? WHERE id = ? AND risk_id = ?`,
+		decision, updatedBy, escalationID, riskID); err != nil {
+		return nil, fmt.Errorf("risk_escalation.CommentEscalation update: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("risk_escalation.CommentEscalation commit: %w", err)
 	}
 	return r.GetRiskEscalationByID(ctx, riskID, escalationID)
 }

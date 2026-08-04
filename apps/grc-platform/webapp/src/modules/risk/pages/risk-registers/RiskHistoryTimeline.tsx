@@ -111,6 +111,7 @@ function entryToSentence(e: HistoryEntry): Rendered {
     case "ASSESS":
       return {
         title: d.previousLevel && d.level ? `Reassessed ${d.previousLevel} → ${d.level}` : `Reassessed${d.level ? ` — ${d.level}` : ""}`,
+        body: d.comment,
         tone: "neutral",
       };
     case "COMPLETE":

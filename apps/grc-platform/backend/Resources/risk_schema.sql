@@ -19,7 +19,14 @@
 --   • Identity refs (user, risk_team)                     ............... RESTRICT
 --   • Owning parents (risk → action_plan/step/evidence/…) ............... CASCADE
 --   • Optional associations (scores, approvers, plans)    ............... SET NULL
---   • Audit trail creator                                 ............... RESTRICT
+--   • Append-only history (risk_change_log, risk_assessment) → risk ...... RESTRICT
+--     Not CASCADE: a history table silently losing its rows whenever its
+--     subject is deleted defeats the point of keeping history. RESTRICT
+--     rather than the audit module's SET NULL (audit_trail → audit) because
+--     risks are never hard-deleted by any code path — only soft-closed via
+--     workflow_status — so this is a safety net against an accidental manual
+--     DELETE, not a real operational path; RESTRICT gets that without
+--     widening risk_id to nullable.
 --   • Junction tables (risk_compliance_reference,
 --     user_risk_team)                                     ............... CASCADE
 -- =============================================================================
@@ -408,7 +415,7 @@ CREATE TABLE IF NOT EXISTS risk_change_log (
   PRIMARY KEY (id),
   KEY idx_change_log_risk      (risk_id),
   KEY idx_change_log_risk_time (risk_id, created_at),
-  CONSTRAINT fk_change_log_risk FOREIGN KEY (risk_id) REFERENCES risk(id) ON DELETE CASCADE
+  CONSTRAINT fk_change_log_risk FOREIGN KEY (risk_id) REFERENCES risk(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
@@ -453,7 +460,7 @@ CREATE TABLE IF NOT EXISTS risk_assessment (
   PRIMARY KEY (id),
   KEY idx_risk_assessment_risk      (risk_id),
   KEY idx_risk_assessment_risk_time (risk_id, created_at),
-  CONSTRAINT fk_risk_assessment_risk  FOREIGN KEY (risk_id)  REFERENCES risk(id)       ON DELETE CASCADE,
+  CONSTRAINT fk_risk_assessment_risk  FOREIGN KEY (risk_id)  REFERENCES risk(id)       ON DELETE RESTRICT,
   CONSTRAINT fk_risk_assessment_score FOREIGN KEY (score_id) REFERENCES risk_score(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

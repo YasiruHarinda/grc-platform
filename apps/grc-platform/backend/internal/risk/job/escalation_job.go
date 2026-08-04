@@ -65,10 +65,14 @@ const runTimeout = 30 * time.Minute
 type EscalationJob struct {
 	risks      riskLister
 	escalation escalator
-	// notify is called after each successful escalation. It is a function
-	// rather than a handler dependency so this package doesn't import the
-	// handler package (which imports services, and would cycle).
-	notify func(ctx context.Context, riskID int, by string)
+	// notify is called after each successful escalation and must run
+	// synchronously and return whether the send actually succeeded — the job
+	// has no way to retry a risk once Escalate has moved it out of its query,
+	// so a fire-and-forget notify would let a run report success while
+	// silently telling nobody. It is a function rather than a handler
+	// dependency so this package doesn't import the handler package (which
+	// imports services, and would cycle).
+	notify func(ctx context.Context, riskID int, by string) error
 }
 
 // escalatedBy is recorded as created_by on job-driven escalations, to
@@ -80,7 +84,7 @@ const escalatedBy = "system"
 func NewEscalationJob(
 	risks riskLister,
 	escalation escalator,
-	notify func(ctx context.Context, riskID int, by string),
+	notify func(ctx context.Context, riskID int, by string) error,
 ) *EscalationJob {
 	return &EscalationJob{risks: risks, escalation: escalation, notify: notify}
 }
@@ -118,7 +122,7 @@ func (j *EscalationJob) runOnce(parent context.Context) {
 	ctx, cancel := context.WithTimeout(parent, runTimeout)
 	defer cancel()
 
-	escalated, failed := 0, 0
+	escalated, notifyFailed, failed := 0, 0, 0
 	for {
 		page, err := j.risks.List(ctx, model.ListRisksFilter{
 			Statuses:       []string{model.StatusInRemediation},
@@ -152,8 +156,17 @@ func (j *EscalationJob) runOnce(parent context.Context) {
 			}
 			escalated++
 			progressed = true
+			// Notification failure doesn't affect progressed/escalated — the
+			// risk did leave IN_REMEDIATION, so the query correctly won't see
+			// it again. It's counted and logged separately instead, since
+			// that's the only way anyone finds out someone wasn't told: the
+			// per-risk reason is already logged (with the risk id) inside
+			// sendRiskEvent, so this is job-level visibility on top of that.
 			if j.notify != nil {
-				j.notify(ctx, r.ID, escalatedBy)
+				if err := j.notify(ctx, r.ID, escalatedBy); err != nil {
+					slog.Warn("escalation job: notification failed", "riskId", r.ID, "err", err)
+					notifyFailed++
+				}
 			}
 		}
 		if !progressed {
@@ -162,5 +175,5 @@ func (j *EscalationJob) runOnce(parent context.Context) {
 			break
 		}
 	}
-	slog.Info("escalation job: run complete", "escalated", escalated, "failed", failed)
+	slog.Info("escalation job: run complete", "escalated", escalated, "notifyFailed", notifyFailed, "failed", failed)
 }

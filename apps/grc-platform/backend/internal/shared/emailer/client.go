@@ -139,6 +139,35 @@ type responseMessage struct {
 	Message string `json:"message"`
 }
 
+// maxSubjectRunes caps the subject well under any mail-header line-length
+// concern, while staying long enough to show the risk code and a readable
+// slice of the title.
+const maxSubjectRunes = 200
+
+// sanitizeSubject collapses embedded newlines to spaces and caps the length.
+// Unlike the body — rendered through html/template specifically so free-text
+// fields are escaped for their context — every subject is built by plain
+// fmt.Sprintf over fields like RiskTitle (a 500-character free-text column),
+// so nothing else stands between user input and the raw request this client
+// sends. Runes rather than bytes, so truncation can't split a multi-byte
+// character.
+func sanitizeSubject(s string) string {
+	// Collapse a CRLF pair to a single space before mapping any leftover lone
+	// \r or \n (Mac-classic or Unix-only line endings) — otherwise each half
+	// of a \r\n pair would become its own space.
+	s = strings.ReplaceAll(s, "\r\n", " ")
+	s = strings.Map(func(r rune) rune {
+		if r == '\r' || r == '\n' {
+			return ' '
+		}
+		return r
+	}, s)
+	if runes := []rune(s); len(runes) > maxSubjectRunes {
+		s = string(runes[:maxSubjectRunes])
+	}
+	return s
+}
+
 // RiskEvent identifies a point in the risk lifecycle that notifies someone.
 // The value is only ever used to look up a template — it is never persisted, so
 // renaming one is safe.
@@ -464,7 +493,7 @@ func (c *Client) SendRiskEvent(ctx context.Context, ev RiskEvent, to []string, i
 	reqBody := sendEmailRequest{
 		To:       recipients,
 		From:     c.from,
-		Subject:  tpl.subject(info),
+		Subject:  sanitizeSubject(tpl.subject(info)),
 		Template: base64.StdEncoding.EncodeToString(body.Bytes()),
 	}
 	b, err := json.Marshal(reqBody)

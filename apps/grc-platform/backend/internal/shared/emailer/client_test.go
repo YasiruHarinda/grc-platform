@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"unicode/utf8"
 )
 
 // newTestClient wires a Client at a test server that serves both the token
@@ -219,6 +220,56 @@ func TestSendRiskEventEscapesUserSuppliedText(t *testing.T) {
 	}
 	if strings.Contains(decoded, "<script>") {
 		t.Error("rejection comment was not HTML-escaped")
+	}
+}
+
+// Unlike the body, the subject is built by plain fmt.Sprintf, not
+// html/template — a CR/LF embedded in a free-text field like RiskTitle must
+// still not reach the outgoing request unsanitized.
+func TestSendRiskEventSanitizesSubjectNewlines(t *testing.T) {
+	var subject string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Subject string `json:"subject"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		subject = body.Subject
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"message":"ok"}`))
+	})
+
+	err := c.SendRiskEvent(context.Background(), EventCreated, []string{"a@b.com"},
+		RiskEventInfo{RiskCode: "R-1", RiskTitle: "Injected\r\nX-Mailer: evil"})
+	if err != nil {
+		t.Fatalf("SendRiskEvent: %v", err)
+	}
+	if strings.ContainsAny(subject, "\r\n") {
+		t.Errorf("subject still contains a raw CR/LF: %q", subject)
+	}
+}
+
+func TestSanitizeSubjectCollapsesNewlines(t *testing.T) {
+	got := sanitizeSubject("line one\r\nline two\nline three")
+	want := "line one line two line three"
+	if got != want {
+		t.Errorf("sanitizeSubject(...) = %q, want %q", got, want)
+	}
+}
+
+func TestSanitizeSubjectTruncatesOnRuneBoundary(t *testing.T) {
+	// A multi-byte rune ('é', 2 bytes in UTF-8) placed right at the cutoff:
+	// byte-slicing would split it and produce invalid UTF-8.
+	s := strings.Repeat("a", maxSubjectRunes-1) + "é" + strings.Repeat("b", 10)
+	got := sanitizeSubject(s)
+	gotRunes := []rune(got)
+	if len(gotRunes) != maxSubjectRunes {
+		t.Fatalf("sanitizeSubject(...) has %d runes, want %d", len(gotRunes), maxSubjectRunes)
+	}
+	if !utf8.ValidString(got) {
+		t.Errorf("sanitizeSubject(...) produced invalid UTF-8: %q", got)
+	}
+	if gotRunes[maxSubjectRunes-1] != 'é' {
+		t.Errorf("truncation cut the boundary rune instead of stopping after it: %q", got)
 	}
 }
 

@@ -711,16 +711,26 @@ export default function RiskRegisters(): JSX.Element {
   // so this closes the drawer and reloads like any other workflow-changing
   // action. The risk stays in the Overdue tab — the escalation is still open —
   // but its status has changed, so the list must refresh.
+  //
+  // Deliberately not routed through runAction: it swallows the error into
+  // setActionError rather than rethrowing, so EscalationCommentDialog's own
+  // await onConfirm(...) would always resolve — the dialog would close as if
+  // the comment saved, discarding what the user typed, even on a 403. The
+  // Comment button only checks whether an open escalation exists, not
+  // identity (the server does that — only the Management Approver or the
+  // frozen lead emails may comment, never the assigner or action owner
+  // themselves), so this is not a rare edge case: they hit it every time.
+  // handleRejectConfirm already gets this right below — mirror it.
   const handleEscalationComment = async (comment: string) => {
     if (!drawerDetail) return;
     const open = escalations.find((e) => e.status === "OPEN");
     if (!open) {
       throw new Error("This risk has no open escalation to comment on.");
     }
-    await runAction(
-      () => commentOnEscalation(authFetch, drawerDetail.id, open.id, comment).then(() => undefined),
-      "Comment submitted. The risk has been returned to its assigner.",
-    );
+    await commentOnEscalation(authFetch, drawerDetail.id, open.id, comment);
+    setActionSuccess("Comment submitted. The risk has been returned to its assigner.");
+    closeDrawer();
+    loadRisks();
   };
 
   // Step completion keeps the drawer open — the user very likely has more
