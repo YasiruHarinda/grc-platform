@@ -85,11 +85,11 @@ export default function RejectDialog({
       PaperProps={{ sx: dialogPaperSx }}
     >
       <DialogTitle>
-        <Typography variant="h6" fontWeight={700}>
+        <Typography component="span" variant="h6" fontWeight={700} display="block">
           {title}
         </Typography>
         {description && (
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+          <Typography component="span" variant="body2" color="text.secondary" sx={{ mt: 0.5 }} display="block">
             {description}
           </Typography>
         )}

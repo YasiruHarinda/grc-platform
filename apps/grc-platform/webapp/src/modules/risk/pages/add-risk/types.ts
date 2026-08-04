@@ -49,6 +49,9 @@ export interface AddRiskFormValues {
   // Array of risk_security_compliance_reference IDs.
   // Fetched from GET /api/v1/compliance-references.
   complianceReferences: number[];
+  // Integer ID of the selected risk_category row. Fetched from
+  // GET /api/v1/risk-categories. Single-select today; the schema is M2M-capable.
+  riskCategory: number | "";
   identifiedByType: IdentifiedByType;
   // Selected person/tool's name for all three identifiedByType values.
   // EMPLOYEE: picked from a live HR entity search (GET /api/v1/employees/search),
@@ -74,8 +77,12 @@ export interface AddRiskFormValues {
   // ── Step 3: Action Plan ───────────────────────────────────────────────────
   // Integer ID of the assignment risk_team row. Fetched from GET /api/v1/teams?type=ASSIGNMENT.
   assignmentTeam: number | "";
-  // User ID of the risk owner. Fetched from GET /api/v1/users.
+  // User ID of the risk owner. Fetched from GET /api/v1/users, filtered to
+  // team membership AND GET /api/v1/risk-owner-candidates.
   riskOwner: number | "";
+  // User ID of the management approver. Required on every risk regardless of
+  // level/treatment. Fetched from GET /api/v1/management-approvers.
+  managementApprover: number | "";
   // User ID of the action owner. Fetched from GET /api/v1/users.
   actionOwner: number | "";
   actionPlanDescription: string;

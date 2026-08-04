@@ -81,9 +81,10 @@ type ActionPlanRepository interface {
 	Create(ctx context.Context, riskID int, req model.CreateActionPlanRequest, createdBy string) (*model.ActionPlan, error)
 	ListSteps(ctx context.Context, planID int) ([]*model.ActionPlanStep, error)
 	UpdateStep(ctx context.Context, planID, stepID int, req model.UpdateActionPlanStepRequest, updatedBy string) error
-	// Complete marks a plan COMPLETED once every step is done; for a
-	// MANAGEMENT plan the entity also resolves its escalation and reverts the
-	// risk ESCALATED -> IN_REMEDIATION as part of the same call.
+	// Complete marks a plan COMPLETED once every step is done. The entity
+	// notifies the risk assigner as part of the same cascade; it no longer
+	// resolves an escalation or reverts the risk, which an escalation comment
+	// does instead.
 	Complete(ctx context.Context, planID int, updatedBy string) (*model.ActionPlan, error)
 }
 
@@ -99,16 +100,27 @@ type EscalationRepository interface {
 	List(ctx context.Context, riskID int) ([]*model.Escalation, error)
 	// Escalate is the manual trigger — Compliance/Admin escalating an overdue
 	// IN_REMEDIATION risk on demand instead of waiting for the daily job.
-	Escalate(ctx context.Context, riskID int, createdBy string) (*model.Escalation, error)
+	// Escalate takes the assigner's and action owner's line-manager emails,
+	// already resolved by the caller — the entity has no HR client of its own.
+	Escalate(ctx context.Context, riskID int, createdBy string, assignerLead, actionOwnerLead *string) (*model.Escalation, error)
+	// Comment records the management/lead comment on an escalation. Leaving the
+	// escalation OPEN is deliberate: it is what keeps the risk in the Overdue
+	// tab until the assigner submits for completion approval.
+	Comment(ctx context.Context, riskID, escalationID int, comment, updatedBy string) (*model.Escalation, error)
+	// Resolve closes every open escalation on a risk. Called when the assigner
+	// submits for completion approval, which is what drops the risk out of the
+	// Overdue tab.
+	Resolve(ctx context.Context, riskID int, updatedBy string) error
 }
 
-// ChangelogRepository is the data-access contract for the risk audit trail.
-type ChangelogRepository interface{}
-
-// NotificationRepository is the data-access contract for risk notifications.
-type NotificationRepository interface {
-	List(ctx context.Context, recipientID int) ([]*model.Notification, error)
-	MarkRead(ctx context.Context, id, recipientID int) error
+// HistoryRepository is the data-access contract for a risk's history — the
+// risk_change_log table, which holds both field diffs and workflow events.
+type HistoryRepository interface {
+	// List returns a risk's history newest-first.
+	List(ctx context.Context, riskID int) ([]*model.HistoryEntry, error)
+	// Record appends one entry. Callers treat failures as non-fatal: a missing
+	// history row must never fail the action it was recording.
+	Record(ctx context.Context, riskID int, req model.RecordHistoryRequest, createdBy string) error
 }
 
 // ComplianceReferenceRepository is the data-access contract for compliance references.
@@ -117,4 +129,9 @@ type NotificationRepository interface {
 // calling it — so it was dropped rather than migrated.
 type ComplianceReferenceRepository interface {
 	List(ctx context.Context) ([]*model.ComplianceReference, error)
+}
+
+// RiskCategoryRepository is the data-access contract for risk categories.
+type RiskCategoryRepository interface {
+	List(ctx context.Context) ([]*model.RiskCategory, error)
 }

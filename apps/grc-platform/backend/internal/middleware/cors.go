@@ -23,7 +23,7 @@ import "net/http"
 // before they reach the auth middleware (which would reject them — no token is sent).
 func CORS(allowedOrigin string) func(http.Handler) http.Handler {
 	if allowedOrigin == "*" {
-		panic("cors: wildcard '*' is not a safe CORS origin; set CORS_ALLOWED_ORIGIN to a specific origin")
+		panic("cors: wildcard '*' is not a safe CORS origin; set FRONTEND_BASE_URL to a specific origin")
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

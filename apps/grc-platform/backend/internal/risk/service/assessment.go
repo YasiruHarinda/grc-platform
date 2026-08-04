@@ -29,6 +29,10 @@ import (
 // RiskAssessmentService defines business operations for residual risk assessments.
 type RiskAssessmentService interface {
 	Create(ctx context.Context, riskID int, req model.CreateAssessmentRequest, assessedBy string) (*model.RiskAssessment, error)
+	// ListByRiskID returns a risk's reassessments newest-first. Used by the
+	// history writer to render a reassessment as "HIGH → MEDIUM" rather than
+	// just its new level; the repository has always exposed it.
+	ListByRiskID(ctx context.Context, riskID int) ([]model.RiskAssessment, error)
 }
 
 type riskAssessmentService struct {
@@ -57,4 +61,11 @@ func (s *riskAssessmentService) Create(ctx context.Context, riskID int, req mode
 		return nil, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "reassessment_date must be in YYYY-MM-DD format"}
 	}
 	return s.repo.Create(ctx, riskID, req, assessedBy)
+}
+
+func (s *riskAssessmentService) ListByRiskID(ctx context.Context, riskID int) ([]model.RiskAssessment, error) {
+	if riskID <= 0 {
+		return nil, badRequest("riskId must be a positive integer")
+	}
+	return s.repo.ListByRiskID(ctx, riskID)
 }

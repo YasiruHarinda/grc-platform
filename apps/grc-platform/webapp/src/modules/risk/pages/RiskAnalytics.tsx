@@ -41,7 +41,7 @@ export default function RiskAnalytics(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchSourceRegisterTeams(authFetch).then(setTeams).catch(console.error);
+    fetchSourceRegisterTeams(authFetch, true).then(setTeams).catch(console.error);
   }, []);
 
   const load = useCallback(async (): Promise<void> => {

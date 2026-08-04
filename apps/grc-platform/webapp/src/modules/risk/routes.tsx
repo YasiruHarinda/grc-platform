@@ -27,7 +27,7 @@ import { RiskPrivilege } from "./privileges";
 export const riskRoutes = (
   <Route path="risk">
     <Route index element={<Navigate to="dashboard" replace />} />
-    <Route path="dashboard" element={<PrivilegeGuard privilege={RiskPrivilege.ViewRisks}><RiskDashboard /></PrivilegeGuard>} />
+    <Route path="dashboard" element={<PrivilegeGuard privilege={RiskPrivilege.ViewRiskDashboard}><RiskDashboard /></PrivilegeGuard>} />
     <Route path="registers" element={<PrivilegeGuard privilege={RiskPrivilege.ViewRisks}><RiskRegisters /></PrivilegeGuard>} />
     <Route path="add" element={<PrivilegeGuard privilege={RiskPrivilege.CreateRisk}><AddRisk /></PrivilegeGuard>} />
     <Route path="analytics" element={<PrivilegeGuard privilege={RiskPrivilege.ViewAnalytics}><RiskAnalytics /></PrivilegeGuard>} />

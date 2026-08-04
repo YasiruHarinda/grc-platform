@@ -24,9 +24,10 @@ import (
 
 // AnalyticsService assembles the risk analytics summary payload.
 type AnalyticsService interface {
-	// Summary builds the analytics payload, optionally scoped to one
-	// register (nil = all registers).
-	Summary(ctx context.Context, registerID *int) (*model.AnalyticsSummary, error)
+	// Summary builds the analytics payload, optionally scoped to one register
+	// (nil = all registers) and further restricted to teamIDs when non-empty
+	// (a Risk Assigner/Risk Owner-only caller's own risk teams).
+	Summary(ctx context.Context, registerID *int, teamIDs []int) (*model.AnalyticsSummary, error)
 }
 
 // assembledAnalyticsService serves an analytics payload that arrives already
@@ -37,18 +38,18 @@ type AnalyticsService interface {
 // left to compute here. See assembledDashboardService.
 type assembledAnalyticsService struct {
 	source interface {
-		Summary(ctx context.Context, registerID *int) (*model.AnalyticsSummary, error)
+		Summary(ctx context.Context, registerID *int, teamIDs []int) (*model.AnalyticsSummary, error)
 	}
 }
 
 // NewAssembledAnalyticsService creates an AnalyticsService that passes an
 // already-assembled payload straight through.
 func NewAssembledAnalyticsService(source interface {
-	Summary(ctx context.Context, registerID *int) (*model.AnalyticsSummary, error)
+	Summary(ctx context.Context, registerID *int, teamIDs []int) (*model.AnalyticsSummary, error)
 }) AnalyticsService {
 	return &assembledAnalyticsService{source: source}
 }
 
-func (s *assembledAnalyticsService) Summary(ctx context.Context, registerID *int) (*model.AnalyticsSummary, error) {
-	return s.source.Summary(ctx, registerID)
+func (s *assembledAnalyticsService) Summary(ctx context.Context, registerID *int, teamIDs []int) (*model.AnalyticsSummary, error) {
+	return s.source.Summary(ctx, registerID, teamIDs)
 }

@@ -30,20 +30,20 @@ type riskAnalyticsRepo struct{ db *sql.DB }
 // analytics page. Every method takes an optional registerID (nil = all
 // registers) and excludes CANCELLED risks.
 type RiskAnalyticsRepository interface {
-	NewThisMonthCount(ctx context.Context, registerID *int, monthStart string) (int, error)
-	AvgDaysToClose(ctx context.Context, registerID *int) (*float64, error)
-	AvgEffectiveScore(ctx context.Context, registerID *int) (*float64, error)
-	IdentifiedTrend(ctx context.Context, registerID *int, since string) ([]domain.MonthScoreStat, error)
-	ClosedTrend(ctx context.Context, registerID *int, since string) ([]domain.MonthCount, error)
-	LevelDistribution(ctx context.Context, registerID *int, since string) ([]domain.MonthLevelCount, error)
+	NewThisMonthCount(ctx context.Context, registerID *int, teamIDs []int, monthStart string) (int, error)
+	AvgDaysToClose(ctx context.Context, registerID *int, teamIDs []int) (*float64, error)
+	AvgEffectiveScore(ctx context.Context, registerID *int, teamIDs []int) (*float64, error)
+	IdentifiedTrend(ctx context.Context, registerID *int, teamIDs []int, since string) ([]domain.MonthScoreStat, error)
+	ClosedTrend(ctx context.Context, registerID *int, teamIDs []int, since string) ([]domain.MonthCount, error)
+	LevelDistribution(ctx context.Context, registerID *int, teamIDs []int, since string) ([]domain.MonthLevelCount, error)
 	LevelReference(ctx context.Context) ([]domain.RiskLevelRef, error)
-	IdentifiedTrendByRegister(ctx context.Context, registerID *int, since string) ([]domain.MonthRegisterCount, error)
-	ClosedTrendByRegister(ctx context.Context, registerID *int, since string) ([]domain.MonthRegisterCount, error)
-	RegisterTotals(ctx context.Context) ([]domain.RegisterShare, error)
-	ComplianceDistribution(ctx context.Context, registerID *int) ([]domain.ComplianceShare, error)
-	TreatmentMix(ctx context.Context, registerID *int) ([]domain.TreatmentShare, error)
-	WorkflowFunnel(ctx context.Context, registerID *int) ([]domain.WorkflowStageCount, error)
-	AgingRisks(ctx context.Context, registerID *int, limit int) ([]domain.AgingRiskItem, error)
+	IdentifiedTrendByRegister(ctx context.Context, registerID *int, teamIDs []int, since string) ([]domain.MonthRegisterCount, error)
+	ClosedTrendByRegister(ctx context.Context, registerID *int, teamIDs []int, since string) ([]domain.MonthRegisterCount, error)
+	RegisterTotals(ctx context.Context, teamIDs []int) ([]domain.RegisterShare, error)
+	ComplianceDistribution(ctx context.Context, registerID *int, teamIDs []int) ([]domain.ComplianceShare, error)
+	TreatmentMix(ctx context.Context, registerID *int, teamIDs []int) ([]domain.TreatmentShare, error)
+	WorkflowFunnel(ctx context.Context, registerID *int, teamIDs []int) ([]domain.WorkflowStageCount, error)
+	AgingRisks(ctx context.Context, registerID *int, teamIDs []int, limit int) ([]domain.AgingRiskItem, error)
 }
 
 // NewRiskAnalyticsRepository constructs a RiskAnalyticsRepository.
@@ -51,16 +51,18 @@ func NewRiskAnalyticsRepository(db *sql.DB) RiskAnalyticsRepository {
 	return &riskAnalyticsRepo{db: db}
 }
 
-func (a *riskAnalyticsRepo) NewThisMonthCount(ctx context.Context, registerID *int, monthStart string) (int, error) {
+func (a *riskAnalyticsRepo) NewThisMonthCount(ctx context.Context, registerID *int, teamIDs []int, monthStart string) (int, error) {
 	clause, filterArgs := registerFilter(registerID)
+	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
 	args := append([]any{monthStart}, filterArgs...)
+	args = append(args, scopeArgs...)
 
 	var count int
 	err := a.db.QueryRowContext(ctx, `
 		SELECT COUNT(*)
 		FROM risk r
 		WHERE r.workflow_status <> 'CANCELLED'
-		  AND r.risk_identified_date >= ?`+clause,
+		  AND r.risk_identified_date >= ?`+clause+scopeClause,
 		args...,
 	).Scan(&count)
 	if err != nil {
@@ -69,16 +71,18 @@ func (a *riskAnalyticsRepo) NewThisMonthCount(ctx context.Context, registerID *i
 	return count, nil
 }
 
-func (a *riskAnalyticsRepo) AvgDaysToClose(ctx context.Context, registerID *int) (*float64, error) {
+func (a *riskAnalyticsRepo) AvgDaysToClose(ctx context.Context, registerID *int, teamIDs []int) (*float64, error) {
 	clause, filterArgs := registerFilter(registerID)
+	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
 	args := append([]any{statusClosed}, filterArgs...)
+	args = append(args, scopeArgs...)
 
 	var avg sql.NullFloat64
 	err := a.db.QueryRowContext(ctx, `
 		SELECT AVG(DATEDIFF(r.updated_at, r.risk_identified_date))
 		FROM risk r
 		WHERE r.workflow_status = ?
-		  AND r.risk_identified_date IS NOT NULL`+clause,
+		  AND r.risk_identified_date IS NOT NULL`+clause+scopeClause,
 		args...,
 	).Scan(&avg)
 	if err != nil {
@@ -90,15 +94,17 @@ func (a *riskAnalyticsRepo) AvgDaysToClose(ctx context.Context, registerID *int)
 	return &avg.Float64, nil
 }
 
-func (a *riskAnalyticsRepo) AvgEffectiveScore(ctx context.Context, registerID *int) (*float64, error) {
+func (a *riskAnalyticsRepo) AvgEffectiveScore(ctx context.Context, registerID *int, teamIDs []int) (*float64, error) {
 	clause, filterArgs := registerFilter(registerID)
+	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
 	args := append([]any{statusClosed, statusCancelled}, filterArgs...)
+	args = append(args, scopeArgs...)
 
 	var avg sql.NullFloat64
 	err := a.db.QueryRowContext(ctx, `
 		SELECT AVG(rs.risk_rating)
 		FROM risk r`+dashboardScoreJoin+`
-		WHERE r.workflow_status NOT IN (?, ?)`+clause,
+		WHERE r.workflow_status NOT IN (?, ?)`+clause+scopeClause,
 		args...,
 	).Scan(&avg)
 	if err != nil {
@@ -110,15 +116,17 @@ func (a *riskAnalyticsRepo) AvgEffectiveScore(ctx context.Context, registerID *i
 	return &avg.Float64, nil
 }
 
-func (a *riskAnalyticsRepo) IdentifiedTrend(ctx context.Context, registerID *int, since string) ([]domain.MonthScoreStat, error) {
+func (a *riskAnalyticsRepo) IdentifiedTrend(ctx context.Context, registerID *int, teamIDs []int, since string) ([]domain.MonthScoreStat, error) {
 	clause, filterArgs := registerFilter(registerID)
+	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
 	args := append([]any{statusCancelled, since}, filterArgs...)
+	args = append(args, scopeArgs...)
 
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT DATE_FORMAT(r.risk_identified_date, '%Y-%m-01'), COUNT(*), AVG(rs.risk_rating)
 		FROM risk r`+dashboardScoreJoin+`
 		WHERE r.workflow_status <> ?
-		  AND r.risk_identified_date >= ?`+clause+`
+		  AND r.risk_identified_date >= ?`+clause+scopeClause+`
 		GROUP BY 1
 		ORDER BY 1`,
 		args...,
@@ -139,15 +147,17 @@ func (a *riskAnalyticsRepo) IdentifiedTrend(ctx context.Context, registerID *int
 	return out, rows.Err()
 }
 
-func (a *riskAnalyticsRepo) ClosedTrend(ctx context.Context, registerID *int, since string) ([]domain.MonthCount, error) {
+func (a *riskAnalyticsRepo) ClosedTrend(ctx context.Context, registerID *int, teamIDs []int, since string) ([]domain.MonthCount, error) {
 	clause, filterArgs := registerFilter(registerID)
+	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
 	args := append([]any{statusClosed, since}, filterArgs...)
+	args = append(args, scopeArgs...)
 
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT DATE_FORMAT(r.updated_at, '%Y-%m-01'), COUNT(*)
 		FROM risk r
 		WHERE r.workflow_status = ?
-		  AND r.updated_at >= ?`+clause+`
+		  AND r.updated_at >= ?`+clause+scopeClause+`
 		GROUP BY 1
 		ORDER BY 1`,
 		args...,
@@ -168,15 +178,17 @@ func (a *riskAnalyticsRepo) ClosedTrend(ctx context.Context, registerID *int, si
 	return out, rows.Err()
 }
 
-func (a *riskAnalyticsRepo) LevelDistribution(ctx context.Context, registerID *int, since string) ([]domain.MonthLevelCount, error) {
+func (a *riskAnalyticsRepo) LevelDistribution(ctx context.Context, registerID *int, teamIDs []int, since string) ([]domain.MonthLevelCount, error) {
 	clause, filterArgs := registerFilter(registerID)
+	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
 	args := append([]any{statusCancelled, since}, filterArgs...)
+	args = append(args, scopeArgs...)
 
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT DATE_FORMAT(r.risk_identified_date, '%Y-%m-01'), rs.risk_level, rs.color_code, COUNT(*)
 		FROM risk r`+dashboardScoreJoin+`
 		WHERE r.workflow_status <> ?
-		  AND r.risk_identified_date >= ?`+clause+`
+		  AND r.risk_identified_date >= ?`+clause+scopeClause+`
 		GROUP BY 1, rs.risk_level, rs.color_code
 		ORDER BY 1`,
 		args...,
@@ -220,16 +232,18 @@ func (a *riskAnalyticsRepo) LevelReference(ctx context.Context) ([]domain.RiskLe
 	return out, rows.Err()
 }
 
-func (a *riskAnalyticsRepo) IdentifiedTrendByRegister(ctx context.Context, registerID *int, since string) ([]domain.MonthRegisterCount, error) {
+func (a *riskAnalyticsRepo) IdentifiedTrendByRegister(ctx context.Context, registerID *int, teamIDs []int, since string) ([]domain.MonthRegisterCount, error) {
 	clause, filterArgs := registerFilter(registerID)
+	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
 	args := append([]any{statusCancelled, since}, filterArgs...)
+	args = append(args, scopeArgs...)
 
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT DATE_FORMAT(r.risk_identified_date, '%Y-%m-01'), st.name, COUNT(*)
 		FROM risk r
 		JOIN risk_team st ON st.id = r.source_register_id
 		WHERE r.workflow_status <> ?
-		  AND r.risk_identified_date >= ?`+clause+`
+		  AND r.risk_identified_date >= ?`+clause+scopeClause+`
 		GROUP BY 1, st.name
 		ORDER BY 1`,
 		args...,
@@ -250,16 +264,18 @@ func (a *riskAnalyticsRepo) IdentifiedTrendByRegister(ctx context.Context, regis
 	return out, rows.Err()
 }
 
-func (a *riskAnalyticsRepo) ClosedTrendByRegister(ctx context.Context, registerID *int, since string) ([]domain.MonthRegisterCount, error) {
+func (a *riskAnalyticsRepo) ClosedTrendByRegister(ctx context.Context, registerID *int, teamIDs []int, since string) ([]domain.MonthRegisterCount, error) {
 	clause, filterArgs := registerFilter(registerID)
+	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
 	args := append([]any{statusClosed, since}, filterArgs...)
+	args = append(args, scopeArgs...)
 
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT DATE_FORMAT(r.updated_at, '%Y-%m-01'), st.name, COUNT(*)
 		FROM risk r
 		JOIN risk_team st ON st.id = r.source_register_id
 		WHERE r.workflow_status = ?
-		  AND r.updated_at >= ?`+clause+`
+		  AND r.updated_at >= ?`+clause+scopeClause+`
 		GROUP BY 1, st.name
 		ORDER BY 1`,
 		args...,
@@ -280,15 +296,18 @@ func (a *riskAnalyticsRepo) ClosedTrendByRegister(ctx context.Context, registerI
 	return out, rows.Err()
 }
 
-func (a *riskAnalyticsRepo) RegisterTotals(ctx context.Context) ([]domain.RegisterShare, error) {
+func (a *riskAnalyticsRepo) RegisterTotals(ctx context.Context, teamIDs []int) ([]domain.RegisterShare, error) {
+	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
+	args := append([]any{statusCancelled}, scopeArgs...)
+
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT st.name, COUNT(*)
 		FROM risk r
 		JOIN risk_team st ON st.id = r.source_register_id
-		WHERE r.workflow_status <> ?
+		WHERE r.workflow_status <> ?`+scopeClause+`
 		GROUP BY st.name
 		ORDER BY COUNT(*) DESC`,
-		statusCancelled,
+		args...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("analytics register totals: %w", err)
@@ -306,16 +325,18 @@ func (a *riskAnalyticsRepo) RegisterTotals(ctx context.Context) ([]domain.Regist
 	return out, rows.Err()
 }
 
-func (a *riskAnalyticsRepo) ComplianceDistribution(ctx context.Context, registerID *int) ([]domain.ComplianceShare, error) {
+func (a *riskAnalyticsRepo) ComplianceDistribution(ctx context.Context, registerID *int, teamIDs []int) ([]domain.ComplianceShare, error) {
 	clause, filterArgs := registerFilter(registerID)
+	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
 	args := append([]any{statusCancelled}, filterArgs...)
+	args = append(args, scopeArgs...)
 
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT ref.name, COUNT(*)
 		FROM risk r
 		JOIN risk_compliance_reference rc ON rc.risk_id = r.id
 		JOIN risk_security_compliance_reference ref ON ref.id = rc.reference_id
-		WHERE r.workflow_status <> ?`+clause+`
+		WHERE r.workflow_status <> ?`+clause+scopeClause+`
 		GROUP BY ref.name
 		ORDER BY COUNT(*) DESC`,
 		args...,
@@ -336,14 +357,16 @@ func (a *riskAnalyticsRepo) ComplianceDistribution(ctx context.Context, register
 	return out, rows.Err()
 }
 
-func (a *riskAnalyticsRepo) TreatmentMix(ctx context.Context, registerID *int) ([]domain.TreatmentShare, error) {
+func (a *riskAnalyticsRepo) TreatmentMix(ctx context.Context, registerID *int, teamIDs []int) ([]domain.TreatmentShare, error) {
 	clause, filterArgs := registerFilter(registerID)
+	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
 	args := append([]any{statusClosed, statusCancelled}, filterArgs...)
+	args = append(args, scopeArgs...)
 
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT COALESCE(r.treatment_strategy, ''), COUNT(*)
 		FROM risk r
-		WHERE r.workflow_status NOT IN (?, ?)`+clause+`
+		WHERE r.workflow_status NOT IN (?, ?)`+clause+scopeClause+`
 		GROUP BY r.treatment_strategy
 		ORDER BY COUNT(*) DESC`,
 		args...,
@@ -364,14 +387,16 @@ func (a *riskAnalyticsRepo) TreatmentMix(ctx context.Context, registerID *int) (
 	return out, rows.Err()
 }
 
-func (a *riskAnalyticsRepo) WorkflowFunnel(ctx context.Context, registerID *int) ([]domain.WorkflowStageCount, error) {
+func (a *riskAnalyticsRepo) WorkflowFunnel(ctx context.Context, registerID *int, teamIDs []int) ([]domain.WorkflowStageCount, error) {
 	clause, filterArgs := registerFilter(registerID)
+	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
 	args := append([]any{statusCancelled}, filterArgs...)
+	args = append(args, scopeArgs...)
 
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT r.workflow_status, COUNT(*)
 		FROM risk r
-		WHERE r.workflow_status <> ?`+clause+`
+		WHERE r.workflow_status <> ?`+clause+scopeClause+`
 		GROUP BY r.workflow_status`,
 		args...,
 	)
@@ -391,9 +416,11 @@ func (a *riskAnalyticsRepo) WorkflowFunnel(ctx context.Context, registerID *int)
 	return out, rows.Err()
 }
 
-func (a *riskAnalyticsRepo) AgingRisks(ctx context.Context, registerID *int, limit int) ([]domain.AgingRiskItem, error) {
+func (a *riskAnalyticsRepo) AgingRisks(ctx context.Context, registerID *int, teamIDs []int, limit int) ([]domain.AgingRiskItem, error) {
 	clause, filterArgs := registerFilter(registerID)
+	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
 	args := append([]any{statusClosed, statusCancelled}, filterArgs...)
+	args = append(args, scopeArgs...)
 	args = append(args, limit)
 
 	rows, err := a.db.QueryContext(ctx, `
@@ -404,7 +431,7 @@ func (a *riskAnalyticsRepo) AgingRisks(ctx context.Context, registerID *int, lim
 		JOIN risk_team st ON st.id = r.source_register_id`+dashboardScoreJoin+`
 		LEFT JOIN `+"`user`"+` owner ON owner.id = r.owner_id
 		WHERE r.workflow_status NOT IN (?, ?)
-		  AND r.risk_identified_date IS NOT NULL`+clause+`
+		  AND r.risk_identified_date IS NOT NULL`+clause+scopeClause+`
 		ORDER BY r.risk_identified_date ASC, r.id ASC
 		LIMIT ?`,
 		args...,

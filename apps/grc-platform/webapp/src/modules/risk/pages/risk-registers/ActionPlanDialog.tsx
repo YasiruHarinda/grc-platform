@@ -42,16 +42,16 @@ import { dialogPaperSx } from "../cardStyles";
 const MIN_EMPLOYEE_SEARCH_LEN = 2;
 const EMPLOYEE_SEARCH_DEBOUNCE_MS = 300;
 
-export interface ManagementActionPlanPayload {
+export interface ActionPlanPayload {
   description: string;
   actionOwnerId: number | null;
   steps: string[];
 }
 
-interface ManagementActionPlanDialogProps {
+interface ActionPlanDialogProps {
   open: boolean;
   onClose: () => void;
-  onConfirm: (payload: ManagementActionPlanPayload) => Promise<void>;
+  onConfirm: (payload: ActionPlanPayload) => Promise<void>;
 }
 
 // A step row, keyed by a stable local id — see the note by its useState call.
@@ -62,13 +62,15 @@ interface StepRow {
 
 // Mirrors the Standard action plan form (ActionPlanStep.tsx) — description +
 // a repeatable step list + an unrestricted Action Owner picker — but as a
-// standalone dialog rather than a wizard step, since Management creates this
-// after a risk is already ESCALATED, not at risk-creation time.
-export default function ManagementActionPlanDialog({
+// standalone dialog rather than a wizard step, since the Risk Assigner
+// creates this while the risk is already IN_REMEDIATION, not at
+// risk-creation time. Typically follows an escalation review that asked for
+// more work, but nothing requires the risk to have ever been escalated.
+export default function ActionPlanDialog({
   open,
   onClose,
   onConfirm,
-}: ManagementActionPlanDialogProps): JSX.Element {
+}: ActionPlanDialogProps): JSX.Element {
   const authFetch = useAuthApiClient();
 
   const [description, setDescription] = useState("");
@@ -176,10 +178,10 @@ export default function ManagementActionPlanDialog({
             heading-level Typography (its default element for variant="h6")
             is invalid HTML and trips a hydration warning. */}
         <Typography component="span" variant="h6" fontWeight={700} sx={{ display: "block" }}>
-          Create Management Action Plan
+          Create Action Plan
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          This risk was escalated for being overdue. Lay out how Management wants it remediated.
+          Lay out another action plan for this risk while it&apos;s in remediation.
         </Typography>
       </DialogTitle>
       <DialogContent>

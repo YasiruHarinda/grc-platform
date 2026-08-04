@@ -35,12 +35,12 @@ const (
 // dashboard. Every method excludes CANCELLED risks; "open" means any status
 // other than CLOSED. registerID nil means every register.
 type RiskDashboardRepository interface {
-	StatusCounts(ctx context.Context, registerID *int) (*domain.RiskStatusSummary, error)
-	OpenRiskFacts(ctx context.Context, registerID *int) ([]domain.OpenRiskFact, error)
-	RegisterStatusFacts(ctx context.Context, registerID *int) ([]domain.RegisterStatusFact, error)
-	CertTagCounts(ctx context.Context, registerID *int) ([]domain.RegisterCertCount, error)
-	RepeatedComplianceRisks(ctx context.Context, registerID *int) ([]domain.RepeatedRiskRow, error)
-	HighRisks(ctx context.Context, registerID *int) ([]domain.HighRiskItem, error)
+	StatusCounts(ctx context.Context, registerID *int, teamIDs []int) (*domain.RiskStatusSummary, error)
+	OpenRiskFacts(ctx context.Context, registerID *int, teamIDs []int) ([]domain.OpenRiskFact, error)
+	RegisterStatusFacts(ctx context.Context, registerID *int, teamIDs []int) ([]domain.RegisterStatusFact, error)
+	CertTagCounts(ctx context.Context, registerID *int, teamIDs []int) ([]domain.RegisterCertCount, error)
+	RepeatedComplianceRisks(ctx context.Context, registerID *int, teamIDs []int) ([]domain.RepeatedRiskRow, error)
+	HighRisks(ctx context.Context, registerID *int, teamIDs []int) ([]domain.HighRiskItem, error)
 	LevelOrder(ctx context.Context) ([]string, error)
 }
 
@@ -74,9 +74,11 @@ func registerFilter(registerID *int) (string, []any) {
 	return " AND r.source_register_id = ?", []any{*registerID}
 }
 
-func (d *riskDashboardRepo) StatusCounts(ctx context.Context, registerID *int) (*domain.RiskStatusSummary, error) {
+func (d *riskDashboardRepo) StatusCounts(ctx context.Context, registerID *int, teamIDs []int) (*domain.RiskStatusSummary, error) {
 	clause, filterArgs := registerFilter(registerID)
+	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
 	args := append([]any{statusClosed, statusClosed, statusClosed, statusCancelled}, filterArgs...)
+	args = append(args, scopeArgs...)
 
 	var s domain.RiskStatusSummary
 	err := d.db.QueryRowContext(ctx, `
@@ -87,7 +89,7 @@ func (d *riskDashboardRepo) StatusCounts(ctx context.Context, registerID *int) (
 		                           AND r.implementation_date IS NOT NULL
 		                           AND r.implementation_date < CURDATE() THEN 1 ELSE 0 END), 0)
 		FROM risk r
-		WHERE r.workflow_status <> ?`+clause,
+		WHERE r.workflow_status <> ?`+clause+scopeClause,
 		args...,
 	).Scan(&s.Total, &s.Open, &s.Closed, &s.Overdue)
 	if err != nil {
@@ -96,16 +98,18 @@ func (d *riskDashboardRepo) StatusCounts(ctx context.Context, registerID *int) (
 	return &s, nil
 }
 
-func (d *riskDashboardRepo) OpenRiskFacts(ctx context.Context, registerID *int) ([]domain.OpenRiskFact, error) {
+func (d *riskDashboardRepo) OpenRiskFacts(ctx context.Context, registerID *int, teamIDs []int) ([]domain.OpenRiskFact, error) {
 	clause, filterArgs := registerFilter(registerID)
+	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
 	args := append([]any{statusClosed, statusCancelled}, filterArgs...)
+	args = append(args, scopeArgs...)
 
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT st.id, st.name, rs.likelihood, rs.impact, rs.risk_level, rs.color_code,
 		       COALESCE(r.treatment_strategy, 'UNSPECIFIED'), COUNT(*)
 		FROM risk r
 		JOIN risk_team st ON st.id = r.source_register_id`+dashboardScoreJoin+`
-		WHERE r.workflow_status NOT IN (?, ?)`+clause+`
+		WHERE r.workflow_status NOT IN (?, ?)`+clause+scopeClause+`
 		GROUP BY st.id, st.name, rs.likelihood, rs.impact, rs.risk_level, rs.color_code,
 		         r.treatment_strategy
 		ORDER BY st.name, rs.likelihood, rs.impact`,
@@ -140,9 +144,11 @@ func (d *riskDashboardRepo) OpenRiskFacts(ctx context.Context, registerID *int) 
 const registerStatusBucketCase = `CASE WHEN r.workflow_status = '` + statusClosed + `' THEN 'CLOSED'
 	                ELSE COALESCE(r.treatment_strategy, 'UNSPECIFIED') END`
 
-func (d *riskDashboardRepo) RegisterStatusFacts(ctx context.Context, registerID *int) ([]domain.RegisterStatusFact, error) {
+func (d *riskDashboardRepo) RegisterStatusFacts(ctx context.Context, registerID *int, teamIDs []int) ([]domain.RegisterStatusFact, error) {
 	clause, filterArgs := registerFilter(registerID)
+	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
 	args := append([]any{statusCancelled}, filterArgs...)
+	args = append(args, scopeArgs...)
 
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT st.id, st.name, rs.risk_level, rs.color_code,
@@ -150,7 +156,7 @@ func (d *riskDashboardRepo) RegisterStatusFacts(ctx context.Context, registerID 
 		       COUNT(*)
 		FROM risk r
 		JOIN risk_team st ON st.id = r.source_register_id`+dashboardScoreJoin+`
-		WHERE r.workflow_status <> ?`+clause+`
+		WHERE r.workflow_status <> ?`+clause+scopeClause+`
 		GROUP BY st.id, st.name, rs.risk_level, rs.color_code, `+registerStatusBucketCase+`
 		ORDER BY st.name`,
 		args...,
@@ -173,9 +179,11 @@ func (d *riskDashboardRepo) RegisterStatusFacts(ctx context.Context, registerID 
 	return out, rows.Err()
 }
 
-func (d *riskDashboardRepo) CertTagCounts(ctx context.Context, registerID *int) ([]domain.RegisterCertCount, error) {
+func (d *riskDashboardRepo) CertTagCounts(ctx context.Context, registerID *int, teamIDs []int) ([]domain.RegisterCertCount, error) {
 	clause, filterArgs := registerFilter(registerID)
+	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
 	args := append([]any{statusClosed, statusCancelled}, filterArgs...)
+	args = append(args, scopeArgs...)
 
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT st.name, ref.name, COUNT(*)
@@ -183,7 +191,7 @@ func (d *riskDashboardRepo) CertTagCounts(ctx context.Context, registerID *int) 
 		JOIN risk_team st ON st.id = r.source_register_id
 		JOIN risk_compliance_reference rc ON rc.risk_id = r.id
 		JOIN risk_security_compliance_reference ref ON ref.id = rc.reference_id
-		WHERE r.workflow_status NOT IN (?, ?)`+clause+`
+		WHERE r.workflow_status NOT IN (?, ?)`+clause+scopeClause+`
 		GROUP BY st.name, ref.name
 		ORDER BY st.name, ref.name`,
 		args...,
@@ -204,16 +212,20 @@ func (d *riskDashboardRepo) CertTagCounts(ctx context.Context, registerID *int) 
 	return out, rows.Err()
 }
 
-func (d *riskDashboardRepo) RepeatedComplianceRisks(ctx context.Context, registerID *int) ([]domain.RepeatedRiskRow, error) {
+func (d *riskDashboardRepo) RepeatedComplianceRisks(ctx context.Context, registerID *int, teamIDs []int) ([]domain.RepeatedRiskRow, error) {
 	clause, filterArgs := registerFilter(registerID)
+	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
 	r2Clause := ""
 	if registerID != nil {
 		r2Clause = " AND r2.source_register_id = ?"
 	}
+	r2ScopeClause, r2ScopeArgs := teamScopeFilter("r2", teamIDs)
 	args := []any{statusClosed, statusCancelled}
 	args = append(args, filterArgs...)
+	args = append(args, scopeArgs...)
 	args = append(args, statusCancelled)
 	args = append(args, filterArgs...)
+	args = append(args, r2ScopeArgs...)
 
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT r.risk_title, st.name,
@@ -221,12 +233,12 @@ func (d *riskDashboardRepo) RepeatedComplianceRisks(ctx context.Context, registe
 		       rs.risk_level, rs.color_code
 		FROM risk r
 		JOIN risk_team st ON st.id = r.source_register_id`+dashboardScoreJoin+`
-		WHERE r.workflow_status <> ?`+clause+`
+		WHERE r.workflow_status <> ?`+clause+scopeClause+`
 		  AND EXISTS (SELECT 1 FROM risk_compliance_reference rc WHERE rc.risk_id = r.id)
 		  AND r.risk_title IN (
 		      SELECT r2.risk_title
 		      FROM risk r2
-		      WHERE r2.workflow_status <> ?`+r2Clause+`
+		      WHERE r2.workflow_status <> ?`+r2Clause+r2ScopeClause+`
 		        AND EXISTS (SELECT 1 FROM risk_compliance_reference rc2 WHERE rc2.risk_id = r2.id)
 		      GROUP BY r2.risk_title
 		      HAVING COUNT(DISTINCT r2.source_register_id) >= 2)
@@ -249,9 +261,11 @@ func (d *riskDashboardRepo) RepeatedComplianceRisks(ctx context.Context, registe
 	return out, rows.Err()
 }
 
-func (d *riskDashboardRepo) HighRisks(ctx context.Context, registerID *int) ([]domain.HighRiskItem, error) {
+func (d *riskDashboardRepo) HighRisks(ctx context.Context, registerID *int, teamIDs []int) ([]domain.HighRiskItem, error) {
 	clause, filterArgs := registerFilter(registerID)
+	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
 	args := append([]any{statusClosed, statusCancelled}, filterArgs...)
+	args = append(args, scopeArgs...)
 
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT r.id, r.risk_code, r.risk_title, st.name,
@@ -262,7 +276,7 @@ func (d *riskDashboardRepo) HighRisks(ctx context.Context, registerID *int) ([]d
 		FROM risk r
 		JOIN risk_team st ON st.id = r.source_register_id`+dashboardScoreJoin+`
 		LEFT JOIN `+"`user`"+` owner ON owner.id = r.owner_id
-		WHERE r.workflow_status NOT IN (?, ?)`+clause+`
+		WHERE r.workflow_status NOT IN (?, ?)`+clause+scopeClause+`
 		  AND rs.risk_level = 'HIGH'
 		ORDER BY r.risk_identified_date IS NULL, r.risk_identified_date ASC, r.id ASC`,
 		args...,
