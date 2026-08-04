@@ -143,6 +143,16 @@ type ListRisksFilter struct {
 	// status: a commented escalation returns the risk to IN_REMEDIATION while
 	// staying OPEN, so it must appear under Approved Risks and Overdue at once.
 	OpenEscalationOnly bool
+	// ExcludeOpenEscalation is OpenEscalationOnly's inverse: excludes risks
+	// that already carry an unresolved escalation. Set by the overdue-
+	// escalation job (job/escalation_job.go) so its search only ever returns
+	// risks that can actually succeed at Escalate — a risk already sitting
+	// under an OPEN escalation (returned to IN_REMEDIATION by a comment, per
+	// OpenEscalationOnly's note above) fails Escalate's own duplicate guard
+	// every time, and since it never leaves IN_REMEDIATION+overdue on its
+	// own, it would otherwise keep re-appearing on page one of every run
+	// forever — crowding out genuinely new overdue risks behind it.
+	ExcludeOpenEscalation bool
 	// EscalationLeadEmail widens rather than narrows: a risk whose open
 	// escalation names this email as a lead is included even when ScopeTeamIDs
 	// would exclude it. Set automatically from the caller — never

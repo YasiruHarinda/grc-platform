@@ -572,6 +572,13 @@ type SearchRisksRequest struct {
 	// which is what finally drops it out.
 	OpenEscalationOnly bool `json:"openEscalationOnly"`
 
+	// ExcludeOpenEscalation is OpenEscalationOnly's inverse: excludes risks
+	// that already carry an unresolved escalation. Used by the backend's
+	// overdue-escalation job so a risk that returned to IN_REMEDIATION via a
+	// comment (still OPEN per the note above) doesn't keep being handed back
+	// to Escalate, which will only reject it again.
+	ExcludeOpenEscalation bool `json:"excludeOpenEscalation"`
+
 	// EscalationLeadEmail widens the result set rather than narrowing it: a
 	// risk with an open escalation naming this email as the assigner's or
 	// action owner's lead is included even when ScopeTeamIDs would exclude it.

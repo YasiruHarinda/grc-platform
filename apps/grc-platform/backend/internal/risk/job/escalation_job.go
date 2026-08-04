@@ -127,7 +127,16 @@ func (j *EscalationJob) runOnce(parent context.Context) {
 		page, err := j.risks.List(ctx, model.ListRisksFilter{
 			Statuses:       []string{model.StatusInRemediation},
 			DueOverdueOnly: true,
-			Limit:          pageLimit,
+			// A risk that returned to IN_REMEDIATION via an escalation comment
+			// still carries an OPEN risk_escalation row (see
+			// ListRisksFilter.OpenEscalationOnly) and Escalate's own duplicate
+			// guard rejects it every time. Left in the query, that permanent
+			// failure would occupy the same page(s) on every run and could
+			// starve genuinely new overdue risks behind it once enough of them
+			// accumulate — excluding them here means the job only ever asks for
+			// risks Escalate can actually accept.
+			ExcludeOpenEscalation: true,
+			Limit:                 pageLimit,
 			// Offset stays 0 deliberately: each successful escalation moves the
 			// risk to ESCALATED, dropping it out of this very result set. Paging
 			// forward would step over the rows that shifted into the gap, so the

@@ -164,6 +164,9 @@ func (r *riskRepo) SearchRisks(ctx context.Context, req domain.SearchRisksReques
 	if req.OpenEscalationOnly {
 		where += " AND EXISTS (SELECT 1 FROM risk_escalation e WHERE e.risk_id = r.id AND e.status = 'OPEN')"
 	}
+	if req.ExcludeOpenEscalation {
+		where += " AND NOT EXISTS (SELECT 1 FROM risk_escalation e WHERE e.risk_id = r.id AND e.status = 'OPEN')"
+	}
 	if scopeClause, scopeArgs := teamScopeFilter("r", req.ScopeTeamIDs); scopeClause != "" {
 		// A lead named on an open escalation is granted access to that one risk
 		// regardless of team scoping, so the two are OR-ed rather than AND-ed.
