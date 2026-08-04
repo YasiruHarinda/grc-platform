@@ -14,17 +14,21 @@
 --       user_audit_team (audit_schema.sql) and user_risk_team (risk_schema.sql).
 --       A user may belong to zero or more teams in either module.
 --
+-- Assumes the `grc_platform` database already exists (e.g. provisioned ahead
+-- of time on a hosted/managed MySQL instance) and that the connecting user
+-- only needs privileges scoped to it — no CREATE DATABASE here. Every table
+-- below sets its own CHARSET/COLLATE explicitly, so the database's own
+-- default charset doesn't matter.
+--
 -- Run order (each file is standalone — it selects the database itself, so no
 -- -D/database argument is required):
---   mysql -u root -p < shared.sql
---   mysql -u root -p < audit_schema.sql
---   mysql -u root -p < risk_schema.sql
+--   mysql -u <user> -p < shared.sql
+--   mysql -u <user> -p < audit_schema.sql
+--   mysql -u <user> -p < risk_schema.sql
 --
 -- Seed data lives outside this directory and is applied afterwards.
 -- =============================================================================
 
-CREATE DATABASE IF NOT EXISTS grc_platform
-  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE grc_platform;
 
 SET FOREIGN_KEY_CHECKS = 0;

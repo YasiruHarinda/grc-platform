@@ -62,7 +62,7 @@ func contextFor(t *testing.T, role string) context.Context {
 			privilege.ViewRisks:        true,
 			privilege.OwnerApproveRisk: true,
 		},
-		"grc-platform-compliance-team": {
+		"grc-platform-risk-compliance-team": {
 			privilege.ViewRisks:    true,
 			privilege.ViewAllRisks: true,
 		},
@@ -95,7 +95,7 @@ func TestIsTeamScopedOnly(t *testing.T) {
 	}{
 		{"grc-platform-risk-assigner", true},
 		{"grc-platform-risk-owner", true},
-		{"grc-platform-compliance-team", false}, // holds ViewAllRisks, in seesEveryRisk
+		{"grc-platform-risk-compliance-team", false}, // holds ViewAllRisks, in seesEveryRisk
 		{"grc-platform-management", false},      // holds ManagementApproveRisk, in seesEveryRisk
 		// Action-Owner-only must never also be classified as team-scoped —
 		// isTeamScopedOnly explicitly excludes it so the two never overlap.
@@ -145,7 +145,7 @@ func TestCanOverrideAssignee(t *testing.T) {
 		{"grc-platform-management", false},
 		{"grc-platform-risk-action-owner", false},
 		// Read-only: sees every risk, but that must not imply acting on one.
-		{"grc-platform-compliance-team", false},
+		{"grc-platform-risk-compliance-team", false},
 	}
 	for _, c := range cases {
 		if got := canOverrideAssignee(contextFor(t, c.role)); got != c.want {
