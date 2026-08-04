@@ -2465,10 +2465,31 @@ async def execute_task(
 
         history = None
         page_note = ""
+        capture_skipped = False
         if skip_agent:
             print(f"[runner]   subtask {idx + 1}: PDF link — opening it directly, no model used")
-            await browser.navigate_to(pdf_link)
-            await asyncio.sleep(1.0)  # let the page settle before capture
+            try:
+                await browser.navigate_to(pdf_link)
+            except Exception as exc:
+                # The agent used to absorb this for us: a dead host or a
+                # navigation timeout came back as a poor agent result, not as
+                # an exception. Opening the link in code removes that buffer,
+                # and nothing above catches it, so one unreachable link would
+                # end the whole task and take every later subtask with it.
+                #
+                # Capturing anyway is NOT the answer. The browser is still on
+                # whatever page was there before, so the shot would be filed
+                # as evidence for a page it never reached — the same failure
+                # the Azure pager walk exists to prevent. Skip the capture and
+                # say so instead.
+                capture_skipped = True
+                page_note = (
+                    f"Could not open {pdf_link} ({exc}). No capture was made for this "
+                    f"step; the remaining steps were still run."
+                )
+                print(f"[runner]   {page_note}")
+            else:
+                await asyncio.sleep(1.0)  # let the page settle before capture
         elif azure_page is not None:
             print(f"[runner]   subtask {idx + 1}: Azure page {azure_page} — walking the pager, no model used")
             reached = await _azure_go_to_page(browser, azure_page, subtask_obj.get("page_size") or 0)
@@ -2550,7 +2571,11 @@ async def execute_task(
 
         # PDF: subtasks export the whole (expanded) page as one PDF; everything
         # else captures one screenshot per scroll position, same as before.
-        if is_pdf:
+        if capture_skipped:
+            # The page we were told to capture was never reached, so there is
+            # nothing on screen worth filing. See the navigate_to guard above.
+            local_paths = []
+        elif is_pdf:
             local_paths = await _capture_evidence_pdf(browser)
         else:
             local_paths = await _capture_evidence_screenshots(browser, history)
