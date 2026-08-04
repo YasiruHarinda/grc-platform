@@ -9,6 +9,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Awaitable, Callable
+from urllib.parse import urlparse
 
 from browser_use import ActionResult, Agent, BrowserProfile, BrowserSession, Tools
 
@@ -1638,8 +1639,27 @@ async def _azure_go_to_page(browser: "BrowserSession", target_page: int, page_si
 
 def _is_azure_portal(url: str | None) -> bool:
     """True only when the browser is on the Azure Portal — the gate that keeps
-    all Azure-specific hardening from ever touching AWS/GitHub runs."""
-    return bool(url) and "portal.azure.com" in url
+    all Azure-specific hardening from ever touching AWS/GitHub runs.
+
+    Matched on the host, not by searching the whole URL. A substring test also
+    accepted addresses that merely *mention* the portal, and the realistic one
+    is not exotic: signing in to Azure goes through a Microsoft login page
+    carrying the portal as its post-login destination
+    (`.../authorize?...redirect_uri=https%3A%2F%2Fportal.azure.com%2F`). That
+    is a login page, not the portal, and it would have turned on the pager
+    walk, the scroll-offset capture and the extra tool instructions while
+    sitting on it.
+
+    Subdomains count. The failure that matters here is the gate reading False
+    on a real portal page, because that is the one that silently restores
+    every behaviour the Azure work replaced; a host Azure adds later should
+    keep working rather than quietly fall back.
+
+    Every caller reads its URL from `window.location.href`, so the value is
+    always absolute and always carries a scheme.
+    """
+    host = (urlparse(url).hostname or "").lower() if url else ""
+    return host == "portal.azure.com" or host.endswith(".portal.azure.com")
 
 
 # Registered only for Azure subtasks (see execute_task). Tells the LLM to reach

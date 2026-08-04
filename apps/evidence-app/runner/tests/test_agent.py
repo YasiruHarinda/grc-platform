@@ -153,6 +153,24 @@ def test_first_http_url_tolerates_none():
     [
         ("https://portal.azure.com/#browse/Microsoft.Network%2FvirtualNetworks", True),
         ("https://portal.azure.com/", True),
+
+        # A URL that only mentions the portal is not the portal. The realistic
+        # one is the middle of an Azure sign-in, where the Microsoft login page
+        # carries the portal as its post-login destination — that page has no
+        # Azure grid, so turning the pager walk on there is pure waste.
+        (
+            "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+            "?redirect_uri=https%3A%2F%2Fportal.azure.com%2F",
+            False,
+        ),
+        ("https://example.com/?target=portal.azure.com", False),
+        ("https://portal.azure.com.example.net/", False),
+
+        # A subdomain is still the portal. This direction is the dangerous one:
+        # a False here restores every behaviour the Azure work replaced, and it
+        # would do so silently.
+        ("https://preview.portal.azure.com/#home", True),
+
         ("https://console.aws.amazon.com/s3/buckets", False),
         ("https://github.com/o/r/issues/61", False),
         ("", False),
