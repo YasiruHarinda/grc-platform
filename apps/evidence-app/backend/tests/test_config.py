@@ -45,7 +45,49 @@ def test_settings_raises_when_an_asgardeo_setting_is_missing(monkeypatch, name):
 
 def test_settings_loads_when_asgardeo_org_is_present(monkeypatch):
     monkeypatch.setenv("ASGARDEO_ORG", "test-org")
+    # Spelled out rather than inherited from conftest, because the validator
+    # below makes this test depend on the two IDs differing. Left implicit, a
+    # future edit to conftest's values could fail this test for a reason that
+    # has nothing to do with what it checks.
+    monkeypatch.setenv("ASGARDEO_WEBAPP_CLIENT_ID", "webapp-client-id")
+    monkeypatch.setenv("ASGARDEO_RUNNER_CLIENT_ID", "runner-client-id")
 
     settings = Settings(_env_file=None)
 
     assert settings.ASGARDEO_ORG == "test-org"
+
+
+@pytest.mark.parametrize(
+    "webapp, runner",
+    [
+        ("same-client-id", "same-client-id"),  # the dangerous one
+        ("", ""),                               # both unset
+        ("", "runner-client-id"),               # web app unset
+        ("webapp-client-id", ""),               # runner unset
+        ("   ", "runner-client-id"),            # whitespace is not a value
+    ],
+)
+def test_settings_rejects_client_ids_that_are_blank_or_identical(monkeypatch, webapp, runner):
+    """Being a required `str` is not enough to make these two safe.
+
+    An empty string satisfies a required `str`, and two equal strings satisfy
+    both settings, so neither case is caught by the required-setting tests
+    above. Each removes the audience check — the only thing that stops a
+    Runner token being granted admin, since Asgardeo's role claim is
+    organisation-wide and a Runner token already carries the web app's role
+    names.
+
+    Identical IDs are the case worth the test. Blank IDs fail loudly at
+    runtime, because no real token carries an empty audience, so everyone is
+    locked out and somebody investigates within minutes. Identical IDs fail
+    silently in the dangerous direction: the app works, everyone logs in, and
+    anyone running the Runner quietly holds admin. `.env.example` ships both
+    fields blank, so the blank case is the likelier mistake and the identical
+    case is the more expensive one.
+    """
+    monkeypatch.setenv("ASGARDEO_ORG", "test-org")
+    monkeypatch.setenv("ASGARDEO_WEBAPP_CLIENT_ID", webapp)
+    monkeypatch.setenv("ASGARDEO_RUNNER_CLIENT_ID", runner)
+
+    with pytest.raises(ValidationError, match="CLIENT_ID"):
+        Settings(_env_file=None)
