@@ -33,6 +33,7 @@ type Risk struct {
 	IdentifiedByName       *string   `json:"identified_by_name"`
 	AssignerID             int       `json:"assigner_id"`
 	OwnerID                int       `json:"owner_id"`
+	ManagementApproverID   int       `json:"management_approver_id"`
 	ImpactDescription      *string   `json:"impact_description"`
 	GrossScoreID           *int      `json:"gross_score_id"`
 	TreatmentStrategy      *string   `json:"treatment_strategy"`
@@ -75,6 +76,10 @@ type CreateRiskRequest struct {
 	IdentifiedByEmail  *string `json:"identified_by_email,omitempty"`
 	AssignerID         int     `json:"assigner_id"`
 	RiskIdentifiedDate string  `json:"risk_identified_date"`
+	// RiskCategoryIDs writes risk_category_reference rows. The schema is
+	// genuinely many-to-many (no DB constraint limits this to one row); the
+	// Add Risk form only ever sends one today via a single-select dropdown.
+	RiskCategoryIDs []int `json:"risk_category_ids"`
 
 	// Step 2: Risk Assessment
 	Likelihood         int    `json:"likelihood"`
@@ -84,8 +89,13 @@ type CreateRiskRequest struct {
 	ReassessmentDate   string `json:"reassessment_date"`
 
 	// Step 3: Action Plan
-	AssignmentTeamID      int                       `json:"assignment_team_id"`
-	OwnerID               int                       `json:"owner_id"`
+	AssignmentTeamID int `json:"assignment_team_id"`
+	OwnerID          int `json:"owner_id"`
+	// ManagementApproverID is required on every risk regardless of level or
+	// treatment strategy — it names who approves PENDING_MANAGEMENT_APPROVAL
+	// (reached only for ACCEPT+HIGH risks) and who an ESCALATED risk
+	// conceptually escalates to.
+	ManagementApproverID  int                       `json:"management_approver_id"`
 	ActionOwnerID         int                       `json:"action_owner_id"`
 	ActionPlanDescription string                    `json:"action_plan_description"`
 	ActionSteps           []CreateActionStepRequest `json:"action_steps"`
@@ -128,12 +138,37 @@ type ListRisksFilter struct {
 	DueFrom        string   // implementation_date >= this date (YYYY-MM-DD); empty = unbounded
 	DueTo          string   // implementation_date <= this date (YYYY-MM-DD); empty = unbounded
 	DueOverdueOnly bool     // implementation_date < today, regardless of the range above
+	// OpenEscalationOnly restricts to risks carrying an unresolved escalation —
+	// what the Overdue Risks tab filters on. Deliberately not the ESCALATED
+	// status: a commented escalation returns the risk to IN_REMEDIATION while
+	// staying OPEN, so it must appear under Approved Risks and Overdue at once.
+	OpenEscalationOnly bool
+	// ExcludeOpenEscalation is OpenEscalationOnly's inverse: excludes risks
+	// that already carry an unresolved escalation. Set by the overdue-
+	// escalation job (job/escalation_job.go) so its search only ever returns
+	// risks that can actually succeed at Escalate — a risk already sitting
+	// under an OPEN escalation (returned to IN_REMEDIATION by a comment, per
+	// OpenEscalationOnly's note above) fails Escalate's own duplicate guard
+	// every time, and since it never leaves IN_REMEDIATION+overdue on its
+	// own, it would otherwise keep re-appearing on page one of every run
+	// forever — crowding out genuinely new overdue risks behind it.
+	ExcludeOpenEscalation bool
+	// EscalationLeadEmail widens rather than narrows: a risk whose open
+	// escalation names this email as a lead is included even when ScopeTeamIDs
+	// would exclude it. Set automatically from the caller — never
+	// client-supplied, or anyone could read any escalated risk.
+	EscalationLeadEmail string
 	// ActionOwnerID restricts to risks with an action plan owned by this user.
 	// Set automatically by the handler for callers who only hold
 	// COMPLETE_ACTION_STEPS_RISK (Action Owners) — never client-supplied.
 	ActionOwnerID *int
-	Limit         int // rows per page; handler enforces a sensible default and max
-	Offset        int // zero-based row offset
+	// ScopeTeamIDs restricts to risks whose source register or assignment team
+	// is one of these. Set automatically by the handler for callers who hold
+	// Risk Hub privileges but none of the "sees everything" ones (Risk
+	// Assigner/Risk Owner-only) — never client-supplied.
+	ScopeTeamIDs []int
+	Limit        int // rows per page; handler enforces a sensible default and max
+	Offset       int // zero-based row offset
 }
 
 // RiskListPage is the paginated response for GET /api/v1/risks.
@@ -178,8 +213,10 @@ type RiskDetail struct {
 	IdentifiedByName       *string `json:"identified_by_name"`
 	AssignerID             int     `json:"assigner_id"`
 	OwnerID                int     `json:"owner_id"`
+	ManagementApproverID   int     `json:"management_approver_id"`
 	ImpactDescription      *string `json:"impact_description"`
 	TreatmentStrategy      *string `json:"treatment_strategy"`
+	SourceRegisterID       int     `json:"source_register_id"`
 	AssignmentTeamID       int     `json:"assignment_team_id"`
 	Progress               *string `json:"progress"`
 	ImplementationDate     *string `json:"implementation_date"`
@@ -201,6 +238,7 @@ type RiskDetail struct {
 	AssignmentTeamName     string  `json:"assignment_team_name"`
 	OwnerName              string  `json:"owner_name"`
 	AssignerName           string  `json:"assigner_name"`
+	ManagementApproverName string  `json:"management_approver_name"`
 	ComplianceApproverName *string `json:"compliance_approver_name"`
 
 	// Gross score (from risk_score join) — the original rating assigned at
@@ -216,6 +254,7 @@ type RiskDetail struct {
 
 	// Related entities
 	ComplianceReferences []ComplianceReference `json:"compliance_references"`
+	RiskCategories       []RiskCategory        `json:"risk_categories"`
 	ActionPlan           *ActionPlanDetail     `json:"action_plan"`
 	Assessments          []RiskAssessment      `json:"assessments"`
 }
@@ -250,8 +289,10 @@ type UpdateRiskRequest struct {
 	IdentifiedByEmail      *string `json:"identified_by_email,omitempty"`
 	AssignerID             *int    `json:"assigner_id,omitempty"`
 	OwnerID                *int    `json:"owner_id,omitempty"`
+	ManagementApproverID   *int    `json:"management_approver_id,omitempty"`
 	ImpactDescription      string  `json:"impact_description"`
 	ComplianceReferenceIDs []int   `json:"compliance_reference_ids"`
+	RiskCategoryIDs        []int   `json:"risk_category_ids"`
 	Progress               string  `json:"progress,omitempty"`
 	GitIssueURL            string  `json:"git_issue_url,omitempty"`
 	Remarks                string  `json:"remarks,omitempty"`
@@ -289,4 +330,6 @@ type EscalateRiskRequest struct {
 
 // TODO: escalation — for MEDIUM/HIGH risks past their implementation_date deadline,
 // compliance can escalate to management via POST /api/v1/risks/{id}/escalate.
-// Management responds by adding a MANAGEMENT action plan. See risk_escalation table.
+// Answered by a comment from the risk's Management Approver (HIGH) or a
+// line manager (MEDIUM/LOW), which returns it to the assigner. See the
+// risk_escalation table.

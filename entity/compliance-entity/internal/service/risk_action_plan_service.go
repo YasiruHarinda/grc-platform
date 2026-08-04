@@ -18,8 +18,6 @@ package service
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -29,13 +27,11 @@ import (
 )
 
 type riskActionPlanService struct {
-	repo            repository.RiskActionPlanRepository
-	stepRepo        repository.RiskActionStepRepository
-	escalationRepo  repository.RiskEscalationRepository
-	escalationSvc   RiskEscalationService
-	riskSvc         RiskService
-	notificationSvc RiskNotificationService
-	userSvc         UserService
+	repo          repository.RiskActionPlanRepository
+	stepRepo      repository.RiskActionStepRepository
+	escalationSvc RiskEscalationService
+	riskSvc       RiskService
+	userSvc       UserService
 }
 
 // NewRiskActionPlanService constructs a RiskActionPlanService. The extra
@@ -46,26 +42,24 @@ type riskActionPlanService struct {
 func NewRiskActionPlanService(
 	repo repository.RiskActionPlanRepository,
 	stepRepo repository.RiskActionStepRepository,
-	escalationRepo repository.RiskEscalationRepository,
 	escalationSvc RiskEscalationService,
 	riskSvc RiskService,
-	notificationSvc RiskNotificationService,
 	userSvc UserService,
 ) RiskActionPlanService {
 	return &riskActionPlanService{
-		repo:            repo,
-		stepRepo:        stepRepo,
-		escalationRepo:  escalationRepo,
-		escalationSvc:   escalationSvc,
-		riskSvc:         riskSvc,
-		notificationSvc: notificationSvc,
-		userSvc:         userSvc,
+		repo:          repo,
+		stepRepo:      stepRepo,
+		escalationSvc: escalationSvc,
+		riskSvc:       riskSvc,
+		userSvc:       userSvc,
 	}
 }
 
 // validPlanTypes / validActionPlanStatuses mirror the risk_action_plan.plan_type
 // and risk_action_plan.status ENUMs in risk_schema.sql.
-var validPlanTypes = map[string]bool{"STANDARD": true, "MANAGEMENT": true}
+// STANDARD is the only plan type. MANAGEMENT plans were how an escalation used
+// to be answered and are retired; a comment does that job now.
+var validPlanTypes = map[string]bool{"STANDARD": true}
 var validActionPlanStatuses = map[string]bool{"PENDING": true, "IN_PROGRESS": true, "COMPLETED": true}
 
 func (s *riskActionPlanService) CreateRiskActionPlan(ctx context.Context, riskID int, req domain.CreateRiskActionPlanRequest) (domain.RiskActionPlan, error) {
@@ -74,7 +68,7 @@ func (s *riskActionPlanService) CreateRiskActionPlan(ctx context.Context, riskID
 	}
 	req.PlanType = strings.ToUpper(req.PlanType)
 	if !validPlanTypes[req.PlanType] {
-		return domain.RiskActionPlan{}, &apierror.ValidationError{Msg: "planType must be STANDARD or MANAGEMENT"}
+		return domain.RiskActionPlan{}, &apierror.ValidationError{Msg: "planType must be STANDARD"}
 	}
 	if req.CreatedBy == "" {
 		return domain.RiskActionPlan{}, &apierror.ValidationError{Msg: "createdBy is required"}
@@ -190,86 +184,16 @@ func (s *riskActionPlanService) CompleteRiskActionPlan(ctx context.Context, plan
 		}
 		plan = updated
 
-		// Best-effort: the plan is already COMPLETED at this point, so a failed
-		// notification must not fail the whole request — a retry would skip this
-		// block entirely (plan.Status is now COMPLETED) and never send it, making
-		// a hard failure here permanently silence the assigner. Swallow rather
-		// than return, matching resolveEscalation's notification below.
-		_, _ = s.notificationSvc.CreateRiskNotification(ctx, domain.CreateRiskNotificationRequest{
-			RecipientID: risk.AssignerID,
-			RiskID:      &plan.RiskID,
-			Type:        "REASSESSMENT",
-			Message:     fmt.Sprintf("The action plan for risk %s is complete — please reassess and resubmit for approval.", risk.RiskCode),
-			CreatedBy:   req.UpdatedBy,
-		})
+		// The in-app notification that used to be written here is gone with the
+		// risk_notification table. The GRC backend emails the assigner on this
+		// same event (EventActionPlanCompleted), which is the only channel the
+		// platform uses.
 	}
 
-	if plan.PlanType == "MANAGEMENT" {
-		if err := s.resolveEscalation(ctx, plan, req.UpdatedBy); err != nil {
-			return domain.RiskActionPlan{}, err
-		}
-	}
-
+	// Completing a plan no longer resolves an escalation or reverts the risk.
+	// An escalation is now answered by a comment (the GRC backend's escalation
+	// comment endpoint), which is what returns the risk to its assigner; the
+	// escalation itself stays OPEN until the assigner submits for completion
+	// approval, so the risk remains in the Overdue tab throughout.
 	return *plan, nil
-}
-
-// resolveEscalation resolves the OPEN escalation linked to plan (if any),
-// notifies whoever created the plan, and reverts the risk to IN_REMEDIATION.
-// A no-op if the escalation was already resolved by a prior call.
-func (s *riskActionPlanService) resolveEscalation(ctx context.Context, plan *domain.RiskActionPlan, updatedBy string) error {
-	escalation, err := s.escalationRepo.GetOpenByActionPlanID(ctx, plan.ID)
-	if err != nil {
-		var notFound *apierror.NotFoundError
-		if errors.As(err, &notFound) {
-			return nil // already resolved by an earlier call
-		}
-		return fmt.Errorf("find open escalation: %w", err)
-	}
-
-	// Revert the risk BEFORE marking the escalation RESOLVED. The OPEN
-	// escalation is this cascade's retry signal (GetOpenByActionPlanID above),
-	// so it must stay OPEN until the revert is durable — otherwise a failure
-	// after RESOLVED lets a retry short-circuit at the NotFound branch while
-	// the risk is still ESCALATED. Skip the revert if a prior attempt already
-	// did it, so the CAS below doesn't 409 on a converging retry.
-	risk, err := s.riskSvc.GetRiskByID(ctx, plan.RiskID)
-	if err != nil {
-		return fmt.Errorf("load risk for revert: %w", err)
-	}
-	if risk.WorkflowStatus == "ESCALATED" {
-		revertStatus := "IN_REMEDIATION"
-		if _, err := s.riskSvc.UpdateRisk(ctx, plan.RiskID, domain.UpdateRiskRequest{
-			WorkflowStatus: &revertStatus,
-			ExpectedStatus: "ESCALATED",
-			UpdatedBy:      updatedBy,
-		}); err != nil {
-			return fmt.Errorf("revert risk to IN_REMEDIATION: %w", err)
-		}
-	}
-
-	resolvedStatus := "RESOLVED"
-	if _, err := s.escalationSvc.UpdateRiskEscalation(ctx, escalation.RiskID, escalation.ID, domain.UpdateRiskEscalationRequest{
-		Status:    &resolvedStatus,
-		UpdatedBy: updatedBy,
-	}); err != nil {
-		return fmt.Errorf("resolve escalation: %w", err)
-	}
-
-	// Best-effort: the risk is reverted and the escalation RESOLVED by this
-	// point, so a failed creator notification must not fail the cascade — a
-	// retry would NotFound-noop above and never send it anyway. Swallow rather
-	// than return. (Likewise skipped, harmlessly, if the creator can't be
-	// resolved by email.)
-	if plan.CreatedBy != nil {
-		if creator, err := s.userSvc.GetUserByEmail(ctx, *plan.CreatedBy); err == nil {
-			_, _ = s.notificationSvc.CreateRiskNotification(ctx, domain.CreateRiskNotificationRequest{
-				RecipientID: creator.ID,
-				RiskID:      &plan.RiskID,
-				Type:        "STATUS_CHANGE",
-				Message:     "The management action plan you created is now complete.",
-				CreatedBy:   updatedBy,
-			})
-		}
-	}
-	return nil
 }

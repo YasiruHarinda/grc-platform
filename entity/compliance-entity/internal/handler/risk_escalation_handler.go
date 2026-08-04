@@ -136,3 +136,31 @@ func (h *RiskEscalationHandler) UpdateRiskEscalation(w http.ResponseWriter, r *h
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(e)
 }
+
+// CommentEscalation handles
+// PATCH /risks/{riskId}/escalations/{escalationId}/comment — records a
+// decision and returns the risk to IN_REMEDIATION atomically, unlike
+// UpdateRiskEscalation above, which only ever touches the escalation row.
+func (h *RiskEscalationHandler) CommentEscalation(w http.ResponseWriter, r *http.Request) {
+	riskID, err := strconv.Atoi(r.PathValue("riskId"))
+	if err != nil {
+		writeServiceError(w, r, &apierror.ValidationError{Msg: "riskId must be a positive integer"})
+		return
+	}
+	escalationID, err := strconv.Atoi(r.PathValue("escalationId"))
+	if err != nil {
+		writeServiceError(w, r, &apierror.ValidationError{Msg: "escalationId must be a positive integer"})
+		return
+	}
+	var req domain.CommentEscalationRequest
+	if !decodeRequest(w, r, &req) {
+		return
+	}
+	e, err := h.svc.CommentEscalation(r.Context(), riskID, escalationID, req)
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(e)
+}

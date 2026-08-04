@@ -53,7 +53,7 @@ type entUser struct {
 	Email       string `json:"email"`
 	DisplayName string `json:"displayName"`
 	UserType    string `json:"userType"`
-	RiskTeamID  *int   `json:"riskTeamId"`
+	RiskTeamIDs []int  `json:"riskTeamIds"`
 	Status      string `json:"status"`
 }
 
@@ -63,7 +63,7 @@ func (u entUser) toModel() *user.User {
 		DisplayName: u.DisplayName,
 		Email:       u.Email,
 		Status:      u.Status,
-		RiskTeamID:  u.RiskTeamID,
+		RiskTeamIDs: u.RiskTeamIDs,
 	}
 }
 

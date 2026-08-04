@@ -14,15 +14,25 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package model
+package handler
 
-// Notification represents an in-app notification, mapping to `risk_notification`.
-type Notification struct {
-	ID          int    `json:"id"`
-	RecipientID int    `json:"recipient_id"`
-	RiskID      *int   `json:"risk_id"`
-	Type        string `json:"type"`
-	Channel     string `json:"channel"`
-	Message     string `json:"message"`
-	IsRead      bool   `json:"is_read"`
+import (
+	"net/http"
+
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
+)
+
+// handleListRiskCategories serves GET /api/v1/risk-categories.
+func (d *Deps) handleListRiskCategories(w http.ResponseWriter, r *http.Request) {
+	cats, err := d.Category.List(r.Context())
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+
+	if cats == nil {
+		cats = []*model.RiskCategory{}
+	}
+	response.WriteJSONValue(w, http.StatusOK, cats)
 }

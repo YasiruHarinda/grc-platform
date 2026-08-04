@@ -27,6 +27,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
@@ -115,6 +116,17 @@ func (d *Deps) handleCreateRisk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The entity already writes a bare CREATE row inside the same transaction
+	// that creates the risk; this adds the SUBMIT that follows it, since a risk
+	// is born already awaiting owner approval.
+	d.recordEvent(r.Context(), result.ID, createdBy, model.HistorySubmit, model.HistoryDetails{
+		To: model.StatusPendingOwnerApproval,
+	})
+	// The risk owner is notified by name; compliance admins are a role and stay
+	// suppressed for now — see notifyComplianceAdmins.
+	d.notifyRiskEvent(emailer.EventCreated, result.ID, []int{req.OwnerID}, createdBy, "")
+	notifyComplianceAdmins(emailer.EventCreated, result.ID)
+
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/risks/%d", result.ID))
 	response.WriteJSONValue(w, http.StatusCreated, result)
 }
@@ -150,6 +162,9 @@ func validateCreateRiskRequest(req model.CreateRiskRequest) error {
 	}
 	if req.OwnerID <= 0 {
 		return errorf("owner_id is required")
+	}
+	if req.ManagementApproverID <= 0 {
+		return errorf("management_approver_id is required")
 	}
 	if req.ActionOwnerID <= 0 {
 		return errorf("action_owner_id is required")

@@ -34,38 +34,119 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
 )
 
-// Risk Hub privilege names.
+// Risk Hub privilege names. All prefixed RISK_ so they group together
+// (visually and alphabetically) apart from the Audit Hub block below.
 const (
-	ViewRisks             = "VIEW_RISKS"
-	CreateRisk            = "CREATE_RISK"
-	UpdateRisk            = "UPDATE_RISK"
-	SubmitRisk            = "SUBMIT_RISK"
-	CancelRisk            = "CANCEL_RISK"
-	OwnerApproveRisk      = "OWNER_APPROVE_RISK"
-	ManagementApproveRisk = "MANAGEMENT_APPROVE_RISK"
-	ComplianceApproveRisk = "COMPLIANCE_APPROVE_RISK"
-	OwnerRejectRisk       = "OWNER_REJECT_RISK"
-	ManagementRejectRisk  = "MANAGEMENT_REJECT_RISK"
-	ComplianceRejectRisk  = "COMPLIANCE_REJECT_RISK"
-	CompleteRisk          = "COMPLETE_RISK"
-	CloseRisk             = "CLOSE_RISK"
-	EscalateRisk          = "ESCALATE_RISK"
-	AssessRisk            = "ASSESS_RISK"
-	ManageTeams           = "MANAGE_TEAMS"
-	ManageRiskScores      = "MANAGE_RISK_SCORES"
-	ManageActionPlans     = "MANAGE_ACTION_PLANS"
-	ManageComplianceRefs  = "MANAGE_COMPLIANCE_REFS"
-	ViewAnalytics         = "VIEW_ANALYTICS"
-	// CreateManagementActionPlan gates creating a plan_type=MANAGEMENT action
-	// plan on an ESCALATED risk — distinct from ManageActionPlans (which
-	// Risk Assigners and Admin already hold for STANDARD plans) so Management
-	// can create MANAGEMENT plans without also being able to touch STANDARD ones.
-	CreateManagementActionPlan = "CREATE_MANAGEMENT_ACTION_PLAN_RISK"
+	// ViewRisks gates the Registers list (GET /risks) and single risk detail
+	// (GET /risks/{id}).
+	ViewRisks = "RISK_VIEW_RISKS"
+
+	// ViewAllRisks grants org-wide read visibility (dashboards, analytics,
+	// registers) without any edit/approve/close/escalate rights — distinct
+	// from ViewRisks, which Risk Assigner/Owner also hold but are legitimately
+	// team-scoped for. See seesEveryRisk in risk_registers.go.
+	ViewAllRisks = "RISK_VIEW_ALL_RISKS"
+
+	// CreateRisk gates registering a new risk (POST /risks) — creation and
+	// initial submission into the approval workflow happen in one step.
+	CreateRisk = "RISK_CREATE"
+
+	// UpdateRisk gates editing an existing risk (PUT /risks/{id}).
+	UpdateRisk = "RISK_UPDATE"
+
+	// SubmitRisk gates resubmitting a rejected risk (POST /risks/{id}/resubmit)
+	// — not the initial submission, which is bundled into CreateRisk.
+	SubmitRisk = "RISK_SUBMIT"
+
+	// CancelRisk gates cancelling (soft-deleting) a risk.
+	CancelRisk = "RISK_CANCEL"
+
+	// OwnerApproveRisk gates the Risk Owner's approval at the owner-approval
+	// workflow stage (initial submission or post-remediation completion).
+	OwnerApproveRisk = "RISK_OWNER_APPROVE"
+
+	// ManagementApproveRisk gates Management's approval at the
+	// PENDING_MANAGEMENT_APPROVAL stage (Accept+HIGH escalation path).
+	ManagementApproveRisk = "RISK_MANAGEMENT_APPROVE"
+
+	// ComplianceApproveRisk gates Compliance's approval at the
+	// PENDING_COMPLIANCE_REVIEW stage.
+	ComplianceApproveRisk = "RISK_COMPLIANCE_APPROVE"
+
+	// OwnerRejectRisk gates the Risk Owner's rejection, sending the risk to
+	// PENDING_REVISION.
+	OwnerRejectRisk = "RISK_OWNER_REJECT"
+
+	// ManagementRejectRisk gates Management's rejection at the management
+	// approval stage.
+	ManagementRejectRisk = "RISK_MANAGEMENT_REJECT"
+
+	// ComplianceRejectRisk gates Compliance's rejection at the compliance
+	// review stage.
+	ComplianceRejectRisk = "RISK_COMPLIANCE_REJECT"
+
+	// CompleteRisk gates submitting action-plan completion for Risk Owner
+	// sign-off (IN_REMEDIATION → PENDING_OWNER_COMPLETION_APPROVAL).
+	CompleteRisk = "RISK_COMPLETE"
+
+	// CloseRisk gates Compliance's final closure of a risk after completion
+	// is approved.
+	CloseRisk = "RISK_CLOSE"
+
+	// EscalateRisk gates escalating a risk to Management, manually or via the
+	// daily overdue-risk job.
+	EscalateRisk = "RISK_ESCALATE"
+
+	// AssessRisk gates recording a residual reassessment on an IN_REMEDIATION
+	// risk (new score, progress notes, next reassessment date).
+	AssessRisk = "RISK_ASSESS"
+
+	// ManageTeams is reserved for a future risk-team admin endpoint
+	// (create/edit/deactivate risk teams) — not yet wired to a handler; today
+	// it's only used as a "sees everything" classification signal in
+	// risk_registers.go.
+	ManageTeams = "RISK_MANAGE_TEAMS"
+
+	// ManageRiskScores is reserved for a future risk-score-matrix admin
+	// endpoint — not yet wired to a handler; same classification-only role as
+	// ManageTeams above.
+	ManageRiskScores = "RISK_MANAGE_SCORES"
+
+	// ManageActionPlans is reserved for editing a STANDARD action plan/its
+	// steps outside of risk creation — not yet wired to a handler (STANDARD
+	// plans are created inline as part of CreateRisk); today it's only used
+	// as a classification signal, same as ManageTeams above.
+	ManageActionPlans = "RISK_MANAGE_ACTION_PLANS"
+
+	// ManageComplianceRefs is reserved for a future compliance-reference admin
+	// endpoint (the framework tags a risk can be linked against) — not yet
+	// wired to a handler; same classification-only role as ManageTeams above.
+	ManageComplianceRefs = "RISK_MANAGE_COMPLIANCE_REFS"
+
+	// ViewAnalytics gates the Analytics page.
+	ViewAnalytics = "RISK_VIEW_ANALYTICS"
+
+	// ViewRiskDashboard gates the Dashboard nav item/route specifically —
+	// distinct from ViewRisks (which gates the Registers list) so an Action
+	// Owner can hold list access without also getting the org-wide dashboard.
+	ViewRiskDashboard = "RISK_VIEW_DASHBOARD"
+
+	// CreateManagementActionPlan is RETIRED. It gated creating a
+	// plan_type=MANAGEMENT action plan, which was how an escalation used to be
+	// answered. Escalations are now answered with a comment
+	// (POST /risks/{id}/escalations/{id}/comment), and additional plans are
+	// created by the Risk Assigner under ManageActionPlans instead.
+	//
+	// The constant is kept so the seed file's INACTIVE marking has something to
+	// refer to and any lingering role_privilege row is recognisable; nothing in
+	// the codebase checks it. Do not reuse it for a new purpose.
+	CreateManagementActionPlan = "RISK_CREATE_MANAGEMENT_ACTION_PLAN"
+
 	// CompleteActionSteps gates viewing/completing the steps of a plan the
 	// caller is action_owner_id on — applies uniformly to STANDARD and
 	// MANAGEMENT plans; ownership is checked separately at the handler/service
 	// layer, this privilege alone does not grant access to every plan.
-	CompleteActionSteps = "COMPLETE_ACTION_STEPS_RISK"
+	CompleteActionSteps = "RISK_COMPLETE_ACTION_STEPS"
 )
 
 // Audit Hub privilege names.

@@ -22,27 +22,40 @@ import (
 	"net/http"
 
 	riskservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/service"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
 
 // Deps holds all service dependencies for Risk Hub handlers.
 type Deps struct {
-	Risk         riskservice.RiskService
-	Assessment   riskservice.RiskAssessmentService
-	Team         riskservice.TeamService
-	Score        riskservice.RiskScoreService
-	ActionPlan   riskservice.ActionPlanService
-	Evidence     riskservice.EvidenceService
-	Escalation   riskservice.EscalationService
-	Notification riskservice.NotificationService
-	Compliance   riskservice.ComplianceReferenceService
-	Analytics    riskservice.AnalyticsService
-	Dashboard    riskservice.DashboardService
-	Employee     riskservice.EmployeeSearchService
+	Risk       riskservice.RiskService
+	Assessment riskservice.RiskAssessmentService
+	Team       riskservice.TeamService
+	Score      riskservice.RiskScoreService
+	ActionPlan riskservice.ActionPlanService
+	Evidence   riskservice.EvidenceService
+	Escalation riskservice.EscalationService
+	History    riskservice.HistoryService
+	Compliance riskservice.ComplianceReferenceService
+	Category   riskservice.RiskCategoryService
+	Analytics  riskservice.AnalyticsService
+	Dashboard  riskservice.DashboardService
+	Employee   riskservice.EmployeeSearchService
 	// Users resolves an authenticated caller's email to their internal
 	// user.id — used by handleListRisks (Action Owner list scoping) and the
 	// action-plan handlers (ownership checks).
 	Users user.Repository
+	// SCIM answers "which users belong to Asgardeo group X" for role-filtered
+	// pickers (Management Approver, Risk Owner) — see internal/scim.
+	SCIM *scim.Client
+	// Email sends the risk-owner notification fired synchronously right
+	// after a risk is created. A delivery failure is logged but never fails
+	// risk creation itself — see handleCreateRisk.
+	Email *emailer.Client
+	// FrontendBaseURL is used to build the risk-detail link inside that
+	// notification email.
+	FrontendBaseURL string
 }
 
 // RegisterRoutes mounts all Risk Hub routes onto mux under /api/v1.
@@ -57,6 +70,15 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 
 	// Compliance references
 	mux.HandleFunc("GET /api/v1/compliance-references", d.handleListComplianceReferences)
+
+	// Risk categories
+	mux.HandleFunc("GET /api/v1/risk-categories", d.handleListRiskCategories)
+
+	// Role-filtered user pickers, sourced live from Asgardeo group membership
+	// via the SCIM Operations Service (this platform keeps no user<->role
+	// table of its own)
+	mux.HandleFunc("GET /api/v1/management-approvers", d.handleListManagementApprovers)
+	mux.HandleFunc("GET /api/v1/risk-owner-candidates", d.handleListRiskOwnerCandidates)
 
 	// Current user
 	mux.HandleFunc("GET /api/v1/me/privileges", d.handleGetMyPrivileges)
@@ -90,24 +112,30 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	// Analytics
 	mux.HandleFunc("GET /api/v1/risks/analytics/summary", d.handleAnalyticsSummary)
 
-	// Action plans (MANAGEMENT plans on escalated risks; step completion by
-	// the Action Owner, uniformly for STANDARD and MANAGEMENT plans)
-	mux.HandleFunc("POST /api/v1/risks/{id}/action-plans", d.handleCreateManagementActionPlan)
+	// Action plans (additional plans added by the Risk Assigner; step
+	// completion by the plan's Action Owner)
+	mux.HandleFunc("POST /api/v1/risks/{id}/action-plans", d.handleCreateActionPlan)
 	mux.HandleFunc("GET /api/v1/risks/{id}/action-plans", d.handleListActionPlans)
 	mux.HandleFunc("GET /api/v1/risks/{id}/action-plans/{planId}/steps", d.handleListActionPlanSteps)
 	mux.HandleFunc("PATCH /api/v1/risks/{id}/action-plans/{planId}/steps/{stepId}", d.handleUpdateActionPlanStep)
 	mux.HandleFunc("POST /api/v1/risks/{id}/action-plans/{planId}/complete", d.handleCompleteActionPlan)
 
-	// Escalations (automatic by default — see internal/job in the
-	// compliance-entity — plus a manual trigger for Compliance/Admin, and
-	// resolved automatically by risk_action_plan_service.go's completion cascade)
+	// Escalations (automatic by default — see internal/risk/job — plus a manual
+	// trigger for Compliance/Admin. Answered with a comment, which returns the
+	// risk to its assigner; the escalation itself stays OPEN until the assigner
+	// submits for completion approval)
 	mux.HandleFunc("POST /api/v1/risks/{id}/escalate", d.handleEscalateRisk)
 	mux.HandleFunc("GET /api/v1/risks/{id}/escalations", d.handleListEscalations)
 
+	// Full risk history — every workflow event and field edit, behind the
+	// drawer's History tab.
+	mux.HandleFunc("GET /api/v1/risks/{id}/history", d.handleListRiskHistory)
+	// Answering an escalation: a comment returns the risk to its assigner.
+	// Replaces the MANAGEMENT action plan that used to serve this purpose.
+	mux.HandleFunc("POST /api/v1/risks/{id}/escalations/{escalationId}/comment", d.handleEscalationComment)
+
 	// TODO: remaining routes
-	// GET    /api/v1/risks/{id}/changelog
 	// GET/POST/DELETE /api/v1/risks/{id}/evidence
-	// GET/PATCH /api/v1/notifications
 	// POST/PUT /api/v1/teams
 	// POST/PUT /api/v1/risk-scores
 	// POST   /api/v1/compliance-references

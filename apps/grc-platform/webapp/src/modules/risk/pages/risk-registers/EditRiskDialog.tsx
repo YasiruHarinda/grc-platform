@@ -209,13 +209,13 @@ export default function EditRiskDialog({
   const [actionOwnerError, setActionOwnerError] = useState<string | null>(null);
   const actionOwnerDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Risk Owner is restricted to users already belonging (via risk_team_id) to
+  // Risk Owner is restricted to users already belonging (via risk_team_ids) to
   // this assignment team — source register isn't editable here (it's baked
   // into the immutable risk_code), so only assignmentTeamId is checked. The
   // risk's existing owner is always kept visible/selectable even if no
   // longer "eligible", so opening this dialog never silently invalidates
   // already-saved data — only an actual team change re-checks eligibility.
-  const eligibleRiskOwners = users.filter((u) => u.risk_team_id === assignmentTeamId);
+  const eligibleRiskOwners = users.filter((u) => u.risk_team_ids.includes(assignmentTeamId));
   const currentOwnerStillEligible = eligibleRiskOwners.some((u) => u.id === ownerId);
   const riskOwnerOptions = currentOwnerStillEligible
     ? eligibleRiskOwners
@@ -226,7 +226,7 @@ export default function EditRiskDialog({
       prevAssignmentTeamId.current = assignmentTeamId;
       setOwnerId((current) => {
         if (current === "") return current;
-        const stillEligible = users.some((u) => u.id === current && u.risk_team_id === assignmentTeamId);
+        const stillEligible = users.some((u) => u.id === current && u.risk_team_ids.includes(assignmentTeamId));
         return stillEligible ? current : "";
       });
     }
@@ -439,11 +439,14 @@ export default function EditRiskDialog({
       fullWidth
       PaperProps={{ sx: dialogPaperSx }}
     >
+      {/* DialogTitle already renders an <h2>, so both children are spans —
+          a nested <h6>/<p> inside a heading is invalid HTML and React warns
+          about it. display:block keeps them on separate lines. */}
       <DialogTitle>
-        <Typography variant="h6" fontWeight={700}>
+        <Typography component="span" variant="h6" fontWeight={700} display="block">
           Edit Risk
         </Typography>
-        <Typography variant="caption" color="text.secondary">
+        <Typography component="span" variant="caption" color="text.secondary" display="block">
           {detail.risk_code}
         </Typography>
       </DialogTitle>

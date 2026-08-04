@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/apierror"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
@@ -36,17 +35,23 @@ var errNotImplemented = errors.New("not implemented")
 type ActionPlanService interface {
 	List(ctx context.Context, riskID int) ([]*model.ActionPlan, error)
 	GetByID(ctx context.Context, riskID, planID int) (*model.ActionPlan, error)
-	// Create is MANAGEMENT-only: STANDARD plans are still created inline as
-	// part of risk registration, a separate path this deliberately doesn't
-	// touch (see repository/entity/stubs.go's note on the two paths).
+	// Create adds a further STANDARD plan to a risk that already has one. The
+	// first plan is still created inline as part of risk registration, a
+	// separate path this deliberately doesn't touch (see
+	// repository/entity/stubs.go's note on the two paths).
+	//
+	// It used to create MANAGEMENT plans, which were how an escalation was
+	// answered. Escalations are now answered with a comment, so the plan type
+	// no longer carries meaning and everything this creates is STANDARD.
 	Create(ctx context.Context, riskID int, req model.CreateActionPlanRequest, createdBy string) (*model.ActionPlan, error)
 	ListSteps(ctx context.Context, planID int) ([]*model.ActionPlanStep, error)
 	// UpdateStep and Complete are ownership-gated in addition to the
 	// CompleteActionSteps privilege the handler already checks: callerEmail
-	// must resolve to the plan's action_owner_id, uniformly for STANDARD and
-	// MANAGEMENT plans.
-	UpdateStep(ctx context.Context, riskID, planID, stepID int, req model.UpdateActionPlanStepRequest, callerEmail string) error
-	Complete(ctx context.Context, riskID, planID int, callerEmail string) (*model.ActionPlan, error)
+	// must resolve to the plan's action_owner_id.
+	// Both take canOverride so a compliance admin can act in the action
+	// owner's place; the handler derives it from the caller's privileges.
+	UpdateStep(ctx context.Context, riskID, planID, stepID int, req model.UpdateActionPlanStepRequest, callerEmail string, canOverride bool) error
+	Complete(ctx context.Context, riskID, planID int, callerEmail string, canOverride bool) (*model.ActionPlan, error)
 }
 
 type actionPlanService struct {
@@ -99,10 +104,10 @@ func (s *actionPlanService) Create(ctx context.Context, riskID int, req model.Cr
 	if riskID <= 0 {
 		return nil, badRequest("riskId must be a positive integer")
 	}
-	if strings.ToUpper(req.PlanType) != "MANAGEMENT" {
-		return nil, badRequest("planType must be MANAGEMENT — STANDARD plans are created as part of risk registration")
-	}
-	req.PlanType = "MANAGEMENT"
+	// Forced rather than validated: callers no longer choose a plan type, and
+	// silently accepting "MANAGEMENT" from an old client would recreate the
+	// very concept this removed.
+	req.PlanType = "STANDARD"
 	if createdBy == "" {
 		return nil, badRequest("createdBy is required")
 	}
@@ -117,7 +122,12 @@ func (s *actionPlanService) ListSteps(ctx context.Context, planID int) ([]*model
 }
 
 // requireOwner reports whether callerEmail resolves to plan's action_owner_id.
-func (s *actionPlanService) requireOwner(ctx context.Context, plan *model.ActionPlan, callerEmail string) error {
+// canOverride short-circuits it for compliance admins, matching the identity
+// gates on the approval transitions.
+func (s *actionPlanService) requireOwner(ctx context.Context, plan *model.ActionPlan, callerEmail string, canOverride bool) error {
+	if canOverride {
+		return nil
+	}
 	caller, err := s.userRepo.GetByEmail(ctx, callerEmail)
 	if err != nil {
 		return err
@@ -128,7 +138,7 @@ func (s *actionPlanService) requireOwner(ctx context.Context, plan *model.Action
 	return nil
 }
 
-func (s *actionPlanService) UpdateStep(ctx context.Context, riskID, planID, stepID int, req model.UpdateActionPlanStepRequest, callerEmail string) error {
+func (s *actionPlanService) UpdateStep(ctx context.Context, riskID, planID, stepID int, req model.UpdateActionPlanStepRequest, callerEmail string, canOverride bool) error {
 	if stepID <= 0 {
 		return badRequest("stepId must be a positive integer")
 	}
@@ -139,13 +149,13 @@ func (s *actionPlanService) UpdateStep(ctx context.Context, riskID, planID, step
 	if err != nil {
 		return err
 	}
-	if err := s.requireOwner(ctx, plan, callerEmail); err != nil {
+	if err := s.requireOwner(ctx, plan, callerEmail, canOverride); err != nil {
 		return err
 	}
 	return s.repo.UpdateStep(ctx, planID, stepID, req, callerEmail)
 }
 
-func (s *actionPlanService) Complete(ctx context.Context, riskID, planID int, callerEmail string) (*model.ActionPlan, error) {
+func (s *actionPlanService) Complete(ctx context.Context, riskID, planID int, callerEmail string, canOverride bool) (*model.ActionPlan, error) {
 	if callerEmail == "" {
 		return nil, badRequest("caller email is required")
 	}
@@ -153,7 +163,7 @@ func (s *actionPlanService) Complete(ctx context.Context, riskID, planID int, ca
 	if err != nil {
 		return nil, err
 	}
-	if err := s.requireOwner(ctx, plan, callerEmail); err != nil {
+	if err := s.requireOwner(ctx, plan, callerEmail, canOverride); err != nil {
 		return nil, err
 	}
 	return s.repo.Complete(ctx, planID, callerEmail)

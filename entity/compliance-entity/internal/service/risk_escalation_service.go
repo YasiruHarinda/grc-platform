@@ -105,6 +105,26 @@ func (s *riskEscalationService) UpdateRiskEscalation(ctx context.Context, riskID
 	return *e, nil
 }
 
+func (s *riskEscalationService) CommentEscalation(ctx context.Context, riskID, escalationID int, req domain.CommentEscalationRequest) (domain.RiskEscalation, error) {
+	if riskID <= 0 {
+		return domain.RiskEscalation{}, &apierror.ValidationError{Msg: "riskId must be a positive integer"}
+	}
+	if escalationID <= 0 {
+		return domain.RiskEscalation{}, &apierror.ValidationError{Msg: "escalationId must be a positive integer"}
+	}
+	if strings.TrimSpace(req.Decision) == "" {
+		return domain.RiskEscalation{}, &apierror.ValidationError{Msg: "decision is required"}
+	}
+	if req.UpdatedBy == "" {
+		return domain.RiskEscalation{}, &apierror.ValidationError{Msg: "updatedBy is required"}
+	}
+	e, err := s.repo.CommentEscalation(ctx, riskID, escalationID, strings.TrimSpace(req.Decision), req.UpdatedBy)
+	if err != nil {
+		return domain.RiskEscalation{}, err
+	}
+	return *e, nil
+}
+
 func (s *riskEscalationService) ListRiskEscalations(ctx context.Context, riskID int) (domain.ListRiskEscalationsResponse, error) {
 	if riskID <= 0 {
 		return domain.ListRiskEscalationsResponse{}, &apierror.ValidationError{Msg: "riskId must be a positive integer"}
@@ -145,7 +165,11 @@ func (s *riskEscalationService) EscalateRisk(ctx context.Context, riskID int, re
 	// escalation row (an unrecoverable stuck state). The CAS inside also makes
 	// a concurrent escalate (daily job vs. manual click) fail rather than
 	// create a duplicate escalation.
-	e, err := s.repo.Escalate(ctx, riskID, domain.CreateRiskEscalationRequest{CreatedBy: req.CreatedBy})
+	e, err := s.repo.Escalate(ctx, riskID, domain.CreateRiskEscalationRequest{
+		CreatedBy:            req.CreatedBy,
+		AssignerLeadEmail:    req.AssignerLeadEmail,
+		ActionOwnerLeadEmail: req.ActionOwnerLeadEmail,
+	})
 	if err != nil {
 		return domain.RiskEscalation{}, err
 	}

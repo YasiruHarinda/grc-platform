@@ -38,6 +38,11 @@ type Employee struct {
 	LastName  string
 	WorkEmail string
 	Thumbnail string
+	// ManagerEmail is the employee's line manager, as HR records them. Empty
+	// when HR has nobody on file — the org chart has roots, and contractors
+	// and recent joiners are sometimes unassigned — so callers must treat "no
+	// lead" as ordinary rather than exceptional.
+	ManagerEmail string
 }
 
 // Client talks to the hr_entity GraphQL service. Pointed at a local mock
@@ -185,6 +190,7 @@ query SearchEmployees($filter: EmployeeFilter, $limit: Int) {
 		lastName
 		workEmail
 		employeeThumbnail
+		managerEmail
 	}
 }`
 
@@ -265,6 +271,7 @@ func (c *Client) GetEmployeeByEmail(ctx context.Context, email string) (*Employe
 			LastName          *string `json:"lastName"`
 			WorkEmail         *string `json:"workEmail"`
 			EmployeeThumbnail *string `json:"employeeThumbnail"`
+			ManagerEmail      *string `json:"managerEmail"`
 		} `json:"employees"`
 	}
 	if err := json.Unmarshal(data, &result); err != nil {
@@ -284,6 +291,9 @@ func (c *Client) GetEmployeeByEmail(ctx context.Context, email string) (*Employe
 		}
 		if e.EmployeeThumbnail != nil {
 			emp.Thumbnail = *e.EmployeeThumbnail
+		}
+		if e.ManagerEmail != nil {
+			emp.ManagerEmail = *e.ManagerEmail
 		}
 		return emp, nil
 	}

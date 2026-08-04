@@ -24,11 +24,29 @@ import "time"
 // justification at creation time; CreatedAt is what "escalated on" shows in
 // the UI instead.
 type Escalation struct {
-	ID                   int       `json:"id"`
-	RiskID               int       `json:"risk_id"`
-	NewTreatmentStrategy *string   `json:"new_treatment_strategy"`
-	ActionPlanID         *int      `json:"action_plan_id"`
-	Decision             *string   `json:"decision"`
+	ID                   int     `json:"id"`
+	RiskID               int     `json:"risk_id"`
+	NewTreatmentStrategy *string `json:"new_treatment_strategy"`
+	ActionPlanID         *int    `json:"action_plan_id"`
+	// Decision holds the management/lead comment that returns an escalated
+	// risk to its assigner. Nil until someone comments.
+	Decision *string `json:"decision"`
+	// Line managers of the assigner and action owner, resolved from the HR
+	// entity once at escalation time. They decide who may comment on a
+	// medium/low escalation and who can see the risk — authorizeComment
+	// (risk/service/escalation.go) reads these two Go fields directly, but
+	// they're json:"-" deliberately: handleListEscalations is gated only on
+	// the broad RISK_VIEW_RISKS privilege, so anyone who can view an
+	// escalated risk would otherwise receive two other people's email
+	// addresses that the webapp never reads.
+	AssignerLeadEmail    *string   `json:"-"`
+	ActionOwnerLeadEmail *string   `json:"-"`
 	Status               string    `json:"status"` // OPEN | RESOLVED
 	CreatedAt            time.Time `json:"created_at"`
+}
+
+// EscalationCommentRequest is the payload for
+// POST /api/v1/risks/{id}/escalations/{escalationId}/comment.
+type EscalationCommentRequest struct {
+	Comment string `json:"comment"`
 }

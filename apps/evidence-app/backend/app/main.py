@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 
 from app.api.routes import products, frameworks, controls, evidence, submissions, agent, usage, me
 from app.config import settings
@@ -33,6 +34,47 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Checklist 4.6 mandatory security headers, on every API response. These are
+# the safe, additive baseline — none of them restrict where content may load
+# from, so nothing the app does is affected. The restrictive CSP directives
+# (default-src etc.) and Permissions-Policy are a separate, deferred piece of
+# work (see issue #75) — not added here.
+#
+# The web app's own Strict-Transport-Security value (webapp/index.js) also
+# carries `preload`; the API's deliberately does not — see issue #72.
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "upgrade-insecure-requests",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+}
+
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers.update(SECURITY_HEADERS)
+    return response
+
+
+# The middleware above only sees responses the app actually returned. An
+# unhandled exception never gets that far: it propagates past this middleware
+# to Starlette's ServerErrorMiddleware, which sits outside it and builds the
+# 500 itself, so that response would go out with none of the headers. Owning
+# the 500 here closes that hole -- "every response" has to include the ones
+# nobody planned for.
+#
+# This reproduces Starlette's own default 500 body and status exactly, and
+# ServerErrorMiddleware still re-raises afterwards, so the traceback is
+# logged exactly as before. Nothing about diagnosing a crash changes.
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request, exc: Exception) -> PlainTextResponse:
+    return PlainTextResponse(
+        "Internal Server Error",
+        status_code=500,
+        headers=SECURITY_HEADERS,
+    )
 
 # The unauthenticated GET /uploads/{filename} route that used to stream blobs
 # straight out of private storage has been removed — evidence files are now

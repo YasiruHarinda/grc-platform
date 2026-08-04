@@ -36,10 +36,16 @@ func TestBackendWorkflowTransitionsAreAllowed(t *testing.T) {
 		{"OwnerApprove after amendment", "PENDING_AMENDMENT", "PENDING_COMPLIANCE_REVIEW"},
 		{"OwnerApprove after amendment (ACCEPT+HIGH)", "PENDING_AMENDMENT", "PENDING_MANAGEMENT_APPROVAL"},
 		{"OwnerApprove completion", "PENDING_OWNER_COMPLETION_APPROVAL", "PENDING_COMPLIANCE_CLOSURE"},
+		{"OwnerApprove completion (ACCEPT+HIGH)", "PENDING_OWNER_COMPLETION_APPROVAL", "PENDING_MANAGEMENT_CLOSURE_APPROVAL"},
 
 		{"ManagementApprove", "PENDING_MANAGEMENT_APPROVAL", "PENDING_COMPLIANCE_REVIEW"},
+		{"ManagementApprove closure", "PENDING_MANAGEMENT_CLOSURE_APPROVAL", "PENDING_COMPLIANCE_CLOSURE"},
 		{"Approve", "PENDING_COMPLIANCE_REVIEW", "IN_REMEDIATION"},
 		{"Complete", "IN_REMEDIATION", "PENDING_OWNER_COMPLETION_APPROVAL"},
+		// Editing implementation_date or the action steps on an in-remediation
+		// risk re-enters the approval chain. This edge was missing from the
+		// table and rejected a legitimate edit with a 400.
+		{"Edit restricted field", "IN_REMEDIATION", "PENDING_AMENDMENT"},
 		{"Close", "PENDING_COMPLIANCE_CLOSURE", "CLOSED"},
 		{"Cancel", "PENDING_RISK_OWNER_APPROVAL", "CANCELLED"},
 
@@ -49,10 +55,12 @@ func TestBackendWorkflowTransitionsAreAllowed(t *testing.T) {
 		{"Reject (MANAGEMENT)", "PENDING_MANAGEMENT_APPROVAL", "PENDING_REVISION"},
 		{"Reject (COMPLIANCE)", "PENDING_COMPLIANCE_REVIEW", "PENDING_REVISION"},
 		{"Reject (COMPLETION_OWNER)", "PENDING_OWNER_COMPLETION_APPROVAL", "PENDING_REVISION"},
+		{"Reject (COMPLETION_MANAGEMENT)", "PENDING_MANAGEMENT_CLOSURE_APPROVAL", "PENDING_REVISION"},
 
 		// Resubmit — ordinary, and the COMPLETION_OWNER variant.
 		{"Resubmit", "PENDING_REVISION", "PENDING_RISK_OWNER_APPROVAL"},
 		{"Resubmit (COMPLETION_OWNER)", "PENDING_REVISION", "PENDING_OWNER_COMPLETION_APPROVAL"},
+		{"Resubmit (COMPLETION_MANAGEMENT)", "PENDING_REVISION", "PENDING_MANAGEMENT_CLOSURE_APPROVAL"},
 	}
 
 	for _, c := range cases {

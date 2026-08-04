@@ -48,6 +48,8 @@ type entEscalation struct {
 	NewTreatmentStrategy *string   `json:"newTreatmentStrategy"`
 	ActionPlanID         *int      `json:"actionPlanId"`
 	Decision             *string   `json:"decision"`
+	AssignerLeadEmail    *string   `json:"assignerLeadEmail"`
+	ActionOwnerLeadEmail *string   `json:"actionOwnerLeadEmail"`
 	Status               string    `json:"status"`
 	CreatedOn            time.Time `json:"createdOn"`
 }
@@ -59,6 +61,8 @@ func (e entEscalation) toModel() *model.Escalation {
 		NewTreatmentStrategy: e.NewTreatmentStrategy,
 		ActionPlanID:         e.ActionPlanID,
 		Decision:             e.Decision,
+		AssignerLeadEmail:    e.AssignerLeadEmail,
+		ActionOwnerLeadEmail: e.ActionOwnerLeadEmail,
 		Status:               e.Status,
 		CreatedAt:            e.CreatedOn,
 	}
@@ -78,11 +82,52 @@ func (r *escalationRepository) List(ctx context.Context, riskID int) ([]*model.E
 	return escalations, nil
 }
 
-func (r *escalationRepository) Escalate(ctx context.Context, riskID int, createdBy string) (*model.Escalation, error) {
-	body := map[string]any{"createdBy": createdBy}
+func (r *escalationRepository) Escalate(ctx context.Context, riskID int, createdBy string, assignerLead, actionOwnerLead *string) (*model.Escalation, error) {
+	body := map[string]any{
+		"createdBy":            createdBy,
+		"assignerLeadEmail":    assignerLead,
+		"actionOwnerLeadEmail": actionOwnerLead,
+	}
 	var e entEscalation
 	if err := r.c.Post(ctx, fmt.Sprintf("/risks/%d/escalate", riskID), body, &e); err != nil {
 		return nil, fmt.Errorf("escalate risk %d: %w", riskID, err)
 	}
 	return e.toModel(), nil
+}
+
+// Comment writes the decision text and returns the risk to IN_REMEDIATION via
+// the entity's dedicated comment endpoint — one transaction on the entity
+// side, so the two can't drift out of step if the second write fails. The
+// escalation's own status is deliberately left alone by that endpoint: it
+// stays OPEN so the risk remains in the Overdue tab until the assigner
+// submits for completion approval.
+func (r *escalationRepository) Comment(ctx context.Context, riskID, escalationID int, comment, updatedBy string) (*model.Escalation, error) {
+	body := map[string]any{"decision": comment, "updatedBy": updatedBy}
+	var e entEscalation
+	if err := r.c.Patch(ctx, fmt.Sprintf("/risks/%d/escalations/%d/comment", riskID, escalationID), body, &e); err != nil {
+		return nil, fmt.Errorf("comment on escalation %d: %w", escalationID, err)
+	}
+	return e.toModel(), nil
+}
+
+// Resolve marks every OPEN escalation on the risk RESOLVED. Plural because a
+// risk escalated, returned, and escalated again carries more than one row, and
+// leaving an older one open would strand the risk in the Overdue tab.
+func (r *escalationRepository) Resolve(ctx context.Context, riskID int, updatedBy string) error {
+	escalations, err := r.List(ctx, riskID)
+	if err != nil {
+		return err
+	}
+	resolved := "RESOLVED"
+	for _, e := range escalations {
+		if e.Status != "OPEN" {
+			continue
+		}
+		body := map[string]any{"status": resolved, "updatedBy": updatedBy}
+		var out entEscalation
+		if err := r.c.Patch(ctx, fmt.Sprintf("/risks/%d/escalations/%d", riskID, e.ID), body, &out); err != nil {
+			return fmt.Errorf("resolve escalation %d: %w", e.ID, err)
+		}
+	}
+	return nil
 }

@@ -59,7 +59,10 @@ import {
   completeActionStep,
   completeRisk,
   createAssessment,
-  createManagementActionPlan,
+  createActionPlan,
+  commentOnEscalation,
+  fetchEscalations,
+  fetchRiskHistory,
   escalateRisk,
   fetchActionPlanSteps,
   fetchActionPlans,
@@ -78,6 +81,8 @@ import {
 } from "../api/riskApi";
 import type {
   ComplianceReference,
+  Escalation,
+  HistoryEntry,
   RiskDetail,
   RiskListItem,
   RiskScore,
@@ -94,8 +99,9 @@ import type { ActionPlanWithSteps } from "./risk-registers/RiskDetailDrawer";
 import RejectDialog from "./risk-registers/RejectDialog";
 import ReassessmentDialog from "./risk-registers/ReassessmentDialog";
 import EditRiskDialog from "./risk-registers/EditRiskDialog";
-import ManagementActionPlanDialog from "./risk-registers/ManagementActionPlanDialog";
-import type { ManagementActionPlanPayload } from "./risk-registers/ManagementActionPlanDialog";
+import ActionPlanDialog from "./risk-registers/ActionPlanDialog";
+import type { ActionPlanPayload } from "./risk-registers/ActionPlanDialog";
+import EscalationCommentDialog from "./risk-registers/EscalationCommentDialog";
 import ColumnFilter from "./risk-registers/ColumnFilter";
 import DateRangeFilter from "./risk-registers/DateRangeFilter";
 import {
@@ -119,6 +125,10 @@ interface TabDef {
   label: string;
   statuses: string[];
   showRiskType: boolean;
+  // When set, the tab's membership comes from the open_escalation filter
+  // rather than from `statuses` — see OVERDUE_STATUSES. `statuses` then only
+  // populates the Status column filter's options.
+  openEscalationOnly?: boolean;
 }
 
 const TABS: TabDef[] = [
@@ -127,7 +137,7 @@ const TABS: TabDef[] = [
   { key: "pending-management",  label: "Pending Management Approval", statuses: PENDING_MANAGEMENT_STATUSES,  showRiskType: true },
   { key: "pending-compliance",  label: "Pending Compliance Approval", statuses: PENDING_COMPLIANCE_STATUSES,  showRiskType: true },
   { key: "pending-revision",    label: "Pending Revision",            statuses: PENDING_REVISION_STATUSES,    showRiskType: true },
-  { key: "overdue",             label: "Overdue Risks",               statuses: OVERDUE_STATUSES,             showRiskType: false },
+  { key: "overdue",             label: "Overdue Risks",               statuses: OVERDUE_STATUSES,             showRiskType: false, openEscalationOnly: true },
 ];
 
 // ── Chips ──────────────────────────────────────────────────────────────────────
@@ -167,13 +177,20 @@ function LevelChip({ level, color }: { level: string; color: string }): JSX.Elem
 
 const RISK_CLOSURE_STATUSES = new Set([
   "PENDING_OWNER_COMPLETION_APPROVAL",
+  "PENDING_MANAGEMENT_CLOSURE_APPROVAL",
   "PENDING_COMPLIANCE_CLOSURE",
 ]);
+
+// Rejection stages that mean "this was rejected on the way out, not on the way
+// in" — a risk sent back from either closure approval is still closure work.
+const RISK_CLOSURE_REJECTION_STAGES = new Set(["COMPLETION_OWNER", "COMPLETION_MANAGEMENT"]);
 
 function RiskTypeChip({ riskType, workflowStatus, rejectionStage }: { riskType: string; workflowStatus: string; rejectionStage?: string | null }): JSX.Element {
   const isRiskClosure =
     RISK_CLOSURE_STATUSES.has(workflowStatus) ||
-    (workflowStatus === "PENDING_REVISION" && rejectionStage === "COMPLETION_OWNER");
+    (workflowStatus === "PENDING_REVISION" &&
+      !!rejectionStage &&
+      RISK_CLOSURE_REJECTION_STAGES.has(rejectionStage));
   if (isRiskClosure) {
     return <Chip label="Risk Closure" color="success" size="small" variant="outlined" />;
   }
@@ -368,7 +385,14 @@ export default function RiskRegisters(): JSX.Element {
   const [assessOpen, setAssessOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
-  const [managementPlanOpen, setManagementPlanOpen] = useState(false);
+  const [actionPlanOpen, setActionPlanOpen] = useState(false);
+  const [escalationCommentOpen, setEscalationCommentOpen] = useState(false);
+  // Escalation history for the open risk. Drives the drawer's escalation
+  // banner and identifies which escalation a comment applies to.
+  const [escalations, setEscalations] = useState<Escalation[]>([]);
+  // Full risk history for the open risk, behind the drawer's History tab.
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [historyError, setHistoryError] = useState("");
 
   // Resolves "am I this plan's action_owner_id" for the Action Plan section's
   // step-completion controls — the users list is already fetched for the
@@ -402,9 +426,15 @@ export default function RiskRegisters(): JSX.Element {
       }
       return activeTabDef.statuses;
     })();
+    // An escalation-scoped tab is defined by the escalation, not the status, so
+    // it contributes no status constraint of its own — but a Status column
+    // filter must still narrow it. Returning the user's selection directly
+    // (rather than intersecting with the tab's list) is what makes that work;
+    // intersecting against an empty tab scope would blank the table.
+    if (activeTabDef.openEscalationOnly) return filters.status;
     if (filters.status.length === 0) return tabStatuses;
     return tabStatuses.filter((s) => filters.status.includes(s));
-  }, [activeTab, activeTabDef.statuses, approvedFilter, filters.status]);
+  }, [activeTab, activeTabDef.statuses, activeTabDef.openEscalationOnly, approvedFilter, filters.status]);
 
   // Full pool of statuses the Status column filter can offer, independent of
   // approvedFilter's own narrowing — so e.g. "Closed" is always selectable
@@ -435,7 +465,7 @@ export default function RiskRegisters(): JSX.Element {
   const statusColumnOptions = statusOptions.map((s) => ({ label: statusLabel(s), value: s }));
 
   useEffect(() => {
-    fetchSourceRegisterTeams(authFetch).then(setSourceTeams).catch(console.error);
+    fetchSourceRegisterTeams(authFetch, true).then(setSourceTeams).catch(console.error);
     fetchAssignmentTeams(authFetch).then(setAssignmentTeams).catch(console.error);
     fetchRiskScores(authFetch).then(setRiskScores).catch(console.error);
     fetchUsers(authFetch).then(setUsers).catch(console.error);
@@ -480,6 +510,7 @@ export default function RiskRegisters(): JSX.Element {
         due_from: filters.dueFrom || undefined,
         due_to: filters.dueTo || undefined,
         due_overdue: filters.dueOverdueOnly || undefined,
+        open_escalation: activeTabDef.openEscalationOnly || undefined,
         offset: page * rowsPerPage,
         limit: rowsPerPage,
       });
@@ -498,8 +529,8 @@ export default function RiskRegisters(): JSX.Element {
     loadRisks();
   }, [loadRisks]);
 
-  // Action plans (STANDARD + MANAGEMENT) aren't embedded in RiskDetail — and
-  // steps aren't embedded in the plan list either — so this is its own
+  // Action plans aren't embedded in RiskDetail — and steps aren't embedded in
+  // the plan list either — so this is its own
   // fetch-then-fan-out, reused both on drawer open and after any action-plan
   // action so the drawer reflects the latest state without closing.
   const loadActionPlans = async (riskId: number) => {
@@ -521,6 +552,9 @@ export default function RiskRegisters(): JSX.Element {
     setDrawerOpen(true);
     setDrawerDetail(null);
     setActionPlans([]);
+    setEscalations([]);
+    setHistory([]);
+    setHistoryError("");
     setDrawerError("");
     setActionPlansError("");
     setDrawerLoading(true);
@@ -537,12 +571,30 @@ export default function RiskRegisters(): JSX.Element {
     } catch (e: unknown) {
       setActionPlansError(e instanceof Error ? e.message : "Failed to load action plans.");
     }
+    // Fetched separately and failure-tolerantly: a risk that has never been
+    // escalated is the common case, and an error here should cost the banner,
+    // not the drawer.
+    try {
+      setEscalations(await fetchEscalations(authFetch, id));
+    } catch {
+      setEscalations([]);
+    }
+    // Fetched independently of the detail for the same reason action plans are:
+    // a history failure should cost the History tab, not the whole drawer.
+    try {
+      setHistory(await fetchRiskHistory(authFetch, id));
+    } catch (e: unknown) {
+      setHistoryError(e instanceof Error ? e.message : "Failed to load history.");
+    }
   };
 
   const closeDrawer = () => {
     setDrawerOpen(false);
     setDrawerDetail(null);
     setActionPlans([]);
+    setEscalations([]);
+    setHistory([]);
+    setHistoryError("");
     setDrawerError("");
     setActionPlansError("");
   };
@@ -628,7 +680,8 @@ export default function RiskRegisters(): JSX.Element {
     onEdit: () => setEditDetail(drawerDetail),
     onAssess: () => setAssessOpen(true),
     onCancel: () => setCancelConfirmOpen(true),
-    onCreateManagementActionPlan: () => setManagementPlanOpen(true),
+    onAddActionPlan: () => setActionPlanOpen(true),
+    onCommentEscalation: () => setEscalationCommentOpen(true),
 
     // Manual jump-the-queue trigger — same outcome as the daily job, just
     // immediate. Closes the drawer and reloads like any other
@@ -640,18 +693,44 @@ export default function RiskRegisters(): JSX.Element {
       ),
   };
 
-  const handleCreateManagementPlan = async (payload: ManagementActionPlanPayload) => {
+  const handleCreateActionPlan = async (payload: ActionPlanPayload) => {
     if (!drawerDetail) return;
     // Plan and its steps are created in a single atomic backend call — a
     // failure rolls back both, so a retry can never orphan a stepless plan or
     // duplicate one.
-    await createManagementActionPlan(authFetch, drawerDetail.id, {
+    await createActionPlan(authFetch, drawerDetail.id, {
       description: payload.description,
       action_owner_id: payload.actionOwnerId,
       steps: payload.steps,
     });
     await loadActionPlans(drawerDetail.id);
-    setActionSuccess("Management action plan created.");
+    setActionSuccess("Action plan added.");
+  };
+
+  // Commenting returns the risk to its assigner (ESCALATED → IN_REMEDIATION),
+  // so this closes the drawer and reloads like any other workflow-changing
+  // action. The risk stays in the Overdue tab — the escalation is still open —
+  // but its status has changed, so the list must refresh.
+  //
+  // Deliberately not routed through runAction: it swallows the error into
+  // setActionError rather than rethrowing, so EscalationCommentDialog's own
+  // await onConfirm(...) would always resolve — the dialog would close as if
+  // the comment saved, discarding what the user typed, even on a 403. The
+  // Comment button only checks whether an open escalation exists, not
+  // identity (the server does that — only the Management Approver or the
+  // frozen lead emails may comment, never the assigner or action owner
+  // themselves), so this is not a rare edge case: they hit it every time.
+  // handleRejectConfirm already gets this right below — mirror it.
+  const handleEscalationComment = async (comment: string) => {
+    if (!drawerDetail) return;
+    const open = escalations.find((e) => e.status === "OPEN");
+    if (!open) {
+      throw new Error("This risk has no open escalation to comment on.");
+    }
+    await commentOnEscalation(authFetch, drawerDetail.id, open.id, comment);
+    setActionSuccess("Comment submitted. The risk has been returned to its assigner.");
+    closeDrawer();
+    loadRisks();
   };
 
   // Step completion keeps the drawer open — the user very likely has more
@@ -977,6 +1056,9 @@ export default function RiskRegisters(): JSX.Element {
         onClose={closeDrawer}
         actionPlans={actionPlans}
         actionPlansError={actionPlansError}
+        escalations={escalations}
+        history={history}
+        historyError={historyError}
         currentUserId={currentUserId}
         userNames={userNames}
         onCompleteStep={handleCompleteStep}
@@ -984,10 +1066,17 @@ export default function RiskRegisters(): JSX.Element {
         {...drawerActions}
       />
 
-      <ManagementActionPlanDialog
-        open={managementPlanOpen}
-        onClose={() => setManagementPlanOpen(false)}
-        onConfirm={handleCreateManagementPlan}
+      <ActionPlanDialog
+        open={actionPlanOpen}
+        onClose={() => setActionPlanOpen(false)}
+        onConfirm={handleCreateActionPlan}
+      />
+
+      <EscalationCommentDialog
+        open={escalationCommentOpen}
+        riskCode={drawerDetail?.risk_code ?? ""}
+        onClose={() => setEscalationCommentOpen(false)}
+        onConfirm={handleEscalationComment}
       />
 
       <RejectDialog

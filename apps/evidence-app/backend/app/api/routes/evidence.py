@@ -7,7 +7,8 @@ from app.models.evidence import Evidence
 from app.models.evidence_file import EvidenceFile
 from app.models.submission import Submission
 from app.schemas.evidence import EvidenceResponse, EvidenceUpdate
-from app.storage.blob_storage import save_file, delete_file
+from app.storage.blob_paths import build_control_prefix, sanitize_title
+from app.storage.blob_storage import save_file, delete_file, delete_files
 
 router = APIRouter(prefix="/evidence", tags=["Evidence"])
 
@@ -49,10 +50,17 @@ def create_evidence(
     # fall through to the foreign key would surface as a 500 telling the
     # caller to retry, which can never succeed. Doing this first also means a
     # doomed request never uploads a blob that would then need cleaning up.
-    if db.query(Control).filter(Control.id == control_id).first() is None:
+    #
+    # The Control is kept (not just checked for existence) so its
+    # Framework/Product chain can be walked into a readable
+    # `product/framework/control/` blob-name prefix -- see fork issue #70.
+    control = db.query(Control).filter(Control.id == control_id).first()
+    if control is None:
         raise HTTPException(status_code=404, detail="Control not found")
 
-    file_name, file_url = save_file(file)
+    file_name, file_url = save_file(
+        file, prefix=build_control_prefix(control), label=sanitize_title(title)
+    )
     try:
         evidence = Evidence(
             title=title,
@@ -149,9 +157,10 @@ def delete_evidence_file(file_id: int, db: Session = Depends(get_db), user: User
         evidence.file_url = survivor.file_url
     db.commit()
 
-    delete_file(deleted_file_name)
+    names_to_delete = [deleted_file_name]
     if parent_deleted:
-        delete_file(legacy_blob_name)
+        names_to_delete.append(legacy_blob_name)
+    delete_files(names_to_delete)
 
 
 @router.get("/{evidence_id}", response_model=EvidenceResponse)
@@ -187,5 +196,4 @@ def delete_evidence(evidence_id: int, db: Session = Depends(get_db), user: User 
     # Delete blobs only after the row is gone, matching delete_control/
     # delete_framework/delete_product. A failed commit must not strand
     # Evidence rows pointing at blobs that were already removed.
-    for fn in file_names:
-        delete_file(fn)
+    delete_files(file_names)

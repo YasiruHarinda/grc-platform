@@ -30,7 +30,7 @@ export const riskNav: NavSection = {
       label: "Dashboard",
       path: "/risk/dashboard",
       icon: LayoutDashboard,
-      requiredPrivilege: RiskPrivilege.ViewRisks,
+      requiredPrivilege: RiskPrivilege.ViewRiskDashboard,
     },
     {
       id: "risk-registers",

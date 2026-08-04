@@ -7,7 +7,7 @@ from app.database import get_db
 from app.models.product import Product
 from app.rbac import require_admin
 from app.schemas.product import ProductCreate, ProductResponse, ProductUpdate
-from app.storage.blob_storage import delete_file
+from app.storage.blob_storage import delete_files
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
@@ -82,18 +82,18 @@ def delete_product(product_id: int, db: Session = Depends(get_db), user: User = 
     db.delete(product)
     try:
         db.commit()
-    except IntegrityError:
-        # Deleting a Product cascades down through its Frameworks and Controls,
-        # and an Agent Task may still point at one of those Controls
-        # (agent_tasks.control_id is a plain FK with no ON DELETE rule, so
-        # Postgres refuses). Nothing clears that reference once a task
-        # finishes. Turn the refusal into a clean 409 rather than letting it
-        # surface as an unhandled server error.
+    except IntegrityError as exc:
+        # Deleting a Product cascades down through its Frameworks and
+        # Controls. Nothing left in this schema should still block that —
+        # agent_tasks.control_id (once the last blocking reference) now
+        # detaches with ON DELETE SET NULL rather than refusing the delete.
+        # This is kept as a safety net for any future reference Postgres
+        # refuses, so it fails as a clean 409 rather than an unhandled
+        # server error.
         db.rollback()
         raise HTTPException(
             status_code=409,
-            detail="A control under this product is still referenced by one or more agent tasks, so it cannot be deleted.",
-        )
-    for name in file_names:
-        delete_file(name)
+            detail="A control under this product is still referenced elsewhere and cannot be deleted.",
+        ) from exc
+    delete_files(file_names)
     return Response(status_code=204)

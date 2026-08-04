@@ -24,9 +24,10 @@ import (
 
 // DashboardService assembles the risk dashboard payload.
 type DashboardService interface {
-	// Summary builds the dashboard payload, optionally scoped to one
-	// register (nil = all registers).
-	Summary(ctx context.Context, registerID *int) (*model.DashboardSummary, error)
+	// Summary builds the dashboard payload, optionally scoped to one register
+	// (nil = all registers) and further restricted to teamIDs when non-empty
+	// (a Risk Assigner/Risk Owner-only caller's own risk teams).
+	Summary(ctx context.Context, registerID *int, teamIDs []int) (*model.DashboardSummary, error)
 }
 
 // assembledDashboardService serves a dashboard that arrives already assembled.
@@ -38,18 +39,18 @@ type DashboardService interface {
 // The audit module's dashboard service has the same shape for the same reason.
 type assembledDashboardService struct {
 	source interface {
-		Summary(ctx context.Context, registerID *int) (*model.DashboardSummary, error)
+		Summary(ctx context.Context, registerID *int, teamIDs []int) (*model.DashboardSummary, error)
 	}
 }
 
 // NewAssembledDashboardService creates a DashboardService that passes an
 // already-assembled payload straight through.
 func NewAssembledDashboardService(source interface {
-	Summary(ctx context.Context, registerID *int) (*model.DashboardSummary, error)
+	Summary(ctx context.Context, registerID *int, teamIDs []int) (*model.DashboardSummary, error)
 }) DashboardService {
 	return &assembledDashboardService{source: source}
 }
 
-func (s *assembledDashboardService) Summary(ctx context.Context, registerID *int) (*model.DashboardSummary, error) {
-	return s.source.Summary(ctx, registerID)
+func (s *assembledDashboardService) Summary(ctx context.Context, registerID *int, teamIDs []int) (*model.DashboardSummary, error) {
+	return s.source.Summary(ctx, registerID, teamIDs)
 }

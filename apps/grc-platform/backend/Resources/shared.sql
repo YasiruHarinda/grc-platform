@@ -9,7 +9,27 @@
 --   privilege      — fine-grained privileges used for frontend view rendering
 --   role_privilege — maps roles to privileges (many-to-many)
 --
+-- NOTE: neither module stores team membership as a column on `user` — both are
+--       many-to-many join tables owned by their own module's schema:
+--       user_audit_team (audit_schema.sql) and user_risk_team (risk_schema.sql).
+--       A user may belong to zero or more teams in either module.
+--
+-- Assumes the `grc_platform` database already exists (e.g. provisioned ahead
+-- of time on a hosted/managed MySQL instance) and that the connecting user
+-- only needs privileges scoped to it — no CREATE DATABASE here. Every table
+-- below sets its own CHARSET/COLLATE explicitly, so the database's own
+-- default charset doesn't matter.
+--
+-- Run order (each file is standalone — it selects the database itself, so no
+-- -D/database argument is required):
+--   mysql -u <user> -p < shared.sql
+--   mysql -u <user> -p < audit_schema.sql
+--   mysql -u <user> -p < risk_schema.sql
+--
+-- Seed data lives outside this directory and is applied afterwards.
 -- =============================================================================
+
+USE grc_platform;
 
 SET FOREIGN_KEY_CHECKS = 0;
 
@@ -17,25 +37,23 @@ SET FOREIGN_KEY_CHECKS = 0;
 -- user
 -- Platform users provisioned via Asgardeo SSO.
 -- Role assignment lives in Asgardeo JWT claims, not here.
--- Audit team membership is many-to-many (see user_audit_team in
--- audit_schema.sql), not a column here. risk_team_id remains a single-value
--- column until the risk-side junction table replaces it; user_repo.go in
--- the compliance-entity service still reads/writes it directly.
+-- Team membership is many-to-many on both sides and lives in each module's own
+-- junction table — user_audit_team (audit_schema.sql) and user_risk_team
+-- (risk_schema.sql) — so neither audit_team_id nor risk_team_id is a column
+-- here any more.
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `user` (
   id            INT          NOT NULL AUTO_INCREMENT,
   email         VARCHAR(255) NOT NULL,
   display_name  VARCHAR(255) NOT NULL,
   user_type     ENUM('INTERNAL','EXTERNAL') NOT NULL DEFAULT 'INTERNAL',
-  risk_team_id  INT          NULL,
   status        ENUM('ACTIVE','INACTIVE','REMOVED') NOT NULL DEFAULT 'ACTIVE',
   created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by    VARCHAR(255) NULL,
   updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   updated_by    VARCHAR(255) NULL,
   PRIMARY KEY (id),
-  UNIQUE KEY uq_user_email (email),
-  KEY idx_user_risk_team (risk_team_id)
+  UNIQUE KEY uq_user_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 

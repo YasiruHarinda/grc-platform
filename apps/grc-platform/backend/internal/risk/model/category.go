@@ -14,6 +14,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package handler
+package model
 
-// TODO: implement risk notification list and mark-read handlers
+// RiskCategory represents a fixed-but-extensible risk classification (e.g.
+// "PII / Sensitive Data Exposure"), mapping to the `risk_category` table.
+type RiskCategory struct {
+	ID          int     `json:"id"`
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+}

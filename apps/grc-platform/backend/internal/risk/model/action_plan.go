@@ -25,8 +25,11 @@ type ActionPlan struct {
 	Description   *string `json:"description"`
 	Status        string  `json:"status"`
 	CompletedDate *string `json:"completed_date"`
-	PlanType      string  `json:"plan_type"` // STANDARD | MANAGEMENT
-	CreatedBy     *string `json:"created_by"`
+	// PlanType is always STANDARD. MANAGEMENT plans were how an escalation was
+	// answered and are retired; the column is kept because historical rows may
+	// still carry it.
+	PlanType  string  `json:"plan_type"`
+	CreatedBy *string `json:"created_by"`
 }
 
 // ActionPlanStep represents an individual step within an action plan,

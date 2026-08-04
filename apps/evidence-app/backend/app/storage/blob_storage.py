@@ -1,4 +1,6 @@
+import logging
 import uuid
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -8,6 +10,8 @@ from azure.storage.blob import BlobSasPermissions, BlobServiceClient, generate_b
 from fastapi import HTTPException, UploadFile
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 # How long a signed link stays valid after it's generated. Chosen per ADR
 # 0003: long enough to browse a gallery of evidence without a link dying
@@ -46,20 +50,34 @@ def _get_blob_service() -> BlobServiceClient:
     return _blob_service
 
 
-def save_file(file: UploadFile) -> tuple[str, str]:
+def save_file(file: UploadFile, *, prefix: str = "", label: str | None = None) -> tuple[str, str]:
     """Upload an evidence file to blob storage and return (blob_name, public_url).
+
+    `prefix` and `label` are both optional and both default to producing
+    exactly the old behaviour -- a bare `{uuid}{ext}` -- so every existing
+    caller that doesn't pass them is unaffected. When given, the blob name
+    becomes `{prefix}{label}-{uuid}{ext}`: `prefix` is meant to be a
+    `product/framework/control/`-shaped path (see
+    `app.storage.blob_paths.build_control_prefix`) and `label` a short,
+    already-sanitised descriptive name (see
+    `app.storage.blob_paths.sanitize_title`). This function does no
+    sanitisation itself -- a caller passing an unsanitised `label` or
+    `prefix` gets exactly that in the blob name, slashes and all -- so
+    building a safe hierarchical name is entirely the caller's job; this is
+    just string assembly plus the upload.
 
     Rejects a file with no name at all (`filename` is `None` or empty
     string) as a bad request rather than storing it. The stored blob name
-    is always a fresh UUID; the client's filename is only ever consulted
-    for its extension, so a present-but-unusual name (no extension, a
-    trailing dot) still works unchanged. A *missing* name is different: a
-    browser file input always attaches one, so in practice this only
-    happens with a non-browser client (the Runner, curl, a script) that
-    built its request incorrectly. Silently storing it under a generated,
-    extensionless name would hide that mistake rather than surface it, so
-    it is rejected instead, the same way this app already rejects other
-    malformed input up front rather than accepting or masking it.
+    always ends in a fresh UUID; the client's filename is only ever
+    consulted for its extension, so a present-but-unusual name (no
+    extension, a trailing dot) still works unchanged. A *missing* name is
+    different: a browser file input always attaches one, so in practice
+    this only happens with a non-browser client (the Runner, curl, a
+    script) that built its request incorrectly. Silently storing it under a
+    generated, extensionless name would hide that mistake rather than
+    surface it, so it is rejected instead, the same way this app already
+    rejects other malformed input up front rather than accepting or masking
+    it.
 
     Also rejects, before any network call, a content type outside the image
     allow-list, or actual bytes over `MAX_UPLOAD_SIZE_BYTES` -- so a
@@ -94,7 +112,8 @@ def save_file(file: UploadFile) -> tuple[str, str]:
         )
 
     extension = Path(file.filename).suffix
-    unique_name = f"{uuid.uuid4()}{extension}"
+    name_stub = f"{label}-" if label else ""
+    unique_name = f"{prefix}{name_stub}{uuid.uuid4()}{extension}"
     blob = _get_blob_service().get_blob_client(
         container=settings.AZURE_STORAGE_CONTAINER, blob=unique_name
     )
@@ -111,6 +130,37 @@ def delete_file(file_name: str) -> None:
         blob.delete_blob()
     except ResourceNotFoundError:
         pass
+
+
+def delete_files(file_names: Iterable[str]) -> None:
+    """Delete a batch of blobs, e.g. everything under a Control/Framework/
+    Product/Evidence being cascade-deleted, with each file's deletion
+    handled independently.
+
+    Every delete handler in the app calls this only *after* its database
+    commit has already succeeded, so by the time this runs the rows are
+    gone for good -- a storage error here must not turn a delete that
+    already happened into a failed response, and one file's failure must
+    not stop the others from being attempted. So each `delete_file` call is
+    isolated: a failure is logged, with the file name (the only remaining
+    handle on what is now an orphaned blob), and the loop moves on. Nothing
+    here retries -- that's deliberately out of scope, see spec issue #24.
+
+    A missing blob is not a failure: `delete_file` already treats
+    `ResourceNotFoundError` as an already-deleted no-op, so it never
+    reaches the `except` below and is never logged.
+    """
+    for file_name in file_names:
+        try:
+            delete_file(file_name)
+        except Exception:
+            logger.error(
+                "Failed to delete blob %r from storage after its database "
+                "row was already committed as deleted; it may now be "
+                "orphaned in storage.",
+                file_name,
+                exc_info=True,
+            )
 
 
 def get_signed_url(file_ref: str, expiry_minutes: int = SIGNED_URL_EXPIRY_MINUTES) -> str:

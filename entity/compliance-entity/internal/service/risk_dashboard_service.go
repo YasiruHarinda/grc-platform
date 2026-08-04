@@ -50,28 +50,29 @@ func (s *riskDashboardService) Summary(ctx context.Context, req domain.RiskDashb
 		return domain.RiskDashboardSummary{}, &apierror.ValidationError{Msg: "registerId must be a positive integer"}
 	}
 	registerID := req.RegisterID
+	teamIDs := req.ScopeTeamIDs
 
-	counts, err := s.repo.StatusCounts(ctx, registerID)
+	counts, err := s.repo.StatusCounts(ctx, registerID, teamIDs)
 	if err != nil {
 		return domain.RiskDashboardSummary{}, err
 	}
-	facts, err := s.repo.OpenRiskFacts(ctx, registerID)
+	facts, err := s.repo.OpenRiskFacts(ctx, registerID, teamIDs)
 	if err != nil {
 		return domain.RiskDashboardSummary{}, err
 	}
-	statusFacts, err := s.repo.RegisterStatusFacts(ctx, registerID)
+	statusFacts, err := s.repo.RegisterStatusFacts(ctx, registerID, teamIDs)
 	if err != nil {
 		return domain.RiskDashboardSummary{}, err
 	}
-	certCounts, err := s.repo.CertTagCounts(ctx, registerID)
+	certCounts, err := s.repo.CertTagCounts(ctx, registerID, teamIDs)
 	if err != nil {
 		return domain.RiskDashboardSummary{}, err
 	}
-	repeatedRows, err := s.repo.RepeatedComplianceRisks(ctx, registerID)
+	repeatedRows, err := s.repo.RepeatedComplianceRisks(ctx, registerID, teamIDs)
 	if err != nil {
 		return domain.RiskDashboardSummary{}, err
 	}
-	highRisks, err := s.repo.HighRisks(ctx, registerID)
+	highRisks, err := s.repo.HighRisks(ctx, registerID, teamIDs)
 	if err != nil {
 		return domain.RiskDashboardSummary{}, err
 	}

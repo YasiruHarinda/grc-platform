@@ -21,12 +21,13 @@ package user
 
 // User maps to the shared `user` table, which is owned by the Compliance
 // Entity — this struct mirrors the subset of its /users payload the GRC
-// backend needs. RiskTeamID is nil when the user isn't assigned to a risk
-// team.
+// backend needs. RiskTeamIDs is a user's risk-team memberships (zero or more)
+// via the entity's user_risk_team join table — empty, never nil, when a user
+// belongs to no risk team.
 type User struct {
 	ID          int    `json:"id"`
 	DisplayName string `json:"display_name"`
 	Email       string `json:"email"`
 	Status      string `json:"status"` // ACTIVE | INACTIVE | REMOVED
-	RiskTeamID  *int   `json:"risk_team_id"`
+	RiskTeamIDs []int  `json:"risk_team_ids"`
 }

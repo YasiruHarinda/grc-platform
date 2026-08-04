@@ -38,13 +38,15 @@ import {
   ListChecks,
   MessageSquare,
   Shield,
+  Tag,
   TrendingUp,
   Users,
   Wrench,
   X,
 } from "@wso2/oxygen-ui-icons-react";
 import type { JSX, ReactNode } from "react";
-import type { ActionPlan, ActionPlanStep, RiskDetail } from "../../api/riskApi";
+import type { ActionPlan, ActionPlanStep, Escalation, HistoryEntry, RiskDetail } from "../../api/riskApi";
+import RiskHistoryTimeline from "./RiskHistoryTimeline";
 import { RiskPrivilege } from "../../privileges";
 import { dialogPaperSx } from "../cardStyles";
 import { STATUS_CONFIG, calcAge, calcDue, formatDate } from "./utils";
@@ -65,7 +67,10 @@ export interface DrawerActions {
   onEdit: () => void;
   onAssess: () => void;
   onCancel: () => void;
-  onCreateManagementActionPlan: () => void;
+  // Adds a further action plan (Risk Assigner only).
+  onAddActionPlan: () => void;
+  // Answers an escalation with a comment, returning the risk to its assigner.
+  onCommentEscalation: () => void;
   onEscalate: () => void;
 }
 
@@ -84,6 +89,12 @@ interface RiskDetailDrawerProps extends DrawerActions {
   // action plans doesn't blank out the rest of the drawer — only the Action
   // Plans tab shows this.
   actionPlansError: string;
+  // Escalation history, newest first. Drives the banner and whether the
+  // "Review Escalation" action is offered.
+  escalations: Escalation[];
+  // Full risk history, newest first — every workflow event and field edit.
+  history: HistoryEntry[];
+  historyError: string;
   currentUserId: number | null;
   // id → display_name, resolved at render time so the Action Owner label
   // stays correct even when the drawer opens before the users list finishes
@@ -98,6 +109,7 @@ const REJECTION_STAGE_LABELS: Record<string, string> = {
   MANAGEMENT: "Management",
   COMPLIANCE: "Compliance",
   COMPLETION_OWNER: "Risk Owner (Completion)",
+  COMPLETION_MANAGEMENT: "Management (Completion)",
 };
 
 // ── Shared visual building blocks (matching Audit's ControlDrawer.tsx —
@@ -320,6 +332,10 @@ function ActionFooter({
   can,
   actionPlans,
   isOverdue,
+  isRiskOwner,
+  isRiskAssigner,
+  isManagementApprover,
+  hasOpenEscalation,
 }: {
   status: string;
   actions: DrawerActions;
@@ -327,10 +343,25 @@ function ActionFooter({
   can: (privilege: string) => boolean;
   actionPlans: ActionPlanWithSteps[];
   isOverdue: boolean;
+  // Per-risk identity — each already folds in the compliance-admin override,
+  // so a compliance admin sees every action. See the backend's
+  // requireRiskActor, which enforces the same rule server-side.
+  isRiskOwner: boolean;
+  isRiskAssigner: boolean;
+  isManagementApprover: boolean;
+  hasOpenEscalation: boolean;
 }): JSX.Element | null {
-  const rejectAndApprove = (approveLabel: string, onApprove: () => void, approvePriv: string, rejectPriv: string) => {
-    const showReject = can(rejectPriv);
-    const showApprove = can(approvePriv);
+  // isActor gates the pair on the named individual for that stage; compliance
+  // approval has no named individual, so its callers pass true.
+  const rejectAndApprove = (
+    approveLabel: string,
+    onApprove: () => void,
+    approvePriv: string,
+    rejectPriv: string,
+    isActor: boolean,
+  ) => {
+    const showReject = can(rejectPriv) && isActor;
+    const showApprove = can(approvePriv) && isActor;
     if (!showReject && !showApprove) return null;
     return (
       <Box sx={{ display: "flex", gap: 1, pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
@@ -350,10 +381,10 @@ function ActionFooter({
 
   switch (status) {
     case "PENDING_RISK_OWNER_APPROVAL": {
-      const showEdit = can(RiskPrivilege.UpdateRisk);
-      const showCancel = can(RiskPrivilege.CancelRisk);
-      const showReject = can(RiskPrivilege.OwnerRejectRisk);
-      const showOwnerApprove = can(RiskPrivilege.OwnerApproveRisk);
+      const showEdit = can(RiskPrivilege.UpdateRisk) && isRiskAssigner;
+      const showCancel = can(RiskPrivilege.CancelRisk) && isRiskAssigner;
+      const showReject = can(RiskPrivilege.OwnerRejectRisk) && isRiskOwner;
+      const showOwnerApprove = can(RiskPrivilege.OwnerApproveRisk) && isRiskOwner;
       if (!showEdit && !showCancel && !showReject && !showOwnerApprove) return null;
       return (
         <Box sx={{ pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
@@ -390,29 +421,43 @@ function ActionFooter({
     }
 
     case "PENDING_AMENDMENT":
-      return rejectAndApprove("Approve as Risk Owner", actions.onOwnerApprove, RiskPrivilege.OwnerApproveRisk, RiskPrivilege.OwnerRejectRisk);
+      return rejectAndApprove("Approve as Risk Owner", actions.onOwnerApprove, RiskPrivilege.OwnerApproveRisk, RiskPrivilege.OwnerRejectRisk, isRiskOwner);
 
     case "PENDING_MANAGEMENT_APPROVAL":
-      return rejectAndApprove("Approve as Management", actions.onManagementApprove, RiskPrivilege.ManagementApproveRisk, RiskPrivilege.ManagementRejectRisk);
+      return rejectAndApprove("Approve as Management", actions.onManagementApprove, RiskPrivilege.ManagementApproveRisk, RiskPrivilege.ManagementRejectRisk, isManagementApprover);
 
+    // Compliance approval is role-wide: any compliance admin may act, so there
+    // is no named individual to check against.
     case "PENDING_COMPLIANCE_REVIEW":
-      return rejectAndApprove("Approve (Compliance)", actions.onApprove, RiskPrivilege.ComplianceApproveRisk, RiskPrivilege.ComplianceRejectRisk);
+      return rejectAndApprove("Approve (Compliance)", actions.onApprove, RiskPrivilege.ComplianceApproveRisk, RiskPrivilege.ComplianceRejectRisk, true);
 
     case "PENDING_OWNER_COMPLETION_APPROVAL":
-      return rejectAndApprove("Approve Completion", actions.onOwnerApprove, RiskPrivilege.OwnerApproveRisk, RiskPrivilege.OwnerRejectRisk);
+      return rejectAndApprove("Approve Completion", actions.onOwnerApprove, RiskPrivilege.OwnerApproveRisk, RiskPrivilege.OwnerRejectRisk, isRiskOwner);
+
+    // Closure-path management sign-off — reuses the same management approve
+    // endpoint, which routes on the risk's current status.
+    case "PENDING_MANAGEMENT_CLOSURE_APPROVAL":
+      return rejectAndApprove("Approve Closure", actions.onManagementApprove, RiskPrivilege.ManagementApproveRisk, RiskPrivilege.ManagementRejectRisk, isManagementApprover);
 
     case "IN_REMEDIATION": {
-      const showEdit = can(RiskPrivilege.UpdateRisk);
+      const showEdit = can(RiskPrivilege.UpdateRisk) && isRiskAssigner;
+      // Reassessment is deliberately NOT identity-gated — the backend applies
+      // no assigner check to it either, and keeping the two in step matters
+      // more than tightening one side unilaterally.
       const showAssess = can(RiskPrivilege.AssessRisk);
       // At least one action plan must be COMPLETED first — not necessarily
       // all of them, since an abandoned STANDARD plan from a prior
       // escalation cycle shouldn't permanently block resubmission.
-      const showComplete = can(RiskPrivilege.CompleteRisk) && actionPlans.some((p) => p.status === "COMPLETED");
+      const showComplete =
+        can(RiskPrivilege.CompleteRisk) && isRiskAssigner && actionPlans.some((p) => p.status === "COMPLETED");
+      // Additional plans are the assigner's call — typically after an
+      // escalation review asked for more work.
+      const showAddPlan = can(RiskPrivilege.ManageActionPlans) && isRiskAssigner;
       // Escalation happens automatically within 24h either way (the daily
       // job) — this just lets Compliance/Admin jump the queue for a risk
       // they've already spotted is overdue.
       const showEscalate = isOverdue && can(RiskPrivilege.EscalateRisk);
-      if (!showEdit && !showAssess && !showComplete && !showEscalate) return null;
+      if (!showEdit && !showAssess && !showComplete && !showEscalate && !showAddPlan) return null;
       return (
         <Box sx={{ pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
           {(showEdit || showAssess) && (
@@ -441,6 +486,17 @@ function ActionFooter({
               Escalate
             </Button>
           )}
+          {showAddPlan && (
+            <Button
+              variant="outlined"
+              fullWidth
+              disabled={disabled}
+              onClick={actions.onAddActionPlan}
+              sx={{ mb: showComplete ? 1 : 0 }}
+            >
+              Add Action Plan
+            </Button>
+          )}
           {showComplete && (
             <Button variant="contained" fullWidth disabled={disabled} onClick={actions.onComplete}>
               Submit for Approval
@@ -451,8 +507,8 @@ function ActionFooter({
     }
 
     case "PENDING_REVISION": {
-      const showEdit = can(RiskPrivilege.UpdateRisk);
-      const showResubmit = can(RiskPrivilege.SubmitRisk);
+      const showEdit = can(RiskPrivilege.UpdateRisk) && isRiskAssigner;
+      const showResubmit = can(RiskPrivilege.SubmitRisk) && isRiskAssigner;
       if (!showEdit && !showResubmit) return null;
       return (
         <Box sx={{ pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
@@ -483,18 +539,17 @@ function ActionFooter({
       );
 
     case "ESCALATED": {
-      // Only one ACTIVE MANAGEMENT plan per escalation cycle. A risk can be
-      // escalated more than once over its life (if it goes overdue again
-      // after a previous escalation resolved), so a COMPLETED MANAGEMENT
-      // plan from an earlier cycle must not block creating a new one now.
-      const hasActiveManagementPlan = actionPlans.some(
-        (p) => p.plan_type === "MANAGEMENT" && p.status !== "COMPLETED",
-      );
-      if (hasActiveManagementPlan || !can(RiskPrivilege.CreateManagementActionPlan)) return null;
+      // An escalation is answered with a comment, which returns the risk to its
+      // assigner. Who may do that is decided server-side from the risk's level
+      // (Management Approver for HIGH, a line manager for MEDIUM/LOW) — and a
+      // lead holds no risk privilege by virtue of managing someone, so there is
+      // nothing meaningful to gate on here. The button is offered to anyone who
+      // can see the risk, and the server refuses if they aren't entitled.
+      if (!hasOpenEscalation) return null;
       return (
         <Box sx={{ pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
-          <Button variant="contained" fullWidth disabled={disabled} onClick={actions.onCreateManagementActionPlan}>
-            Create Management Action Plan
+          <Button variant="contained" fullWidth disabled={disabled} onClick={actions.onCommentEscalation}>
+            Review Escalation
           </Button>
         </Box>
       );
@@ -515,6 +570,9 @@ export default function RiskDetailDrawer({
   onClose,
   actionPlans,
   actionPlansError,
+  escalations,
+  history,
+  historyError,
   currentUserId,
   userNames,
   onCompleteStep,
@@ -524,6 +582,25 @@ export default function RiskDetailDrawer({
   const status = detail?.workflow_status ?? "";
   const statusCfg = STATUS_CONFIG[status] ?? { label: status, color: "default" as const };
   const isOverdue = !!detail && calcDue(detail.implementation_date).daysLeft < 0;
+
+  // Per-risk identity, mirroring the backend's requireRiskActor gate: holding
+  // the privilege only says the caller may act on *some* risk, not that they're
+  // the person *this* risk named. Without these the buttons would render and
+  // then 403 on click.
+  //
+  // ComplianceApproveRisk is the same compliance-admin override the backend
+  // uses (canOverrideAssignee) — it must stay in step with it, or the UI will
+  // hide actions the server would have allowed.
+  // An unresolved escalation is what puts the risk in the Overdue tab and
+  // enables the review action — the workflow status doesn't say, because a
+  // commented escalation is back to IN_REMEDIATION while still open.
+  const openEscalation = escalations.find((e) => e.status === "OPEN") ?? null;
+
+  const canOverrideAssignee = can(RiskPrivilege.ComplianceApproveRisk);
+  const isRiskOwner = canOverrideAssignee || (!!detail && detail.owner_id === currentUserId);
+  const isRiskAssigner = canOverrideAssignee || (!!detail && detail.assigner_id === currentUserId);
+  const isManagementApprover =
+    canOverrideAssignee || (!!detail && detail.management_approver_id === currentUserId);
 
   const [tab, setTab] = useState(0);
   // Reset to the first tab whenever a different risk is opened, so the
@@ -616,7 +693,7 @@ export default function RiskDetailDrawer({
           <Tab icon={<FileText size={15} />} iconPosition="start" label="Basic Information" sx={{ textTransform: "none", minHeight: 44, fontWeight: 600 }} />
           <Tab icon={<Shield size={15} />} iconPosition="start" label="Risk Treatment" sx={{ textTransform: "none", minHeight: 44, fontWeight: 600 }} />
           <Tab icon={<ListChecks size={15} />} iconPosition="start" label="Action Plans" sx={{ textTransform: "none", minHeight: 44, fontWeight: 600 }} />
-          <Tab icon={<TrendingUp size={15} />} iconPosition="start" label="Assessment History" sx={{ textTransform: "none", minHeight: 44, fontWeight: 600 }} />
+          <Tab icon={<TrendingUp size={15} />} iconPosition="start" label="History" sx={{ textTransform: "none", minHeight: 44, fontWeight: 600 }} />
         </Tabs>
       )}
 
@@ -632,6 +709,25 @@ export default function RiskDetailDrawer({
           </Alert>
         ) : detail ? (
           <>
+            {openEscalation && (
+              <Alert severity="warning" sx={{ mb: 2 }}>
+                <Typography variant="caption" fontWeight={700} display="block">
+                  Escalated on {formatDate(openEscalation.created_at)} — remediation passed its
+                  implementation date
+                </Typography>
+                {openEscalation.decision ? (
+                  <>
+                    <Typography variant="caption" fontWeight={700} display="block" sx={{ mt: 0.5 }}>
+                      Review comment
+                    </Typography>
+                    {openEscalation.decision}
+                  </>
+                ) : (
+                  "Awaiting a review comment before this risk returns to its assigner."
+                )}
+              </Alert>
+            )}
+
             {detail.rejection_comment && (
               <Alert severity="error" sx={{ mb: 2 }}>
                 <Typography variant="caption" fontWeight={700} display="block">
@@ -663,9 +759,24 @@ export default function RiskDetailDrawer({
 
               <SectionCard icon={<Users size={16} />} iconBg="#eff6ff" iconColor="#2563eb" title="Ownership">
                 <InfoGrid>
-                  <InfoTile label="Assigned By">{detail.assigner_name}</InfoTile>
+                  <InfoTile label="Assigned To">{detail.assigner_name}</InfoTile>
                   <InfoTile label="Risk Owner">{detail.owner_name}</InfoTile>
+                  <InfoTile label="Management Approver">{detail.management_approver_name || "—"}</InfoTile>
                 </InfoGrid>
+              </SectionCard>
+
+              <SectionCard icon={<Tag size={16} />} iconBg="#fef2f2" iconColor="#dc2626" title="Risk Category">
+                {detail.risk_categories.length > 0 ? (
+                  <Stack direction="row" flexWrap="wrap" gap={0.75}>
+                    {detail.risk_categories.map((cat) => (
+                      <Chip key={cat.id} label={cat.name} size="small" variant="outlined" />
+                    ))}
+                  </Stack>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    No risk category assigned.
+                  </Typography>
+                )}
               </SectionCard>
 
               <SectionCard icon={<LinkIcon size={16} />} iconBg="#f5f3ff" iconColor="#7c3aed" title="Compliance References">
@@ -747,41 +858,17 @@ export default function RiskDetailDrawer({
             </TabPanel>
 
             <TabPanel value={tab} index={3}>
-              {detail.assessments.length > 0 ? (
-                detail.assessments.map((a) => (
-                  <SectionCard
-                    key={a.is_initial ? "initial" : a.id}
-                    icon={<TrendingUp size={16} />}
-                    iconBg="action.hover"
-                    iconColor={a.residual_color_code}
-                    title={a.is_initial ? "Initial Assessment" : `Reassessment — ${formatDate(a.reassessment_date)}`}
-                    headerExtra={
-                      <Chip
-                        label={`${a.residual_level} : Score ${a.residual_rating}`}
-                        size="small"
-                        sx={{ bgcolor: a.residual_color_code, color: "#fff", fontWeight: 700 }}
-                      />
-                    }
-                  >
-                    {a.is_initial ? (
-                      <Typography variant="body2" color="text.secondary">
-                        Gross score recorded at risk creation, before any remediation progress.
-                      </Typography>
-                    ) : (
-                      <Stack gap={0.5}>
-                        <Typography variant="body2">{a.progress}</Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          Assessed by {a.assessed_by}
-                        </Typography>
-                      </Stack>
-                    )}
-                  </SectionCard>
-                ))
+              {historyError ? (
+                <Alert severity="error">{historyError}</Alert>
+              ) : history.length > 0 ? (
+                <SectionCard icon={<TrendingUp size={16} />} iconBg="#f1f5f9" iconColor="#475569" title="History">
+                  <RiskHistoryTimeline entries={history} />
+                </SectionCard>
               ) : (
                 <EmptyState
                   icon={<TrendingUp size={28} />}
-                  title="No reassessments yet"
-                  caption="Residual score history will appear here once this risk is reassessed."
+                  title="No history yet"
+                  caption="Actions taken on this risk will appear here."
                 />
               )}
             </TabPanel>
@@ -799,6 +886,10 @@ export default function RiskDetailDrawer({
             can={can}
             actionPlans={actionPlans}
             isOverdue={isOverdue}
+            isRiskOwner={isRiskOwner}
+            isRiskAssigner={isRiskAssigner}
+            isManagementApprover={isManagementApprover}
+            hasOpenEscalation={!!openEscalation}
           />
         </Box>
       )}

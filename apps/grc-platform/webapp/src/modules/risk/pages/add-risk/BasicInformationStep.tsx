@@ -39,7 +39,7 @@ import type { JSX, ReactNode } from "react";
 import type { AddRiskFormValues } from "./types";
 import { QUARTERS, YEAR_OPTIONS } from "./constants";
 import { searchEmployees } from "../../api/riskApi";
-import type { ComplianceReference, EmployeeOption, RiskTeam, UserOption } from "../../api/riskApi";
+import type { ComplianceReference, EmployeeOption, RiskCategory, RiskTeam, UserOption } from "../../api/riskApi";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 
 // Minimum characters before searching — matches the backend's own floor
@@ -78,6 +78,7 @@ interface BasicInformationStepProps {
   riskSequenceId: number | null;
   sourceRegisterTeams: RiskTeam[];
   complianceRefs: ComplianceReference[];
+  riskCategories: RiskCategory[];
   users: UserOption[];
 }
 
@@ -85,6 +86,7 @@ export default function BasicInformationStep({
   riskSequenceId,
   sourceRegisterTeams,
   complianceRefs,
+  riskCategories,
   users,
 }: BasicInformationStepProps): JSX.Element {
   const { control, clearErrors, setValue } = useFormContext<AddRiskFormValues>();
@@ -369,6 +371,40 @@ export default function BasicInformationStep({
                   ))}
                 </ToggleButtonGroup>
               </FormControl>
+            )}
+          />
+
+          {/* Risk Category (single-select) */}
+          <Controller
+            name="riskCategory"
+            control={control}
+            rules={{ required: "Risk category is required" }}
+            render={({ field, fieldState }) => (
+              <Box>
+                <FieldLabel>Risk Category</FieldLabel>
+                <ComplexSelect
+                  {...field}
+                  fullWidth
+                  error={!!fieldState.error}
+                  displayEmpty
+                  onChange={(e) => {
+                    field.onChange(e);
+                    if (e.target.value) clearErrors("riskCategory");
+                  }}
+                >
+                  <ComplexSelect.MenuItem value="" disabled sx={{ display: "none" }}>
+                    Select a risk category
+                  </ComplexSelect.MenuItem>
+                  {riskCategories.map((cat) => (
+                    <ComplexSelect.MenuItem key={cat.id} value={cat.id}>
+                      {cat.name}
+                    </ComplexSelect.MenuItem>
+                  ))}
+                </ComplexSelect>
+                {fieldState.error && (
+                  <FormHelperText error>{fieldState.error.message}</FormHelperText>
+                )}
+              </Box>
             )}
           />
         </Stack>

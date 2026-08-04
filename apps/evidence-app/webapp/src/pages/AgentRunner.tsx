@@ -1231,7 +1231,7 @@ function RunTimeline({
                         rel="noopener noreferrer"
                         sx={{ textTransform: "none" }}
                       >
-                        View PDF — {shot.file_name}
+                        View PDF — {shot.file_name.split("/").pop()}
                       </Button>
                     ) : (
                       <Box

@@ -17,28 +17,42 @@
 package handler
 
 import (
+	"context"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
-// handleCreateManagementActionPlan serves POST /api/v1/risks/{id}/action-plans.
-// MANAGEMENT-only — see ActionPlanService.Create's comment for why STANDARD
-// plans don't go through this endpoint.
-func (d *Deps) handleCreateManagementActionPlan(w http.ResponseWriter, r *http.Request) {
+// handleCreateActionPlan serves POST /api/v1/risks/{id}/action-plans, adding a
+// further STANDARD plan to a risk that already has one from registration.
+//
+// This endpoint used to create MANAGEMENT plans, which were how an escalation
+// was answered. Escalations are now answered with a comment, so the plan type
+// is gone and remediation planning belongs to the Risk Assigner: the gate moved
+// from RISK_CREATE_MANAGEMENT_ACTION_PLAN (a Management privilege) to
+// RISK_MANAGE_ACTION_PLANS plus the assigner identity check, matching every
+// other assigner-side action.
+func (d *Deps) handleCreateActionPlan(w http.ResponseWriter, r *http.Request) {
 	by, ok := requireUserEmail(w, r)
 	if !ok {
 		return
 	}
-	if !auth.RequirePrivilege(r.Context(), w, privilege.CreateManagementActionPlan) {
+	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageActionPlans) {
 		return
 	}
 	riskID, ok := parseRiskID(w, r)
 	if !ok {
+		return
+	}
+	if !d.requireRiskAssigner(w, r, riskID) {
 		return
 	}
 	var req model.CreateActionPlanRequest
@@ -50,12 +64,15 @@ func (d *Deps) handleCreateManagementActionPlan(w http.ResponseWriter, r *http.R
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.recordEvent(r.Context(), riskID, by, model.HistoryCreate, model.HistoryDetails{
+		Plan: planLabel(plan),
+	})
 	response.WriteJSONValue(w, http.StatusCreated, plan)
 }
 
 // handleListActionPlans serves GET /api/v1/risks/{id}/action-plans. Visible to
-// anyone who can view the risk, including MANAGEMENT plans (see the design
-// decision that walked back an earlier team-only view restriction) — except
+// anyone who can view the risk (see the design decision that walked back an
+// earlier team-only view restriction) — except
 // an Action-Owner-only caller, who is further scoped to risks where they own
 // a plan (riskVisibleToCaller), matching handleListRisks' list scoping.
 func (d *Deps) handleListActionPlans(w http.ResponseWriter, r *http.Request) {
@@ -128,8 +145,8 @@ func (d *Deps) handleListActionPlanSteps(w http.ResponseWriter, r *http.Request)
 // handleUpdateActionPlanStep serves
 // PATCH /api/v1/risks/{id}/action-plans/{planId}/steps/{stepId}. This is how
 // an Action Owner marks a step complete — applies uniformly to STANDARD and
-// MANAGEMENT plans. Gated by CompleteActionSteps plus the service-layer
-// ownership check (caller must be the plan's action_owner_id).
+// Gated by CompleteActionSteps plus the service-layer ownership check (caller
+// must be the plan's action_owner_id).
 func (d *Deps) handleUpdateActionPlanStep(w http.ResponseWriter, r *http.Request) {
 	by, ok := requireUserEmail(w, r)
 	if !ok {
@@ -156,7 +173,7 @@ func (d *Deps) handleUpdateActionPlanStep(w http.ResponseWriter, r *http.Request
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
-	if err := d.ActionPlan.UpdateStep(r.Context(), riskID, planID, stepID, req, by); err != nil {
+	if err := d.ActionPlan.UpdateStep(r.Context(), riskID, planID, stepID, req, by, canOverrideAssignee(r.Context())); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
@@ -165,8 +182,7 @@ func (d *Deps) handleUpdateActionPlanStep(w http.ResponseWriter, r *http.Request
 
 // handleCompleteActionPlan serves
 // POST /api/v1/risks/{id}/action-plans/{planId}/complete. Requires every step
-// already COMPLETED (enforced entity-side); for a MANAGEMENT plan this also
-// resolves its escalation and reverts the risk to IN_REMEDIATION.
+// already COMPLETED (enforced entity-side).
 func (d *Deps) handleCompleteActionPlan(w http.ResponseWriter, r *http.Request) {
 	by, ok := requireUserEmail(w, r)
 	if !ok {
@@ -184,10 +200,41 @@ func (d *Deps) handleCompleteActionPlan(w http.ResponseWriter, r *http.Request) 
 		response.WriteError(w, http.StatusBadRequest, "planId must be a positive integer")
 		return
 	}
-	plan, err := d.ActionPlan.Complete(r.Context(), riskID, planID, by)
+	plan, err := d.ActionPlan.Complete(r.Context(), riskID, planID, by, canOverrideAssignee(r.Context()))
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.recordEvent(r.Context(), riskID, by, model.HistoryComplete, model.HistoryDetails{
+		Plan: planLabel(plan),
+	})
+	// Fires per plan — a risk with several plans therefore sends several. This
+	// is the only channel now: the in-app REASSESSMENT notification the entity
+	// used to write on this same cascade went with the risk_notification table.
+	d.notifyAssignerOfPlanCompletion(r.Context(), riskID, by)
 	response.WriteJSONValue(w, http.StatusOK, plan)
+}
+
+// notifyAssignerOfPlanCompletion tells the risk's assigner that an action plan
+// has finished and the risk is ready to be reassessed and submitted.
+func (d *Deps) notifyAssignerOfPlanCompletion(ctx context.Context, riskID int, by string) {
+	detail, err := d.Risk.GetByID(ctx, riskID)
+	if err != nil {
+		slog.Warn("risk notification: failed to load risk for plan completion", "riskId", riskID, "err", err)
+		return
+	}
+	d.notifyRiskEvent(emailer.EventActionPlanCompleted, riskID, []int{detail.AssignerID}, by, "")
+}
+
+// planLabel names an action plan for the history, falling back to its id when
+// it has no description — a plan is optional-description, and "plan 7" reads
+// better in a timeline than an empty string.
+func planLabel(plan *model.ActionPlan) string {
+	if plan == nil {
+		return ""
+	}
+	if plan.Description != nil && strings.TrimSpace(*plan.Description) != "" {
+		return strings.TrimSpace(*plan.Description)
+	}
+	return fmt.Sprintf("plan %d", plan.ID)
 }
