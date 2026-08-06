@@ -66,10 +66,18 @@ func WriteJSONValue(w http.ResponseWriter, statusCode int, v any) {
 	WriteJSON(w, statusCode, data)
 }
 
-// DecodeJSON reads and unmarshals the JSON request body into v.
-// On failure it writes an appropriate error response and returns a non-nil error.
+// DecodeJSON reads and unmarshals the JSON request body into v, capping the body
+// at the default maxRequestBodyBytes. On failure it writes an appropriate error
+// response and returns a non-nil error.
 func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	return DecodeJSONLimit(w, r, v, maxRequestBodyBytes)
+}
+
+// DecodeJSONLimit is DecodeJSON with a caller-supplied body cap, for endpoints
+// whose legitimate payloads (e.g. bulk imports) exceed the default 1 MiB. It
+// otherwise behaves identically: a body over maxBytes yields 413.
+func DecodeJSONLimit(w http.ResponseWriter, r *http.Request, v any, maxBytes int64) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		if _, ok := err.(*http.MaxBytesError); ok {
