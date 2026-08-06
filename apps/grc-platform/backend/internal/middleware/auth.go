@@ -215,8 +215,13 @@ func rsaPublicKeyFromJWK(nB64, eB64 string) (*rsa.PublicKey, error) {
 	return &rsa.PublicKey{N: new(big.Int).SetBytes(nBytes), E: e}, nil
 }
 
-// Auth validates the Authorization: Bearer JWT on every request and stores
-// the resulting UserInfo in the context.
+// Auth validates the caller's JWT on every request and stores the resulting
+// UserInfo in the context. The token is read from Choreo's gateway-forwarded
+// X-Jwt-Assertion header when present, falling back to a raw Authorization:
+// Bearer header for callers that reach the backend without going through the
+// gateway (local dev, direct pod access). Either source is verified the same
+// way — full RS256 signature check against the matching IdP's JWKS — so which
+// header carried the token has no bearing on trust.
 // When TokenValidatorEnabled is false the token is only decoded without signature
 // verification — for local development only.
 func Auth(cfg Config) func(http.Handler) http.Handler {
@@ -262,7 +267,7 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 				return
 			}
 
-			tokenStr := bearerToken(r)
+			tokenStr := requestToken(r)
 			if tokenStr == "" {
 				writeAuthError(w, "You are not authorized to perform this action. Please try again.")
 				return
@@ -317,7 +322,15 @@ func WithUserInfo(ctx context.Context, user *UserInfo) context.Context {
 	return context.WithValue(ctx, userInfoKey, user)
 }
 
-func bearerToken(r *http.Request) string {
+// requestToken returns the caller's token string, preferring Choreo's
+// gateway-forwarded X-Jwt-Assertion header over a raw Authorization: Bearer
+// header. Both are handed to the same signature-verified extraction path —
+// this only selects which header the string came from, not how much it's
+// trusted.
+func requestToken(r *http.Request) string {
+	if assertion := r.Header.Get("X-Jwt-Assertion"); assertion != "" {
+		return assertion
+	}
 	v := r.Header.Get("Authorization")
 	after, ok := strings.CutPrefix(v, "Bearer ")
 	if !ok {

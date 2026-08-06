@@ -89,6 +89,21 @@ func testKeyFunc(t *jwt.Token) (interface{}, error) {
 	return &testRSAKey.PublicKey, nil
 }
 
+// unsignedToken builds an alg=none JWT with a known issuer but no real
+// signature — what a forger who knows the issuer string can produce without
+// the IdP's private key.
+func unsignedToken(issuer, sub, email string, groups []string) string {
+	claims := jwt.MapClaims{
+		"iss":    issuer,
+		"sub":    sub,
+		"email":  email,
+		"groups": groups,
+		"exp":    time.Now().Add(time.Hour).Unix(),
+	}
+	tok, _ := jwt.NewWithClaims(jwt.SigningMethodNone, claims).SignedString(jwt.UnsafeAllowNoneSignatureType)
+	return tok
+}
+
 // idpCfg builds a minimal IdPConfig for use with TestKeyFuncs.
 func idpCfg(issuer, audience, scope string, groupRoleMap map[string]string) config.IdPConfig {
 	return config.IdPConfig{
@@ -162,6 +177,99 @@ func TestAuth_ValidDevToken_PopulatesContext(t *testing.T) {
 }
 
 // ── new security tests ─────────────────────────────────────────────────────────
+
+// TestAuth_XJwtAssertion_ValidSignature_PopulatesContext verifies that a
+// correctly signed token carried on X-Jwt-Assertion (Choreo's gateway-forwarded
+// header) is accepted and resolves the caller's identity, going through the
+// same signature-verified path as a bearer token.
+func TestAuth_XJwtAssertion_ValidSignature_PopulatesContext(t *testing.T) {
+	const issuer = "https://idp.example.com"
+	cfg := middleware.Config{
+		TokenValidatorEnabled: true,
+		IdPs:                  []config.IdPConfig{idpCfg(issuer, "api", config.ScopeFull, nil)},
+		TestKeyFuncs:          map[string]jwt.Keyfunc{issuer: testKeyFunc},
+	}
+
+	tok := signedToken(issuer, "api", "uid-1", "user@example.com", []string{"risk-manager"})
+
+	var captured *middleware.UserInfo
+	h := middleware.Auth(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = middleware.UserInfoFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/risks", nil)
+	req.Header.Set("X-Jwt-Assertion", tok)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("assertion: got %d, want 200", rec.Code)
+	}
+	if captured == nil || captured.Subject != "uid-1" {
+		t.Fatalf("expected identity from assertion, got %+v", captured)
+	}
+}
+
+// TestAuth_XJwtAssertion_UnsignedForgery_Returns401 verifies that an unsigned
+// (alg=none) forged assertion — with a *known* issuer, so this exercises
+// signature verification specifically rather than issuer rejection — is
+// rejected. This is the exact bypass a direct caller on an Organization-visible
+// endpoint would attempt, skipping the gateway that would normally mint a
+// genuinely-signed assertion; it proves the assertion path is
+// signature-verified, not decode-only.
+func TestAuth_XJwtAssertion_UnsignedForgery_Returns401(t *testing.T) {
+	const issuer = "https://idp.example.com"
+	cfg := middleware.Config{
+		TokenValidatorEnabled: true,
+		IdPs:                  []config.IdPConfig{idpCfg(issuer, "api", config.ScopeFull, nil)},
+		TestKeyFuncs:          map[string]jwt.Keyfunc{issuer: testKeyFunc},
+	}
+
+	forged := unsignedToken(issuer, "uid-attacker", "attacker@example.com", []string{"admin"})
+	h := middleware.Auth(cfg)(okHandler())
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/risks", nil)
+	req.Header.Set("X-Jwt-Assertion", forged)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unsigned forged assertion: got %d, want 401", rec.Code)
+	}
+}
+
+// TestAuth_XJwtAssertion_TakesPriorityOverBearerToken verifies that when both
+// headers are present, X-Jwt-Assertion is used — both are still verified the
+// same way, so this only checks header precedence, not a trust difference.
+func TestAuth_XJwtAssertion_TakesPriorityOverBearerToken(t *testing.T) {
+	const issuer = "https://idp.example.com"
+	cfg := middleware.Config{
+		TokenValidatorEnabled: true,
+		IdPs:                  []config.IdPConfig{idpCfg(issuer, "api", config.ScopeFull, nil)},
+		TestKeyFuncs:          map[string]jwt.Keyfunc{issuer: testKeyFunc},
+	}
+
+	assertionTok := signedToken(issuer, "api", "uid-assertion", "assertion@example.com", nil)
+
+	var captured *middleware.UserInfo
+	h := middleware.Auth(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = middleware.UserInfoFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/risks", nil)
+	req.Header.Set("X-Jwt-Assertion", assertionTok)
+	req.Header.Set("Authorization", "Bearer not.a.jwt")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("assertion priority: got %d, want 200", rec.Code)
+	}
+	if captured == nil || captured.Subject != "uid-assertion" {
+		t.Fatalf("expected identity from assertion, got %+v", captured)
+	}
+}
 
 // TestAuth_UnknownIssuer_Returns401 verifies that a token whose iss claim does not
 // match any configured IdP is rejected with 401, not silently passed through.
