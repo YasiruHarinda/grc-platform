@@ -96,6 +96,12 @@ func (h *controlHandler) addControl(w http.ResponseWriter, r *http.Request) {
 	response.WriteJSONValue(w, http.StatusCreated, c)
 }
 
+// maxBulkBodyBytes caps the bulk-add request body. It is larger than the default
+// 1 MiB so a full maxBulkControls (500) import with paragraph-length descriptions
+// fits — roughly 8 KB per control — and clients hit the friendly 422 item-count
+// error rather than a generic 413 first.
+const maxBulkBodyBytes = 4 << 20 // 4 MiB
+
 // bulkAddControls handles POST /api/v1/audits/{id}/controls/bulk.
 // Used by the Create Audit form when copying from a previous audit or uploading CSV.
 func (h *controlHandler) bulkAddControls(w http.ResponseWriter, r *http.Request) {
@@ -107,7 +113,7 @@ func (h *controlHandler) bulkAddControls(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req model.BulkAddControlsRequest
-	if err := response.DecodeJSON(w, r, &req); err != nil {
+	if err := response.DecodeJSONLimit(w, r, &req, maxBulkBodyBytes); err != nil {
 		return
 	}
 	actor := auth.FromContext(r.Context()).Email
