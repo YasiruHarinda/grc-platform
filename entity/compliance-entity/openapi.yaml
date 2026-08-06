@@ -147,7 +147,7 @@ paths:
         required: true
         schema:
           type: string
-        description: Folder prefix, ending in "/". Must match one of the allowed layouts audit/{auditName}/{controlNumber}/evidence/, audit/{auditName}/{controlNumber}/population/, or audit/{auditName}/{controlNumber}/population/sample/. Unlike upload/download/delete, listing does not accept the risks/ tree.
+        description: Folder prefix matching one of the allowed layouts audit/{auditName}/{controlNumber}/evidence/, audit/{auditName}/{controlNumber}/population/, or audit/{auditName}/{controlNumber}/population/sample/. The trailing slash is optional — both the slash-terminated form and the slashless form (e.g. audit/{auditName}/{controlNumber}/evidence) are accepted. Unlike upload/download/delete, listing does not accept the risks/ tree.
       responses:
         '200':
           description: List of blobs

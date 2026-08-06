@@ -3172,10 +3172,9 @@ components:
           format: date
           nullable: true
         population:
-          allOf:
-          - $ref: '#/components/schemas/PopulationDetails'
-          type: object
           nullable: true
+          anyOf:
+          - $ref: '#/components/schemas/PopulationDetails'
           description: OE controls only.
         pushToFramework:
           type: boolean
@@ -3189,6 +3188,7 @@ components:
       properties:
         controls:
           type: array
+          maxItems: 500
           items:
             $ref: '#/components/schemas/AddControlRequest'
     UpdateControlRequest:
@@ -3236,10 +3236,9 @@ components:
           format: date
           nullable: true
         population:
-          allOf:
-          - $ref: '#/components/schemas/PopulationDetails'
-          type: object
           nullable: true
+          anyOf:
+          - $ref: '#/components/schemas/PopulationDetails'
           description: Set only when editing an OE control's population details; null leaves them unchanged.
     UpdateStatusRequest:
       type: object
@@ -3509,10 +3508,9 @@ components:
       type: object
       properties:
         round:
-          allOf:
-          - $ref: '#/components/schemas/AuditPopulation'
-          type: object
           nullable: true
+          anyOf:
+          - $ref: '#/components/schemas/AuditPopulation'
         populationFiles:
           type: array
           items:
@@ -4328,16 +4326,14 @@ components:
           type: string
           nullable: true
         gross_score:
-          allOf:
-          - $ref: '#/components/schemas/RiskScore'
-          type: object
           nullable: true
+          anyOf:
+          - $ref: '#/components/schemas/RiskScore'
           description: The original rating assigned at creation; immutable once a risk owner has approved the risk.
         effective_score:
-          allOf:
-          - $ref: '#/components/schemas/RiskScore'
-          type: object
           nullable: true
+          anyOf:
+          - $ref: '#/components/schemas/RiskScore'
           description: The current residual score — the latest reassessment's score when one exists, else the gross score. This is what tables/headers should display.
         compliance_references:
           type: array
@@ -4348,10 +4344,9 @@ components:
           items:
             $ref: '#/components/schemas/RiskCategory'
         action_plan:
-          allOf:
-          - $ref: '#/components/schemas/ActionPlanDetail'
-          type: object
           nullable: true
+          anyOf:
+          - $ref: '#/components/schemas/ActionPlanDetail'
         assessments:
           type: array
           items:

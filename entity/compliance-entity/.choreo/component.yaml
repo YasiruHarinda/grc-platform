@@ -10,4 +10,5 @@ endpoints:
 
     networkVisibilities:
       - Project
+      - Organization
     schemaFilePath: openapi.yaml
