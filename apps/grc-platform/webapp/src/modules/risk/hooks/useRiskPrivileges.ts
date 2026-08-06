@@ -21,7 +21,7 @@ import { BACKEND_BASE_URL } from "@config/apiConfig";
 const isMockAuth = window.config?.GRC_PLATFORM_MOCK_AUTH === true;
 
 // Shared across all hook instances so only one fetch ever fires per session.
-let _promise: Promise<Set<string>> | null = null;
+let _promise: Promise<Set<string> | null> | null = null;
 
 export interface RiskPrivilegeState {
   can: (privilege: string) => boolean;
@@ -34,15 +34,15 @@ export interface RiskPrivilegeState {
 // In mock-auth mode all privileges are granted immediately without an API call.
 export function useRiskPrivileges(): RiskPrivilegeState {
   const authFetch = useAuthApiClient();
-  const [privileges, setPrivileges] = useState<Set<string>>(new Set());
+  const [privileges, setPrivileges] = useState<Set<string> | null>(new Set());
   const [loading, setLoading] = useState(!isMockAuth);
 
   useEffect(() => {
     if (isMockAuth) return;
     if (!_promise) {
       _promise = authFetch(`${BACKEND_BASE_URL}/api/v1/me/privileges`)
-        .then((res) => res.json() as Promise<{ privileges: string[] }>)
-        .then((data) => new Set<string>(data.privileges ?? []))
+        .then((res) => res.json() as Promise<{ privileges?: string[]; allowAll?: boolean }>)
+        .then((data) => data.allowAll ? null : new Set<string>(data.privileges ?? []))
         .catch(() => { _promise = null; return new Set<string>(); });
     }
     let cancelled = false;
@@ -59,7 +59,7 @@ export function useRiskPrivileges(): RiskPrivilegeState {
   }, []); // intentionally empty — _promise deduplicates across instances and renders
 
   const can = useCallback(
-    (priv: string) => isMockAuth || privileges.has(priv),
+    (priv: string) => isMockAuth || privileges === null || privileges.has(priv),
     [privileges],
   );
 
