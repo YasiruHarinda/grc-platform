@@ -30,15 +30,34 @@ export interface WorkQueuePage {
 
 const LIMIT = 25;
 
-export function useGetWorkQueue(tab: WorkQueueTab, page: number, teamIds: number[] = [], ownerIds: number[] = []) {
+export type DueSort = "asc" | "desc";
+
+export interface WorkQueueFilters {
+  teamIds?: number[];
+  ownerIds?: number[];
+  auditIds?: number[];
+  statuses?: string[];
+  controlNumber?: string;
+  dueSort?: DueSort;
+}
+
+export function useGetWorkQueue(tab: WorkQueueTab, page: number, filters: WorkQueueFilters = {}) {
   const authFetch = useAuthApiClient();
+  const {
+    teamIds = [], ownerIds = [], auditIds = [], statuses = [],
+    controlNumber = "", dueSort = "asc",
+  } = filters;
 
   return useQuery({
-    queryKey: ["audit", "work-queue", tab, page, teamIds, ownerIds] as const,
+    queryKey: ["audit", "work-queue", tab, page, teamIds, ownerIds, auditIds, statuses, controlNumber, dueSort] as const,
     queryFn: async (): Promise<WorkQueuePage> => {
       const params = new URLSearchParams({ tab, page: String(page), limit: String(LIMIT) });
       teamIds.forEach((id) => params.append("teamIds", String(id)));
       ownerIds.forEach((id) => params.append("ownerIds", String(id)));
+      auditIds.forEach((id) => params.append("auditIds", String(id)));
+      statuses.forEach((s) => params.append("statuses", s));
+      if (controlNumber.trim()) params.set("controlNumber", controlNumber.trim());
+      if (dueSort === "desc") params.set("dueSort", "desc");
       const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audit/work-queue?${params.toString()}`);
       if (!res.ok) throw new Error(`Failed to load work queue (${res.status})`);
       return res.json() as Promise<WorkQueuePage>;

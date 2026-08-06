@@ -36,24 +36,19 @@ import {
   TextField,
   Typography,
 } from "@wso2/oxygen-ui";
-import { CheckCircle, Filter, Search, X } from "@wso2/oxygen-ui-icons-react";
+import { ArrowDown, ArrowUp, CheckCircle, Filter, Search, X } from "@wso2/oxygen-ui-icons-react";
 import type { JSX } from "react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
-import { CONTROL_STATUS_COLORS, CONTROL_STATUS_LABELS } from "@modules/audit/utils/controlStatus";
+import ControlStatusChip from "@modules/audit/components/ControlStatusChip";
+import { CONTROL_STATUS_LABELS } from "@modules/audit/utils/controlStatus";
 import type { ControlStatus } from "@modules/audit/types/audit";
 import type { ActionItem } from "@modules/audit/types/dashboard";
-import { useGetWorkQueue, type WorkQueueTab } from "@modules/audit/api/useGetWorkQueue";
+import { useGetWorkQueue, type WorkQueueTab, type DueSort } from "@modules/audit/api/useGetWorkQueue";
 import { useGetTeams } from "@modules/audit/api/useGetTeams";
 import { useGetUsers } from "@modules/audit/api/useGetUsers";
+import { useGetAudits } from "@modules/audit/api/useGetAudits";
 import { dueInfo } from "./dueDate";
-
-function statusColor(s: string): string {
-  return CONTROL_STATUS_COLORS[s as ControlStatus] ?? "#90A4AE";
-}
-function statusLabel(s: string): string {
-  return CONTROL_STATUS_LABELS[s as ControlStatus] ?? s;
-}
 
 function actionLabel(status: string, canApprove: boolean): string {
   switch (status) {
@@ -73,21 +68,48 @@ function actionLabel(status: string, canApprove: boolean): string {
   }
 }
 
+// Statuses offered in the Status / Action-needed column filters. COMPLETE is
+// terminal and never surfaces in the work queue, so it is excluded.
+const FILTERABLE_STATUSES = (Object.keys(CONTROL_STATUS_LABELS) as ControlStatus[]).filter(
+  (s) => s !== "COMPLETE",
+);
+
+interface ActionGroup {
+  label: string;
+  statuses: ControlStatus[];
+}
+
+// buildActionGroups collapses the filterable statuses by their action label, so the
+// "Action needed" filter offers the human-readable actions and resolves each back
+// to its underlying statuses (some labels depend on canApprove).
+function buildActionGroups(canApprove: boolean): ActionGroup[] {
+  const byLabel = new Map<string, ControlStatus[]>();
+  for (const s of FILTERABLE_STATUSES) {
+    const label = actionLabel(s, canApprove);
+    const arr = byLabel.get(label) ?? [];
+    arr.push(s);
+    byLabel.set(label, arr);
+  }
+  return [...byLabel.entries()].map(([label, statuses]) => ({ label, statuses }));
+}
+
 // ── Column filter ─────────────────────────────────────────────────────────────
 
-interface FilterOption {
-  id: number;
+type FilterId = string | number;
+
+interface FilterOption<T extends FilterId = number> {
+  id: T;
   label: string;
 }
 
-interface ColFilterProps {
+interface ColFilterProps<T extends FilterId> {
   label: string;
-  options: FilterOption[];
-  selected: number[];
-  onChange: (v: number[]) => void;
+  options: FilterOption<T>[];
+  selected: T[];
+  onChange: (v: T[]) => void;
 }
 
-function ColFilter({ label, options, selected, onChange }: ColFilterProps): JSX.Element {
+function ColFilter<T extends FilterId>({ label, options, selected, onChange }: ColFilterProps<T>): JSX.Element {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const [query, setQuery] = useState("");
   const isActive = selected.length > 0;
@@ -95,7 +117,7 @@ function ColFilter({ label, options, selected, onChange }: ColFilterProps): JSX.
     ? options.filter((o) => o.label.toLowerCase().includes(query.toLowerCase()))
     : options;
 
-  function toggle(id: number) {
+  function toggle(id: T) {
     onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
   }
 
@@ -161,6 +183,56 @@ function ColFilter({ label, options, selected, onChange }: ColFilterProps): JSX.
   );
 }
 
+// TextColFilter is a header substring-search filter (used for Control No). The
+// caller debounces the value before issuing a request.
+function TextColFilter({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }): JSX.Element {
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const isActive = value.trim().length > 0;
+
+  return (
+    <>
+      <IconButton
+        size="small"
+        aria-label={`Filter by ${label}`}
+        onClick={(e) => { e.stopPropagation(); setAnchor(e.currentTarget); }}
+        sx={{
+          ml: 0.25, p: 0.25, borderRadius: 0.75,
+          color: isActive ? "primary.main" : "action.disabled",
+          bgcolor: isActive ? "rgba(25,118,210,0.08)" : "transparent",
+          "&:hover": { color: isActive ? "primary.main" : "text.secondary", bgcolor: isActive ? "rgba(25,118,210,0.12)" : "action.hover" },
+        }}
+      >
+        <Filter size={12} />
+      </IconButton>
+
+      <Popover
+        open={Boolean(anchor)}
+        anchorEl={anchor}
+        onClose={() => setAnchor(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+        transformOrigin={{ vertical: "top", horizontal: "left" }}
+        slotProps={{ paper: { sx: { width: 230, borderRadius: 2, mt: 0.5 } } }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <Box sx={{ p: 1.25 }}>
+          <TextField
+            size="small" fullWidth placeholder={`Search ${label}...`} value={value}
+            onChange={(e) => onChange(e.target.value)} autoFocus
+            slotProps={{
+              input: {
+                startAdornment: <Search size={14} style={{ marginRight: 4 }} />,
+                endAdornment: value ? (
+                  <IconButton size="small" edge="end" aria-label="Clear search" onClick={() => onChange("")}><X size={12} /></IconButton>
+                ) : null,
+              },
+            }}
+          />
+        </Box>
+      </Popover>
+    </>
+  );
+}
+
 // ── Paginated tab panel ────────────────────────────────────────────────────────
 
 interface TabPanelProps {
@@ -174,27 +246,74 @@ function TabPanel({ tab, canApprove, emptyText }: TabPanelProps): JSX.Element {
   const [page, setPage] = useState(0); // 0-based for MUI, 1-based for API
   const [teamFilter, setTeamFilter] = useState<number[]>([]);
   const [ownerFilter, setOwnerFilter] = useState<number[]>([]);
+  const [auditFilter, setAuditFilter] = useState<number[]>([]);
+  const [statusFilter, setStatusFilter] = useState<string[]>([]);
+  const [actionFilter, setActionFilter] = useState<string[]>([]);
+  const [controlInput, setControlInput] = useState(""); // immediate text-box value
+  const [controlNumber, setControlNumber] = useState(""); // debounced value sent to API
+  const [dueSort, setDueSort] = useState<DueSort>("asc");
 
-  const { data, isLoading, isError } = useGetWorkQueue(tab, page + 1, teamFilter, ownerFilter);
+  // Debounce the control-number box so we don't issue a request per keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => { setControlNumber(controlInput); setPage(0); }, 350);
+    return () => clearTimeout(t);
+  }, [controlInput]);
+
+  // Map the selected action labels back to their statuses and merge with the raw
+  // status filter — both column filters constrain the same status column (union).
+  const actionGroups = useMemo(() => buildActionGroups(canApprove), [canApprove]);
+  const effectiveStatuses = useMemo(() => {
+    const set = new Set<string>(statusFilter);
+    for (const label of actionFilter) {
+      actionGroups.find((g) => g.label === label)?.statuses.forEach((s) => set.add(s));
+    }
+    return [...set];
+  }, [statusFilter, actionFilter, actionGroups]);
+
+  const { data, isLoading, isError } = useGetWorkQueue(tab, page + 1, {
+    teamIds: teamFilter, ownerIds: ownerFilter, auditIds: auditFilter,
+    statuses: effectiveStatuses, controlNumber, dueSort,
+  });
   const { data: teamsData } = useGetTeams();
   const { data: usersData } = useGetUsers();
+  const { data: auditsData } = useGetAudits();
 
-  const items: ActionItem[] = data?.items ?? [];
+  const items: ActionItem[] = useMemo(() => data?.items ?? [], [data]);
   const total = data?.total ?? 0;
   const limit = data?.limit ?? 25;
 
   // Source filter options from the full unfiltered lists so all values are
   // selectable regardless of which page is currently displayed.
-  const teams: FilterOption[] = (teamsData ?? [])
+  const teams: FilterOption<number>[] = (teamsData ?? [])
     .map((t) => ({ id: t.id, label: t.name }))
     .sort((a, b) => a.label.localeCompare(b.label));
 
-  const owners: FilterOption[] = (usersData ?? [])
-    .filter((u) => u.userType === "INTERNAL")
-    .map((u) => ({ id: u.id, label: u.displayName }))
+  // Process-owner filter options: union of the users list and the owners actually
+  // present in the loaded queue rows. Deriving from the rows means the filter still
+  // works even when /audit/users is empty or a user isn't flagged INTERNAL.
+  const owners: FilterOption<number>[] = useMemo(() => {
+    const byId = new Map<number, string>();
+    (usersData ?? []).forEach((u) => byId.set(u.id, u.displayName));
+    items.forEach((it) => {
+      if (it.ownerId != null && !byId.has(it.ownerId)) {
+        byId.set(it.ownerId, it.processOwner || `#${it.ownerId}`);
+      }
+    });
+    return [...byId.entries()]
+      .map(([id, label]) => ({ id, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [usersData, items]);
+
+  const audits: FilterOption<number>[] = (auditsData?.items ?? [])
+    .map((a) => ({ id: a.id, label: a.name }))
     .sort((a, b) => a.label.localeCompare(b.label));
 
-  const hasFilters = teamFilter.length > 0 || ownerFilter.length > 0;
+  const statusOptions: FilterOption<string>[] = FILTERABLE_STATUSES.map((s) => ({ id: s, label: CONTROL_STATUS_LABELS[s] }));
+  const actionOptions: FilterOption<string>[] = actionGroups.map((g) => ({ id: g.label, label: g.label }));
+
+  const hasFilters =
+    teamFilter.length > 0 || ownerFilter.length > 0 || auditFilter.length > 0 ||
+    statusFilter.length > 0 || actionFilter.length > 0 || controlNumber.trim().length > 0;
 
   if (isLoading) {
     return (
@@ -227,7 +346,19 @@ function TabPanel({ tab, canApprove, emptyText }: TabPanelProps): JSX.Element {
           {ownerFilter.map((id) => (
             <Chip key={id} label={owners.find((o) => o.id === id)?.label ?? String(id)} size="small" onDelete={() => { setOwnerFilter((p) => p.filter((x) => x !== id)); setPage(0); }} />
           ))}
-          <Button size="small" onClick={() => { setTeamFilter([]); setOwnerFilter([]); setPage(0); }}
+          {auditFilter.map((id) => (
+            <Chip key={`a${id}`} label={audits.find((a) => a.id === id)?.label ?? String(id)} size="small" onDelete={() => { setAuditFilter((p) => p.filter((x) => x !== id)); setPage(0); }} />
+          ))}
+          {statusFilter.map((s) => (
+            <Chip key={`s${s}`} label={CONTROL_STATUS_LABELS[s as ControlStatus] ?? s} size="small" onDelete={() => { setStatusFilter((p) => p.filter((x) => x !== s)); setPage(0); }} />
+          ))}
+          {actionFilter.map((a) => (
+            <Chip key={`ac${a}`} label={a} size="small" onDelete={() => { setActionFilter((p) => p.filter((x) => x !== a)); setPage(0); }} />
+          ))}
+          {controlNumber.trim() && (
+            <Chip label={`Control: ${controlNumber.trim()}`} size="small" onDelete={() => { setControlInput(""); setControlNumber(""); setPage(0); }} />
+          )}
+          <Button size="small" onClick={() => { setTeamFilter([]); setOwnerFilter([]); setAuditFilter([]); setStatusFilter([]); setActionFilter([]); setControlInput(""); setControlNumber(""); setPage(0); }}
             sx={{ textTransform: "none", fontSize: "0.75rem", py: 0.25 }}>
             Clear all
           </Button>
@@ -244,25 +375,53 @@ function TabPanel({ tab, canApprove, emptyText }: TabPanelProps): JSX.Element {
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell sx={{ fontWeight: 600, whiteSpace: "nowrap" }}>Control</TableCell>
-              <TableCell sx={{ fontWeight: 600 }}>Audit</TableCell>
-              <TableCell sx={{ fontWeight: 600 }}>Action needed</TableCell>
-              <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
-              <TableCell sx={{ fontWeight: 600, whiteSpace: "nowrap" }}>Due date</TableCell>
+              <TableCell sx={{ fontWeight: 600, whiteSpace: "nowrap" }}>
+                <Box sx={{ display: "flex", alignItems: "center" }}>
+                  Control
+                  <TextColFilter label="Control No" value={controlInput} onChange={setControlInput} />
+                </Box>
+              </TableCell>
+              <TableCell sx={{ fontWeight: 600 }}>
+                <Box sx={{ display: "flex", alignItems: "center" }}>
+                  Audit
+                  <ColFilter label="Audit" options={audits} selected={auditFilter} onChange={(v) => { setAuditFilter(v); setPage(0); }} />
+                </Box>
+              </TableCell>
+              <TableCell sx={{ fontWeight: 600 }}>
+                <Box sx={{ display: "flex", alignItems: "center" }}>
+                  Action needed
+                  <ColFilter label="Action needed" options={actionOptions} selected={actionFilter} onChange={(v) => { setActionFilter(v); setPage(0); }} />
+                </Box>
+              </TableCell>
+              <TableCell sx={{ fontWeight: 600 }}>
+                <Box sx={{ display: "flex", alignItems: "center" }}>
+                  Status
+                  <ColFilter label="Status" options={statusOptions} selected={statusFilter} onChange={(v) => { setStatusFilter(v); setPage(0); }} />
+                </Box>
+              </TableCell>
+              <TableCell sx={{ fontWeight: 600, whiteSpace: "nowrap" }}>
+                <Box sx={{ display: "flex", alignItems: "center" }}>
+                  Due date
+                  <IconButton
+                    size="small"
+                    aria-label={dueSort === "asc" ? "Sort due date descending" : "Sort due date ascending"}
+                    onClick={(e) => { e.stopPropagation(); setDueSort((s) => (s === "asc" ? "desc" : "asc")); setPage(0); }}
+                    sx={{ ml: 0.25, p: 0.25, borderRadius: 0.75, color: "primary.main", "&:hover": { bgcolor: "action.hover" } }}
+                  >
+                    {dueSort === "asc" ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
+                  </IconButton>
+                </Box>
+              </TableCell>
               <TableCell sx={{ fontWeight: 600 }}>
                 <Box sx={{ display: "flex", alignItems: "center" }}>
                   Team
-                  {teams.length > 0 && (
-                    <ColFilter label="Team" options={teams} selected={teamFilter} onChange={(v) => { setTeamFilter(v); setPage(0); }} />
-                  )}
+                  <ColFilter label="Team" options={teams} selected={teamFilter} onChange={(v) => { setTeamFilter(v); setPage(0); }} />
                 </Box>
               </TableCell>
               <TableCell sx={{ fontWeight: 600 }}>
                 <Box sx={{ display: "flex", alignItems: "center" }}>
                   Process Owner
-                  {owners.length > 0 && (
-                    <ColFilter label="Process Owner" options={owners} selected={ownerFilter} onChange={(v) => { setOwnerFilter(v); setPage(0); }} />
-                  )}
+                  <ColFilter label="Process Owner" options={owners} selected={ownerFilter} onChange={(v) => { setOwnerFilter(v); setPage(0); }} />
                 </Box>
               </TableCell>
             </TableRow>
@@ -290,15 +449,7 @@ function TabPanel({ tab, canApprove, emptyText }: TabPanelProps): JSX.Element {
                     <Typography variant="body2" color="primary.main">{actionLabel(item.status, canApprove)}</Typography>
                   </TableCell>
                   <TableCell>
-                    <Chip
-                      label={statusLabel(item.status)}
-                      size="small"
-                      sx={{
-                        bgcolor: `${statusColor(item.status)}18`,
-                        "[data-color-scheme='dark'] &": { bgcolor: `${statusColor(item.status)}40` },
-                        color: statusColor(item.status), fontWeight: 600, fontSize: "0.7rem",
-                      }}
-                    />
+                    <ControlStatusChip status={item.status as ControlStatus} />
                   </TableCell>
                   <TableCell sx={{ whiteSpace: "nowrap" }}>
                     <Typography variant="body2" sx={{ color: due.color, fontWeight: due.sortKey <= 3 ? 600 : 400 }}>

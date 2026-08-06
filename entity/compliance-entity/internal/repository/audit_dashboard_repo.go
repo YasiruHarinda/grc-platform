@@ -325,6 +325,30 @@ func buildIntInFilter(col string, ids []int) (string, []any) {
 	return fmt.Sprintf(" AND %s IN (%s)", col, phs[:len(phs)-1]), args // #nosec G201
 }
 
+func buildStringInFilter(col string, vals []string) (string, []any) {
+	if len(vals) == 0 {
+		return "", nil
+	}
+	phs := strings.Repeat("?,", len(vals))
+	args := make([]any, len(vals))
+	for i, v := range vals {
+		args[i] = v
+	}
+	return fmt.Sprintf(" AND %s IN (%s)", col, phs[:len(phs)-1]), args // #nosec G201
+}
+
+// buildLikeFilter matches col against a case-insensitive substring. An empty or
+// whitespace-only term yields no filter.
+func buildLikeFilter(col, term string) (string, []any) {
+	term = strings.TrimSpace(term)
+	if term == "" {
+		return "", nil
+	}
+	// Escape LIKE wildcards so a literal % or _ in the term is matched literally.
+	esc := strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(term)
+	return fmt.Sprintf(" AND %s LIKE ?", col), []any{"%" + esc + "%"} // #nosec G201
+}
+
 // GetWorkQueuePage returns a single paginated page of work-queue items.
 func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQueueRequest) (*domain.WorkQueuePage, error) {
 	// Resolve scope the same way as the dashboard.
@@ -345,12 +369,27 @@ func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQue
 	}
 	offset := (page - 1) * limit
 
-	// Build optional team/owner filter fragments on the FK columns of audit_control,
-	// so count queries need no extra JOINs (c.team_id and c.owner_id are on the base table).
+	// Build optional filter fragments on columns of audit_control (plus audit_id),
+	// so count queries need no extra JOINs (team_id, owner_id, audit_id, status and
+	// control_number are all on the base table).
 	teamSQL, teamArgs := buildIntInFilter("c.team_id", req.TeamIDs)
 	ownerSQL, ownerArgs := buildIntInFilter("c.owner_id", req.OwnerIDs)
-	filterSQL := teamSQL + ownerSQL
-	filterArgs := append(teamArgs, ownerArgs...)
+	auditSQL, auditArgs := buildIntInFilter("c.audit_id", req.AuditIDs)
+	statusSQL, statusArgs := buildStringInFilter("c.status", req.Statuses)
+	ctrlSQL, ctrlArgs := buildLikeFilter("c.control_number", req.ControlNumber)
+	filterSQL := teamSQL + ownerSQL + auditSQL + statusSQL + ctrlSQL
+	filterArgs := make([]any, 0, len(teamArgs)+len(ownerArgs)+len(auditArgs)+len(statusArgs)+len(ctrlArgs))
+	filterArgs = append(filterArgs, teamArgs...)
+	filterArgs = append(filterArgs, ownerArgs...)
+	filterArgs = append(filterArgs, auditArgs...)
+	filterArgs = append(filterArgs, statusArgs...)
+	filterArgs = append(filterArgs, ctrlArgs...)
+
+	// Due-date sort direction. Controlled string (never user input), safe to inline.
+	dueDir := "ASC"
+	if req.DueSortDesc {
+		dueDir = "DESC"
+	}
 
 	var items []domain.DashboardControlItem
 	var total int
@@ -380,7 +419,7 @@ func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQue
 			FROM audit_control c JOIN audit a ON a.id = c.audit_id
 			LEFT JOIN audit_team t ON t.id = c.team_id
 			LEFT JOIN `+"`user`"+` u ON u.id = c.owner_id
-			%s AND %s%s ORDER BY c.due_date ASC, c.id ASC LIMIT ? OFFSET ?`, baseWhere, statusFilter, filterSQL) // #nosec G201
+			%s AND %s%s ORDER BY c.due_date %s, c.id ASC LIMIT ? OFFSET ?`, baseWhere, statusFilter, filterSQL, dueDir) // #nosec G201
 		pageArgs := append(append(args, filterArgs...), limit, offset)
 		items, err = r.scanControlItems(ctx, q, pageArgs)
 
@@ -407,7 +446,7 @@ func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQue
 			FROM audit_control c JOIN audit a ON a.id = c.audit_id
 			LEFT JOIN audit_team t ON t.id = c.team_id
 			LEFT JOIN `+"`user`"+` u ON u.id = c.owner_id
-			%s ORDER BY c.due_date ASC, c.id ASC LIMIT ? OFFSET ?`, dueSoonWhere) // #nosec G201
+			%s ORDER BY c.due_date %s, c.id ASC LIMIT ? OFFSET ?`, dueSoonWhere, dueDir) // #nosec G201
 		pageArgs := append(append(args, filterArgs...), limit, offset)
 		items, err = r.scanControlItems(ctx, q, pageArgs)
 
@@ -430,7 +469,7 @@ func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQue
 			FROM audit_control c JOIN audit a ON a.id = c.audit_id
 			LEFT JOIN audit_team t ON t.id = c.team_id
 			LEFT JOIN `+"`user`"+` u ON u.id = c.owner_id
-			%s ORDER BY c.due_date ASC LIMIT ? OFFSET ?`, overdueWhere) // #nosec G201
+			%s ORDER BY c.due_date %s LIMIT ? OFFSET ?`, overdueWhere, dueDir) // #nosec G201
 		pageArgs := append(append(args, filterArgs...), limit, offset)
 		items, err = r.scanControlItems(ctx, q, pageArgs)
 	}

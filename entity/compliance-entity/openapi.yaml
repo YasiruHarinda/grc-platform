@@ -5427,6 +5427,33 @@ components:
           minimum: 1
           maximum: 100
           default: 25
+        teamIds:
+          type: array
+          description: Filter by audit_team.id; empty/omitted = all teams.
+          items:
+            type: integer
+        ownerIds:
+          type: array
+          description: Filter by process-owner user.id; empty/omitted = all owners.
+          items:
+            type: integer
+        auditIds:
+          type: array
+          description: Filter by audit.id; empty/omitted = all audits.
+          items:
+            type: integer
+        controlNumber:
+          type: string
+          description: Case-insensitive substring match on control_number; empty/omitted = no filter.
+        statuses:
+          type: array
+          description: Filter by audit_control.status; empty/omitted = all statuses. The backend resolves both the status and action-needed UI filters into this set.
+          items:
+            type: string
+        dueSortDesc:
+          type: boolean
+          default: false
+          description: Sort by due date descending (latest first) when true; ascending otherwise.
     WorkQueuePage:
       type: object
       properties:

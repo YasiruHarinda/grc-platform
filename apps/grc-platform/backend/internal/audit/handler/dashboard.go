@@ -19,6 +19,7 @@ package handler
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	auditservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
@@ -90,6 +91,18 @@ func (h *dashboardHandler) getWorkQueue(w http.ResponseWriter, r *http.Request) 
 			f.OwnerIDs = append(f.OwnerIDs, id)
 		}
 	}
+	for _, v := range q["auditIds"] {
+		if id, err := strconv.Atoi(v); err == nil {
+			f.AuditIDs = append(f.AuditIDs, id)
+		}
+	}
+	for _, v := range q["statuses"] {
+		if v != "" {
+			f.Statuses = append(f.Statuses, v)
+		}
+	}
+	f.ControlNumber = strings.TrimSpace(q.Get("controlNumber"))
+	f.DueSortDesc = q.Get("dueSort") == "desc"
 
 	p, err := h.svc.GetWorkQueuePage(r.Context(), f, tab, page, limit)
 	if err != nil {
