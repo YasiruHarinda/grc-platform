@@ -71,7 +71,7 @@ paths:
               properties:
                 blobName:
                   type: string
-                  description: Destination blob path (must be within audits/{id}/controls/{id}/evidence/)
+                  description: Destination blob path. Must match one of the allowed layouts audit/{auditName}/{controlNumber}/evidence/{file}, audit/{auditName}/{controlNumber}/population/{file}, audit/{auditName}/{controlNumber}/population/sample/{file}, or risks/{riskId}/evidence/{timestamp}/{file}.
                 file:
                   type: string
                   format: binary
@@ -99,7 +99,7 @@ paths:
         required: true
         schema:
           type: string
-        description: Blob path (must be within audits/{id}/controls/{id}/evidence/)
+        description: Blob path. Must match one of the allowed layouts audit/{auditName}/{controlNumber}/evidence/{file}, audit/{auditName}/{controlNumber}/population/{file}, audit/{auditName}/{controlNumber}/population/sample/{file}, or risks/{riskId}/evidence/{timestamp}/{file}.
       responses:
         '200':
           description: File bytes
@@ -125,7 +125,7 @@ paths:
         required: true
         schema:
           type: string
-        description: Blob path (must be within audits/{id}/controls/{id}/evidence/)
+        description: Blob path. Must match one of the allowed layouts audit/{auditName}/{controlNumber}/evidence/{file}, audit/{auditName}/{controlNumber}/population/{file}, audit/{auditName}/{controlNumber}/population/sample/{file}, or risks/{riskId}/evidence/{timestamp}/{file}.
       responses:
         '204':
           description: File deleted
@@ -147,7 +147,7 @@ paths:
         required: true
         schema:
           type: string
-        description: Folder prefix (must be within audits/{id}/controls/{id}/evidence/)
+        description: Folder prefix, ending in "/". Must match one of the allowed layouts audit/{auditName}/{controlNumber}/evidence/, audit/{auditName}/{controlNumber}/population/, or audit/{auditName}/{controlNumber}/population/sample/. Unlike upload/download/delete, listing does not accept the risks/ tree.
       responses:
         '200':
           description: List of blobs
