@@ -215,12 +215,8 @@ func rsaPublicKeyFromJWK(nB64, eB64 string) (*rsa.PublicKey, error) {
 	return &rsa.PublicKey{N: new(big.Int).SetBytes(nBytes), E: e}, nil
 }
 
-// Auth resolves the caller's identity on every request and stores the
-// resulting UserInfo in the context. It prefers Choreo's gateway-forwarded
-// X-Jwt-Assertion header (present when the API's gateway-level OAuth2 security
-// is on) and falls back to independently verifying a raw Authorization: Bearer
-// token against the IdP's JWKS for callers that reach the backend without
-// going through that gateway hop.
+// Auth validates the Authorization: Bearer JWT on every request and stores
+// the resulting UserInfo in the context.
 // When TokenValidatorEnabled is false the token is only decoded without signature
 // verification — for local development only.
 func Auth(cfg Config) func(http.Handler) http.Handler {
@@ -267,13 +263,12 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 			}
 
 			tokenStr := bearerToken(r)
-			assertion := r.Header.Get("X-Jwt-Assertion")
-			if tokenStr == "" && assertion == "" {
+			if tokenStr == "" {
 				writeAuthError(w, "You are not authorized to perform this action. Please try again.")
 				return
 			}
 
-			info, idp, err := extractUserInfo(assertion, tokenStr, cfg, idps)
+			info, idp, err := extractUserInfo(tokenStr, cfg, idps)
 			if err != nil {
 				slog.ErrorContext(r.Context(), "auth: token validation failed", "err", err)
 				writeAuthError(w, "You are not authorized to perform this action. Please try again.")
@@ -331,10 +326,11 @@ func bearerToken(r *http.Request) string {
 	return after
 }
 
-// extractUserInfo resolves the caller's identity and the IdP that issued it
-// (nil in local-dev mode). assertion (Choreo's X-Jwt-Assertion) takes priority
-// over tokenStr (the raw client Authorization bearer) when both are present.
-func extractUserInfo(assertion, tokenStr string, cfg Config, idps map[string]idpRuntime) (*UserInfo, *config.IdPConfig, error) {
+// extractUserInfo validates the token and returns the caller's identity plus the
+// IdP that issued it (nil in local-dev mode). In production it selects the IdP by
+// the token's iss claim: an unknown issuer is rejected with the same generic error
+// as any other invalid token, so the set of configured issuers is not leaked.
+func extractUserInfo(tokenStr string, cfg Config, idps map[string]idpRuntime) (*UserInfo, *config.IdPConfig, error) {
 	if !cfg.TokenValidatorEnabled {
 		// Local dev: decode without signature verification. No IdP selection.
 		var c jwtClaims
@@ -348,52 +344,6 @@ func extractUserInfo(assertion, tokenStr string, cfg Config, idps map[string]idp
 		return &UserInfo{Subject: sub, Email: c.Email, Groups: c.Groups, Issuer: c.Issuer}, nil, nil
 	}
 
-	if assertion != "" {
-		return extractFromAssertion(assertion, idps)
-	}
-	return extractFromBearerToken(tokenStr, cfg, idps)
-}
-
-// extractFromAssertion decodes Choreo's gateway-forwarded X-Jwt-Assertion
-// header without verifying its signature. The gateway has already verified
-// the caller's Asgardeo token itself before minting this one, signed with
-// Choreo's own internal key — which our Asgardeo JWKS cannot verify — so the
-// Choreo-internal network hop from gateway to this pod is the trust boundary
-// here, same as every other Choreo-hosted service in this org (e.g.
-// digiops-hr/apps/leave's jwt_decoder.bal). The issuer claim still selects the
-// IdP (and therefore Scope/GroupRoleMap) exactly as the verified path does, so
-// an evidence-app-scoped caller can never be resolved as full-scope.
-func extractFromAssertion(assertion string, idps map[string]idpRuntime) (*UserInfo, *config.IdPConfig, error) {
-	var c jwtClaims
-	if _, _, err := new(jwt.Parser).ParseUnverified(assertion, &c); err != nil {
-		return nil, nil, fmt.Errorf("decode assertion: %w", err)
-	}
-	sub, err := c.GetSubject()
-	if err != nil || sub == "" {
-		return nil, nil, fmt.Errorf("assertion missing sub claim")
-	}
-	rt, ok := idps[c.Issuer]
-	if !ok {
-		return nil, nil, fmt.Errorf("unknown issuer")
-	}
-
-	idpCfg := rt.cfg
-	return &UserInfo{
-		Subject: sub,
-		Email:   c.Email,
-		Groups:  c.Groups,
-		Issuer:  rt.cfg.Issuer,
-		Scope:   rt.cfg.Scope,
-	}, &idpCfg, nil
-}
-
-// extractFromBearerToken independently verifies the raw client Authorization
-// token's signature against the matching IdP's JWKS. Used for any caller that
-// reaches the backend without going through the gateway's OAuth2 hop (e.g.
-// local dev, direct pod access) — an unknown issuer is rejected with the same
-// generic error as any other invalid token, so the set of configured issuers
-// is not leaked.
-func extractFromBearerToken(tokenStr string, cfg Config, idps map[string]idpRuntime) (*UserInfo, *config.IdPConfig, error) {
 	// Read the issuer from the unverified token only to pick the IdP; nothing else
 	// from this parse is trusted.
 	var probe jwtClaims
