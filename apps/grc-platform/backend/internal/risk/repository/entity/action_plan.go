@@ -29,7 +29,7 @@ type actionPlanRepository struct{ c *entityclient.Client }
 
 // NewActionPlanRepository creates a Compliance Entity-backed repository.ActionPlanRepository.
 //
-// Only used today for MANAGEMENT plans (created via POST /risks/{id}/action-plans
+// Used for additional plans added after registration (POST /risks/{id}/action-plans
 // once a risk is ESCALATED) and for completing plans of either type — STANDARD
 // plans are still created inline as part of risk creation (repository/entity/risk.go),
 // a separate path per the note this file used to carry in stubs.go.

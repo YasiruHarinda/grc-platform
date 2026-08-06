@@ -40,7 +40,11 @@ type RiskService interface {
 
 	// Workflow transitions — each validates the current status before advancing.
 	OwnerApprove(ctx context.Context, id int, byUserEmail string) error
-	ManagementApprove(ctx context.Context, id int, byUserEmail string) error
+	// ManagementApprove additionally requires byUserID to match the risk's
+	// management_approver_id — it is gated by both the RISK_MANAGEMENT_APPROVE
+	// privilege (checked by the handler) and this per-risk identity check,
+	// unless canOverride says the caller is a compliance admin.
+	ManagementApprove(ctx context.Context, id int, byUserEmail string, byUserID *int, canOverride bool) error
 	Approve(ctx context.Context, id int, byUserEmail string) error
 	Reject(ctx context.Context, id int, req model.RejectRiskRequest, fromStatus, byUserEmail string) error
 	Complete(ctx context.Context, id int, byUserEmail string) error
@@ -102,29 +106,70 @@ func (s *riskService) OwnerApprove(ctx context.Context, id int, byUserEmail stri
 			}
 		}
 		next := model.StatusPendingComplianceReview
-		if stringVal(detail.TreatmentStrategy) == "ACCEPT" && detail.GrossScore != nil && detail.GrossScore.RiskLevel == "HIGH" {
+		if needsManagementSignOff(detail) {
 			next = model.StatusPendingManagementApproval
 		}
 		return s.repo.TransitionStatus(ctx, id, detail.WorkflowStatus, next, byUserEmail)
 
 	case model.StatusPendingOwnerCompletion:
-		return s.repo.TransitionStatus(ctx, id, model.StatusPendingOwnerCompletion, model.StatusPendingComplianceClosure, byUserEmail)
+		// Closure mirrors creation: an ACCEPT + HIGH risk that needed
+		// management sign-off to start remediation needs it again to finish.
+		next := model.StatusPendingComplianceClosure
+		if needsManagementSignOff(detail) {
+			next = model.StatusPendingManagementClosure
+		}
+		return s.repo.TransitionStatus(ctx, id, model.StatusPendingOwnerCompletion, next, byUserEmail)
 
 	default:
 		return &apierror.Error{StatusCode: http.StatusConflict, Body: fmt.Sprintf("cannot be owner-approved from status: %s", detail.WorkflowStatus)}
 	}
 }
 
-// ManagementApprove moves PENDING_MANAGEMENT_APPROVAL → PENDING_COMPLIANCE_REVIEW.
-func (s *riskService) ManagementApprove(ctx context.Context, id int, byUserEmail string) error {
-	status, err := s.repo.GetWorkflowStatus(ctx, id)
+// needsManagementSignOff reports whether a risk routes through its Management
+// Approver. The rule is the same entering remediation and leaving it, so both
+// call sites share it: an ACCEPT treatment on a HIGH gross-scored risk is the
+// one combination senior management must personally endorse.
+//
+// GrossScore, not the residual score, is deliberate — gross is immutable after
+// creation, so a reassessment that lowers the residual level cannot quietly
+// route a risk around the approver who was named for it.
+func needsManagementSignOff(detail *model.RiskDetail) bool {
+	return stringVal(detail.TreatmentStrategy) == "ACCEPT" &&
+		detail.GrossScore != nil && detail.GrossScore.RiskLevel == "HIGH"
+}
+
+// ManagementApprove advances a risk past its Management Approver. It serves
+// both management stages, which differ only in where they lead:
+//
+//   - PENDING_MANAGEMENT_APPROVAL        → PENDING_COMPLIANCE_REVIEW  (entering remediation)
+//   - PENDING_MANAGEMENT_CLOSURE_APPROVAL → PENDING_COMPLIANCE_CLOSURE (leaving it)
+//
+// Only the risk's own management_approver_id may perform either — byUserID is
+// the caller's resolved platform user id, nil when the caller has no platform
+// user row at all (which can never match, so it always 403s).
+//
+// canOverride lets a compliance admin approve in the named approver's place, so
+// a departed or unavailable approver can't deadlock a risk. The handler decides
+// it from the caller's privileges (see canOverrideAssignee) and passes the
+// answer in, keeping this package free of any dependency on the auth context.
+func (s *riskService) ManagementApprove(ctx context.Context, id int, byUserEmail string, byUserID *int, canOverride bool) error {
+	detail, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err
 	}
-	if status != model.StatusPendingManagementApproval {
-		return &apierror.Error{StatusCode: http.StatusConflict, Body: fmt.Sprintf("cannot be management-approved from status: %s", status)}
+	var next string
+	switch detail.WorkflowStatus {
+	case model.StatusPendingManagementApproval:
+		next = model.StatusPendingComplianceReview
+	case model.StatusPendingManagementClosure:
+		next = model.StatusPendingComplianceClosure
+	default:
+		return &apierror.Error{StatusCode: http.StatusConflict, Body: fmt.Sprintf("cannot be management-approved from status: %s", detail.WorkflowStatus)}
 	}
-	return s.repo.TransitionStatus(ctx, id, model.StatusPendingManagementApproval, model.StatusPendingComplianceReview, byUserEmail)
+	if !canOverride && (byUserID == nil || detail.ManagementApproverID != *byUserID) {
+		return &apierror.Error{StatusCode: http.StatusForbidden, Body: "only this risk's designated Management Approver may approve it"}
+	}
+	return s.repo.TransitionStatus(ctx, id, detail.WorkflowStatus, next, byUserEmail)
 }
 
 // Approve is the compliance approval step: PENDING_COMPLIANCE_REVIEW → IN_REMEDIATION.
@@ -159,6 +204,11 @@ func (s *riskService) Reject(ctx context.Context, id int, req model.RejectRiskRe
 		stage = "COMPLIANCE"
 	case model.StatusPendingOwnerCompletion:
 		stage = "COMPLETION_OWNER"
+	case model.StatusPendingManagementClosure:
+		// Distinct from COMPLETION_OWNER so the drawer attributes the rejection
+		// to Management rather than the Risk Owner, and so Resubmit can route
+		// back to the stage that actually rejected it.
+		stage = "COMPLETION_MANAGEMENT"
 	default:
 		return &apierror.Error{StatusCode: http.StatusConflict, Body: fmt.Sprintf("cannot be rejected from status: %s", fromStatus)}
 	}
@@ -198,9 +248,13 @@ func (s *riskService) Complete(ctx context.Context, id int, byUserEmail string) 
 	return s.repo.TransitionStatus(ctx, id, model.StatusInRemediation, model.StatusPendingOwnerCompletion, byUserEmail)
 }
 
-// Resubmit clears rejection info and moves PENDING_REVISION back to the appropriate approval stage:
-// - COMPLETION_OWNER rejection → PENDING_OWNER_COMPLETION_APPROVAL
-// - all other rejections → PENDING_RISK_OWNER_APPROVAL
+// Resubmit clears rejection info and moves PENDING_REVISION back to the
+// appropriate approval stage. A rejection on the closure path returns to the
+// stage that rejected it rather than restarting the whole chain — the earlier
+// approvers already signed off on this risk and are not asked twice:
+//   - COMPLETION_OWNER rejection      → PENDING_OWNER_COMPLETION_APPROVAL
+//   - COMPLETION_MANAGEMENT rejection → PENDING_MANAGEMENT_CLOSURE_APPROVAL
+//   - all other rejections            → PENDING_RISK_OWNER_APPROVAL
 func (s *riskService) Resubmit(ctx context.Context, id int, byUserEmail string) error {
 	detail, err := s.repo.GetByID(ctx, id)
 	if err != nil {
@@ -210,8 +264,11 @@ func (s *riskService) Resubmit(ctx context.Context, id int, byUserEmail string) 
 		return &apierror.Error{StatusCode: http.StatusConflict, Body: fmt.Sprintf("cannot be resubmitted from status: %s", detail.WorkflowStatus)}
 	}
 	next := model.StatusPendingOwnerApproval
-	if stringVal(detail.RejectionStage) == "COMPLETION_OWNER" {
+	switch stringVal(detail.RejectionStage) {
+	case "COMPLETION_OWNER":
 		next = model.StatusPendingOwnerCompletion
+	case "COMPLETION_MANAGEMENT":
+		next = model.StatusPendingManagementClosure
 	}
 	return s.repo.ResubmitTransition(ctx, id, model.StatusPendingRevision, next, byUserEmail)
 }

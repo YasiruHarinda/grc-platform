@@ -29,10 +29,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/config"
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/db"
-	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/job"
-	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/repository"
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/server"
-	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/service"
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/storage"
 )
 
@@ -76,17 +73,11 @@ func main() {
 		}
 	}()
 
-	// Daily overdue-risk escalation job. Runs against its own repo/service
-	// instances (cheap — thin wrappers over the same pool) rather than
-	// reaching into NewRouter's, which aren't exposed outside server.New.
-	jobCtx, jobCancel := context.WithCancel(context.Background())
-	defer jobCancel()
-	jobRiskSvc := service.NewRiskService(repository.NewRiskRepository(pool))
-	escalationJob := job.NewEscalationJob(
-		jobRiskSvc,
-		service.NewRiskEscalationService(repository.NewRiskEscalationRepository(pool), jobRiskSvc),
-	)
-	go escalationJob.Start(jobCtx)
+	// The daily overdue-risk escalation job used to run here. It moved to the
+	// GRC backend (apps/grc-platform/backend/internal/risk/job): escalation now
+	// resolves line managers from the HR entity and sends email, and this
+	// service has a client for neither. Running it here meant automatic
+	// escalations notified nobody while manual ones did.
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

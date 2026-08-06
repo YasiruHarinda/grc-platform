@@ -27,6 +27,11 @@ package domain
 // RegisterID nil means every register.
 type RiskDashboardRequest struct {
 	RegisterID *int `json:"registerId"`
+	// ScopeTeamIDs restricts the whole payload to risks whose source register
+	// or assignment team is one of these — how a Risk Assigner/Risk Owner-only
+	// caller's dashboard is scoped to their own risk teams. Empty means
+	// unrestricted; the GRC backend decides whether a caller needs this.
+	ScopeTeamIDs []int `json:"scopeTeamIds"`
 }
 
 // RiskDashboardSummary is the assembled dashboard.

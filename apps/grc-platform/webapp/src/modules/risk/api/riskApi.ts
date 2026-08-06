@@ -44,11 +44,17 @@ export interface ComplianceReference {
   description: string | null;
 }
 
+export interface RiskCategory {
+  id: number;
+  name: string;
+  description: string | null;
+}
+
 export interface UserOption {
   id: number;
   display_name: string;
   email: string;
-  risk_team_id: number | null;
+  risk_team_ids: number[];
 }
 
 // EmployeeOption is a WSO2 employee returned by GET /api/v1/employees/search,
@@ -115,9 +121,9 @@ export interface ActionPlanDetail {
 }
 
 // ActionPlan is the standalone shape returned by GET/POST .../action-plans —
-// unlike RiskDetail.action_plan (always the STANDARD plan embedded at risk
-// creation), this is how the MANAGEMENT plan created on an escalated risk is
-// fetched, and how both plans are listed together.
+// unlike RiskDetail.action_plan (always the first plan, embedded at risk
+// creation), this lists every plan on a risk, including ones the assigner added
+// later.
 export interface ActionPlan {
   id: number;
   risk_id: number;
@@ -125,21 +131,56 @@ export interface ActionPlan {
   description: string | null;
   status: string; // PENDING | IN_PROGRESS | COMPLETED
   completed_date: string | null;
-  plan_type: string; // STANDARD | MANAGEMENT
+  // Always STANDARD on new plans; MANAGEMENT is retired and only appears on
+  // historical rows.
+  plan_type: string;
   created_by: string | null;
 }
 
-// Escalation is created automatically by the compliance-entity's daily
-// overdue-risk job — no escalated_to/reason, since it's system-driven, not a
-// human decision. created_at is what "escalated on" shows in the UI.
+// Escalation is created by the backend's daily overdue-risk job, or by a
+// Compliance user clicking Escalate — no escalated_to/reason, since neither
+// path asks a human for one. created_at is what "escalated on" shows in the UI.
 export interface Escalation {
   id: number;
   risk_id: number;
   new_treatment_strategy: string | null;
   action_plan_id: number | null;
+  // The management/lead comment answering this escalation. Null until someone
+  // comments; writing it returns the risk to its assigner.
   decision: string | null;
+  // Stays OPEN through the comment and the assigner's remediation — it is what
+  // keeps the risk in the Overdue tab — and is only resolved when the assigner
+  // submits for completion approval.
   status: string; // OPEN | RESOLVED
   created_at: string;
+}
+
+// HistoryEntry is one event in a risk's history. A row is either a field diff
+// (action CREATE/UPDATE/DELETE, with field_changed and old/new values) or a
+// workflow event (every other action, with details) — never both.
+export interface HistoryEntry {
+  id: number;
+  risk_id: number;
+  action: string;
+  field_changed: string | null;
+  old_value: string | null;
+  new_value: string | null;
+  details?: HistoryDetails;
+  created_by: string;
+  created_at: string;
+}
+
+// Every field is optional — each action fills only what it needs.
+export interface HistoryDetails {
+  from?: string;
+  to?: string;
+  role?: string;
+  comment?: string;
+  stage?: string;
+  level?: string;
+  previousLevel?: string;
+  overdueDays?: number;
+  plan?: string;
 }
 
 export interface RiskAssessmentRecord {
@@ -193,6 +234,11 @@ export interface RiskDetail {
   assignment_team_name: string;
   owner_name: string;
   assigner_name: string;
+  // The specific user named at creation who must approve this risk's
+  // PENDING_MANAGEMENT_APPROVAL stage — holding RISK_MANAGEMENT_APPROVE is not
+  // enough on its own. Set on every risk, not just ACCEPT + HIGH ones.
+  management_approver_id: number;
+  management_approver_name: string;
   compliance_approver_name: string | null;
   // Original rating from creation; immutable once a risk owner has approved
   // the risk. Only EditRiskDialog should read this — for display, use
@@ -202,6 +248,10 @@ export interface RiskDetail {
   // else gross_score. This is what headers/tables should display.
   effective_score: RiskScoreInfo | null;
   compliance_references: ComplianceReference[];
+  // Many-to-many at the schema level even though Add Risk renders a
+  // single-select, so this can come back with zero, one, or several entries —
+  // render it as a list, not a scalar.
+  risk_categories: RiskCategory[];
   action_plan: ActionPlanDetail | null;
   assessments: RiskAssessmentRecord[];
 }
@@ -218,6 +268,11 @@ export interface ListRisksParams {
   due_from?: string;
   due_to?: string;
   due_overdue?: boolean;
+  // Risks carrying an unresolved escalation — what the Overdue Risks tab
+  // filters on. Not the ESCALATED status: once management comments, the risk
+  // returns to IN_REMEDIATION while the escalation stays open, so it shows in
+  // Approved Risks and Overdue at the same time.
+  open_escalation?: boolean;
   offset?: number;
   limit?: number;
 }
@@ -440,8 +495,14 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function fetchSourceRegisterTeams(authFetch: AuthFetch): Promise<RiskTeam[]> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/teams?type=SOURCE_REGISTER`);
+// mine=true restricts the result to the caller's own risk teams — used by the
+// Dashboard/Analytics/Registers-list register filters so they never offer a
+// register the caller can't see any data for. AddRisk's create-flow register
+// picker omits it, since raising a risk under a register you don't belong to
+// is a legitimate action this scoping was never meant to restrict.
+export async function fetchSourceRegisterTeams(authFetch: AuthFetch, mine?: boolean): Promise<RiskTeam[]> {
+  const query = mine ? "&mine=true" : "";
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/teams?type=SOURCE_REGISTER${query}`);
   return handleResponse<RiskTeam[]>(res);
 }
 
@@ -462,6 +523,24 @@ export async function fetchComplianceReferences(authFetch: AuthFetch): Promise<C
 
 export async function fetchUsers(authFetch: AuthFetch): Promise<UserOption[]> {
   const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/users`);
+  return handleResponse<UserOption[]>(res);
+}
+
+export async function fetchRiskCategories(authFetch: AuthFetch): Promise<RiskCategory[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk-categories`);
+  return handleResponse<RiskCategory[]>(res);
+}
+
+// fetchManagementApprovers / fetchRiskOwnerCandidates return the subset of
+// platform users who also hold the matching Asgardeo group membership —
+// sourced live via the backend's SCIM integration, not a locally-stored role.
+export async function fetchManagementApprovers(authFetch: AuthFetch): Promise<UserOption[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/management-approvers`);
+  return handleResponse<UserOption[]>(res);
+}
+
+export async function fetchRiskOwnerCandidates(authFetch: AuthFetch): Promise<UserOption[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk-owner-candidates`);
   return handleResponse<UserOption[]>(res);
 }
 
@@ -519,6 +598,7 @@ export function buildCreateRiskPayload(data: AddRiskFormValues): Record<string, 
     risk_title: data.riskTitle,
     risk_description: data.riskDescription,
     compliance_reference_ids: data.complianceReferences,
+    risk_category_ids: data.riskCategory !== "" ? [data.riskCategory] : undefined,
     identified_by_type: data.identifiedByType,
     identified_by_name: data.identifiedByName !== "" ? data.identifiedByName : undefined,
     // Only meaningful (and only required by the backend) for EMPLOYEE — the
@@ -537,6 +617,7 @@ export function buildCreateRiskPayload(data: AddRiskFormValues): Record<string, 
     reassessment_date: toDateOnlyString(data.reassessmentDate),
     assignment_team_id: data.assignmentTeam !== "" ? data.assignmentTeam : undefined,
     owner_id: data.riskOwner !== "" ? data.riskOwner : undefined,
+    management_approver_id: data.managementApprover !== "" ? data.managementApprover : undefined,
     action_owner_id: data.actionOwner !== "" ? data.actionOwner : undefined,
     action_plan_description: data.actionPlanDescription,
     action_steps: data.actionSteps.map((s) => ({ description: s.description })),
@@ -575,6 +656,7 @@ export async function fetchRisks(
   if (params.due_from) q.set("due_from", params.due_from);
   if (params.due_to) q.set("due_to", params.due_to);
   if (params.due_overdue) q.set("due_overdue", "true");
+  if (params.open_escalation) q.set("open_escalation", "true");
   if (params.offset !== undefined) q.set("offset", String(params.offset));
   if (params.limit !== undefined) q.set("limit", String(params.limit));
   const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks?${q}`);
@@ -685,10 +767,10 @@ export async function fetchActionPlans(authFetch: AuthFetch, riskId: number): Pr
   return handleResponse<ActionPlan[]>(res);
 }
 
-// createManagementActionPlan is MANAGEMENT-only — the backend rejects any
-// other plan_type here, since STANDARD plans are still created inline as
-// part of risk registration (Add Risk's own flow).
-export async function createManagementActionPlan(
+// createActionPlan adds a further plan to a risk that already has one from
+// registration. The backend forces plan_type STANDARD and gates this on the
+// caller being the risk's assigner — MANAGEMENT plans are retired.
+export async function createActionPlan(
   authFetch: AuthFetch,
   riskId: number,
   payload: { description: string; action_owner_id: number | null; steps: string[] },
@@ -698,13 +780,40 @@ export async function createManagementActionPlan(
     body: JSON.stringify({
       description: payload.description,
       action_owner_id: payload.action_owner_id,
-      plan_type: "MANAGEMENT",
       // Steps are created atomically with the plan on the backend, so a
       // failure can't leave an orphaned, stepless plan behind.
       steps: payload.steps,
     }),
   });
   return handleResponse<ActionPlan>(res);
+}
+
+// fetchRiskHistory returns a risk's full history, newest first — every
+// workflow event and field edit, behind the drawer's History tab.
+export async function fetchRiskHistory(authFetch: AuthFetch, riskId: number): Promise<HistoryEntry[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/history`);
+  return handleResponse<HistoryEntry[]>(res);
+}
+
+// commentOnEscalation answers an escalation. The comment alone returns the risk
+// to its assigner (ESCALATED → IN_REMEDIATION); the escalation stays open, so
+// the risk remains in the Overdue tab until the assigner submits it for
+// completion approval.
+//
+// Who may call this is decided server-side by risk level: the risk's Management
+// Approver for a HIGH risk, or the assigner's/action owner's line manager for
+// MEDIUM and LOW. A compliance admin may always do it.
+export async function commentOnEscalation(
+  authFetch: AuthFetch,
+  riskId: number,
+  escalationId: number,
+  comment: string,
+): Promise<Escalation> {
+  const res = await authFetch(
+    `${BACKEND_BASE_URL}/api/v1/risks/${riskId}/escalations/${escalationId}/comment`,
+    { method: "POST", body: JSON.stringify({ comment }) },
+  );
+  return handleResponse<Escalation>(res);
 }
 
 export async function fetchActionPlanSteps(

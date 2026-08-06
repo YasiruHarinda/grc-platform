@@ -23,26 +23,19 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/repository"
 )
 
-// NotificationService defines business operations for risk notifications.
-type NotificationService interface {
-	List(ctx context.Context, recipientID int) ([]*model.Notification, error)
-	MarkRead(ctx context.Context, id, recipientID int) error
+// RiskCategoryService defines business operations for risk categories.
+type RiskCategoryService interface {
+	List(ctx context.Context) ([]*model.RiskCategory, error)
 }
 
-type notificationService struct {
-	repo repository.NotificationRepository
+type riskCategoryService struct {
+	repo repository.RiskCategoryRepository
 }
 
-func NewNotificationService(repo repository.NotificationRepository) NotificationService {
-	return &notificationService{repo: repo}
+func NewRiskCategoryService(repo repository.RiskCategoryRepository) RiskCategoryService {
+	return &riskCategoryService{repo: repo}
 }
 
-func (s *notificationService) List(ctx context.Context, recipientID int) ([]*model.Notification, error) {
-	// TODO: delegate to repo, filter by recipient_id and is_read=false
-	return nil, nil
-}
-
-func (s *notificationService) MarkRead(ctx context.Context, id, recipientID int) error {
-	// TODO: verify notification belongs to recipientID, set is_read=true via repo
-	return nil
+func (s *riskCategoryService) List(ctx context.Context) ([]*model.RiskCategory, error) {
+	return s.repo.List(ctx)
 }

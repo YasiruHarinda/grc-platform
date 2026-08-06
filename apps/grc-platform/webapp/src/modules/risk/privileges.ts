@@ -14,30 +14,42 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Risk Hub privilege name constants.
+// Risk Hub privilege name constants. All prefixed RISK_ so they group together
+// (visually and alphabetically) apart from the Audit Hub's privileges.
 // Values must match privilege_name in the privilege table and the constants in
 // backend/internal/shared/privilege/privilege.go exactly.
 export const RiskPrivilege = {
-  ViewRisks:             "VIEW_RISKS",
-  CreateRisk:            "CREATE_RISK",
-  UpdateRisk:            "UPDATE_RISK",
-  SubmitRisk:            "SUBMIT_RISK",
-  CancelRisk:            "CANCEL_RISK",
-  OwnerApproveRisk:      "OWNER_APPROVE_RISK",
-  ManagementApproveRisk: "MANAGEMENT_APPROVE_RISK",
-  ComplianceApproveRisk: "COMPLIANCE_APPROVE_RISK",
-  OwnerRejectRisk:       "OWNER_REJECT_RISK",
-  ManagementRejectRisk:  "MANAGEMENT_REJECT_RISK",
-  ComplianceRejectRisk:  "COMPLIANCE_REJECT_RISK",
-  CompleteRisk:          "COMPLETE_RISK",
-  CloseRisk:             "CLOSE_RISK",
-  EscalateRisk:          "ESCALATE_RISK",
-  AssessRisk:            "ASSESS_RISK",
-  ManageTeams:           "MANAGE_TEAMS",
-  ManageRiskScores:      "MANAGE_RISK_SCORES",
-  ManageActionPlans:     "MANAGE_ACTION_PLANS",
-  ManageComplianceRefs:  "MANAGE_COMPLIANCE_REFS",
-  ViewAnalytics:         "VIEW_ANALYTICS",
-  CreateManagementActionPlan: "CREATE_MANAGEMENT_ACTION_PLAN_RISK",
-  CompleteActionSteps:        "COMPLETE_ACTION_STEPS_RISK",
+  ViewRisks:             "RISK_VIEW_RISKS",
+  // ViewAllRisks grants org-wide read visibility without edit/approve rights
+  // — see backend/internal/shared/privilege/privilege.go for details.
+  ViewAllRisks:          "RISK_VIEW_ALL_RISKS",
+  // ViewRiskDashboard gates the Dashboard nav item/route specifically —
+  // distinct from ViewRisks (which gates the Registers list) so an Action
+  // Owner can hold list access without also getting the dashboard.
+  ViewRiskDashboard:     "RISK_VIEW_DASHBOARD",
+  CreateRisk:            "RISK_CREATE",
+  UpdateRisk:            "RISK_UPDATE",
+  SubmitRisk:            "RISK_SUBMIT",
+  CancelRisk:            "RISK_CANCEL",
+  OwnerApproveRisk:      "RISK_OWNER_APPROVE",
+  ManagementApproveRisk: "RISK_MANAGEMENT_APPROVE",
+  ComplianceApproveRisk: "RISK_COMPLIANCE_APPROVE",
+  OwnerRejectRisk:       "RISK_OWNER_REJECT",
+  ManagementRejectRisk:  "RISK_MANAGEMENT_REJECT",
+  ComplianceRejectRisk:  "RISK_COMPLIANCE_REJECT",
+  CompleteRisk:          "RISK_COMPLETE",
+  CloseRisk:             "RISK_CLOSE",
+  EscalateRisk:          "RISK_ESCALATE",
+  AssessRisk:            "RISK_ASSESS",
+  ManageTeams:           "RISK_MANAGE_TEAMS",
+  ManageRiskScores:      "RISK_MANAGE_SCORES",
+  ManageActionPlans:     "RISK_MANAGE_ACTION_PLANS",
+  ManageComplianceRefs:  "RISK_MANAGE_COMPLIANCE_REFS",
+  ViewAnalytics:         "RISK_VIEW_ANALYTICS",
+  // RETIRED alongside the MANAGEMENT action plan itself: an escalation is now
+  // answered with a comment, and additional plans are created by the Risk
+  // Assigner under ManageActionPlans. Seeded INACTIVE server-side, so it
+  // resolves for nobody — nothing should check it.
+  CreateManagementActionPlan: "RISK_CREATE_MANAGEMENT_ACTION_PLAN",
+  CompleteActionSteps:        "RISK_COMPLETE_ACTION_STEPS",
 } as const;

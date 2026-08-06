@@ -42,12 +42,15 @@ import {
   createRisk,
   fetchAssignmentTeams,
   fetchComplianceReferences,
+  fetchManagementApprovers,
   fetchNextSequenceID,
+  fetchRiskCategories,
+  fetchRiskOwnerCandidates,
   fetchRiskScores,
   fetchSourceRegisterTeams,
   fetchUsers,
 } from "../api/riskApi";
-import type { ComplianceReference, RiskScore, RiskTeam, UserOption } from "../api/riskApi";
+import type { ComplianceReference, RiskCategory, RiskScore, RiskTeam, UserOption } from "../api/riskApi";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 
 const STEPS = ["Basic Information", "Risk Assessment", "Risk Treatment Plan"] as const;
@@ -59,6 +62,7 @@ const STEP_1_FIELDS: (keyof AddRiskFormValues)[] = [
   "sourceRegister",
   "riskTitle",
   "riskDescription",
+  "riskCategory",
   "identifiedByType",
   "assignedBy",
   "riskIdentifiedDate",
@@ -112,7 +116,10 @@ export default function AddRisk(): JSX.Element {
   const [assignmentTeams, setAssignmentTeams]         = useState<RiskTeam[]>([]);
   const [riskScores, setRiskScores]                   = useState<RiskScore[]>([]);
   const [complianceRefs, setComplianceRefs]           = useState<ComplianceReference[]>([]);
+  const [riskCategories, setRiskCategories]           = useState<RiskCategory[]>([]);
   const [users, setUsers]                             = useState<UserOption[]>([]);
+  const [managementApprovers, setManagementApprovers] = useState<UserOption[]>([]);
+  const [riskOwnerCandidates, setRiskOwnerCandidates] = useState<UserOption[]>([]);
   const [fetchError, setFetchError]                   = useState<string | null>(null);
   const [submitError, setSubmitError]                 = useState<string | null>(null);
 
@@ -129,6 +136,7 @@ export default function AddRisk(): JSX.Element {
       riskTitle: "",
       riskDescription: "",
       complianceReferences: [],
+      riskCategory: "",
       identifiedByType: "EMPLOYEE",
       identifiedByName: "",
       identifiedByEmail: "",
@@ -143,6 +151,7 @@ export default function AddRisk(): JSX.Element {
       // ── Step 3 defaults ───────────────────────────────────────────────────
       assignmentTeam: "",
       riskOwner: "",
+      managementApprover: "",
       actionOwner: "",
       actionPlanDescription: "",
       actionSteps: [{ description: "" }],
@@ -176,14 +185,20 @@ export default function AddRisk(): JSX.Element {
       fetchAssignmentTeams(authFetch),
       fetchRiskScores(authFetch),
       fetchComplianceReferences(authFetch),
+      fetchRiskCategories(authFetch),
       fetchUsers(authFetch),
+      fetchManagementApprovers(authFetch),
+      fetchRiskOwnerCandidates(authFetch),
     ])
-      .then(([srTeams, atTeams, scores, refs, userList]) => {
+      .then(([srTeams, atTeams, scores, refs, categories, userList, mgmtApprovers, ownerCandidates]) => {
         setSourceRegisterTeams(srTeams);
         setAssignmentTeams(atTeams);
         setRiskScores(scores);
         setComplianceRefs(refs);
+        setRiskCategories(categories);
         setUsers(userList);
+        setManagementApprovers(mgmtApprovers);
+        setRiskOwnerCandidates(ownerCandidates);
       })
       .catch(() => {
         setFetchError("Failed to load form data. Please refresh the page.");
@@ -252,6 +267,10 @@ export default function AddRisk(): JSX.Element {
       setError("riskOwner", { type: "required", message: "Risk owner is required" });
       hasStep3Error = true;
     }
+    if (!data.managementApprover) {
+      setError("managementApprover", { type: "required", message: "Management approver is required" });
+      hasStep3Error = true;
+    }
     if (!data.actionOwner) {
       setError("actionOwner", { type: "required", message: "Action owner is required" });
       hasStep3Error = true;
@@ -298,10 +317,16 @@ export default function AddRisk(): JSX.Element {
       riskSequenceId={riskSequenceId}
       sourceRegisterTeams={sourceRegisterTeams}
       complianceRefs={complianceRefs}
+      riskCategories={riskCategories}
       users={users}
     />,
     <RiskAssessmentStep riskScores={riskScores} />,
-    <ActionPlanStep assignmentTeams={assignmentTeams} users={users} />,
+    <ActionPlanStep
+      assignmentTeams={assignmentTeams}
+      users={users}
+      riskOwnerCandidates={riskOwnerCandidates}
+      managementApprovers={managementApprovers}
+    />,
   ];
 
   return (

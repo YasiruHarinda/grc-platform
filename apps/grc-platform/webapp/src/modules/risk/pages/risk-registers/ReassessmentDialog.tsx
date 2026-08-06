@@ -115,10 +115,10 @@ export default function ReassessmentDialog({
       PaperProps={{ sx: dialogPaperSx }}
     >
       <DialogTitle>
-        <Typography variant="h6" fontWeight={700}>
+        <Typography component="span" variant="h6" fontWeight={700} display="block">
           Reassess Risk
         </Typography>
-        <Typography variant="body2" color="text.secondary">
+        <Typography component="span" variant="body2" color="text.secondary" display="block">
           {riskCode} : Record a residual risk assessment
         </Typography>
       </DialogTitle>

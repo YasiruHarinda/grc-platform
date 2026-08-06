@@ -129,6 +129,11 @@ type RiskScoreService interface {
 	ListRiskScores(ctx context.Context) (domain.ListRiskScoresResponse, error)
 }
 
+// RiskCategoryService defines operations on risk_category.
+type RiskCategoryService interface {
+	ListRiskCategories(ctx context.Context) (domain.ListRiskCategoriesResponse, error)
+}
+
 // RiskReferenceService defines operations on risk_security_compliance_reference.
 type RiskReferenceService interface {
 	SearchRiskReferences(ctx context.Context, req domain.SearchRiskReferencesRequest) (domain.SearchRiskReferencesResponse, error)
@@ -213,6 +218,9 @@ type RiskEscalationService interface {
 	CreateRiskEscalation(ctx context.Context, riskID int, req domain.CreateRiskEscalationRequest) (domain.RiskEscalation, error)
 	GetRiskEscalationByID(ctx context.Context, riskID, escalationID int) (domain.RiskEscalation, error)
 	UpdateRiskEscalation(ctx context.Context, riskID, escalationID int, req domain.UpdateRiskEscalationRequest) (domain.RiskEscalation, error)
+	// CommentEscalation records a decision and returns the risk to
+	// IN_REMEDIATION as one transaction. See CommentEscalationRequest.
+	CommentEscalation(ctx context.Context, riskID, escalationID int, req domain.CommentEscalationRequest) (domain.RiskEscalation, error)
 	ListRiskEscalations(ctx context.Context, riskID int) (domain.ListRiskEscalationsResponse, error)
 	// EscalateRisk is the single "escalate one risk" operation shared by the
 	// daily job (internal/job) and a manual trigger (Compliance clicking
@@ -227,13 +235,6 @@ type RiskEscalationService interface {
 type RiskChangeLogService interface {
 	CreateRiskChangeLog(ctx context.Context, riskID int, req domain.CreateRiskChangeLogRequest) (domain.RiskChangeLog, error)
 	ListRiskChangeLog(ctx context.Context, riskID int, limit, offset int) (domain.ListRiskChangeLogResponse, error)
-}
-
-// RiskNotificationService defines operations on risk_notification.
-type RiskNotificationService interface {
-	CreateRiskNotification(ctx context.Context, req domain.CreateRiskNotificationRequest) (domain.RiskNotification, error)
-	ListRiskNotifications(ctx context.Context, recipientID int) (domain.ListRiskNotificationsResponse, error)
-	MarkRiskNotificationRead(ctx context.Context, id int64, req domain.MarkRiskNotificationReadRequest) (domain.RiskNotification, error)
 }
 
 // DashboardService defines the read query for the audit dashboard.

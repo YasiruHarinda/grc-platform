@@ -11,11 +11,13 @@ from sqlalchemy.orm import Session
 from app.auth import User, get_current_user
 from app.database import get_db
 from app.models.agent_task import AgentTask
+from app.models.control import Control
 from app.models.evidence import Evidence
 from app.models.evidence_file import EvidenceFile
 from app.models.submission import Submission
 from app.models.usage_log import UsageLog
 from app.schemas.agent_task import TaskCreate, TaskOut, TaskProgress, TaskResult
+from app.storage.blob_paths import build_control_prefix, sanitize_title
 from app.storage.blob_storage import save_file
 
 router = APIRouter(prefix="/agent", tags=["Agent"])
@@ -79,6 +81,43 @@ def _authorize_task_access(task: AgentTask, user: User) -> None:
     endpoints: only the Agent Task's owner or an Admin may access it."""
     if user.role != "admin" and task.user_email != user.email:
         raise HTTPException(403)
+
+
+def _agent_evidence_title(task: AgentTask) -> str:
+    """The Evidence title an AI-agent run gets, shared by `runner_result`
+    (which sets it when the result arrives) and `upload_screenshot` (which
+    needs the identical string at upload time, to build the same blob-name
+    label -- see fork issue #70's addendum). `task.title` and `task.prompt`
+    are both already set at task *creation* (`create_task` above), so both
+    call sites can compute this from the same Agent Task row. Kept as one
+    helper rather than two copies of the f-string so the two can never drift
+    apart.
+    """
+    return f"AI Agent: {task.title or task.prompt[:80]}"
+
+
+def _running_task_for(user_email: str, db: Session) -> AgentTask | None:
+    """This user's currently-running Agent Task, if any.
+
+    `/agent/tasks/next` (`runner_next_task` below) flips exactly one task to
+    `running` for a given user at a time, so this is how `upload_screenshot`
+    -- which only ever receives a file and the authenticated user, no task
+    id -- resolves which task (and therefore which Control) a screenshot
+    belongs to, without adding a `task_id` to the upload contract (which
+    would mean the backend supporting both the old and new Runner shapes
+    indefinitely; see ADR 0001, the Runner is never containerised and runs
+    on individual engineers' laptops).
+
+    Ordered by id descending as a defensive tie-break should more than one
+    somehow be `running` at once (not expected in normal operation) --
+    picking the most recently claimed task rather than an arbitrary one.
+    """
+    return (
+        db.query(AgentTask)
+        .filter(AgentTask.user_email == user_email, AgentTask.status == "running")
+        .order_by(AgentTask.id.desc())
+        .first()
+    )
 
 
 @router.post("/tasks", response_model=TaskOut)
@@ -255,7 +294,7 @@ def cancel_task(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    task = db.query(AgentTask).filter(AgentTask.id == task_id).first()
+    task = db.query(AgentTask).filter(AgentTask.id == task_id).with_for_update().first()
     if not task:
         raise HTTPException(404)
     _authorize_task_access(task, user)
@@ -339,13 +378,35 @@ def runner_result(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    task = db.query(AgentTask).filter(
-        AgentTask.id == task_id, AgentTask.user_email == user.email
-    ).first()
+    task = (
+        db.query(AgentTask)
+        .filter(AgentTask.id == task_id, AgentTask.user_email == user.email)
+        .with_for_update()
+        .first()
+    )
     if not task:
         raise HTTPException(404)
 
+    # The runner reached us, so it is alive — record that before deciding
+    # whether the payload itself is worth applying. A replayed post is still
+    # proof of life, and dropping it here would make the runner look offline
+    # for no reason.
     _last_poll[user.email] = datetime.now(timezone.utc)
+
+    # A result was already recorded for this task (`completed_at` is set in
+    # exactly one place: below). This happens when the Runner posts a result,
+    # the response is lost before the Runner sees it (timeout, dropped
+    # connection, pod restart), and the Runner's generic error handler posts
+    # a second, contradicting result (e.g. status="failed") as it winds down
+    # — see runner/wso2_runner/loop.py's exception handler around post_result.
+    # The first result already committed Evidence/Evidence Files/Submission
+    # and the usage log correctly; a second post must be a no-op that looks,
+    # to the caller, exactly like the original success — never overwrite a
+    # good result with a stale/contradicting one. The row lock above also
+    # makes this check safe against a `cancel_task` racing in between our
+    # read and our commit (see that handler's matching lock).
+    if task.completed_at is not None:
+        return {"ok": True}
 
     # If the user cancelled from the UI, that decision wins over a normal
     # completion that the runner may post as it winds down.
@@ -373,7 +434,7 @@ def runner_result(
     if result.screenshots and not cancelled:
         first = result.screenshots[0]
         evidence = Evidence(
-            title=f"AI Agent: {task.title or task.prompt[:80]}",
+            title=_agent_evidence_title(task),
             description=first.get("subtask") or task.prompt,
             file_name=first["file_name"],
             file_url=first["file_url"],
@@ -409,9 +470,35 @@ def runner_result(
 def upload_screenshot(
     file: UploadFile,
     user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
-    """Runner uploads a PNG screenshot here before posting the task result."""
+    """Runner uploads a PNG screenshot here before posting the task result.
+
+    This endpoint only ever gets a file and the authenticated user -- no
+    task id, and per fork issue #70's addendum, it must stay that way (no
+    Runner change, no protocol change). So the hierarchical
+    `product/framework/control/` blob-name prefix is derived by resolving
+    *this user's currently-running task* (`_running_task_for`) and walking
+    its Control up to its Framework and Product.
+
+    Falls back to the old flat `{uuid}{ext}` path -- never fails the
+    upload -- whenever that chain can't be resolved: no running task, a
+    task with no `control_id` (nullable, and after the #76 work a routine
+    post-deletion state, not an error), or a `control_id` whose Control row
+    is somehow already gone. A screenshot must never be lost just because we
+    couldn't work out where to file it.
+    """
     # Uploading means the runner is alive and working — keep it "online".
     _last_poll[user.email] = datetime.now(timezone.utc)
-    file_name, file_url = save_file(file)
+
+    prefix = ""
+    label: str | None = None
+    task = _running_task_for(user.email, db)
+    if task is not None and task.control_id is not None:
+        control = db.query(Control).filter(Control.id == task.control_id).first()
+        if control is not None:
+            prefix = build_control_prefix(control)
+            label = sanitize_title(_agent_evidence_title(task))
+
+    file_name, file_url = save_file(file, prefix=prefix, label=label)
     return {"file_name": file_name, "file_url": file_url}

@@ -29,8 +29,30 @@ type Config struct {
 	Auth                    AuthConfig
 	ComplianceEntityBaseURL string
 	HREntity                HREntityConfig
+	SCIM                    SCIMConfig
 	CORSAllowedOrigin       string
 	AIValidation            AIValidationConfig
+	Email                   EmailConfig
+}
+
+// EmailConfig holds the connection details for the shared email-sending
+// service (email-service), used to notify a risk's owner when the risk is
+// created. Required (mustEnv) like HREntityConfig: unlike AI validation, a
+// misconfigured/disabled notifier fails silently from the product's
+// perspective (nobody gets told the risk exists), so this is treated as
+// load-bearing rather than optional.
+//
+// The service's own code (service.bal) has no inbound auth check, but the
+// real Choreo-hosted instance sits behind API Manager with OAuth2
+// client-credentials, same as HREntityConfig — ClientID/ClientSecret/TokenURL
+// are required for real calls to succeed.
+type EmailConfig struct {
+	ServiceURL      string
+	FromAddress     string
+	FrontendBaseURL string
+	ClientID        string
+	ClientSecret    string
+	TokenURL        string
 }
 
 // AIValidationConfig configures the fire-and-forget trigger to the AI Validation
@@ -82,6 +104,24 @@ type HREntityConfig struct {
 	ClientSecret string
 }
 
+// SCIMConfig holds the connection details for the internal SCIM Operations
+// Service (digiops-infra/operations/scim-operations-service), used to answer
+// "which users belong to Asgardeo group X" for role-filtered dropdowns
+// (Management Approver, Risk Owner) — this platform has no DB-side
+// user↔role table of its own. Required (mustEnv) like HREntityConfig.
+type SCIMConfig struct {
+	BaseURL      string
+	TokenURL     string
+	ClientID     string
+	ClientSecret string
+	// Scopes is a space-separated OAuth2 scope list requested on every token
+	// exchange (e.g. "org_internal:users:read org_internal:groups:read").
+	// Asgardeo grants only the subset the application is actually authorized
+	// for — an app not authorized for a scope silently gets it omitted from
+	// the issued token rather than an error at token-request time.
+	Scopes string
+}
+
 // Load reads configuration from environment variables.
 //
 // There is no database configuration: the backend reaches all data through the
@@ -126,6 +166,52 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	scimBaseURL, err := mustEnv("SCIM_BASE_URL")
+	if err != nil {
+		return Config{}, err
+	}
+	scimTokenURL, err := mustEnv("SCIM_TOKEN_URL")
+	if err != nil {
+		return Config{}, err
+	}
+	scimClientID, err := mustEnv("SCIM_CLIENT_ID")
+	if err != nil {
+		return Config{}, err
+	}
+	scimClientSecret, err := mustEnv("SCIM_CLIENT_SECRET")
+	if err != nil {
+		return Config{}, err
+	}
+	scimScopes, err := mustEnv("SCIM_SCOPES")
+	if err != nil {
+		return Config{}, err
+	}
+
+	emailServiceURL, err := mustEnv("EMAIL_SERVICE_URL")
+	if err != nil {
+		return Config{}, err
+	}
+	emailFromAddress, err := mustEnv("EMAIL_FROM_ADDRESS")
+	if err != nil {
+		return Config{}, err
+	}
+	frontendBaseURL, err := mustEnv("FRONTEND_BASE_URL")
+	if err != nil {
+		return Config{}, err
+	}
+	emailClientID, err := mustEnv("EMAIL_CLIENT_ID")
+	if err != nil {
+		return Config{}, err
+	}
+	emailClientSecret, err := mustEnv("EMAIL_CLIENT_SECRET")
+	if err != nil {
+		return Config{}, err
+	}
+	emailTokenURL, err := mustEnv("EMAIL_TOKEN_URL")
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		Port:                    envOrDefault("PORT", ":8081"),
 		Auth:                    authCfg,
@@ -136,11 +222,31 @@ func Load() (Config, error) {
 			ClientID:     hrEntityClientID,
 			ClientSecret: hrEntityClientSecret,
 		},
-		CORSAllowedOrigin: envOrDefault("CORS_ALLOWED_ORIGIN", "http://localhost:3000"),
+		SCIM: SCIMConfig{
+			BaseURL:      scimBaseURL,
+			TokenURL:     scimTokenURL,
+			ClientID:     scimClientID,
+			ClientSecret: scimClientSecret,
+			Scopes:       scimScopes,
+		},
+		// Derived from FRONTEND_BASE_URL rather than its own env var: both are
+		// "the webapp's public origin", and having two meant one could be
+		// correctly set (this one is mustEnv, so a typo fails startup loudly)
+		// while the other silently defaulted to localhost — a deployment
+		// could boot with email links pointing somewhere CORS doesn't trust.
+		CORSAllowedOrigin: frontendBaseURL,
 		AIValidation: AIValidationConfig{
 			Enabled:      os.Getenv("AI_VALIDATION_ENABLED") == "true",
 			AgentBaseURL: envOrDefault("AI_AGENT_BASE_URL", "http://localhost:8090"),
 			AgentAPIKey:  os.Getenv("AI_AGENT_API_KEY"),
+		},
+		Email: EmailConfig{
+			ServiceURL:      emailServiceURL,
+			FromAddress:     emailFromAddress,
+			FrontendBaseURL: frontendBaseURL,
+			ClientID:        emailClientID,
+			ClientSecret:    emailClientSecret,
+			TokenURL:        emailTokenURL,
 		},
 	}, nil
 }

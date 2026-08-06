@@ -28,7 +28,7 @@ export function useAuthApiClient() {
    * Builds request headers with auth and payload defaults.
    *
    * @param {RequestInit | undefined} options - Request init options.
-   * @param {string} token - ID token used as bearer and user token header.
+   * @param {string} token - ID token used as the bearer token.
    * @returns {Headers} Final headers for request execution.
    */
   const buildRequestHeaders = (
@@ -37,7 +37,6 @@ export function useAuthApiClient() {
   ): Headers => {
     const headers = new Headers(options?.headers);
     headers.set("Authorization", `Bearer ${token}`);
-    headers.set("x-user-id-token", token);
     if (!headers.has("Accept")) {
       headers.set("Accept", "application/json");
     }

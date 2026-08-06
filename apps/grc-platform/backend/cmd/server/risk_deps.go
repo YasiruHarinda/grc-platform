@@ -17,10 +17,13 @@
 package main
 
 import (
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
 	riskhandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/handler"
 	riskentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/repository/entity"
 	riskservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/service"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/file"
 	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user/entity"
@@ -33,6 +36,7 @@ import (
 // database handle. fileSvc is the shared Azure Blob service used by evidence
 // uploads, and hrClient talks to the HR entity's GraphQL service for employee
 // lookups — neither is backed by the GRC platform's own database either.
+// emailCfg wires the risk-owner notification email sent on risk creation.
 //
 // Dashboard and analytics take their payload already assembled: the entity runs
 // the aggregate queries and the pivots, so these services pass it through,
@@ -41,22 +45,29 @@ func buildRiskDeps(
 	ec *entityclient.Client,
 	fileSvc *file.Service,
 	hrClient *hrentity.Client,
+	scimClient *scim.Client,
+	emailCfg config.EmailConfig,
 ) riskhandler.Deps {
 	userRepo := userentity.NewRepository(ec)
 	actionPlanRepo := riskentity.NewActionPlanRepository(ec)
+	riskRepo := riskentity.NewRiskRepository(ec)
 	return riskhandler.Deps{
-		Risk:         riskservice.NewRiskService(riskentity.NewRiskRepository(ec), actionPlanRepo),
-		Assessment:   riskservice.NewRiskAssessmentService(riskentity.NewAssessmentRepository(ec)),
-		Team:         riskservice.NewTeamService(riskentity.NewTeamRepository(ec)),
-		Score:        riskservice.NewRiskScoreService(riskentity.NewRiskScoreRepository(ec)),
-		ActionPlan:   riskservice.NewActionPlanService(actionPlanRepo, userRepo),
-		Evidence:     riskservice.NewEvidenceService(riskentity.NewRiskEvidenceRepository(ec), fileSvc),
-		Escalation:   riskservice.NewEscalationService(riskentity.NewEscalationRepository(ec)),
-		Notification: riskservice.NewNotificationService(riskentity.NewNotificationRepository(ec)),
-		Compliance:   riskservice.NewComplianceReferenceService(riskentity.NewComplianceReferenceRepository(ec)),
-		Analytics:    riskservice.NewAssembledAnalyticsService(riskentity.NewAnalyticsRepository(ec)),
-		Dashboard:    riskservice.NewAssembledDashboardService(riskentity.NewDashboardRepository(ec)),
-		Employee:     riskservice.NewEmployeeSearchService(hrClient),
-		Users:        userRepo,
+		Risk:            riskservice.NewRiskService(riskRepo, actionPlanRepo),
+		Assessment:      riskservice.NewRiskAssessmentService(riskentity.NewAssessmentRepository(ec)),
+		Team:            riskservice.NewTeamService(riskentity.NewTeamRepository(ec)),
+		Score:           riskservice.NewRiskScoreService(riskentity.NewRiskScoreRepository(ec)),
+		Category:        riskservice.NewRiskCategoryService(riskentity.NewRiskCategoryRepository(ec)),
+		ActionPlan:      riskservice.NewActionPlanService(actionPlanRepo, userRepo),
+		Evidence:        riskservice.NewEvidenceService(riskentity.NewRiskEvidenceRepository(ec), fileSvc),
+		History:         riskservice.NewHistoryService(riskentity.NewHistoryRepository(ec)),
+		Escalation:      riskservice.NewEscalationService(riskentity.NewEscalationRepository(ec), riskRepo, actionPlanRepo, userRepo, hrClient),
+		Compliance:      riskservice.NewComplianceReferenceService(riskentity.NewComplianceReferenceRepository(ec)),
+		Analytics:       riskservice.NewAssembledAnalyticsService(riskentity.NewAnalyticsRepository(ec)),
+		Dashboard:       riskservice.NewAssembledDashboardService(riskentity.NewDashboardRepository(ec)),
+		Employee:        riskservice.NewEmployeeSearchService(hrClient),
+		Users:           userRepo,
+		SCIM:            scimClient,
+		Email:           emailer.New(emailCfg.ServiceURL, emailCfg.FromAddress, emailCfg.TokenURL, emailCfg.ClientID, emailCfg.ClientSecret),
+		FrontendBaseURL: emailCfg.FrontendBaseURL,
 	}
 }

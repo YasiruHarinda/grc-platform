@@ -19,7 +19,7 @@ package entity
 // Unimplemented repositories, kept so the risk module can stop depending on a
 // *sql.DB before these features exist.
 //
-// Risk evidence and notifications are still scaffolding: every method below
+// Risk evidence is still scaffolding: every method below
 // returns errNotImplemented, neither is routed, and their tables are empty.
 // Their MySQL counterparts were identical — stubs holding a database handle
 // they never used. Holding an entity client they never use instead changes
@@ -65,22 +65,5 @@ func (r *riskEvidenceRepository) Create(ctx context.Context, riskID int, fileNam
 }
 
 func (r *riskEvidenceRepository) Delete(ctx context.Context, riskID, evidenceID int, byUserID string) error {
-	return errNotImplemented
-}
-
-// ── Notifications ────────────────────────────────────────────────────────────
-
-type notificationRepository struct{ c *entityclient.Client }
-
-// NewNotificationRepository returns an unimplemented notification repository.
-func NewNotificationRepository(c *entityclient.Client) repository.NotificationRepository {
-	return &notificationRepository{c: c}
-}
-
-func (r *notificationRepository) List(ctx context.Context, recipientID int) ([]*model.Notification, error) {
-	return nil, errNotImplemented
-}
-
-func (r *notificationRepository) MarkRead(ctx context.Context, id, recipientID int) error {
 	return errNotImplemented
 }
