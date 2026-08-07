@@ -519,7 +519,7 @@ export default function WorkQueue({
         />
       </Tabs>
       <Box sx={{ pt: 1 }}>
-        {tab === 0 && <TabPanel tab="action-items" canApprove={canApprove} emptyText="No pending actions — you're all caught up!" />}
+        {tab === 0 && <TabPanel tab="action-items" canApprove={canApprove} emptyText="No pending actions - you're all caught up!" />}
         {tab === 1 && <TabPanel tab="due-soon" canApprove={canApprove} emptyText="Nothing due in the next 7 days" />}
         {tab === 2 && <TabPanel tab="overdue" canApprove={canApprove} emptyText="No overdue controls" />}
       </Box>
