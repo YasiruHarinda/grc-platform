@@ -138,6 +138,13 @@ type TaskOut = {
   prompt: string;
   region_hint: string | null;
   control_id: number | null;
+  // Frozen at task creation, and NOT updated if the Control is later
+  // renamed or deleted (see the backend's app/models/agent_task.py comment).
+  // Present even after control_id goes null, so a run whose Control was
+  // deleted can still be told apart from a login task or a Control-less
+  // run, which have neither.
+  control_ref_snapshot?: string | null;
+  control_title_snapshot?: string | null;
   title: string | null;
   kind: "run" | "login" | "reset";
   status: "queued" | "running" | "completed" | "failed" | "cancelled";
@@ -1087,9 +1094,18 @@ function TaskStatusPanel({
         </Typography>
 
         <Stack direction="row" spacing={0.75} flexWrap="wrap" rowGap={0.5}>
-          {task.control_id && (
+          {task.control_id ? (
             <Chip label={`Control #${task.control_id}`} size="small" variant="outlined" />
-          )}
+          ) : task.control_title_snapshot || task.control_ref_snapshot ? (
+            // control_id is null but a snapshot survives -- this run's
+            // Control was deleted after the run happened, not a login task
+            // or a Control-less run (those have no snapshot either).
+            <Chip
+              label={`${task.control_ref_snapshot ?? task.control_title_snapshot} (deleted)`}
+              size="small"
+              variant="outlined"
+            />
+          ) : null}
           {task.region_hint && (
             <Chip label={`Hint: ${task.region_hint.slice(0, 40)}`} size="small" variant="outlined" />
           )}

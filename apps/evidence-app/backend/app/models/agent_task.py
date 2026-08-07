@@ -15,6 +15,25 @@ class AgentTask(Base):
     control_id: Mapped[int | None] = mapped_column(ForeignKey("controls.id", ondelete="SET NULL"), nullable=True)
     title: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
+    # Frozen copies of the Control's identity at the moment this task was
+    # created -- plain text, no foreign key, so `ON DELETE SET NULL` on
+    # `control_id` above can never reach them. Without these, `control_id`
+    # going NULL when its Control is deleted is indistinguishable from a
+    # `login` task or a `run` started without picking a Control at all --
+    # three different situations collapsing into the same NULL. These two
+    # columns are the difference between "this run had no Control" and
+    # "this run had a Control that is now gone".
+    #
+    # Deliberately NOT kept in sync if the Control is later renamed: they are
+    # set once, at creation, from whatever the Control was called at the
+    # time this task actually ran against it. That is audit-correct -- the
+    # task describes what really happened, not what the Control is called
+    # today -- but it will look like a bug ("why doesn't this match the
+    # Control's current name?") to a future reader who doesn't know it's
+    # deliberate. It is.
+    control_ref_snapshot: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    control_title_snapshot: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     # run | login — "login" tasks just open a browser at `prompt` (a URL) for the
     # user to manually authenticate (incl. MFA); no LLM steps are run for them.
     kind: Mapped[str] = mapped_column(String(20), nullable=False, default="run")
