@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
 	riskservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/service"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
@@ -49,6 +50,9 @@ type Deps struct {
 	// SCIM answers "which users belong to Asgardeo group X" for role-filtered
 	// pickers (Management Approver, Risk Owner) — see internal/scim.
 	SCIM *scim.Client
+	// Groups holds the Asgardeo group names SCIM is queried against — see
+	// config.RiskGroupsConfig.
+	Groups config.RiskGroupsConfig
 	// Email sends the risk-owner notification fired synchronously right
 	// after a risk is created. A delivery failure is logged but never fails
 	// risk creation itself — see handleCreateRisk.

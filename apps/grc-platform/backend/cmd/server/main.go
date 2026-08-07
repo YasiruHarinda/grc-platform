@@ -95,7 +95,7 @@ func main() {
 	})
 
 	userhandler.RegisterRoutes(mux, userDeps)
-	riskDeps := buildRiskDeps(entityCli, fileSvc, hrClient, scimClient, cfg.Email)
+	riskDeps := buildRiskDeps(entityCli, fileSvc, hrClient, scimClient, cfg.Email, cfg.RiskGroups)
 	riskhandler.RegisterRoutes(mux, riskDeps)
 	audithandler.RegisterRoutes(mux, buildAuditDeps(fileSvc, entityCli, cfg.AIValidation))
 
