@@ -15,10 +15,12 @@ talks to the GRC Platform **Go backend** over REST. Access is role-gated.
 | Area | Technology |
 |------|------------|
 | UI | [React 19](https://react.dev/), [TypeScript](https://www.typescriptlang.org/), [Vite 7](https://vite.dev/) |
-| Design system | [Oxygen UI](https://github.com/wso2/oxygen-ui) (`@wso2/oxygen-ui` 0.6.0) |
+| Design system | [Oxygen UI](https://github.com/wso2/oxygen-ui) (`@wso2/oxygen-ui` 0.13.0, plus `@wso2/oxygen-ui-charts-react` and `@wso2/oxygen-ui-icons-react`) |
 | Data fetching | [TanStack Query 5](https://tanstack.com/query/latest) |
 | Routing | [React Router 7](https://reactrouter.com/) |
-| Authentication | [@asgardeo/react](https://github.com/asgardeo/asgardeo-auth-react-sdk) |
+| Authentication | [@asgardeo/react](https://github.com/asgardeo/asgardeo-auth-react-sdk) (with `@asgardeo/browser` and `@asgardeo/react-router`) |
+| Forms | [react-hook-form](https://react-hook-form.com/) |
+| Session | [react-idle-timer](https://idletimer.dev/) (idle-timeout session guard) |
 
 ## Prerequisites
 
@@ -109,7 +111,9 @@ Open [http://localhost:3000](http://localhost:3000). The root path redirects to
 
 ## Role-Based Access Control (RBAC)
 
-Access is enforced at the Go backend and gated in the UI by role claims from Asgardeo.
+Access is enforced at the Go backend and gated in the UI by privilege claims from
+Asgardeo, checked via each module's privilege-guard component (see
+[Modules](#modules)).
 
 **Key decisions:**
 
@@ -204,25 +208,37 @@ webapp/
 ### Modules
 
 Domain code lives under `src/modules/`. Each module owns its pages, routes
-(`routes.tsx`), and sidebar nav (`nav.ts`), which the shared `App.tsx` and
-`SideBar.tsx` import and spread (see the registration pattern below).
+(`routes.tsx`), sidebar nav (`nav.ts`), and privilege constants
+(`privileges.ts`), which the shared `App.tsx` and `SideBar.tsx` import and
+spread (see the registration pattern below).
 
 | Module | Base path | Purpose |
 |--------|-----------|---------|
 | `audit` | `/audit` | Audit Hub — controls, evidence, audit workflows |
 | `risk` | `/risk` | Risk Hub — risk register and assessments |
 
-Each module owns these files:
+Each module owns these files/folders:
 
 ```
 src/modules/audit/                    src/modules/risk/
 ├── routes.tsx   → auditRoutes        ├── routes.tsx   → riskRoutes
 ├── nav.ts       → auditNav           ├── nav.ts       → riskNav
+├── privileges.ts → AuditPrivilege    ├── privileges.ts → RiskPrivilege
+├── api/                              ├── api/
+├── hooks/                            ├── hooks/
+├── components/                       ├── components/
+│   └── AuditPrivilegeGuard.tsx       │   └── PrivilegeGuard.tsx
 └── pages/...                         └── pages/...
             ↓ imported & spread by ↓
 App.tsx:      <Route>{auditRoutes}{riskRoutes}</Route>
 SideBar.tsx:  SECTIONS = [auditNav, riskNav]   (maps over them)
 ```
+
+`privileges.ts` values must match `privilege_name` in the backend's privilege
+table exactly. Routes and nav items are gated by privilege using each
+module's privilege-guard component (`AuditPrivilegeGuard.tsx` /
+`PrivilegeGuard.tsx`), which reads the current user's privileges and
+redirects/hides when the required one is missing.
 
 This **registration pattern** keeps the Audit and Risk owners working in separate
 files so they don't cause merge conflicts.
