@@ -127,7 +127,8 @@ type SCIMConfig struct {
 // pickers against via the SCIM Operations Service (see internal/scim and
 // riskhandler.Deps.Groups). Each defaults to the org's existing group name so
 // deployments that don't set the env var are unaffected; Choreo environments
-// can override without a code change or redeploy.
+// can override without a code change — a process restart to re-read the env
+// var is still required, since these are loaded once at startup.
 type RiskGroupsConfig struct {
 	// Management gates GET /management-approvers (Management Approver picker).
 	Management string
