@@ -30,6 +30,7 @@ type Config struct {
 	ComplianceEntityBaseURL string
 	HREntity                HREntityConfig
 	SCIM                    SCIMConfig
+	RiskGroups              RiskGroupsConfig
 	CORSAllowedOrigin       string
 	AIValidation            AIValidationConfig
 	Email                   EmailConfig
@@ -120,6 +121,22 @@ type SCIMConfig struct {
 	// for — an app not authorized for a scope silently gets it omitted from
 	// the issued token rather than an error at token-request time.
 	Scopes string
+}
+
+// RiskGroupsConfig holds the Asgardeo group names the Risk Hub filters user
+// pickers against via the SCIM Operations Service (see internal/scim and
+// riskhandler.Deps.Groups). Each defaults to the org's existing group name so
+// deployments that don't set the env var are unaffected; Choreo environments
+// can override without a code change or redeploy.
+type RiskGroupsConfig struct {
+	// Management gates GET /management-approvers (Management Approver picker).
+	Management string
+	// RiskOwner gates GET /risk-owner-candidates (Risk Owner picker).
+	RiskOwner string
+	// ComplianceAdmin is provisioned for the future Compliance Admin email
+	// notification (see notifyComplianceAdmins in risk/handler/notify.go,
+	// currently a deliberate no-op) — nothing reads this yet.
+	ComplianceAdmin string
 }
 
 // Load reads configuration from environment variables.
@@ -228,6 +245,11 @@ func Load() (Config, error) {
 			ClientID:     scimClientID,
 			ClientSecret: scimClientSecret,
 			Scopes:       scimScopes,
+		},
+		RiskGroups: RiskGroupsConfig{
+			Management:      envOrDefault("RISK_MANAGEMENT_GROUP", "grc-platform-management"),
+			RiskOwner:       envOrDefault("RISK_OWNER_GROUP", "grc-platform-risk-owner"),
+			ComplianceAdmin: envOrDefault("RISK_COMPLIANCE_ADMIN_GROUP", "grc-platform-risk-compliance-admin"),
 		},
 		// Derived from FRONTEND_BASE_URL rather than its own env var: both are
 		// "the webapp's public origin", and having two meant one could be

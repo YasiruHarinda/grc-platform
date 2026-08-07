@@ -37,6 +37,8 @@ import (
 // uploads, and hrClient talks to the HR entity's GraphQL service for employee
 // lookups — neither is backed by the GRC platform's own database either.
 // emailCfg wires the risk-owner notification email sent on risk creation.
+// groupsCfg carries the Asgardeo group names SCIM-backed user pickers filter
+// against — see config.RiskGroupsConfig.
 //
 // Dashboard and analytics take their payload already assembled: the entity runs
 // the aggregate queries and the pivots, so these services pass it through,
@@ -47,6 +49,7 @@ func buildRiskDeps(
 	hrClient *hrentity.Client,
 	scimClient *scim.Client,
 	emailCfg config.EmailConfig,
+	groupsCfg config.RiskGroupsConfig,
 ) riskhandler.Deps {
 	userRepo := userentity.NewRepository(ec)
 	actionPlanRepo := riskentity.NewActionPlanRepository(ec)
@@ -67,6 +70,7 @@ func buildRiskDeps(
 		Employee:        riskservice.NewEmployeeSearchService(hrClient),
 		Users:           userRepo,
 		SCIM:            scimClient,
+		Groups:          groupsCfg,
 		Email:           emailer.New(emailCfg.ServiceURL, emailCfg.FromAddress, emailCfg.TokenURL, emailCfg.ClientID, emailCfg.ClientSecret),
 		FrontendBaseURL: emailCfg.FrontendBaseURL,
 	}
