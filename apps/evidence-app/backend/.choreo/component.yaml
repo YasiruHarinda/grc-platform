@@ -9,4 +9,17 @@ endpoints:
     networkVisibilities:
       - Public
       - Organization
-    schemaFilePath: openapi.yaml
+    # No schemaFilePath, deliberately. The web app calls this backend from a
+    # different origin, so every request is preceded by a CORS preflight —
+    # an OPTIONS request that browsers send without an Authorization header.
+    # openapi.yaml declares get/post/put/patch/delete and no options, so
+    # handing it to the gateway makes the gateway reject the preflight and
+    # every call fails before it reaches the app.
+    #
+    # apps/grc-platform/backend runs on Choreo today with no schemaFilePath
+    # at all, which is what proves this is a supported shape here.
+    #
+    # The cost is real and accepted for now: with no document the gateway
+    # validates nothing and rate-limits nothing. Restoring it is the point
+    # of the OpenAPI generation work, which must include OPTIONS before this
+    # line comes back.
