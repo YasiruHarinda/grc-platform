@@ -1,7 +1,10 @@
 # Compliance Evidence Portal — Web App
 
 React + TypeScript single-page app (Vite, MUI v5). Deployed on Choreo as a
-web-application component that builds `dist/` and serves it via `index.js`.
+web-application component on the **React buildpack**: Choreo builds `dist/`
+and serves it as static files behind a CDN, with no server process of ours in
+front of it. `index.js` and the `Dockerfile` are retained as a fallback for
+switching back to the Dockerfile buildpack — see Build & deploy below.
 
 ## Stack
 
