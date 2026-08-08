@@ -1,3 +1,10 @@
+// NOT IN USE on Choreo's React buildpack (see issue #90) — that buildpack
+// builds dist/ and serves it as static files behind a CDN, so this process
+// never runs. Kept, with the Dockerfile below, so the component can be
+// switched back to the Dockerfile buildpack without a code change; runtime
+// config then comes from `public/config.js` either way (see
+// src/config/apiConfig.ts and README.md), not from BACKEND_URL below.
+//
 // Production web server for Choreo.
 //
 // Serves the built Vite app from ./dist and proxies /api to the

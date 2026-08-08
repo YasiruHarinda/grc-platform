@@ -6,18 +6,25 @@ import CssBaseline from "@mui/material/CssBaseline";
 import GlobalStyles from "@mui/material/GlobalStyles";
 import { AuthProvider } from "@asgardeo/auth-react";
 import App from "./App.tsx";
+import { authConfig as evidencePortalAuthConfig } from "./config/authConfig.ts";
 
-const asgardeoClientID = import.meta.env.VITE_ASGARDEO_CLIENT_ID;
-const asgardeoBaseUrl = import.meta.env.VITE_ASGARDEO_BASE_URL;
+const asgardeoClientID = evidencePortalAuthConfig.clientId;
+const asgardeoBaseUrl = evidencePortalAuthConfig.baseUrl;
 
 if (!asgardeoClientID || !asgardeoBaseUrl) {
   const missing = [
-    !asgardeoClientID && "VITE_ASGARDEO_CLIENT_ID",
-    !asgardeoBaseUrl && "VITE_ASGARDEO_BASE_URL",
+    !asgardeoClientID && "EVIDENCE_PORTAL_AUTH_CLIENT_ID",
+    !asgardeoBaseUrl && "EVIDENCE_PORTAL_AUTH_BASE_URL",
   ]
     .filter(Boolean)
     .join(", ");
-  throw new Error(`Missing required environment variable(s): ${missing}`);
+  // Logged, not thrown. This runs before createRoot().render() below, so a
+  // throw here stops React mounting at all — the page stays blank and the
+  // only trace is in the browser console. Letting it mount lets the app say
+  // something about the failure instead. See issue #90.
+  console.error(
+    `[main] Missing required configuration: ${missing}. Set them in public/config.js (see README).`
+  );
 }
 
 const authConfig = {

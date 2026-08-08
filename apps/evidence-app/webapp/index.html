@@ -2,10 +2,36 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      Fallback CSP for the React buildpack, which serves this file as a
+      static asset behind a CDN — index.js, which sets this as a response
+      header today, never runs there.
+
+      This deliberately carries the SAME policy index.js sends
+      (`upgrade-insecure-requests; frame-ancestors 'none'`) and nothing
+      more, so moving off index.js changes no behaviour. `frame-ancestors`
+      is kept for documentation only: browsers ignore it when it arrives
+      via <meta> rather than a header, so clickjacking cover is genuinely
+      lost on this hosting model and needs a host-level header.
+
+      The restrictive directives (`default-src 'self'` and friends) are
+      issue #75's job, deliberately NOT done here: tuned against localhost
+      they would name the wrong origins and block every evidence image in
+      production, which is the exact trap #75 exists to avoid. Tighten
+      this once there is a deployed app to tune against. See also #72.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="upgrade-insecure-requests; frame-ancestors 'none'"
+    />
     <link rel="icon" type="image/svg+xml" href="/logo-dark.svg" media="(prefers-color-scheme: light)" />
     <link rel="icon" type="image/svg+xml" href="/logo-white.svg" media="(prefers-color-scheme: dark)" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Evidence Portal</title>
+    <script
+      src="/config.js"
+      onerror="console.error('[Evidence Portal] Missing /config.js — create webapp/public/config.js (see README).')"
+    ></script>
   </head>
   <body>
     <div id="root"></div>
