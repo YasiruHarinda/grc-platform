@@ -17,9 +17,8 @@
 import { Box, Typography } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
 import type { ScopeRollup } from "@modules/audit/types/framework";
-import { DUE_OVERDUE, DUE_SOON } from "@modules/audit/components/dashboard/dueDate";
+import { DUE_SOON } from "@modules/audit/components/dashboard/dueDate";
 import CompletionRing from "@modules/audit/components/dashboard/CompletionRing";
-import { formatDaysLeft } from "@modules/audit/utils/frameworkRollup";
 
 const PHASE_ROWS: { key: keyof ScopeRollup["phaseCounts"]; label: string }[] = [
   { key: "complete", label: "Complete" },
@@ -32,13 +31,11 @@ interface StandPanelProps {
   scope: ScopeRollup;
 }
 
-// "Where we stand" — completion ring, four-phase breakdown, deadline footer.
+// "Where we stand" — completion ring, four-phase breakdown.
 // No audit-period-elapsed bar (removed at the client's request, §3.3); pace
 // still drives the status rule (§4.2), it just isn't drawn here.
 export default function StandPanel({ scope }: StandPanelProps): JSX.Element {
   const total = scope.total;
-  const deadlineReddened = scope.daysLeft <= 14;
-  const deadlineLabel = formatDaysLeft(scope.daysLeft);
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2, height: "100%" }}>
@@ -62,13 +59,6 @@ export default function StandPanel({ scope }: StandPanelProps): JSX.Element {
             </Box>
           );
         })}
-      </Box>
-
-      <Box sx={{ pt: 1, borderTop: 1, borderColor: "divider", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <Typography variant="caption" color="text.secondary">Deadline {scope.deadline}</Typography>
-        <Typography variant="caption" fontWeight={700} sx={{ color: deadlineReddened ? DUE_OVERDUE : "text.secondary" }}>
-          {deadlineLabel}
-        </Typography>
       </Box>
     </Box>
   );

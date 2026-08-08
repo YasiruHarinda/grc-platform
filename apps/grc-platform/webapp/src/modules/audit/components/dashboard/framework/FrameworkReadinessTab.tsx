@@ -160,7 +160,7 @@ export default function FrameworkReadinessTab({ audits }: FrameworkReadinessTabP
             onSelect={setSelectedAuditId}
           />
 
-          <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "1fr 1fr 1fr" }, gap: 2 }}>
+          <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "1fr 1fr 1fr" }, gap: 2, height: 420 }}>
             <PanelCard title="Where we stand">
               <StandPanel scope={scope} />
             </PanelCard>

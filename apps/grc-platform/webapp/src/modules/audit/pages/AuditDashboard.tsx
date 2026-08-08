@@ -16,7 +16,7 @@
 
 import { Alert, Box, Paper, Skeleton, Typography } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { useGetAudits } from "@modules/audit/api/useGetAudits";
 import { useGetDashboard } from "@modules/audit/api/useGetDashboard";
@@ -36,8 +36,6 @@ import WorkQueue, {
   QUEUE_TAB_OVERDUE,
 } from "@modules/audit/components/dashboard/WorkQueue";
 import FrameworkReadinessTab from "@modules/audit/components/dashboard/framework/FrameworkReadinessTab";
-import { computeFrameworkRollups } from "@modules/audit/utils/frameworkRollup";
-import { DUE_OVERDUE } from "@modules/audit/components/dashboard/dueDate";
 import type { ControlPhase } from "@modules/audit/utils/controlStatus";
 import type { TeamCompletion } from "@modules/audit/types/dashboard";
 
@@ -100,20 +98,9 @@ export default function AuditDashboard(): JSX.Element {
     setSearchParams(next, { replace: true });
   };
 
-  // Rail-level rollup needs no new request (§6) — reused here only to size the
-  // tab's attention badge; the Frameworks tab computes its own when opened.
-  const attentionFrameworkCount = useMemo(() => {
-    const rollups = computeFrameworkRollups(auditsData?.items ?? []);
-    return rollups.filter((r) => r.status !== "onTrack").length;
-  }, [auditsData]);
-
   const tabs: TabOption[] = [
     { id: TAB_OVERVIEW, label: "Overview" },
-    {
-      id: TAB_FRAMEWORKS,
-      label: "Frameworks",
-      ...(attentionFrameworkCount > 0 && { count: attentionFrameworkCount, badgeColor: DUE_OVERDUE }),
-    },
+    { id: TAB_FRAMEWORKS, label: "Frameworks" },
   ];
 
   const queueRef = useRef<HTMLDivElement>(null);

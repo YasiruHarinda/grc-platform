@@ -18,17 +18,15 @@ import { Box, LinearProgress, Typography, useTheme } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
 import type { FrameworkRollup, ScopeRollup } from "@modules/audit/types/framework";
 import { DUE_OVERDUE } from "@modules/audit/components/dashboard/dueDate";
-import { formatDaysLeft } from "@modules/audit/utils/frameworkRollup";
 
 interface ChipProps {
   label: string;
-  endDateLabel: string;
   rollup: ScopeRollup;
   selected: boolean;
   onSelect: () => void;
 }
 
-function AuditChip({ label, endDateLabel, rollup, selected, onSelect }: ChipProps): JSX.Element {
+function AuditChip({ label, rollup, selected, onSelect }: ChipProps): JSX.Element {
   const theme = useTheme();
   const color = rollup.completionPercent >= 100 ? theme.palette.success.main : theme.palette.primary.main;
 
@@ -77,7 +75,6 @@ function AuditChip({ label, endDateLabel, rollup, selected, onSelect }: ChipProp
           "& .MuiLinearProgress-bar": { bgcolor: color, borderRadius: 3 },
         }}
       />
-      <Typography variant="caption" color="text.secondary">{endDateLabel}</Typography>
     </Box>
   );
 }
@@ -94,7 +91,6 @@ export default function AuditStrip({ framework, selectedAuditId, onSelect }: Aud
     <Box role="tablist" sx={{ display: "flex", gap: 1.5, overflowX: "auto", pb: 0.5 }}>
       <AuditChip
         label="All audits"
-        endDateLabel={formatDaysLeft(framework.daysLeft, "to nearest deadline")}
         rollup={framework}
         selected={selectedAuditId === null}
         onSelect={() => onSelect(null)}
@@ -103,7 +99,6 @@ export default function AuditStrip({ framework, selectedAuditId, onSelect }: Aud
         <AuditChip
           key={audit.id}
           label={audit.name}
-          endDateLabel={`Ends ${audit.deadline}`}
           rollup={audit}
           selected={selectedAuditId === audit.id}
           onSelect={() => onSelect(audit.id)}

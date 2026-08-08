@@ -199,8 +199,7 @@ export default function AuditCard({
                   size="small"
                   sx={{
                     height: 20, fontSize: "0.68rem", fontWeight: 700,
-                    color: "#E53935", bgcolor: "rgba(229,57,53,0.12)",
-                    "[data-color-scheme='dark'] &": { bgcolor: "rgba(229,57,53,0.25)" },
+                    color: "#E53935", bgcolor: "transparent", border: "1px solid #E53935",
                     "& .MuiChip-icon": { color: "#E53935" },
                   }}
                 />

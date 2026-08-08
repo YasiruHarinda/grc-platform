@@ -20,20 +20,11 @@ import type {
   BlockerReason,
   BlockerRow,
   FrameworkRollup,
-  FrameworkStatus,
   PhaseCounts,
   TeamRollup,
 } from "@modules/audit/types/framework";
 import { DUE_SOON_DAYS } from "@modules/audit/components/dashboard/dueDate";
 import { STATUS_PHASE } from "@modules/audit/utils/controlStatus";
-
-// ── Rule constants (§4.1) — the whole of the status rule lives here, so a
-// threshold change is a one-line diff. ────────────────────────────────────────
-
-export const CRITICAL_OVERDUE_RATIO = 0.1;
-export const CRITICAL_DAYS_LEFT = 14;
-export const CRITICAL_COMPLETION_THRESHOLD = 90;
-export const AT_RISK_PACE_THRESHOLD = -10;
 
 const DAY_MS = 86_400_000;
 
@@ -47,12 +38,6 @@ function startOfDay(date: Date): Date {
   return d;
 }
 
-// Shared by every deadline footer (rail card, "All audits" chip, Where-we-
-// stand) so the overdue/left phrasing can't drift between them.
-export function formatDaysLeft(daysLeft: number, suffix = "left"): string {
-  return daysLeft < 0 ? `${-daysLeft}d overdue` : `${daysLeft}d ${suffix}`;
-}
-
 // ── §4.2 Pace ──────────────────────────────────────────────────────────────
 
 export function computeElapsedPercent(periodStart: string, periodEnd: string, today: Date = new Date()): number {
@@ -63,27 +48,6 @@ export function computeElapsedPercent(periodStart: string, periodEnd: string, to
   if (now >= end) return 100;
   return ((now - start) / (end - start)) * 100;
 }
-
-// ── §4.1 Status ────────────────────────────────────────────────────────────
-
-export function computeStatus(input: {
-  overdueCount: number;
-  total: number;
-  daysLeft: number;
-  completionPercent: number;
-  pace: number;
-}): FrameworkStatus {
-  const { overdueCount, total, daysLeft, completionPercent, pace } = input;
-  const overdueRatio = total > 0 ? overdueCount / total : 0;
-
-  if (overdueRatio >= CRITICAL_OVERDUE_RATIO) return "critical";
-  if (daysLeft <= CRITICAL_DAYS_LEFT && completionPercent < CRITICAL_COMPLETION_THRESHOLD) return "critical";
-  if (pace <= AT_RISK_PACE_THRESHOLD) return "atRisk";
-  if (overdueCount > 0) return "atRisk";
-  return "onTrack";
-}
-
-const STATUS_RANK: Record<FrameworkStatus, number> = { critical: 0, atRisk: 1, onTrack: 2 };
 
 // ── Phase / blocker / team derivation from a control list ────────────────────
 
@@ -231,8 +195,6 @@ function buildTeams(controls: AuditControl[], today: Date): TeamRollup[] {
 export function computeAuditRollup(audit: Audit, controls: AuditControl[] | undefined, today: Date = new Date()): AuditRollup {
   const { total, approved, overdue } = audit.controlCounts;
   const completionPercent = total > 0 ? (approved / total) * 100 : 0;
-  const deadline = new Date(`${audit.periodEnd}T00:00:00`);
-  const daysLeft = daysBetween(startOfDay(today), deadline);
   const hasDetail = controls !== undefined;
   const blockers = hasDetail ? buildBlockers(audit, controls, today) : [];
 
@@ -244,7 +206,6 @@ export function computeAuditRollup(audit: Audit, controls: AuditControl[] | unde
     completionPercent,
     overdueCount: overdue,
     dueSoonCount: blockers.filter((b) => b.reason === "dueSoon").length,
-    daysLeft,
     deadline: audit.periodEnd,
     phaseCounts: hasDetail
       ? tallyPhaseCounts(controls)
@@ -295,7 +256,6 @@ export function computeFrameworkRollups(
     const pace = completionPercent - elapsedPercent;
 
     const nearest = auditRollups[0]; // sorted by deadline ascending above
-    const daysLeft = nearest ? nearest.daysLeft : 0;
     const deadline = nearest ? nearest.deadline : "";
 
     const hasDetail = auditRollups.some((a) => a.hasDetail);
@@ -306,12 +266,9 @@ export function computeFrameworkRollups(
     const controlsInScope = frameworkAudits.flatMap((audit) => controlsByAuditId[audit.id] ?? []);
     const teams = buildTeams(controlsInScope, today);
 
-    const status = computeStatus({ overdueCount, total, daysLeft, completionPercent, pace });
-
     rollups.push({
       id: frameworkId,
       name,
-      status,
       auditCount: auditRollups.length,
       pace,
       total,
@@ -319,7 +276,6 @@ export function computeFrameworkRollups(
       completionPercent,
       overdueCount,
       dueSoonCount,
-      daysLeft,
       deadline,
       phaseCounts,
       blockers,
@@ -329,9 +285,8 @@ export function computeFrameworkRollups(
     });
   }
 
-  // §4.3 Rail sort order: status rank, then overdue desc, then pace asc.
+  // §4.3 Rail sort order: overdue desc, then pace asc.
   return rollups.sort((a, b) => {
-    if (STATUS_RANK[a.status] !== STATUS_RANK[b.status]) return STATUS_RANK[a.status] - STATUS_RANK[b.status];
     if (b.overdueCount !== a.overdueCount) return b.overdueCount - a.overdueCount;
     return a.pace - b.pace;
   });

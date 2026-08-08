@@ -16,6 +16,7 @@
 
 import { Box, Typography } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
+import { useNavigate } from "react-router";
 import type { BlockerReason, ScopeRollup } from "@modules/audit/types/framework";
 import { DUE_OVERDUE, DUE_SOON } from "@modules/audit/components/dashboard/dueDate";
 
@@ -40,6 +41,7 @@ interface BlockerListProps {
 // "What's blocking" — ranked overdue, then needs-clarification, then due
 // within 7 days (§3.3). scope.blockers already arrives in that order.
 export default function BlockerList({ scope, showAuditLabel }: BlockerListProps): JSX.Element {
+  const navigate = useNavigate();
   const overdueCount = scope.blockers.filter((b) => b.reason === "overdue").length;
   const needsClarificationCount = scope.blockers.filter((b) => b.reason === "needsClarification").length;
   const dueSoonCount = scope.blockers.filter((b) => b.reason === "dueSoon").length;
@@ -62,9 +64,18 @@ export default function BlockerList({ scope, showAuditLabel }: BlockerListProps)
         {scope.blockers.map((blocker) => (
           <Box
             key={blocker.controlId}
+            role="button"
+            tabIndex={0}
+            onClick={() => void navigate(`/audit/audits/${blocker.auditId}?control=${blocker.controlId}`)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                void navigate(`/audit/audits/${blocker.auditId}?control=${blocker.controlId}`);
+              }
+            }}
             sx={{
               display: "flex", alignItems: "center", gap: 1,
-              borderRadius: 1.5, px: 1, py: 0.75,
+              borderRadius: 1.5, px: 1, py: 0.75, cursor: "pointer",
               "&:hover": { bgcolor: "action.hover" },
             }}
           >

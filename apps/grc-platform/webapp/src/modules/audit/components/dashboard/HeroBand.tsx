@@ -99,8 +99,7 @@ export default function HeroBand({
               onClick={onOverdueClick}
               sx={{
                 color: DUE_OVERDUE, fontWeight: 600,
-                bgcolor: "rgba(239,68,68,0.12)",
-                "[data-color-scheme='dark'] &": { bgcolor: "rgba(239,68,68,0.25)" },
+                bgcolor: "transparent", border: `1px solid ${DUE_OVERDUE}`,
                 "& .MuiChip-icon": { color: DUE_OVERDUE },
               }}
             />
@@ -114,8 +113,7 @@ export default function HeroBand({
               onClick={onQueueClick}
               sx={{
                 color: DUE_SOON, fontWeight: 600,
-                bgcolor: "rgba(245,158,11,0.12)",
-                "[data-color-scheme='dark'] &": { bgcolor: "rgba(245,158,11,0.25)" },
+                bgcolor: "transparent", border: `1px solid ${DUE_SOON}`,
                 "& .MuiChip-icon": { color: DUE_SOON },
               }}
             />
@@ -129,8 +127,7 @@ export default function HeroBand({
               onClick={onQueueClick}
               sx={{
                 color: "#3B82F6", fontWeight: 600,
-                bgcolor: "rgba(59,130,246,0.10)",
-                "[data-color-scheme='dark'] &": { bgcolor: "rgba(59,130,246,0.25)" },
+                bgcolor: "transparent", border: "1px solid #3B82F6",
                 "& .MuiChip-icon": { color: "#3B82F6" },
               }}
             />

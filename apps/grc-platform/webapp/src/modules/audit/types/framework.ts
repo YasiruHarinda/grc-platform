@@ -14,8 +14,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-export type FrameworkStatus = "critical" | "atRisk" | "onTrack";
-
 export interface PhaseCounts {
   complete: number;
   inProgress: number;
@@ -66,8 +64,6 @@ export interface ScopeRollup {
   overdueCount: number;
   /** Due within DUE_SOON_DAYS and not already overdue (§5 aggregation table). */
   dueSoonCount: number;
-  /** Days until the binding deadline; negative once past. */
-  daysLeft: number;
   /** YYYY-MM-DD of the binding deadline (nearest audit end date in scope). */
   deadline: string;
   phaseCounts: PhaseCounts;
@@ -90,9 +86,8 @@ export interface AuditRollup extends ScopeRollup {
 export interface FrameworkRollup extends ScopeRollup {
   id: number;
   name: string;
-  status: FrameworkStatus;
   auditCount: number;
-  /** Rule input only (§4.2) — never rendered. Drives status + rail sort. */
+  /** Drives rail sort order only (§4.3) — never rendered. */
   pace: number;
   audits: AuditRollup[];
 }

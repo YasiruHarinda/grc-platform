@@ -14,29 +14,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Chip, Paper, Typography, useTheme } from "@wso2/oxygen-ui";
+import { Box, LinearProgress, Paper, Typography, useTheme } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
-import type { FrameworkRollup, FrameworkStatus } from "@modules/audit/types/framework";
-import { DUE_OVERDUE, DUE_SOON } from "@modules/audit/components/dashboard/dueDate";
-import { formatDaysLeft } from "@modules/audit/utils/frameworkRollup";
-import PhaseBar from "./PhaseBar";
-
-const STATUS_LABELS: Record<FrameworkStatus, string> = {
-  critical: "Critical",
-  atRisk: "At risk",
-  onTrack: "On track",
-};
-
-function StatusChip({ status }: { status: FrameworkStatus }): JSX.Element {
-  if (status === "critical") {
-    return <Chip label={STATUS_LABELS.critical} size="small" sx={{ bgcolor: DUE_OVERDUE, color: "white", fontWeight: 700 }} />;
-  }
-  if (status === "atRisk") {
-    return <Chip label={STATUS_LABELS.atRisk} size="small" sx={{ bgcolor: DUE_SOON, color: "white", fontWeight: 700 }} />;
-  }
-  // On track carries no accent at all — the absence of a mark is the signal (§8.1).
-  return <Chip label={STATUS_LABELS.onTrack} size="small" variant="outlined" />;
-}
+import type { FrameworkRollup } from "@modules/audit/types/framework";
+import { DUE_OVERDUE } from "@modules/audit/components/dashboard/dueDate";
 
 interface FrameworkCardProps {
   rollup: FrameworkRollup;
@@ -46,9 +27,6 @@ interface FrameworkCardProps {
 
 export default function FrameworkCard({ rollup, selected, onSelect }: FrameworkCardProps): JSX.Element {
   const theme = useTheme();
-  const deadlineDate = new Date(`${rollup.deadline}T00:00:00`);
-  const deadlineLabel = Number.isNaN(deadlineDate.getTime()) ? "—" : formatDaysLeft(rollup.daysLeft);
-  const deadlineReddened = rollup.daysLeft <= 14;
   const completeColor = rollup.completionPercent >= 100 ? theme.palette.success.main : theme.palette.primary.main;
 
   return (
@@ -72,12 +50,9 @@ export default function FrameworkCard({ rollup, selected, onSelect }: FrameworkC
         "&:hover": { borderColor: selected ? "warning.main" : "text.secondary" },
       }}
     >
-      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
-        <Typography variant="subtitle1" fontWeight={700} noWrap title={rollup.name} sx={{ minWidth: 0 }}>
-          {rollup.name}
-        </Typography>
-        <StatusChip status={rollup.status} />
-      </Box>
+      <Typography variant="subtitle1" fontWeight={700} noWrap title={rollup.name} sx={{ minWidth: 0 }}>
+        {rollup.name}
+      </Typography>
 
       <Box sx={{ display: "flex", alignItems: "baseline", gap: 0.75, flexWrap: "wrap" }}>
         <Typography variant="h5" fontWeight={700} lineHeight={1}>
@@ -88,9 +63,17 @@ export default function FrameworkCard({ rollup, selected, onSelect }: FrameworkC
         </Typography>
       </Box>
 
-      <PhaseBar counts={rollup.phaseCounts} completeColor={completeColor} />
+      <LinearProgress
+        variant="determinate"
+        value={Math.min(rollup.completionPercent, 100)}
+        sx={{
+          height: 8, borderRadius: 4, bgcolor: "#E0E0E0",
+          "[data-color-scheme='dark'] &": { bgcolor: "rgba(255,255,255,0.12)" },
+          "& .MuiLinearProgress-bar": { bgcolor: completeColor, borderRadius: 4 },
+        }}
+      />
 
-      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <Box>
         {rollup.overdueCount > 0 ? (
           <Typography variant="body2" fontWeight={700} sx={{ color: DUE_OVERDUE }}>
             {rollup.overdueCount} overdue
@@ -98,9 +81,6 @@ export default function FrameworkCard({ rollup, selected, onSelect }: FrameworkC
         ) : (
           <Typography variant="body2" color="text.secondary">No overdue controls</Typography>
         )}
-        <Typography variant="body2" fontWeight={600} sx={{ color: deadlineReddened ? DUE_OVERDUE : "text.secondary" }}>
-          {deadlineLabel}
-        </Typography>
       </Box>
     </Paper>
   );

@@ -14,19 +14,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Typography, useTheme } from "@wso2/oxygen-ui";
+import { Box, LinearProgress, Typography, useTheme } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
 import type { ScopeRollup } from "@modules/audit/types/framework";
 import { DUE_OVERDUE, DUE_SOON } from "@modules/audit/components/dashboard/dueDate";
-import PhaseBar from "./PhaseBar";
 
 interface FrameworkTeamBreakdownProps {
   scope: ScopeRollup;
 }
 
-// "Who owns the gap" — per-team completion, phase bar, and the assignee
-// holding the most overdue work. The reader draws the escalation conclusion;
-// this panel only states the fact it would be built on (§10).
+// "Who owns the gap" — per-team completion. The reader draws the escalation
+// conclusion; this panel only states the fact it would be built on (§10).
 export default function FrameworkTeamBreakdown({ scope }: FrameworkTeamBreakdownProps): JSX.Element {
   const theme = useTheme();
 
@@ -54,29 +52,29 @@ export default function FrameworkTeamBreakdown({ scope }: FrameworkTeamBreakdown
               </Typography>
             </Box>
 
-            <PhaseBar counts={team.phaseCounts} completeColor={completeColor} height={6} />
+            <LinearProgress
+              variant="determinate"
+              value={Math.min(pct, 100)}
+              sx={{
+                height: 6, borderRadius: 3, bgcolor: "#E0E0E0",
+                "[data-color-scheme='dark'] &": { bgcolor: "rgba(255,255,255,0.12)" },
+                "& .MuiLinearProgress-bar": { bgcolor: completeColor, borderRadius: 3 },
+              }}
+            />
 
-            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mt: 0.5, flexWrap: "wrap", gap: 0.5 }}>
-              <Typography variant="caption" color="text.secondary">
-                {team.openCount} open
-                {team.overdueCount > 0 && (
-                  <Typography component="span" variant="caption" fontWeight={700} sx={{ color: DUE_OVERDUE, ml: 1 }}>
-                    {team.overdueCount} overdue
-                  </Typography>
-                )}
-                {team.dueSoonCount > 0 && (
-                  <Typography component="span" variant="caption" fontWeight={700} sx={{ color: DUE_SOON, ml: 1 }}>
-                    {team.dueSoonCount} due soon
-                  </Typography>
-                )}
-              </Typography>
-              {team.topAssignee && (
-                <Typography variant="caption" fontWeight={600}>
-                  {team.topAssignee.name} ({team.topAssignee.overdueCount})
-                  {team.additionalAssigneeCount > 0 && ` +${team.additionalAssigneeCount}`}
+            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>
+              {team.openCount} open
+              {team.overdueCount > 0 && (
+                <Typography component="span" variant="caption" fontWeight={700} sx={{ color: DUE_OVERDUE, ml: 1 }}>
+                  {team.overdueCount} overdue
                 </Typography>
               )}
-            </Box>
+              {team.dueSoonCount > 0 && (
+                <Typography component="span" variant="caption" fontWeight={700} sx={{ color: DUE_SOON, ml: 1 }}>
+                  {team.dueSoonCount} due soon
+                </Typography>
+              )}
+            </Typography>
           </Box>
         );
       })}

@@ -16,16 +16,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { Audit, AuditControl } from "@modules/audit/types/audit";
-import {
-  AT_RISK_PACE_THRESHOLD,
-  CRITICAL_COMPLETION_THRESHOLD,
-  CRITICAL_DAYS_LEFT,
-  CRITICAL_OVERDUE_RATIO,
-  computeElapsedPercent,
-  computeFrameworkRollups,
-  computeStatus,
-  formatDaysLeft,
-} from "./frameworkRollup";
+import { computeElapsedPercent, computeFrameworkRollups } from "./frameworkRollup";
 
 const TODAY = new Date("2026-06-15T00:00:00");
 
@@ -95,87 +86,6 @@ describe("computeElapsedPercent", () => {
   });
 });
 
-// ── computeStatus ─────────────────────────────────────────────────────────────
-
-describe("computeStatus", () => {
-  it("is critical when overdue ratio meets the threshold", () => {
-    const status = computeStatus({
-      overdueCount: 2,
-      total: 20, // 10% exactly
-      daysLeft: 100,
-      completionPercent: 95,
-      pace: 5,
-    });
-    expect(status).toBe("critical");
-  });
-
-  it("is critical when close to deadline with low completion, even with no overdue", () => {
-    const status = computeStatus({
-      overdueCount: 0,
-      total: 20,
-      daysLeft: 10,
-      completionPercent: 80,
-      pace: 5,
-    });
-    expect(status).toBe("critical");
-  });
-
-  it("is not critical at exactly 90% completion within 14 days (threshold is exclusive)", () => {
-    const status = computeStatus({
-      overdueCount: 0,
-      total: 20,
-      daysLeft: CRITICAL_DAYS_LEFT,
-      completionPercent: CRITICAL_COMPLETION_THRESHOLD,
-      pace: 0,
-    });
-    expect(status).not.toBe("critical");
-  });
-
-  it("is atRisk when pace is at or below the negative threshold", () => {
-    const status = computeStatus({
-      overdueCount: 0,
-      total: 20,
-      daysLeft: 100,
-      completionPercent: 50,
-      pace: AT_RISK_PACE_THRESHOLD,
-    });
-    expect(status).toBe("atRisk");
-  });
-
-  it("is atRisk when there is any overdue work but below the critical ratio", () => {
-    const status = computeStatus({
-      overdueCount: 1,
-      total: 100, // 1% overdue, well under the critical 10%
-      daysLeft: 100,
-      completionPercent: 80,
-      pace: 5,
-    });
-    expect(status).toBe("atRisk");
-  });
-
-  it("is onTrack otherwise", () => {
-    const status = computeStatus({
-      overdueCount: 0,
-      total: 20,
-      daysLeft: 100,
-      completionPercent: 50,
-      pace: 0,
-    });
-    expect(status).toBe("onTrack");
-  });
-
-  it("prefers critical over atRisk when both apply", () => {
-    const status = computeStatus({
-      overdueCount: 5,
-      total: 20, // 25% overdue -> critical
-      daysLeft: 100,
-      completionPercent: 50,
-      pace: AT_RISK_PACE_THRESHOLD, // also qualifies for atRisk
-    });
-    expect(status).toBe("critical");
-  });
-});
-
 // ── computeFrameworkRollups: aggregation ─────────────────────────────────────
 
 describe("computeFrameworkRollups", () => {
@@ -235,32 +145,32 @@ describe("computeFrameworkRollups", () => {
     expect(rollup.deadline).toBe("2026-08-01");
   });
 
-  it("sorts frameworks by status rank, then overdue desc, then pace asc", () => {
+  it("sorts frameworks by overdue desc, then pace asc", () => {
     const audits = [
       makeAudit({
         id: 1,
-        framework: { id: 1, name: "On Track" },
+        framework: { id: 1, name: "No Overdue" },
         controlCounts: { total: 20, approved: 20, overdue: 0 },
         periodStart: "2026-01-01",
         periodEnd: "2026-12-31",
       }),
       makeAudit({
         id: 2,
-        framework: { id: 2, name: "Critical High Overdue" },
-        controlCounts: { total: 20, approved: 5, overdue: 5 }, // 25% overdue
+        framework: { id: 2, name: "High Overdue" },
+        controlCounts: { total: 20, approved: 5, overdue: 5 },
         periodStart: "2026-01-01",
         periodEnd: "2026-12-31",
       }),
       makeAudit({
         id: 3,
-        framework: { id: 3, name: "Critical Low Overdue" },
-        controlCounts: { total: 20, approved: 5, overdue: 3 }, // 15% overdue
+        framework: { id: 3, name: "Mid Overdue" },
+        controlCounts: { total: 20, approved: 5, overdue: 3 },
         periodStart: "2026-01-01",
         periodEnd: "2026-12-31",
       }),
       makeAudit({
         id: 4,
-        framework: { id: 4, name: "At Risk" },
+        framework: { id: 4, name: "Low Overdue" },
         controlCounts: { total: 20, approved: 5, overdue: 1 },
         periodStart: "2026-01-01",
         periodEnd: "2026-12-31",
@@ -268,10 +178,10 @@ describe("computeFrameworkRollups", () => {
     ];
     const rollups = computeFrameworkRollups(audits, {}, TODAY);
     expect(rollups.map((r) => r.name)).toEqual([
-      "Critical High Overdue",
-      "Critical Low Overdue",
-      "At Risk",
-      "On Track",
+      "High Overdue",
+      "Mid Overdue",
+      "Low Overdue",
+      "No Overdue",
     ]);
   });
 
@@ -371,27 +281,5 @@ describe("computeFrameworkRollups with controls", () => {
     const [rollup] = computeFrameworkRollups(audits, controlsByAuditId, TODAY);
     const labels = rollup.blockers.map((b) => `${b.auditName}:${b.controlNumber}`);
     expect(labels).toEqual(expect.arrayContaining(["Audit A:A-1", "Audit B:B-1"]));
-  });
-});
-
-// Sanity check that the exported thresholds match the spec (§4.1) so a change
-// there is visible in a diff, not silently absorbed by the tests above.
-describe("thresholds", () => {
-  it("match the documented rule constants", () => {
-    expect(CRITICAL_OVERDUE_RATIO).toBe(0.1);
-    expect(CRITICAL_DAYS_LEFT).toBe(14);
-    expect(CRITICAL_COMPLETION_THRESHOLD).toBe(90);
-    expect(AT_RISK_PACE_THRESHOLD).toBe(-10);
-  });
-});
-
-describe("formatDaysLeft", () => {
-  it("labels a past deadline as overdue", () => {
-    expect(formatDaysLeft(-3)).toBe("3d overdue");
-  });
-
-  it("labels a future deadline with the given suffix", () => {
-    expect(formatDaysLeft(5)).toBe("5d left");
-    expect(formatDaysLeft(5, "to nearest deadline")).toBe("5d to nearest deadline");
   });
 });
