@@ -95,14 +95,36 @@ def _role_for(claims: dict) -> str:
     )
 
 
+def _request_token(request: Request) -> str:
+    """The caller's raw JWT, read from whichever header carried it.
+
+    `Authorization: Bearer` is this app's own, fully-tested contract and is
+    tried first. `X-Jwt-Assertion` is the header Choreo's API gateway
+    forwards; it is a fallback for the case where the gateway does not also
+    pass `Authorization` through unchanged.
+
+    This function decides nothing about trust — it only picks which header
+    to read the string out of. The value it returns still has to pass the
+    full signature, issuer and audience check in `get_current_user` below,
+    exactly like a token from `Authorization` would. That matters because
+    this endpoint's network visibility is `[Public, Organization]`: anything
+    else inside the Choreo organisation can call it directly, bypassing the
+    gateway, and set `X-Jwt-Assertion` to whatever it likes. Treating the
+    header's mere presence as proof of anything would be an authentication
+    bypass; only a signature Asgardeo actually produced is.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header[len("Bearer "):]
+    return request.headers.get("X-Jwt-Assertion", "")
+
+
 async def get_current_user(request: Request) -> User:
     # Asgardeo Bearer token — verified locally against Asgardeo's public
     # signing keys (JWKS). Both the web frontend and the local Runner
     # authenticate this way.
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header[len("Bearer "):]
-
+    token = _request_token(request)
+    if token:
         try:
             # Off the event loop, deliberately. This looks like a cache read
             # and usually is, but PyJWKClient refetches whenever its cached
