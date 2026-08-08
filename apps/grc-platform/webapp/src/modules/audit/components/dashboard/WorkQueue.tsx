@@ -74,17 +74,46 @@ const FILTERABLE_STATUSES = (Object.keys(CONTROL_STATUS_LABELS) as ControlStatus
   (s) => s !== "COMPLETE",
 );
 
+// Fixed status sets mirroring the backend's per-tab filters (audit_dashboard_repo.go),
+// so the Status / Action-needed dropdowns never offer a status that can't appear on
+// that tab.
+const PENDING_STATUSES: ControlStatus[] = [
+  "EVIDENCE_PENDING", "POPULATION_PENDING", "POPULATION_NEED_CLARIFICATION",
+  "EVIDENCE_NEED_CLARIFICATION", "SUBMITTED_SAMPLE",
+];
+const VALIDATION_STATUSES: ControlStatus[] = [
+  "EVIDENCE_UNDER_VALIDATION", "POPULATION_UNDER_VALIDATION", "POPULATION_COMPLETE", "AWAITING_SAMPLE",
+];
+const REVIEW_STATUSES: ControlStatus[] = ["EVIDENCE_INTERNAL_REVIEW", "POPULATION_INTERNAL_REVIEW"];
+
+// statusesForTab returns the statuses that can actually appear on a given tab, so
+// the column filters only ever list relevant options. Due Soon and Overdue span
+// every non-terminal status; Action Items mirrors the backend's role-based filter
+// (approximated here from the two privilege flags the frontend already has).
+function statusesForTab(tab: WorkQueueTab, canApprove: boolean, canSubmit: boolean): ControlStatus[] {
+  switch (tab) {
+    case "pending":    return PENDING_STATUSES;
+    case "validation": return VALIDATION_STATUSES;
+    case "action-items":
+      if (canApprove) return REVIEW_STATUSES;
+      if (canSubmit) return PENDING_STATUSES;
+      return VALIDATION_STATUSES;
+    default: // due-soon, overdue
+      return FILTERABLE_STATUSES;
+  }
+}
+
 interface ActionGroup {
   label: string;
   statuses: ControlStatus[];
 }
 
-// buildActionGroups collapses the filterable statuses by their action label, so the
+// buildActionGroups collapses the given statuses by their action label, so the
 // "Action needed" filter offers the human-readable actions and resolves each back
 // to its underlying statuses (some labels depend on canApprove).
-function buildActionGroups(canApprove: boolean): ActionGroup[] {
+function buildActionGroups(canApprove: boolean, statuses: ControlStatus[]): ActionGroup[] {
   const byLabel = new Map<string, ControlStatus[]>();
-  for (const s of FILTERABLE_STATUSES) {
+  for (const s of statuses) {
     const label = actionLabel(s, canApprove);
     const arr = byLabel.get(label) ?? [];
     arr.push(s);
@@ -238,10 +267,11 @@ function TextColFilter({ label, value, onChange }: { label: string; value: strin
 interface TabPanelProps {
   tab: WorkQueueTab;
   canApprove: boolean;
+  canSubmit: boolean;
   emptyText: string;
 }
 
-function TabPanel({ tab, canApprove, emptyText }: TabPanelProps): JSX.Element {
+function TabPanel({ tab, canApprove, canSubmit, emptyText }: TabPanelProps): JSX.Element {
   const navigate = useNavigate();
   const [page, setPage] = useState(0); // 0-based for MUI, 1-based for API
   const [teamFilter, setTeamFilter] = useState<number[]>([]);
@@ -259,9 +289,13 @@ function TabPanel({ tab, canApprove, emptyText }: TabPanelProps): JSX.Element {
     return () => clearTimeout(t);
   }, [controlInput]);
 
+  // Statuses that can actually appear on this tab, so the filter dropdowns below
+  // don't offer options that will only ever return zero rows.
+  const tabStatuses = useMemo(() => statusesForTab(tab, canApprove, canSubmit), [tab, canApprove, canSubmit]);
+
   // Map the selected action labels back to their statuses and merge with the raw
   // status filter — both column filters constrain the same status column (union).
-  const actionGroups = useMemo(() => buildActionGroups(canApprove), [canApprove]);
+  const actionGroups = useMemo(() => buildActionGroups(canApprove, tabStatuses), [canApprove, tabStatuses]);
   const effectiveStatuses = useMemo(() => {
     const set = new Set<string>(statusFilter);
     for (const label of actionFilter) {
@@ -308,7 +342,7 @@ function TabPanel({ tab, canApprove, emptyText }: TabPanelProps): JSX.Element {
     .map((a) => ({ id: a.id, label: a.name }))
     .sort((a, b) => a.label.localeCompare(b.label));
 
-  const statusOptions: FilterOption<string>[] = FILTERABLE_STATUSES.map((s) => ({ id: s, label: CONTROL_STATUS_LABELS[s] }));
+  const statusOptions: FilterOption<string>[] = tabStatuses.map((s) => ({ id: s, label: CONTROL_STATUS_LABELS[s] }));
   const actionOptions: FilterOption<string>[] = actionGroups.map((g) => ({ id: g.label, label: g.label }));
 
   const hasFilters =
@@ -488,21 +522,26 @@ function TabPanel({ tab, canApprove, emptyText }: TabPanelProps): JSX.Element {
 
 export const QUEUE_TAB_AWAITING = 0;
 export const QUEUE_TAB_DUE_SOON = 1;
-export const QUEUE_TAB_OVERDUE = 2;
+export const QUEUE_TAB_PENDING = 2;
+export const QUEUE_TAB_VALIDATION = 3;
+export const QUEUE_TAB_OVERDUE = 4;
 
 interface WorkQueueProps {
   totalActionItems: number;
   totalDueSoonItems: number;
+  totalPendingItems: number;
+  totalValidationItems: number;
   totalOverdueControls: number;
   canApprove: boolean;
+  canSubmit: boolean;
   queueTitle: string;
   tab: number;
   onTabChange: (tab: number) => void;
 }
 
 export default function WorkQueue({
-  totalActionItems, totalDueSoonItems, totalOverdueControls,
-  canApprove, queueTitle, tab, onTabChange,
+  totalActionItems, totalDueSoonItems, totalPendingItems, totalValidationItems, totalOverdueControls,
+  canApprove, canSubmit, queueTitle, tab, onTabChange,
 }: WorkQueueProps): JSX.Element {
   return (
     <Box>
@@ -513,15 +552,19 @@ export default function WorkQueue({
       >
         <Tab label={`${queueTitle} (${totalActionItems})`} />
         <Tab label={`Due Soon (${totalDueSoonItems})`} />
+        <Tab label={`Pending Submission (${totalPendingItems})`} />
+        <Tab label={`Under Validation (${totalValidationItems})`} />
         <Tab
           label={`Overdue (${totalOverdueControls})`}
           sx={totalOverdueControls > 0 ? { color: "#E53935", "&.Mui-selected": { color: "#E53935" } } : undefined}
         />
       </Tabs>
       <Box sx={{ pt: 1 }}>
-        {tab === 0 && <TabPanel tab="action-items" canApprove={canApprove} emptyText="No pending actions - you're all caught up!" />}
-        {tab === 1 && <TabPanel tab="due-soon" canApprove={canApprove} emptyText="Nothing due in the next 7 days" />}
-        {tab === 2 && <TabPanel tab="overdue" canApprove={canApprove} emptyText="No overdue controls" />}
+        {tab === 0 && <TabPanel tab="action-items" canApprove={canApprove} canSubmit={canSubmit} emptyText="No pending actions" />}
+        {tab === 1 && <TabPanel tab="due-soon" canApprove={canApprove} canSubmit={canSubmit} emptyText="Nothing due in the next 7 days" />}
+        {tab === 2 && <TabPanel tab="pending" canApprove={canApprove} canSubmit={canSubmit} emptyText="Nothing pending submission or clarification" />}
+        {tab === 3 && <TabPanel tab="validation" canApprove={canApprove} canSubmit={canSubmit} emptyText="Nothing under validation" />}
+        {tab === 4 && <TabPanel tab="overdue" canApprove={canApprove} canSubmit={canSubmit} emptyText="No overdue controls" />}
       </Box>
     </Box>
   );

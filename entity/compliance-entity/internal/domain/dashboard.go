@@ -107,6 +107,8 @@ type WorkQueueTab string
 const (
 	WorkQueueTabActionItems WorkQueueTab = "action-items"
 	WorkQueueTabDueSoon     WorkQueueTab = "due-soon"
+	WorkQueueTabPending     WorkQueueTab = "pending"
+	WorkQueueTabValidation  WorkQueueTab = "validation"
 	WorkQueueTabOverdue     WorkQueueTab = "overdue"
 )
 
@@ -159,5 +161,7 @@ type DashboardData struct {
 	TeamStatusDistribution []TeamStatusCount      `json:"teamStatusDistribution"`
 	ActionItems            []DashboardControlItem `json:"actionItems"`
 	DueSoonItems           []DashboardControlItem `json:"dueSoonItems"`
+	PendingItems           []DashboardControlItem `json:"pendingItems"`
+	ValidationItems        []DashboardControlItem `json:"validationItems"`
 	OverdueControls        []DashboardControlItem `json:"overdueControls"`
 }

@@ -168,7 +168,15 @@ func (r *dashboardRepo) Get(ctx context.Context, req domain.AuditDashboardReques
 	if err != nil {
 		return nil, err
 	}
-	dueSoonItems, err := r.queryDueSoonItems(ctx, req, baseWhere, args)
+	dueSoonItems, err := r.queryDueSoonItems(ctx, baseWhere, args)
+	if err != nil {
+		return nil, err
+	}
+	pendingItems, err := r.queryStatusItems(ctx, baseWhere, args, pendingStatusFilter, 500)
+	if err != nil {
+		return nil, err
+	}
+	validationItems, err := r.queryStatusItems(ctx, baseWhere, args, validationStatusFilter, 500)
 	if err != nil {
 		return nil, err
 	}
@@ -197,6 +205,8 @@ func (r *dashboardRepo) Get(ctx context.Context, req domain.AuditDashboardReques
 		TeamStatusDistribution: teamStatusDist,
 		ActionItems:            actionItems,
 		DueSoonItems:           dueSoonItems,
+		PendingItems:           pendingItems,
+		ValidationItems:        validationItems,
 		OverdueControls:        overdueControls,
 	}, nil
 }
@@ -264,11 +274,10 @@ func (r *dashboardRepo) queryActionItems(ctx context.Context, req domain.AuditDa
 	return r.scanControlItems(ctx, q, scopeArgs)
 }
 
-func (r *dashboardRepo) queryDueSoonItems(ctx context.Context, req domain.AuditDashboardRequest, baseWhere string, scopeArgs []any) ([]domain.DashboardControlItem, error) {
-	statusFilter, ok := r.actionItemsStatusFilter(req.PrimaryRole())
-	if !ok {
-		return []domain.DashboardControlItem{}, nil
-	}
+// queryDueSoonItems returns controls due within 7 days in any non-terminal
+// status — "due soon" is a date concern, not tied to who currently owns the
+// next action, so (unlike queryActionItems) it is not filtered by role/status.
+func (r *dashboardRepo) queryDueSoonItems(ctx context.Context, baseWhere string, scopeArgs []any) ([]domain.DashboardControlItem, error) {
 	q := fmt.Sprintf(`
 		SELECT c.id, c.audit_id, a.name,
 		       c.control_number,
@@ -281,9 +290,40 @@ func (r *dashboardRepo) queryDueSoonItems(ctx context.Context, req domain.AuditD
 		FROM audit_control c JOIN audit a ON a.id = c.audit_id
 		LEFT JOIN audit_team t ON t.id = c.team_id
 		LEFT JOIN `+"`user`"+` u ON u.id = c.owner_id
-		%s AND %s AND c.due_date IS NOT NULL
+		%s AND c.status != 'COMPLETE' AND c.due_date IS NOT NULL
 		AND c.due_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
-		ORDER BY c.due_date ASC, c.id ASC LIMIT 500`, baseWhere, statusFilter) // #nosec G201
+		ORDER BY c.due_date ASC, c.id ASC LIMIT 500`, baseWhere) // #nosec G201
+	return r.scanControlItems(ctx, q, scopeArgs)
+}
+
+// pendingStatusFilter matches controls whose evidence or population submission
+// is awaiting the process owner (not yet submitted, kicked back for clarification,
+// or a sample has been requested and evidence for it is still owed).
+const pendingStatusFilter = "c.status IN ('EVIDENCE_PENDING','POPULATION_PENDING','POPULATION_NEED_CLARIFICATION','EVIDENCE_NEED_CLARIFICATION','SUBMITTED_SAMPLE')"
+
+// validationStatusFilter matches controls whose evidence or population has been
+// submitted and is now with the external auditor for validation/sampling.
+const validationStatusFilter = "c.status IN ('EVIDENCE_UNDER_VALIDATION','POPULATION_UNDER_VALIDATION','POPULATION_COMPLETE','AWAITING_SAMPLE')"
+
+// queryStatusItems returns every in-scope control matching statusFilter, most
+// urgent (earliest due date) first, capped at limit. Used for the Pending and
+// Under Validation work-queue lists, which — unlike Action Items — show the
+// fixed status set to every role rather than a role-specific subset.
+func (r *dashboardRepo) queryStatusItems(ctx context.Context, baseWhere string, scopeArgs []any, statusFilter string, limit int) ([]domain.DashboardControlItem, error) {
+	q := fmt.Sprintf(`
+		SELECT c.id, c.audit_id, a.name,
+		       c.control_number,
+		       c.description,
+		       c.status,
+		       COALESCE(DATE_FORMAT(c.due_date,'%%Y-%%m-%%d'),''),
+		       COALESCE(t.name,''),
+		       COALESCE(u.display_name,''),
+		       c.team_id, c.owner_id
+		FROM audit_control c JOIN audit a ON a.id = c.audit_id
+		LEFT JOIN audit_team t ON t.id = c.team_id
+		LEFT JOIN `+"`user`"+` u ON u.id = c.owner_id
+		%s AND %s
+		ORDER BY c.due_date ASC, c.id ASC LIMIT %d`, baseWhere, statusFilter, limit) // #nosec G201
 	return r.scanControlItems(ctx, q, scopeArgs)
 }
 
@@ -424,12 +464,10 @@ func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQue
 		items, err = r.scanControlItems(ctx, q, pageArgs)
 
 	case domain.WorkQueueTabDueSoon:
-		statusFilter, ok := r.actionItemsStatusFilter(req.PrimaryRole())
-		if !ok {
-			return &domain.WorkQueuePage{Items: []domain.DashboardControlItem{}, Total: 0, Page: page, Limit: limit}, nil
-		}
-		dueSoonWhere := fmt.Sprintf(`%s AND %s AND c.due_date IS NOT NULL AND c.due_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)%s`, baseWhere, statusFilter, filterSQL) // #nosec G201
-		cq := fmt.Sprintf(`SELECT COUNT(*) FROM audit_control c JOIN audit a ON a.id = c.audit_id %s`, dueSoonWhere)                                                                        // #nosec G201
+		// Due soon is a date concern, not a role/action concern — every non-terminal
+		// status is included, matching queryDueSoonItems above.
+		dueSoonWhere := fmt.Sprintf(`%s AND c.status != 'COMPLETE' AND c.due_date IS NOT NULL AND c.due_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)%s`, baseWhere, filterSQL) // #nosec G201
+		cq := fmt.Sprintf(`SELECT COUNT(*) FROM audit_control c JOIN audit a ON a.id = c.audit_id %s`, dueSoonWhere)                                                                              // #nosec G201
 		cqArgs := append(args, filterArgs...)
 		if err := r.db.QueryRowContext(ctx, cq, cqArgs...).Scan(&total); err != nil {
 			return nil, err
@@ -447,6 +485,35 @@ func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQue
 			LEFT JOIN audit_team t ON t.id = c.team_id
 			LEFT JOIN `+"`user`"+` u ON u.id = c.owner_id
 			%s ORDER BY c.due_date %s, c.id ASC LIMIT ? OFFSET ?`, dueSoonWhere, dueDir) // #nosec G201
+		pageArgs := append(append(args, filterArgs...), limit, offset)
+		items, err = r.scanControlItems(ctx, q, pageArgs)
+
+	case domain.WorkQueueTabPending, domain.WorkQueueTabValidation:
+		// Both are fixed status-set lists shown to every role the same way
+		// (unlike Action Items, which is role-scoped) — only the status set differs.
+		statusFilter := pendingStatusFilter
+		if req.Tab == domain.WorkQueueTabValidation {
+			statusFilter = validationStatusFilter
+		}
+		statusWhere := fmt.Sprintf(`%s AND %s%s`, baseWhere, statusFilter, filterSQL) // #nosec G201
+		cq := fmt.Sprintf(`SELECT COUNT(*) FROM audit_control c JOIN audit a ON a.id = c.audit_id %s`, statusWhere) // #nosec G201
+		cqArgs := append(args, filterArgs...)
+		if err := r.db.QueryRowContext(ctx, cq, cqArgs...).Scan(&total); err != nil {
+			return nil, err
+		}
+		q := fmt.Sprintf(`
+			SELECT c.id, c.audit_id, a.name,
+			       c.control_number,
+			       c.description,
+			       c.status,
+			       COALESCE(DATE_FORMAT(c.due_date,'%%Y-%%m-%%d'),''),
+			       COALESCE(t.name,''),
+			       COALESCE(u.display_name,''),
+			       c.team_id, c.owner_id
+			FROM audit_control c JOIN audit a ON a.id = c.audit_id
+			LEFT JOIN audit_team t ON t.id = c.team_id
+			LEFT JOIN `+"`user`"+` u ON u.id = c.owner_id
+			%s ORDER BY c.due_date %s, c.id ASC LIMIT ? OFFSET ?`, statusWhere, dueDir) // #nosec G201
 		pageArgs := append(append(args, filterArgs...), limit, offset)
 		items, err = r.scanControlItems(ctx, q, pageArgs)
 
