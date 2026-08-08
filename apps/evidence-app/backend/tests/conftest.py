@@ -61,9 +61,16 @@ os.environ.setdefault(
     "AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;"
     f"BlobEndpoint=http://{AZURE_BLOB_EMULATOR_ENDPOINT}/devstoreaccount1;",
 )
-# Required: app/config.py has no default for this setting, so it must be in
-# the environment before anything imports app.config for the first time.
+# Required: app/config.py has no default for these settings, so they must be
+# in the environment before anything imports app.config for the first time.
+# The client IDs and role names are arbitrary test values — the suite never
+# talks to Asgardeo, and the auth tests sign their own tokens against a
+# locally generated key.
 os.environ.setdefault("ASGARDEO_ORG", "test-org")
+os.environ.setdefault("ASGARDEO_WEBAPP_CLIENT_ID", "test-webapp-client-id")
+os.environ.setdefault("ASGARDEO_RUNNER_CLIENT_ID", "test-runner-client-id")
+os.environ.setdefault("ASGARDEO_ADMIN_ROLE", "test-admin-role")
+os.environ.setdefault("ASGARDEO_ENGINEER_ROLE", "test-engineer-role")
 
 import io
 

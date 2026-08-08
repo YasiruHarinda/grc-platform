@@ -18,6 +18,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -164,9 +165,16 @@ func (s *controlService) Add(ctx context.Context, auditID int, req model.AddCont
 	return c, nil
 }
 
+// maxBulkControls bounds a single bulk-add request. Keep this in sync with
+// maxItems on BulkAddControlsRequest.controls in openapi.yaml.
+const maxBulkControls = 500
+
 func (s *controlService) BulkAdd(ctx context.Context, auditID int, reqs []model.AddControlRequest, createdBy string) ([]*model.AuditControl, error) {
 	if len(reqs) == 0 {
 		return []*model.AuditControl{}, nil
+	}
+	if len(reqs) > maxBulkControls {
+		return nil, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: fmt.Sprintf("controls must not exceed %d items per request", maxBulkControls)}
 	}
 	for _, req := range reqs {
 		if err := validateAddRequest(req); err != nil {

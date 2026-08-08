@@ -24,27 +24,19 @@ import (
 	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
 
-// Asgardeo group names this platform filters user pickers against. These are
-// exact group names already relied on elsewhere in the codebase (see
-// internal/audit/model/dashboard.go's asgardeoGroupRoles), not arbitrary
-// strings — the SCIM Operations Service is asked to match membership in
-// exactly these groups.
-const (
-	managementGroup = "grc-platform-management"
-	riskOwnerGroup  = "grc-platform-risk-owner"
-)
-
 // handleListManagementApprovers serves GET /api/v1/management-approvers:
-// every platform user who is also a member of the Management Asgardeo group.
+// every platform user who is also a member of the Management Asgardeo group
+// (d.Groups.Management, RISK_MANAGEMENT_GROUP — see config.RiskGroupsConfig).
 func (d *Deps) handleListManagementApprovers(w http.ResponseWriter, r *http.Request) {
-	d.handleListUsersInGroup(w, r, managementGroup)
+	d.handleListUsersInGroup(w, r, d.Groups.Management)
 }
 
 // handleListRiskOwnerCandidates serves GET /api/v1/risk-owner-candidates:
-// every platform user who is also a member of the Risk Owner Asgardeo group.
-// The Add Risk form further intersects this with team membership client-side.
+// every platform user who is also a member of the Risk Owner Asgardeo group
+// (d.Groups.RiskOwner, RISK_OWNER_GROUP — see config.RiskGroupsConfig). The
+// Add Risk form further intersects this with team membership client-side.
 func (d *Deps) handleListRiskOwnerCandidates(w http.ResponseWriter, r *http.Request) {
-	d.handleListUsersInGroup(w, r, riskOwnerGroup)
+	d.handleListUsersInGroup(w, r, d.Groups.RiskOwner)
 }
 
 // handleListUsersInGroup returns the subset of platform users (from GET

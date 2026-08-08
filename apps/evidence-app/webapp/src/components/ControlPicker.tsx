@@ -15,8 +15,9 @@ import Alert from "@mui/material/Alert";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import { PlusIcon, PenToSquareIcon, TrashIcon } from "@oxygen-ui/react-icons";
-import { controlsApi, evidenceApi, submissionsApi } from "../api/client";
+import { controlsApi, evidenceApi, submissionsApi, agentApi } from "../api/client";
 import ConfirmDeleteDialog from "./ConfirmDeleteDialog";
+import { timeAgo } from "../utils/timeAgo";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 
 type Control = {
@@ -28,7 +29,13 @@ type Control = {
 };
 
 type Evidence = { id: number; control_id: number };
-type Submission = { id: number; evidence_id: number };
+type Submission = { id: number; evidence_id: number; status: string };
+type AgentTask = {
+  status: string;
+  control_id: number | null;
+  started_at: string | null;
+  user_email: string;
+};
 
 type ControlOption = Control & { isCreate?: false } | {
   isCreate: true;
@@ -86,13 +93,35 @@ export default function ControlPicker({
     queryFn: submissionsApi.list,
     enabled: !!deleteTarget,
   });
+  // Only fetched while the delete dialog is open, so we can warn about an
+  // agent run that's still (or claims to be) in progress against it.
+  const { data: allTasks = [], isLoading: isTasksLoading } = useQuery<AgentTask[]>({
+    queryKey: ["agent-tasks"],
+    queryFn: () => agentApi.listTasks(500),
+    enabled: !!deleteTarget,
+  });
 
   const cascadeImpact = (ctrlId: number) => {
     const evIds = allEvidence.filter((e) => e.control_id === ctrlId).map((e) => e.id);
-    const subCount = allSubmissions.filter((s) => evIds.includes(s.evidence_id)).length;
+    const subs = allSubmissions.filter((s) => evIds.includes(s.evidence_id));
+    const approvedCount = subs.filter((s) => s.status === "approved").length;
     return [
-      { label: "evidence files", count: evIds.length },
-      { label: "submission records", count: subCount },
+      { label: "evidence records", count: evIds.length },
+      { label: "submission records", count: subs.length },
+      { label: "approved submissions", count: approvedCount },
+    ];
+  };
+
+  // status = "running" isn't trustworthy on its own — a crashed Runner leaves
+  // that row forever, and there's no heartbeat column. Showing how long ago
+  // it started lets the Admin judge that instead of the system claiming it.
+  const activeRunWarnings = (ctrlId: number): string[] => {
+    const activeRuns = allTasks.filter((t) => t.status === "running" && t.control_id === ctrlId);
+    if (activeRuns.length === 0) return [];
+    return [
+      `${activeRuns.length} agent run${activeRuns.length === 1 ? "" : "s"} marked as in progress against this control.`,
+      ...activeRuns.map((t) => `Started ${timeAgo(t.started_at)} by ${t.user_email}.`),
+      "If it is still running, deleting now will leave its evidence unlinked.",
     ];
   };
 
@@ -209,12 +238,21 @@ export default function ControlPicker({
                     </Typography>
                   )}
                 </Box>
+                {/* No onMouseDown handler on these two buttons, on purpose.
+                    Autocomplete's own listbox needs that event so it can call
+                    preventDefault and stop the search box losing focus. Swallow
+                    it and the box blurs, the dropdown closes on blur, the button
+                    unmounts before mouse-up, and the browser never fires a
+                    click at all — the icons look alive but do nothing. Selecting
+                    the row is already prevented by stopPropagation on the click
+                    below, which is all these handlers ever needed.
+                    Product and Framework are unaffected: a Select menu stays
+                    open when focus moves inside it. */}
                 {isAdmin && (
                   <Tooltip title="Edit">
                     <IconButton
                       size="small"
                       aria-label="Edit control"
-                      onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.stopPropagation();
                         e.preventDefault();
@@ -231,7 +269,6 @@ export default function ControlPicker({
                       size="small"
                       color="error"
                       aria-label="Delete control"
-                      onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.stopPropagation();
                         e.preventDefault();
@@ -300,12 +337,13 @@ export default function ControlPicker({
         }}
         onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
         isPending={deleteMutation.isPending}
-        impactLoading={isEvidenceLoading || isSubmissionsLoading}
+        impactLoading={isEvidenceLoading || isSubmissionsLoading || isTasksLoading}
         entityType="control"
         entityName={
           deleteTarget ? `${deleteTarget.control_ref} — ${deleteTarget.title}` : ""
         }
         impact={deleteTarget ? cascadeImpact(deleteTarget.id) : []}
+        warnings={deleteTarget ? activeRunWarnings(deleteTarget.id) : []}
         error={deleteError}
       />
     </>

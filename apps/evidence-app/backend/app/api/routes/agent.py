@@ -126,12 +126,36 @@ def create_task(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # Resolve the Control before inserting. Naming a control_id that doesn't
+    # exist is a bad request, not a server failure: left to the foreign key
+    # it would surface as a raw IntegrityError, i.e. a 500. Matches
+    # create_control's own check on its parent Framework
+    # (app/api/routes/controls.py).
+    #
+    # `req.control_id is not None` is the guard that keeps control-less
+    # tasks working: `login` tasks never have a Control, and a `run` can be
+    # started without picking one either -- both are legitimate and must
+    # keep going straight through as NULL. Only a *supplied* id is looked up
+    # and validated.
+    control = None
+    if req.control_id is not None:
+        control = db.query(Control).filter(Control.id == req.control_id).first()
+        if not control:
+            raise HTTPException(status_code=404, detail="Control not found")
+
     task = AgentTask(
         user_email=user.email,
         prompt=req.prompt,
         region_hint=req.region_hint,
         portal_url=req.portal_url,
         control_id=req.control_id,
+        # Snapshot the Control's identity as plain text, frozen at this
+        # moment -- see the comment on these columns in app/models/agent_task.py
+        # for why they exist and why they're never updated afterwards.
+        # `control` is None whenever `req.control_id` was None, so a
+        # control-less task correctly gets no snapshot either.
+        control_ref_snapshot=control.control_ref if control else None,
+        control_title_snapshot=control.title if control else None,
         title=req.title,
         kind=req.kind,
         status="queued",

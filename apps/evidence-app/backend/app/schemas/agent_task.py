@@ -25,6 +25,12 @@ class TaskOut(BaseModel):
     portal_url: str | None
     control_id: int | None
     title: str | None
+    # Frozen at task creation -- see the comment on the model columns.
+    # Present even after `control_id` goes NULL (Control deleted), so a
+    # deleted-Control run is still distinguishable from one that never had
+    # a Control (e.g. a `login` task).
+    control_ref_snapshot: str | None = None
+    control_title_snapshot: str | None = None
     kind: str
     status: str
     runner_id: str | None
