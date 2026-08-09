@@ -532,39 +532,78 @@ interface WorkQueueProps {
   totalPendingItems: number;
   totalValidationItems: number;
   totalOverdueControls: number;
+  // canViewAll (AUDIT_VIEW_ALL_AUDITS) sees the full tab set; a submitter without
+  // it sees only Pending Submission; an auditor without it only Under Validation.
+  canViewAll: boolean;
   canApprove: boolean;
   canSubmit: boolean;
+  canValidate: boolean;
   queueTitle: string;
   tab: number;
   onTabChange: (tab: number) => void;
 }
 
+interface QueueTabDef {
+  value: number;
+  label: string;
+  tabKey: WorkQueueTab;
+  emptyText: string;
+  sx?: object;
+}
+
 export default function WorkQueue({
   totalActionItems, totalDueSoonItems, totalPendingItems, totalValidationItems, totalOverdueControls,
-  canApprove, canSubmit, queueTitle, tab, onTabChange,
+  canViewAll, canApprove, canSubmit, canValidate, queueTitle, tab, onTabChange,
 }: WorkQueueProps): JSX.Element {
+  const allTabs: QueueTabDef[] = [
+    { value: QUEUE_TAB_AWAITING, label: `${queueTitle} (${totalActionItems})`, tabKey: "action-items", emptyText: "No pending actions" },
+    { value: QUEUE_TAB_DUE_SOON, label: `Due Soon (${totalDueSoonItems})`, tabKey: "due-soon", emptyText: "Nothing due in the next 7 days" },
+    { value: QUEUE_TAB_PENDING, label: `Pending Submission (${totalPendingItems})`, tabKey: "pending", emptyText: "Nothing pending submission or clarification" },
+    { value: QUEUE_TAB_VALIDATION, label: `Under Validation (${totalValidationItems})`, tabKey: "validation", emptyText: "Nothing under validation" },
+    {
+      value: QUEUE_TAB_OVERDUE, label: `Overdue (${totalOverdueControls})`, tabKey: "overdue", emptyText: "No overdue controls",
+      sx: totalOverdueControls > 0 ? { color: "#E53935", "&.Mui-selected": { color: "#E53935" } } : undefined,
+    },
+  ];
+
+  // Privilege-driven tab visibility (ADR-0002): org-wide readers get everything;
+  // a submitter sees only their Pending Submission queue; an auditor only Under
+  // Validation. Each Tab carries an explicit `value` so hidden tabs don't shift
+  // the selected index.
+  const visibleTabs = canViewAll
+    ? allTabs
+    : canSubmit
+      ? allTabs.filter((t) => t.value === QUEUE_TAB_PENDING)
+      : canValidate
+        ? allTabs.filter((t) => t.value === QUEUE_TAB_VALIDATION)
+        : [];
+
+  if (visibleTabs.length === 0) {
+    return (
+      <Box sx={{ py: 4, textAlign: "center" }}>
+        <Typography variant="body2" color="text.secondary">No work items for your role.</Typography>
+      </Box>
+    );
+  }
+
+  // The default landing tab may be hidden for narrow roles — fall back to the
+  // first visible tab.
+  const effectiveTab = visibleTabs.some((t) => t.value === tab) ? tab : visibleTabs[0].value;
+  const active = visibleTabs.find((t) => t.value === effectiveTab) ?? visibleTabs[0];
+
   return (
     <Box>
       <Tabs
-        value={tab}
+        value={effectiveTab}
         onChange={(_, v: number) => onTabChange(v)}
         sx={{ borderBottom: 1, borderColor: "divider", minHeight: 40, "& .MuiTab-root": { minHeight: 40, textTransform: "none", fontWeight: 600 } }}
       >
-        <Tab label={`${queueTitle} (${totalActionItems})`} />
-        <Tab label={`Due Soon (${totalDueSoonItems})`} />
-        <Tab label={`Pending Submission (${totalPendingItems})`} />
-        <Tab label={`Under Validation (${totalValidationItems})`} />
-        <Tab
-          label={`Overdue (${totalOverdueControls})`}
-          sx={totalOverdueControls > 0 ? { color: "#E53935", "&.Mui-selected": { color: "#E53935" } } : undefined}
-        />
+        {visibleTabs.map((t) => (
+          <Tab key={t.value} value={t.value} label={t.label} sx={t.sx} />
+        ))}
       </Tabs>
       <Box sx={{ pt: 1 }}>
-        {tab === 0 && <TabPanel tab="action-items" canApprove={canApprove} canSubmit={canSubmit} emptyText="No pending actions" />}
-        {tab === 1 && <TabPanel tab="due-soon" canApprove={canApprove} canSubmit={canSubmit} emptyText="Nothing due in the next 7 days" />}
-        {tab === 2 && <TabPanel tab="pending" canApprove={canApprove} canSubmit={canSubmit} emptyText="Nothing pending submission or clarification" />}
-        {tab === 3 && <TabPanel tab="validation" canApprove={canApprove} canSubmit={canSubmit} emptyText="Nothing under validation" />}
-        {tab === 4 && <TabPanel tab="overdue" canApprove={canApprove} canSubmit={canSubmit} emptyText="No overdue controls" />}
+        <TabPanel tab={active.tabKey} canApprove={canApprove} canSubmit={canSubmit} emptyText={active.emptyText} />
       </Box>
     </Box>
   );

@@ -37,43 +37,74 @@ type dashboardRepo struct{ db *sql.DB }
 // NewDashboardRepository constructs a DashboardRepository.
 func NewDashboardRepository(db *sql.DB) DashboardRepository { return &dashboardRepo{db: db} }
 
-// resolveScope returns a WHERE fragment (starting with "AND"), any args to bind,
-// and an error. Only sql.ErrNoRows and a NULL team/user column are mapped to
-// " AND 1=0" (legitimate no-data cases); any other DB error is propagated so
-// callers return 500 instead of a silent empty dashboard.
-func (r *dashboardRepo) resolveScope(ctx context.Context, req domain.AuditDashboardRequest) (string, []any, error) {
-	switch req.PrimaryRole() {
-	case domain.RoleComplianceAdmin, domain.RoleComplianceTeam, domain.RoleManagement:
+// scopeWhere returns a WHERE fragment (starting with "AND"), any args to bind,
+// and an error, for the given row scope. Scope is derived from the caller's
+// privileges upstream (never a role); this just applies it, resolving the actor's
+// team/owner/auditor identity from userEmail. Only sql.ErrNoRows / a NULL user is
+// mapped to " AND 1=0" (a legitimate no-data case); any other DB error propagates
+// so callers return 500 instead of a silent empty dashboard.
+func (r *dashboardRepo) scopeWhere(ctx context.Context, scope domain.Scope, userEmail string) (string, []any, error) {
+	switch scope {
+	case domain.ScopeAll:
 		return "", nil, nil
-	case domain.RoleInternalTeam:
+	case domain.ScopeOwnTeam:
 		// A user can belong to more than one audit team (user_audit_team is
-		// many-to-many), so scope to any of them via a subquery rather than a
-		// single equality check. A user with no team membership simply matches
-		// no rows — no separate "not found" branch is needed the way the old
-		// single-column lookup required.
+		// many-to-many), so scope to any of them via a subquery. A user with no
+		// team membership simply matches no rows.
 		return " AND c.team_id IN (SELECT uat.audit_team_id FROM user_audit_team uat JOIN `user` u ON u.id = uat.user_id WHERE u.email = ? AND uat.is_active = TRUE)",
-			[]any{req.UserEmail}, nil
-	case domain.RoleExternalAuditor:
-		var userID sql.NullInt64
-		err := r.db.QueryRowContext(ctx, "SELECT id FROM `user` WHERE email = ?", req.UserEmail).Scan(&userID)
-		if errors.Is(err, sql.ErrNoRows) || (err == nil && !userID.Valid) {
+			[]any{userEmail}, nil
+	case domain.ScopeOwned:
+		uid, ok, err := r.userIDByEmail(ctx, userEmail)
+		if err != nil {
+			return "", nil, err
+		}
+		if !ok {
 			return " AND 1=0", nil, nil
 		}
+		return " AND c.owner_id = ?", []any{uid}, nil
+	case domain.ScopeAssigned:
+		uid, ok, err := r.userIDByEmail(ctx, userEmail)
 		if err != nil {
-			return "", nil, fmt.Errorf("dashboard.resolveScope: lookup user for %q: %w", req.UserEmail, err)
+			return "", nil, err
 		}
-		return " AND c.auditor_id = ?", []any{userID.Int64}, nil
-	default:
+		if !ok {
+			return " AND 1=0", nil, nil
+		}
+		return " AND c.auditor_id = ?", []any{uid}, nil
+	default: // ScopeNone and any unrecognized value scope to nothing.
 		return " AND 1=0", nil, nil
 	}
 }
 
+// userIDByEmail resolves a user's id from their email. ok=false when no such user
+// (or a NULL id) exists — a legitimate "scope to zero rows" case, not an error.
+func (r *dashboardRepo) userIDByEmail(ctx context.Context, email string) (int64, bool, error) {
+	var id sql.NullInt64
+	err := r.db.QueryRowContext(ctx, "SELECT id FROM `user` WHERE email = ?", email).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && !id.Valid) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("dashboard.userIDByEmail %q: %w", email, err)
+	}
+	return id.Int64, true, nil
+}
+
 func (r *dashboardRepo) Get(ctx context.Context, req domain.AuditDashboardRequest) (*domain.DashboardData, error) {
-	scope, args, err := r.resolveScope(ctx, req)
+	// Two scopes: the view scope drives stats/charts (baseWhere); the work-queue
+	// scope drives the action/due/pending/validation/overdue lists (queueWhere).
+	// They differ only for the submitter (own_team view, owned work queue).
+	scope, args, err := r.scopeWhere(ctx, req.Scope, req.UserEmail)
 	if err != nil {
 		return nil, err
 	}
 	baseWhere := "WHERE a.status = 'ACTIVE'" + scope
+
+	queueScope, queueArgs, err := r.scopeWhere(ctx, req.WorkQueueScope, req.UserEmail)
+	if err != nil {
+		return nil, err
+	}
+	queueWhere := "WHERE a.status = 'ACTIVE'" + queueScope
 
 	// Status distribution.
 	statusRows, err := r.db.QueryContext(ctx, fmt.Sprintf(`
@@ -164,27 +195,27 @@ func (r *dashboardRepo) Get(ctx context.Context, req domain.AuditDashboardReques
 	if err != nil {
 		return nil, err
 	}
-	actionItems, err := r.queryActionItems(ctx, req, baseWhere, args)
+	actionItems, err := r.queryActionItems(ctx, req.WorkQueueClass, queueWhere, queueArgs)
 	if err != nil {
 		return nil, err
 	}
-	dueSoonItems, err := r.queryDueSoonItems(ctx, baseWhere, args)
+	dueSoonItems, err := r.queryDueSoonItems(ctx, queueWhere, queueArgs)
 	if err != nil {
 		return nil, err
 	}
-	pendingItems, err := r.queryStatusItems(ctx, baseWhere, args, pendingStatusFilter, 500)
+	pendingItems, err := r.queryStatusItems(ctx, queueWhere, queueArgs, pendingStatusFilter, 500)
 	if err != nil {
 		return nil, err
 	}
-	validationItems, err := r.queryStatusItems(ctx, baseWhere, args, validationStatusFilter, 500)
+	validationItems, err := r.queryStatusItems(ctx, queueWhere, queueArgs, validationStatusFilter, 500)
 	if err != nil {
 		return nil, err
 	}
-	totalActionItems, err := r.queryActionItemsCount(ctx, req, baseWhere, args)
+	totalActionItems, err := r.queryActionItemsCount(ctx, req.WorkQueueClass, queueWhere, queueArgs)
 	if err != nil {
 		return nil, err
 	}
-	overdueControls, err := r.queryOverdueControls(ctx, baseWhere, args)
+	overdueControls, err := r.queryOverdueControls(ctx, queueWhere, queueArgs)
 	if err != nil {
 		return nil, err
 	}
@@ -238,23 +269,24 @@ func (r *dashboardRepo) queryAuditStats(ctx context.Context) (domain.AuditStats,
 	return s, rows.Err()
 }
 
-func (r *dashboardRepo) actionItemsStatusFilter(role string) (string, bool) {
-	switch role {
-	case domain.RoleInternalTeam:
+// actionItemsStatusFilter maps the caller-supplied work-queue class to the
+// control statuses that count as that actor's action items. ok=false means the
+// actor has no action queue (e.g. management), so callers return an empty list.
+func (r *dashboardRepo) actionItemsStatusFilter(class domain.WorkQueueClass) (string, bool) {
+	switch class {
+	case domain.WorkQueueClassSubmission:
 		return "c.status IN ('EVIDENCE_PENDING','SUBMITTED_SAMPLE','EVIDENCE_NEED_CLARIFICATION','POPULATION_PENDING','POPULATION_NEED_CLARIFICATION')", true
-	case domain.RoleComplianceAdmin, domain.RoleComplianceTeam:
+	case domain.WorkQueueClassReview:
 		return "c.status IN ('EVIDENCE_INTERNAL_REVIEW','POPULATION_INTERNAL_REVIEW')", true
-	case domain.RoleExternalAuditor:
+	case domain.WorkQueueClassValidation:
 		return "c.status IN ('EVIDENCE_UNDER_VALIDATION','POPULATION_UNDER_VALIDATION','POPULATION_COMPLETE','AWAITING_SAMPLE')", true
-	case domain.RoleManagement:
+	default: // WorkQueueClassNone and any unrecognized value: no action queue.
 		return "", false
-	default:
-		return "c.status IN ('EVIDENCE_INTERNAL_REVIEW','POPULATION_INTERNAL_REVIEW')", true
 	}
 }
 
-func (r *dashboardRepo) queryActionItems(ctx context.Context, req domain.AuditDashboardRequest, baseWhere string, scopeArgs []any) ([]domain.DashboardControlItem, error) {
-	statusFilter, ok := r.actionItemsStatusFilter(req.PrimaryRole())
+func (r *dashboardRepo) queryActionItems(ctx context.Context, class domain.WorkQueueClass, baseWhere string, scopeArgs []any) ([]domain.DashboardControlItem, error) {
+	statusFilter, ok := r.actionItemsStatusFilter(class)
 	if !ok {
 		return []domain.DashboardControlItem{}, nil
 	}
@@ -327,19 +359,10 @@ func (r *dashboardRepo) queryStatusItems(ctx context.Context, baseWhere string, 
 	return r.scanControlItems(ctx, q, scopeArgs)
 }
 
-func (r *dashboardRepo) queryActionItemsCount(ctx context.Context, req domain.AuditDashboardRequest, baseWhere string, scopeArgs []any) (int, error) {
-	var statusFilter string
-	switch req.PrimaryRole() {
-	case domain.RoleInternalTeam:
-		statusFilter = "c.status IN ('EVIDENCE_PENDING','SUBMITTED_SAMPLE','EVIDENCE_NEED_CLARIFICATION','POPULATION_PENDING','POPULATION_NEED_CLARIFICATION')"
-	case domain.RoleComplianceAdmin, domain.RoleComplianceTeam:
-		statusFilter = "c.status IN ('EVIDENCE_INTERNAL_REVIEW','POPULATION_INTERNAL_REVIEW')"
-	case domain.RoleExternalAuditor:
-		statusFilter = "c.status IN ('EVIDENCE_UNDER_VALIDATION','POPULATION_UNDER_VALIDATION','POPULATION_COMPLETE','AWAITING_SAMPLE')"
-	case domain.RoleManagement:
+func (r *dashboardRepo) queryActionItemsCount(ctx context.Context, class domain.WorkQueueClass, baseWhere string, scopeArgs []any) (int, error) {
+	statusFilter, ok := r.actionItemsStatusFilter(class)
+	if !ok {
 		return 0, nil
-	default:
-		statusFilter = "c.status IN ('EVIDENCE_INTERNAL_REVIEW','POPULATION_INTERNAL_REVIEW')"
 	}
 	q := fmt.Sprintf(`
 		SELECT COUNT(*) FROM audit_control c JOIN audit a ON a.id = c.audit_id
@@ -391,9 +414,8 @@ func buildLikeFilter(col, term string) (string, []any) {
 
 // GetWorkQueuePage returns a single paginated page of work-queue items.
 func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQueueRequest) (*domain.WorkQueuePage, error) {
-	// Resolve scope the same way as the dashboard.
-	dashReq := domain.AuditDashboardRequest{Roles: req.Roles, UserEmail: req.UserEmail}
-	scope, args, err := r.resolveScope(ctx, dashReq)
+	// The work queue uses the work-queue scope (personal for submitters).
+	scope, args, err := r.scopeWhere(ctx, req.WorkQueueScope, req.UserEmail)
 	if err != nil {
 		return nil, err
 	}
@@ -436,7 +458,7 @@ func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQue
 
 	switch req.Tab {
 	case domain.WorkQueueTabActionItems:
-		statusFilter, ok := r.actionItemsStatusFilter(req.PrimaryRole())
+		statusFilter, ok := r.actionItemsStatusFilter(req.WorkQueueClass)
 		if !ok {
 			return &domain.WorkQueuePage{Items: []domain.DashboardControlItem{}, Total: 0, Page: page, Limit: limit}, nil
 		}

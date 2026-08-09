@@ -171,14 +171,16 @@ func (h *evidenceHandler) submitPopulation(w http.ResponseWriter, r *http.Reques
 }
 
 // canViewPopulation allows: the team (SubmitEvidence), an internal reviewer
-// (ReviewEvidence), the control's assigned auditor (by email), or ManageControls.
+// (ReviewEvidence), an org-wide reader (ViewAllAudits, e.g. management — see
+// ADR-0002), the control's assigned auditor (by email), or ManageControls.
 // Unlike the write routes there is no team-assignment (IDOR) check here — this
 // mirrors listEvidence/downloadEvidenceFile, which are privilege-gated only.
 func canViewPopulation(r *http.Request, control *model.AuditControl) bool {
 	ctx := r.Context()
 	if auth.HasPrivilege(ctx, privilege.ManageControls) ||
 		auth.HasPrivilege(ctx, privilege.SubmitEvidence) ||
-		auth.HasPrivilege(ctx, privilege.ReviewEvidence) {
+		auth.HasPrivilege(ctx, privilege.ReviewEvidence) ||
+		auth.HasPrivilege(ctx, privilege.ViewAllAudits) {
 		return true
 	}
 	actor := auth.FromContext(ctx)
@@ -258,7 +260,7 @@ func (h *evidenceHandler) listPopulation(w http.ResponseWriter, r *http.Request)
 // It proxies the file bytes the same way downloadEvidenceFile does — the
 // backend reads the blob directly from Azure using its own storage credential.
 func (h *evidenceHandler) downloadPopulationFile(w http.ResponseWriter, r *http.Request) {
-	if !auth.RequireAnyPrivilege(r.Context(), w, privilege.SubmitEvidence, privilege.ReviewEvidence, privilege.ManageControls) {
+	if !auth.RequireAnyPrivilege(r.Context(), w, privilege.SubmitEvidence, privilege.ReviewEvidence, privilege.ManageControls, privilege.ViewAllAudits) {
 		return
 	}
 	fileID, ok := parseIntParam(w, r, "fileId")
@@ -336,7 +338,7 @@ func (h *evidenceHandler) deletePopulationFile(w http.ResponseWriter, r *http.Re
 				response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
 				return
 			}
-			if !requireAssignedAuditor(w, r, control) {
+			if !requireAssignedAuditor(w, r, control, privilege.SelectSample) {
 				return
 			}
 			if !sampleEligibleStatuses[control.Status] {
@@ -424,7 +426,7 @@ func (h *evidenceHandler) reviewPopulation(w http.ResponseWriter, r *http.Reques
 // same round.
 func (h *evidenceHandler) validatePopulation(w http.ResponseWriter, r *http.Request) {
 	h.decideRound(w, r, decideRoundParams{
-		postGate:          requireAssignedAuditor,
+		postGate:          assignedAuditorGate(privilege.ValidateEvidence),
 		requiredStatus:    "POPULATION_UNDER_VALIDATION",
 		statusConflictMsg: "population can only be validated while it is under auditor validation",
 		latestRoundID: func(ctx context.Context, auditID, controlID int) (int, error) {

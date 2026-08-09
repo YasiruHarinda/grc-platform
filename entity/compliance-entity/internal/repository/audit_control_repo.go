@@ -235,7 +235,41 @@ func buildControlFilters(seedWhere string, seedArgs []any, req domain.SearchCont
 			args = append(args, id)
 		}
 	}
+	if len(req.ControlIDs) > 0 {
+		ph := strings.Repeat("?,", len(req.ControlIDs))
+		where += " AND c.id IN (" + ph[:len(ph)-1] + ")"
+		for _, id := range req.ControlIDs {
+			args = append(args, id)
+		}
+	}
+	scopeClause, scopeArgs := controlScopeWhere(req.Scope, req.UserEmail)
+	where += scopeClause
+	args = append(args, scopeArgs...)
 	return where, args
+}
+
+// controlScopeWhere returns a WHERE fragment (starting with "AND") and its
+// bind args for the given row scope, mirroring audit_dashboard_repo.go's
+// scopeWhere (same `c` control alias, same user_audit_team join) so list/search
+// endpoints enforce the same row-scoping rule the dashboard already does. Unlike
+// the dashboard's version this never needs a DB round-trip to resolve the
+// caller's identity — auditor/owner match by a correlated subquery on email
+// instead of a pre-resolved user id — so it stays a pure string/args builder,
+// callable from buildControlFilters without a context or *sql.DB.
+func controlScopeWhere(scope domain.Scope, userEmail string) (string, []any) {
+	switch scope {
+	case "", domain.ScopeAll:
+		return "", nil
+	case domain.ScopeOwnTeam:
+		return " AND c.team_id IN (SELECT uat.audit_team_id FROM user_audit_team uat JOIN `user` u ON u.id = uat.user_id WHERE u.email = ? AND uat.is_active = TRUE)",
+			[]any{userEmail}
+	case domain.ScopeOwned:
+		return " AND c.owner_id = (SELECT id FROM `user` WHERE email = ?)", []any{userEmail}
+	case domain.ScopeAssigned:
+		return " AND c.auditor_id = (SELECT id FROM `user` WHERE email = ?)", []any{userEmail}
+	default: // ScopeNone and any unrecognized value scope to nothing.
+		return " AND 1=0", nil
+	}
 }
 
 // runControlSearch executes the count + paginated data query and scans the results.

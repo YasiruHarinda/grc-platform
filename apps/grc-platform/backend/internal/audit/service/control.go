@@ -53,7 +53,9 @@ var validStatuses = map[string]bool{
 // ControlService defines business operations for audit controls.
 type ControlService interface {
 	List(ctx context.Context, auditID int) ([]*model.AuditControl, error)
+	ListScoped(ctx context.Context, auditID int, scope model.Scope, userEmail string) ([]*model.AuditControl, error)
 	GetByID(ctx context.Context, auditID, controlID int) (*model.AuditControl, error)
+	InScope(ctx context.Context, auditID, controlID int, scope model.Scope, userEmail string) (bool, error)
 	Add(ctx context.Context, auditID int, req model.AddControlRequest, createdBy string) (*model.AuditControl, error)
 	BulkAdd(ctx context.Context, auditID int, reqs []model.AddControlRequest, createdBy string) ([]*model.AuditControl, error)
 	Update(ctx context.Context, auditID, controlID int, req model.UpdateControlRequest, updatedBy string) error
@@ -112,6 +114,14 @@ func statusChangeAction(to string) string {
 
 func (s *controlService) List(ctx context.Context, auditID int) ([]*model.AuditControl, error) {
 	return s.repo.List(ctx, auditID)
+}
+
+func (s *controlService) ListScoped(ctx context.Context, auditID int, scope model.Scope, userEmail string) ([]*model.AuditControl, error) {
+	return s.repo.ListScoped(ctx, auditID, scope, userEmail)
+}
+
+func (s *controlService) InScope(ctx context.Context, auditID, controlID int, scope model.Scope, userEmail string) (bool, error) {
+	return s.repo.InScope(ctx, auditID, controlID, scope, userEmail)
 }
 
 func (s *controlService) GetByID(ctx context.Context, auditID, controlID int) (*model.AuditControl, error) {

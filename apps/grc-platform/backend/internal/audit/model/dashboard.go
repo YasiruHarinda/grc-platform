@@ -119,11 +119,51 @@ type WorkQueuePage struct {
 	Limit int          `json:"limit"`
 }
 
-// DashboardFilter carries the query scope derived from the user's JWT roles.
+// Scope is the row-visibility class the Compliance Entity applies. It is derived
+// from the actor's privileges in the handler (never from a role or group name)
+// and sent to the entity explicitly. See docs/adr/0002-privilege-derived-scope.md.
+type Scope string
+
+const (
+	// ScopeAll sees every row (org-wide read — holders of AUDIT_VIEW_ALL_AUDITS).
+	ScopeAll Scope = "all"
+	// ScopeOwnTeam sees the actor's audit teams' controls (submitter dashboards).
+	ScopeOwnTeam Scope = "own_team"
+	// ScopeOwned sees only controls the actor owns (owner_id = actor) — the
+	// submitter's work queue, narrower than their own_team dashboard.
+	ScopeOwned Scope = "owned"
+	// ScopeAssigned sees only controls the actor audits (auditor_id = actor).
+	ScopeAssigned Scope = "assigned"
+	// ScopeNone sees nothing.
+	ScopeNone Scope = "none"
+)
+
+// WorkQueueClass selects which control-lifecycle bucket counts as the actor's
+// "action items", derived from privileges (never a role). Sent to the entity so
+// it needs no role knowledge to compute the action-items list/count.
+type WorkQueueClass string
+
+const (
+	// WorkQueueClassReview — internal review stage (holders of AUDIT_REVIEW_EVIDENCE).
+	WorkQueueClassReview WorkQueueClass = "review"
+	// WorkQueueClassSubmission — submission stage (submitters without review).
+	WorkQueueClassSubmission WorkQueueClass = "submission"
+	// WorkQueueClassValidation — auditor validation/sample stage.
+	WorkQueueClassValidation WorkQueueClass = "validation"
+	// WorkQueueClassNone — no action queue (e.g. management observers).
+	WorkQueueClassNone WorkQueueClass = "none"
+)
+
+// DashboardFilter carries the query scope, derived from the user's privileges.
 type DashboardFilter struct {
-	// Roles is the set of role strings from the JWT groups claim.
-	Roles []string
-	// UserEmail is the authenticated user's email (used to look up team/auditor ID).
+	// ViewScope scopes dashboard stats, charts and lists.
+	ViewScope Scope
+	// WorkQueueScope scopes the work-queue tabs. Equals ViewScope for every role
+	// except the submitter (own_team view, owned work queue).
+	WorkQueueScope Scope
+	// WorkQueueClass selects the action-items lifecycle bucket for the actor.
+	WorkQueueClass WorkQueueClass
+	// UserEmail is the authenticated user's email (used to look up team/owner/auditor ID).
 	UserEmail string
 	// TeamIDs optionally restricts work-queue results to specific audit_team IDs.
 	TeamIDs []int
@@ -139,62 +179,4 @@ type DashboardFilter struct {
 	Statuses []string
 	// DueSortDesc sorts the page by due date descending (latest first) when true.
 	DueSortDesc bool
-}
-
-// Role constants — mirror the Asgardeo group names exactly.
-const (
-	RoleComplianceAdmin = "compliance_admin"
-	RoleComplianceTeam  = "compliance_team"
-	RoleInternalTeam    = "internal_team"
-	RoleExternalAuditor = "external_auditor"
-	RoleManagement      = "management"
-)
-
-// asgardeoGroupRoles maps Asgardeo group names (JWT groups claim) to the
-// canonical dashboard role tokens the Compliance Entity understands. The
-// entity scopes unknown roles to zero rows, so translation must happen here
-// (the entity itself is owned by another team and cannot be changed).
-var asgardeoGroupRoles = map[string]string{
-	"grc-platform-compliance-audit-admin": RoleComplianceAdmin,
-	"grc-platform-compliance-audit-team":  RoleComplianceTeam,
-	"grc-platform-internal-team":          RoleInternalTeam,
-	"grc-platform-external-auditor":       RoleExternalAuditor,
-	"grc-platform-management":             RoleManagement,
-	// Read-only auditor sees the same org-wide scope as management.
-	"grc-platform-internal-auditor": RoleManagement,
-	// Testing catch-all group — full visibility for local development.
-	"wso2-everyone": RoleComplianceAdmin,
-}
-
-// NormalizedRoles returns Roles translated to canonical role tokens.
-// Values that are already canonical (or unknown) pass through unchanged.
-func (f DashboardFilter) NormalizedRoles() []string {
-	out := make([]string, 0, len(f.Roles))
-	for _, g := range f.Roles {
-		if r, ok := asgardeoGroupRoles[g]; ok {
-			out = append(out, r)
-			continue
-		}
-		out = append(out, g)
-	}
-	return out
-}
-
-// PrimaryRole returns the highest-priority audit role from the filter's role list.
-func (f DashboardFilter) PrimaryRole() string {
-	priority := []string{
-		RoleComplianceAdmin,
-		RoleComplianceTeam,
-		RoleExternalAuditor,
-		RoleInternalTeam,
-		RoleManagement,
-	}
-	for _, r := range priority {
-		for _, g := range f.Roles {
-			if g == r {
-				return r
-			}
-		}
-	}
-	return ""
 }

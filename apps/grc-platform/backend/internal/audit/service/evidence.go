@@ -102,6 +102,12 @@ type EvidenceService interface {
 	// Entity) plus its name and content type, by file ID.
 	DownloadFile(ctx context.Context, fileID int) (data []byte, fileName, contentType string, err error)
 
+	// FileAuditorEmail returns the email of the auditor assigned to fileID's
+	// owning control (nil if none), for the assigned-auditor download gate —
+	// the download route only carries a file id, not a control id, so this is
+	// how downloadEvidenceFile resolves assignment without one.
+	FileAuditorEmail(ctx context.Context, fileID int) (*string, error)
+
 	// DeleteFile removes a single evidence file from the submission. The caller
 	// must be the file's creator or hold ManageControls (isAdmin=true). The blob
 	// in Azure is not deleted — only the DB record is removed.
@@ -432,6 +438,14 @@ func (s *evidenceService) DownloadFile(ctx context.Context, fileID int) (data []
 		ct = *f.FileType
 	}
 	return data, f.FileName, ct, nil
+}
+
+func (s *evidenceService) FileAuditorEmail(ctx context.Context, fileID int) (*string, error) {
+	f, err := s.repo.GetFileByID(ctx, fileID)
+	if err != nil {
+		return nil, err
+	}
+	return f.AuditorEmail, nil
 }
 
 func (s *evidenceService) DeleteFile(ctx context.Context, fileID int, actor string, isAdmin bool) error {

@@ -16,33 +16,46 @@
 
 package domain
 
-// AuditDashboardRequest is the body of POST /audit/dashboard. Roles come from the
-// caller's JWT groups claim; UserEmail is the authenticated user (for team/auditor scope).
-type AuditDashboardRequest struct {
-	Roles     []string `json:"roles"`
-	UserEmail string   `json:"userEmail"`
-}
+// Scope is the row-visibility class the caller (the grc-platform backend) derives
+// from the actor's privileges and sends explicitly. The entity applies it without
+// knowing any GRC role or group. See the backend's docs/adr/0002.
+type Scope string
 
-// Audit role constants — mirror the Asgardeo group names exactly.
 const (
-	RoleComplianceAdmin = "compliance_admin"
-	RoleComplianceTeam  = "compliance_team"
-	RoleInternalTeam    = "internal_team"
-	RoleExternalAuditor = "external_auditor"
-	RoleManagement      = "management"
+	// ScopeAll sees every row (org-wide read).
+	ScopeAll Scope = "all"
+	// ScopeOwnTeam sees the actor's audit teams' controls (by user_audit_team).
+	ScopeOwnTeam Scope = "own_team"
+	// ScopeOwned sees only controls the actor owns (owner_id = actor).
+	ScopeOwned Scope = "owned"
+	// ScopeAssigned sees only controls the actor audits (auditor_id = actor).
+	ScopeAssigned Scope = "assigned"
+	// ScopeNone sees nothing.
+	ScopeNone Scope = "none"
 )
 
-// PrimaryRole returns the highest-priority audit role from the request's role list.
-func (req AuditDashboardRequest) PrimaryRole() string {
-	priority := []string{RoleComplianceAdmin, RoleComplianceTeam, RoleExternalAuditor, RoleInternalTeam, RoleManagement}
-	for _, r := range priority {
-		for _, g := range req.Roles {
-			if g == r {
-				return r
-			}
-		}
-	}
-	return ""
+// WorkQueueClass selects which control-lifecycle bucket counts as the actor's
+// "action items". Also privilege-derived by the caller — role-free.
+type WorkQueueClass string
+
+const (
+	WorkQueueClassReview     WorkQueueClass = "review"     // internal review stage
+	WorkQueueClassSubmission WorkQueueClass = "submission" // evidence/population submission stage
+	WorkQueueClassValidation WorkQueueClass = "validation" // auditor validation/sample stage
+	WorkQueueClassNone       WorkQueueClass = "none"       // no action queue (e.g. management)
+)
+
+// AuditDashboardRequest is the body of POST /audit/dashboard/search. Scope and
+// WorkQueueClass are derived by the caller from the actor's privileges; UserEmail
+// resolves the actor's team/owner/auditor identity for scoped queries.
+type AuditDashboardRequest struct {
+	// Scope scopes stats, charts and lists (the dashboard view).
+	Scope Scope `json:"scope"`
+	// WorkQueueScope scopes the work-queue preview lists (action/due/pending/validation/overdue).
+	WorkQueueScope Scope `json:"workQueueScope"`
+	// WorkQueueClass selects the action-items lifecycle bucket.
+	WorkQueueClass WorkQueueClass `json:"workQueueClass"`
+	UserEmail      string         `json:"userEmail"`
 }
 
 // AuditStats are the audit-count summary tiles.
@@ -114,9 +127,12 @@ const (
 
 // WorkQueueRequest is the body of POST /audit/work-queue/search.
 type WorkQueueRequest struct {
-	Roles     []string     `json:"roles"`
-	UserEmail string       `json:"userEmail"`
-	Tab       WorkQueueTab `json:"tab"`
+	// WorkQueueScope scopes the work-queue rows (derived from privileges by the caller).
+	WorkQueueScope Scope `json:"workQueueScope"`
+	// WorkQueueClass selects the action-items lifecycle bucket for the action-items tab.
+	WorkQueueClass WorkQueueClass `json:"workQueueClass"`
+	UserEmail      string         `json:"userEmail"`
+	Tab            WorkQueueTab   `json:"tab"`
 	Page      int          `json:"page"`    // 1-based
 	Limit     int          `json:"limit"`   // rows per page; capped at 100 server-side
 	TeamIDs   []int        `json:"teamIds"` // filter by audit_team.id; nil/empty = all teams
@@ -129,19 +145,6 @@ type WorkQueueRequest struct {
 	Statuses []string `json:"statuses"`
 	// DueSortDesc sorts by due date descending (latest first) when true; ascending otherwise.
 	DueSortDesc bool `json:"dueSortDesc"`
-}
-
-// PrimaryRole re-uses the same priority logic as AuditDashboardRequest.
-func (r WorkQueueRequest) PrimaryRole() string {
-	priority := []string{RoleComplianceAdmin, RoleComplianceTeam, RoleExternalAuditor, RoleInternalTeam, RoleManagement}
-	for _, p := range priority {
-		for _, g := range r.Roles {
-			if g == p {
-				return p
-			}
-		}
-	}
-	return ""
 }
 
 // WorkQueuePage is the paginated response for POST /audit/work-queue/search.

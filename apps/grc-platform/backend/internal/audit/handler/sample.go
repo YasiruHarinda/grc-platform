@@ -23,6 +23,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
 // Sample-selection routes: the assigned auditor picks the sample after the
@@ -43,7 +44,7 @@ func (h *evidenceHandler) controlForAuditorAction(w http.ResponseWriter, r *http
 		response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
 		return nil, false
 	}
-	if !requireAssignedAuditor(w, r, control) {
+	if !requireAssignedAuditor(w, r, control, privilege.SelectSample) {
 		return nil, false
 	}
 	return control, true

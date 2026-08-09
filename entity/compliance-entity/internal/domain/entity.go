@@ -114,9 +114,15 @@ type AuditFramework struct {
 
 // SearchAuditFrameworksRequest is the payload for POST /audit/frameworks/search.
 type SearchAuditFrameworksRequest struct {
-	SearchQuery string     `json:"searchQuery"`
-	StatusKey   string     `json:"statusKey"` // ACTIVE | INACTIVE | "" (all)
-	Pagination  Pagination `json:"pagination"`
+	SearchQuery string `json:"searchQuery"`
+	StatusKey   string `json:"statusKey"` // ACTIVE | INACTIVE | "" (all)
+	// Scope/UserEmail apply the same row-scoping rule as controls/audits (see
+	// audit_dashboard_repo.go's scopeWhere): a framework has no team of its own,
+	// so it matches when it has at least one audit with at least one control in
+	// scope. Empty Scope (or ScopeAll) applies no filter.
+	Scope      Scope      `json:"scope"`
+	UserEmail  string     `json:"userEmail"`
+	Pagination Pagination `json:"pagination"`
 }
 
 // SearchAuditFrameworksResponse is returned by POST /audit/frameworks/search.
@@ -243,7 +249,18 @@ type SearchAuditsRequest struct {
 	StatusKeys   []string   `json:"statusKeys"`   // ACTIVE | COMPLETED | ARCHIVED | REMOVED
 	FrameworkIDs []int      `json:"frameworkIds"` // filter by one or more framework IDs
 	ProductIDs   []int      `json:"productIds"`   // filter by one or more product IDs
-	Pagination   Pagination `json:"pagination"`
+	// AuditIDs restricts to specific audit ids — used by the GRC Backend's
+	// single-item scope check (is auditId visible to this caller at this
+	// scope?) so it can reuse this same query instead of a bespoke endpoint.
+	AuditIDs []int `json:"auditIds"`
+	// Scope/UserEmail apply the same row-scoping rule as the dashboard (see
+	// dashboard.go's Scope type and audit_dashboard_repo.go's scopeWhere): an
+	// audit matches only if it has at least one control within scope. Empty
+	// Scope (or ScopeAll) applies no filter, for backward compatibility with
+	// callers that don't scope (e.g. internal existence/uniqueness checks).
+	Scope     Scope  `json:"scope"`
+	UserEmail string `json:"userEmail"`
+	Pagination Pagination `json:"pagination"`
 }
 
 // SearchAuditsResponse is returned by POST /audits/search.
@@ -297,13 +314,22 @@ type AuditControl struct {
 
 // SearchControlsRequest is the payload for POST /audits/{auditId}/controls/search.
 type SearchControlsRequest struct {
-	SearchQuery      string     `json:"searchQuery"`
-	StatusKeys       []string   `json:"statusKeys"`       // control status values
-	RequirementTypes []string   `json:"requirementTypes"` // DESIGN | OE
-	TeamIDs          []int      `json:"teamIds"`
-	AuditorIDs       []int      `json:"auditorIds"` // filter by assigned auditor user IDs
-	OwnerIDs         []int      `json:"ownerIds"`   // filter by assigned owner user IDs
-	Pagination       Pagination `json:"pagination"`
+	SearchQuery      string   `json:"searchQuery"`
+	StatusKeys       []string `json:"statusKeys"`       // control status values
+	RequirementTypes []string `json:"requirementTypes"` // DESIGN | OE
+	TeamIDs          []int    `json:"teamIds"`
+	AuditorIDs       []int    `json:"auditorIds"` // filter by assigned auditor user IDs
+	OwnerIDs         []int    `json:"ownerIds"`   // filter by assigned owner user IDs
+	// ControlIDs restricts to specific control ids — used by the GRC Backend's
+	// single-item scope check (is controlId visible to this caller at this
+	// scope?) so it can reuse this same query instead of a bespoke endpoint.
+	ControlIDs []int `json:"controlIds"`
+	// Scope/UserEmail apply the same row-scoping rule as the dashboard (see
+	// dashboard.go's Scope type and audit_dashboard_repo.go's scopeWhere).
+	// Empty Scope (or ScopeAll) applies no filter.
+	Scope      Scope      `json:"scope"`
+	UserEmail  string     `json:"userEmail"`
+	Pagination Pagination `json:"pagination"`
 }
 
 // SearchControlsResponse is returned by POST /audits/{auditId}/controls/search.
@@ -816,6 +842,11 @@ type AuditEvidenceFile struct {
 	FileType     *string   `json:"fileType"`
 	FileSize     *int64    `json:"fileSize"`
 	CreatedOn    time.Time `json:"createdOn"`
+	// AuditorEmail is the email of the auditor assigned to the file's owning
+	// control (nil if the control has no auditor or the file has no evidence_id,
+	// e.g. a population file). Only populated by GetEvidenceFileByID, for the
+	// GRC Backend's assigned-auditor download gate — never persisted here.
+	AuditorEmail *string `json:"auditorEmail"`
 }
 
 // CreateEvidenceFileRequest is the payload for POST /evidence/{evidenceId}/files.

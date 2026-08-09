@@ -17,6 +17,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -32,6 +33,40 @@ type dashboardHandler struct {
 	svc auditservice.DashboardService
 }
 
+// deriveScopes computes the actor's view and work-queue row scopes purely from
+// their privileges — no role or group name is consulted. The two differ only for
+// the submitter (own_team dashboard, owned work queue). See ADR-0002.
+func deriveScopes(ctx context.Context) (view, workQueue model.Scope) {
+	switch {
+	case auth.HasPrivilege(ctx, privilege.ViewAllAudits):
+		return model.ScopeAll, model.ScopeAll
+	case auth.HasPrivilege(ctx, privilege.SubmitEvidence):
+		return model.ScopeOwnTeam, model.ScopeOwned
+	case auth.HasPrivilege(ctx, privilege.ValidateEvidence):
+		return model.ScopeAssigned, model.ScopeAssigned
+	default:
+		return model.ScopeNone, model.ScopeNone
+	}
+}
+
+// deriveWorkQueueClass computes which control-lifecycle bucket is the actor's
+// action queue, from privileges. Reviewers (compliance/admin) review; submitters
+// without review (internal team) submit; auditors validate; everyone else — most
+// notably read-only management, which holds ViewAllAudits but no action privilege
+// — has no action queue.
+func deriveWorkQueueClass(ctx context.Context) model.WorkQueueClass {
+	switch {
+	case auth.HasPrivilege(ctx, privilege.ReviewEvidence):
+		return model.WorkQueueClassReview
+	case auth.HasPrivilege(ctx, privilege.SubmitEvidence):
+		return model.WorkQueueClassSubmission
+	case auth.HasPrivilege(ctx, privilege.ValidateEvidence):
+		return model.WorkQueueClassValidation
+	default:
+		return model.WorkQueueClassNone
+	}
+}
+
 func (h *dashboardHandler) getDashboard(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAudits) {
 		return
@@ -40,9 +75,10 @@ func (h *dashboardHandler) getDashboard(w http.ResponseWriter, r *http.Request) 
 
 	f := model.DashboardFilter{}
 	if user != nil {
-		f.Roles = user.Groups
 		f.UserEmail = user.Email
 	}
+	f.ViewScope, f.WorkQueueScope = deriveScopes(r.Context())
+	f.WorkQueueClass = deriveWorkQueueClass(r.Context())
 
 	data, err := h.svc.Get(r.Context(), f)
 	if err != nil {
@@ -61,9 +97,10 @@ func (h *dashboardHandler) getWorkQueue(w http.ResponseWriter, r *http.Request) 
 
 	f := model.DashboardFilter{}
 	if user != nil {
-		f.Roles = user.Groups
 		f.UserEmail = user.Email
 	}
+	f.ViewScope, f.WorkQueueScope = deriveScopes(r.Context())
+	f.WorkQueueClass = deriveWorkQueueClass(r.Context())
 
 	q := r.URL.Query()
 	tab := model.WorkQueueTab(q.Get("tab"))

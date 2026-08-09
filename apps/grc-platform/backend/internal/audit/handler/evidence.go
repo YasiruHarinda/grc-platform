@@ -23,6 +23,7 @@ import (
 	"mime"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
@@ -55,11 +56,12 @@ type evidenceHandler struct {
 // id (else 404 — a client cannot aim at another audit's control). It returns the
 // derived audit id and ok=false after writing the response on failure.
 //
-// Users who hold ManageControls (compliance admin) bypass the team-assignment
-// check — they already have full read/write over all audit data, so the IDOR
-// restriction is redundant and would block legitimate admin submissions.
+// Users who hold ManageControls (compliance admin) or ViewAllAudits (org-wide
+// read, e.g. compliance team — see ADR-0002) bypass the team-assignment check —
+// they already have full or org-wide read/write over audit data, so the IDOR
+// restriction is redundant and would block legitimate submissions.
 func (h *evidenceHandler) requireAssignment(w http.ResponseWriter, r *http.Request, auditID, controlID int) bool {
-	if auth.HasPrivilege(r.Context(), privilege.ManageControls) {
+	if auth.HasPrivilege(r.Context(), privilege.ManageControls) || auth.HasPrivilege(r.Context(), privilege.ViewAllAudits) {
 		return true
 	}
 	actor := auth.FromContext(r.Context())
@@ -384,7 +386,7 @@ func (h *evidenceHandler) reviewEvidence(w http.ResponseWriter, r *http.Request)
 // reasoning as reviewEvidence above. Auditor-gated (see requireAssignedAuditor).
 func (h *evidenceHandler) validateEvidence(w http.ResponseWriter, r *http.Request) {
 	h.decideRound(w, r, decideRoundParams{
-		postGate:          requireAssignedAuditor,
+		postGate:          assignedAuditorGate(privilege.ValidateEvidence),
 		requiredStatus:    "EVIDENCE_UNDER_VALIDATION",
 		statusConflictMsg: "evidence can only be validated while it is under auditor validation",
 		latestRoundID: func(ctx context.Context, auditID, controlID int) (int, error) {
@@ -539,12 +541,40 @@ func (h *evidenceHandler) reconcileAfterDelete(ctx context.Context, auditID, con
 // downloadEvidenceFile handles GET /api/v1/evidence/files/{fileId}/download.
 // It proxies the file bytes from the Compliance Entity (which reads them from
 // Azure) so the browser never contacts Azure directly.
-func (h *evidenceHandler) downloadEvidenceFile(w http.ResponseWriter, r *http.Request) {
-	if !auth.RequirePrivilege(r.Context(), w, privilege.ReviewEvidence) {
-		return
+// requireEvidenceFileAccess authorizes downloadEvidenceFile with the same rule
+// as canViewEvidence, but resolved from a file id instead of a control — the
+// download route (GET /api/v1/evidence/files/{fileId}/download) carries no
+// auditId/controlId to look a control up by. ManageControls, SubmitEvidence,
+// ReviewEvidence, and ViewAllAudits bypass unconditionally; anyone else (e.g. an
+// external auditor holding only ValidateEvidence) must be the email-matched
+// auditor of the file's owning control, via FileAuditorEmail.
+func (h *evidenceHandler) requireEvidenceFileAccess(w http.ResponseWriter, r *http.Request, fileID int) bool {
+	ctx := r.Context()
+	if auth.HasPrivilege(ctx, privilege.ManageControls) ||
+		auth.HasPrivilege(ctx, privilege.SubmitEvidence) ||
+		auth.HasPrivilege(ctx, privilege.ReviewEvidence) ||
+		auth.HasPrivilege(ctx, privilege.ViewAllAudits) {
+		return true
 	}
+	auditorEmail, err := h.svc.FileAuditorEmail(ctx, fileID)
+	if err != nil {
+		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
+		return false
+	}
+	actor := auth.FromContext(ctx)
+	if auditorEmail == nil || !strings.EqualFold(*auditorEmail, actor.Email) {
+		response.WriteError(w, http.StatusForbidden, response.ErrMsgForbidden)
+		return false
+	}
+	return true
+}
+
+func (h *evidenceHandler) downloadEvidenceFile(w http.ResponseWriter, r *http.Request) {
 	fileID, ok := parseIntParam(w, r, "fileId")
 	if !ok {
+		return
+	}
+	if !h.requireEvidenceFileAccess(w, r, fileID) {
 		return
 	}
 	data, fileName, contentType, err := h.svc.DownloadFile(r.Context(), fileID)
@@ -566,17 +596,44 @@ func (h *evidenceHandler) downloadEvidenceFile(w http.ResponseWriter, r *http.Re
 	_, _ = w.Write(data) // #nosec G705 -- file served with nosniff + attachment disposition, browser won't execute it inline
 }
 
+// canViewEvidence allows: the team (SubmitEvidence), an internal reviewer
+// (ReviewEvidence), an org-wide reader (ViewAllAudits), ManageControls, or the
+// control's assigned auditor (by email, e.g. ValidateEvidence holders). No
+// team-assignment (IDOR) check — mirrors canViewPopulation.
+func canViewEvidence(r *http.Request, control *model.AuditControl) bool {
+	ctx := r.Context()
+	if auth.HasPrivilege(ctx, privilege.ManageControls) ||
+		auth.HasPrivilege(ctx, privilege.SubmitEvidence) ||
+		auth.HasPrivilege(ctx, privilege.ReviewEvidence) ||
+		auth.HasPrivilege(ctx, privilege.ViewAllAudits) {
+		return true
+	}
+	actor := auth.FromContext(ctx)
+	return control.AuditorEmail != nil && strings.EqualFold(*control.AuditorEmail, actor.Email)
+}
+
 // listEvidence handles GET /api/v1/audits/{id}/controls/{controlId}/evidence.
 func (h *evidenceHandler) listEvidence(w http.ResponseWriter, r *http.Request) {
-	if !auth.RequirePrivilege(r.Context(), w, privilege.ReviewEvidence) {
-		return
-	}
 	auditID, ok := parseIntParam(w, r, "id")
 	if !ok {
 		return
 	}
 	controlID, ok := parseIntParam(w, r, "controlId")
 	if !ok {
+		return
+	}
+
+	control, err := h.controlSvc.GetByID(r.Context(), auditID, controlID)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	if control == nil {
+		response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
+		return
+	}
+	if !canViewEvidence(r, control) {
+		response.WriteError(w, http.StatusForbidden, response.ErrMsgForbidden)
 		return
 	}
 
