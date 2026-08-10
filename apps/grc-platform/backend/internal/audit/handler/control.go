@@ -17,17 +17,22 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
 type controlHandler struct {
 	svc service.ControlService
+	// notify sends owner-assignment notification emails after addControl/
+	// bulkAddControls/updateControl — see notify.go.
+	notify *Deps
 }
 
 // listControls handles GET /api/v1/audits/{id}/controls.
@@ -118,6 +123,7 @@ func (h *controlHandler) addControl(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	h.notifyOwnerAssignments(r.Context(), auditID, []model.AddControlRequest{req}, []*model.AuditControl{c}, actor)
 	response.WriteJSONValue(w, http.StatusCreated, c)
 }
 
@@ -147,6 +153,7 @@ func (h *controlHandler) bulkAddControls(w http.ResponseWriter, r *http.Request)
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	h.notifyOwnerAssignments(r.Context(), auditID, req.Controls, controls, actor)
 	response.WriteJSONValue(w, http.StatusCreated, &model.ControlListResponse{
 		Items: controls,
 		Total: len(controls),
@@ -171,11 +178,145 @@ func (h *controlHandler) updateControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := auth.FromContext(r.Context()).Email
-	if err := h.svc.Update(r.Context(), auditID, controlID, req, actor); err != nil {
+	result, err := h.svc.Update(r.Context(), auditID, controlID, req, actor)
+	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	h.notifyReassignments(r.Context(), auditID, controlID, result, actor)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// notifyOwnerAssignments builds one map[ownerID][]emailer.AuditEventItem
+// across every control's control-owner AND population-owner in reqs, then
+// fires one AuditEventOwnerAssigned email per distinct owner — so a person
+// who is both a control's and its population's owner in the same request
+// gets exactly one email, not two (see emailer.AuditEventOwnerAssigned).
+// controls is matched to reqs by ControlNumber (unique per audit) rather
+// than index, since bulkAddControls's response is sorted by control number,
+// not request order.
+func (h *controlHandler) notifyOwnerAssignments(ctx context.Context, auditID int, reqs []model.AddControlRequest, controls []*model.AuditControl, actor string) {
+	byNumber := make(map[string]*model.AuditControl, len(controls))
+	for _, c := range controls {
+		if c != nil {
+			byNumber[c.ControlNumber] = c
+		}
+	}
+
+	byOwner := map[int][]emailer.AuditEventItem{}
+	logsByOwner := map[int][]notificationLogItem{}
+	add := func(ownerID int, item emailer.AuditEventItem, logItem notificationLogItem) {
+		byOwner[ownerID] = append(byOwner[ownerID], item)
+		logsByOwner[ownerID] = append(logsByOwner[ownerID], logItem)
+	}
+
+	for _, req := range reqs {
+		c, ok := byNumber[req.ControlNumber]
+		if !ok {
+			continue
+		}
+		if req.OwnerID != nil {
+			add(*req.OwnerID, emailer.AuditEventItem{
+				ControlNumber: c.ControlNumber,
+				Description:   c.Description,
+				DueDate:       derefString(c.DueDate),
+				Kind:          "Control",
+			}, notificationLogItem{
+				AuditID:   &auditID,
+				Type:      "OWNER_ASSIGNED_CONTROL",
+				ControlID: &c.ID,
+			})
+		}
+		if req.Population != nil && req.Population.OwnerID != nil {
+			add(*req.Population.OwnerID, emailer.AuditEventItem{
+				ControlNumber: c.ControlNumber,
+				Description:   c.Description,
+				DueDate:       derefString(req.Population.DueDate),
+				Kind:          "Population",
+			}, notificationLogItem{
+				AuditID:      &auditID,
+				Type:         "OWNER_ASSIGNED_POPULATION",
+				PopulationID: c.PopulationID,
+			})
+		}
+	}
+
+	name := h.notify.auditName(ctx, auditID)
+	for ownerID, items := range byOwner {
+		info := emailer.AuditEventInfo{
+			AuditName: name,
+			Actor:     h.notify.describeActor(ctx, actor),
+			DetailURL: h.notify.detailURL(auditID),
+			Items:     items,
+		}
+		h.notify.notifyAuditEvent(emailer.AuditEventOwnerAssigned, ownerID, info, logsByOwner[ownerID])
+	}
+}
+
+// notifyReassignments fires the owner-assigned event for updateControl's (at
+// most two) reassignments — new control owner and/or new population owner —
+// coalesced into one email if they're the same person, same as
+// notifyOwnerAssignments. Update doesn't return the updated control (only
+// what changed), so this re-fetches it once, only when there's actually a
+// reassignment to notify about.
+func (h *controlHandler) notifyReassignments(ctx context.Context, auditID, controlID int, result service.ControlUpdateResult, actor string) {
+	if !result.ControlOwnerChanged && !result.PopulationOwnerChanged {
+		return
+	}
+	c, err := h.svc.GetByID(ctx, auditID, controlID)
+	if err != nil || c == nil {
+		return
+	}
+
+	byOwner := map[int][]emailer.AuditEventItem{}
+	logsByOwner := map[int][]notificationLogItem{}
+	if result.ControlOwnerChanged && result.NewControlOwnerID != nil {
+		owner := *result.NewControlOwnerID
+		byOwner[owner] = append(byOwner[owner], emailer.AuditEventItem{
+			ControlNumber: c.ControlNumber,
+			Description:   c.Description,
+			DueDate:       derefString(c.DueDate),
+			Kind:          "Control",
+		})
+		logsByOwner[owner] = append(logsByOwner[owner], notificationLogItem{
+			AuditID:   &auditID,
+			Type:      "OWNER_ASSIGNED_CONTROL",
+			ControlID: &c.ID,
+		})
+	}
+	if result.PopulationOwnerChanged && result.NewPopulationOwnerID != nil {
+		owner := *result.NewPopulationOwnerID
+		byOwner[owner] = append(byOwner[owner], emailer.AuditEventItem{
+			ControlNumber: c.ControlNumber,
+			Description:   c.Description,
+			DueDate:       derefString(c.PopulationDueDate),
+			Kind:          "Population",
+		})
+		logsByOwner[owner] = append(logsByOwner[owner], notificationLogItem{
+			AuditID:      &auditID,
+			Type:         "OWNER_ASSIGNED_POPULATION",
+			PopulationID: c.PopulationID,
+		})
+	}
+
+	name := h.notify.auditName(ctx, auditID)
+	for owner, items := range byOwner {
+		info := emailer.AuditEventInfo{
+			AuditName: name,
+			Actor:     h.notify.describeActor(ctx, actor),
+			DetailURL: h.notify.detailURL(auditID),
+			Items:     items,
+		}
+		h.notify.notifyAuditEvent(emailer.AuditEventOwnerAssigned, owner, info, logsByOwner[owner])
+	}
+}
+
+// derefString returns "" for a nil pointer instead of dereferencing it.
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // updateControlStatus handles PATCH /api/v1/audits/{id}/controls/{controlId}/status.

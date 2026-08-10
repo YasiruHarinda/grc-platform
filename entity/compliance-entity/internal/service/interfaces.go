@@ -190,6 +190,12 @@ type AuditTrailService interface {
 	ListAuditTrail(ctx context.Context, auditID int, filter domain.TrailFilter, limit, offset int) (domain.ListAuditTrailResponse, error)
 }
 
+// AuditNotificationService defines operations on audit_notification.
+type AuditNotificationService interface {
+	CreateAuditNotification(ctx context.Context, req domain.CreateAuditNotificationRequest) (domain.AuditNotification, error)
+	AuditNotificationExists(ctx context.Context, req domain.AuditNotificationExistsRequest) (bool, error)
+}
+
 // CommentService defines operations on audit_comment (control-scoped — one
 // thread per control, spanning population and evidence phases).
 type CommentService interface {

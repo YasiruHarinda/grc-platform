@@ -255,6 +255,29 @@ func (r *controlRepo) AssignedAuditID(ctx context.Context, userEmail string, con
 	return resp.AuditID, true, nil
 }
 
+// ListAllForReminders returns every control across every audit, unfiltered
+// (no status/owner/audit restriction) — for the daily reminder job's sweep.
+// The entity has no due-date range filter, so filtering happens in the job
+// itself; this reuses the existing global search endpoint with an empty
+// filter rather than adding a bespoke one, mirroring List/ListScoped's own
+// paging idiom.
+func (r *controlRepo) ListAllForReminders(ctx context.Context) ([]*model.AuditControl, error) {
+	var all []*model.AuditControl
+	for offset := 0; ; offset += pageLimit {
+		var resp struct {
+			Controls []*model.AuditControl `json:"controls"`
+		}
+		body := map[string]any{"pagination": map[string]int{"limit": pageLimit, "offset": offset}}
+		if err := r.c.Post(ctx, "/controls/search", body, &resp); err != nil {
+			return nil, err
+		}
+		all = append(all, resp.Controls...)
+		if len(resp.Controls) < pageLimit {
+			return all, nil
+		}
+	}
+}
+
 func (r *controlRepo) ActivePopulationID(ctx context.Context, controlID int) (int, bool, error) {
 	var resp struct {
 		PopulationID int `json:"populationId"`

@@ -65,6 +65,13 @@ type AuditControl struct {
 	StatusOverridden bool       `json:"statusOverridden"`
 	OverriddenBy     *string    `json:"overriddenBy"`
 	OverriddenAt     *time.Time `json:"overriddenAt"`
+	// PopulationID/PopulationOwnerID/PopulationStatus are the IDs behind
+	// PopulationOwnerName/PopulationTeamName above — used by the reminder job
+	// to resolve and dedup against the population's own owner (which may
+	// differ from the control's owner) and to know when its round is done.
+	PopulationID      *int    `json:"populationId"`
+	PopulationOwnerID *int    `json:"populationOwnerId"`
+	PopulationStatus  *string `json:"populationStatus"`
 }
 
 // ControlListResponse is returned by GET /api/v1/audits/{id}/controls.

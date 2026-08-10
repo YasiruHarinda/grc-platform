@@ -28,6 +28,7 @@ import (
 	"time"
 
 	audithandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/handler"
+	auditjob "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/job"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/middleware"
@@ -102,7 +103,11 @@ func main() {
 	userhandler.RegisterRoutes(mux, userDeps)
 	riskDeps := buildRiskDeps(entityCli, fileSvc, hrClient, grantRepo, cfg.Email)
 	riskhandler.RegisterRoutes(mux, riskDeps)
-	audithandler.RegisterRoutes(mux, buildAuditDeps(fileSvc, entityCli, cfg.AIValidation))
+
+	auditDeps := buildAuditDeps(fileSvc, entityCli, cfg.AIValidation, cfg.Email)
+	reminderJob := auditjob.NewReminderJob(auditDeps.Audit, auditDeps.Control, auditDeps.Notification, auditDeps.SendReminderDigestSync)
+	auditDeps.TriggerReminderJob = reminderJob.RunOnce
+	audithandler.RegisterRoutes(mux, auditDeps)
 
 	// Daily overdue-risk escalation. This lives here rather than in the
 	// compliance-entity because escalation now resolves line managers from the
@@ -113,6 +118,10 @@ func main() {
 	defer jobCancel()
 	go riskjob.NewEscalationJob(riskDeps.Risk, riskDeps.Escalation, riskDeps.NotifyEscalationSync).Start(jobCtx)
 
+	// Daily audit due-date reminder digest — fixed 08:00 UTC send time (not a
+	// 24h-since-boot ticker like the escalation job above), so the digest
+	// arrives at a predictable time regardless of server restarts.
+	go reminderJob.Start(jobCtx)
 	handler := middleware.SecurityHeaders(
 		middleware.CORS(cfg.CORSAllowedOrigin)(
 			middleware.CorrelationID(

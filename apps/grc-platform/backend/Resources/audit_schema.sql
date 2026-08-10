@@ -16,7 +16,9 @@
 --   audit_evidence_file     — files attached to evidence or population
 --   audit_comment           — threaded comments on a control (population + evidence phases)
 --   audit_ai_validation_log — async AI validation results (hints only, append-only)
---   audit_trail             — immutable event log for an audit
+--   audit_trail              — immutable event log for an audit
+--   audit_notification       — send-log for every audit-module email (also the
+--                              reminder job's de-dup mechanism)
 -- =============================================================================
 
 USE grc_platform;
@@ -477,6 +479,57 @@ SET @add_trail_overridden_sql = IF(@trail_has_overridden_action = 0,
 PREPARE add_trail_overridden_stmt FROM @add_trail_overridden_sql;
 EXECUTE add_trail_overridden_stmt;
 DEALLOCATE PREPARE add_trail_overridden_stmt;
+
+-- =============================================================================
+-- audit_notification  (universal send-log for every audit-module email)
+--
+-- One row per email actually sent (not per event-trigger — a triggered event
+-- with zero deliverable recipients, or that fails to send, writes no row).
+-- Also the de-dup mechanism for the daily reminder job (REMINDER_DUE_10 /
+-- REMINDER_DUE_5 / REMINDER_OVERDUE): before sending a given tier for a given
+-- control/population item, the job does an application-level existence check
+-- (recipient_id, type, control_id, population_id, due_date_snapshot) using
+-- NULL-safe equality — NOT a DB unique constraint, because control_id and
+-- population_id are mutually-exclusive nullable columns and MySQL's
+-- unique-index NULL semantics (NULL never equals NULL) would silently fail to
+-- prevent duplicate reminder rows.
+--
+-- due_date_snapshot freezes the due_date a reminder was computed against, so
+-- editing a control/population's due_date later correctly restarts its
+-- reminder cycle (a new due_date_snapshot no longer matches old log rows).
+--
+-- MySQL does not allow a CHECK constraint on columns used in an ON DELETE SET
+-- NULL FK action, so "exactly one of control_id/population_id is non-NULL" is
+-- enforced at the application layer, not here.
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS audit_notification (
+  id                BIGINT       NOT NULL AUTO_INCREMENT,
+  recipient_id      INT          NOT NULL,
+  audit_id          INT          NULL,
+  control_id        INT          NULL,
+  population_id     INT          NULL,
+  type              ENUM(
+                        'OWNER_ASSIGNED_CONTROL',
+                        'OWNER_ASSIGNED_POPULATION',
+                        'REMINDER_DUE_10',
+                        'REMINDER_DUE_5',
+                        'REMINDER_OVERDUE',
+                        'RESUBMISSION_NEEDED',
+                        'SAMPLE_SUBMITTED'
+                      ) NOT NULL,
+  channel           ENUM('EMAIL') NOT NULL DEFAULT 'EMAIL',
+  due_date_snapshot DATE         NULL,
+  message           TEXT         NULL,
+  created_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_by        VARCHAR(255) NULL,
+  PRIMARY KEY (id),
+  KEY idx_notif_dedup (recipient_id, type, control_id, population_id, due_date_snapshot),
+  CONSTRAINT fk_notif_recipient  FOREIGN KEY (recipient_id)  REFERENCES `user`(id)           ON DELETE CASCADE,
+  CONSTRAINT fk_notif_audit      FOREIGN KEY (audit_id)      REFERENCES audit(id)            ON DELETE SET NULL,
+  CONSTRAINT fk_notif_control    FOREIGN KEY (control_id)    REFERENCES audit_control(id)    ON DELETE SET NULL,
+  CONSTRAINT fk_notif_population FOREIGN KEY (population_id) REFERENCES audit_population(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;
 

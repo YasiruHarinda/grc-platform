@@ -1,0 +1,278 @@
+// Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package emailer
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"html/template"
+	"log/slog"
+	"strings"
+)
+
+// AuditEvent identifies a point in the audit lifecycle that notifies someone.
+// The value is only ever used to look up a template — it is never persisted,
+// so renaming one is safe.
+type AuditEvent string
+
+const (
+	// AuditEventOwnerAssigned covers both control-owner and population-owner
+	// assignment as one event, not two — the caller batches every item a
+	// single owner was just assigned (control and/or population) into one
+	// AuditEventInfo.Items and sends one email, so a person who is both a
+	// control's and its population's owner in the same request gets exactly
+	// one email, not two.
+	AuditEventOwnerAssigned      AuditEvent = "AUDIT_OWNER_ASSIGNED"
+	AuditEventReminderDue10      AuditEvent = "AUDIT_REMINDER_DUE_10"
+	AuditEventReminderDue5       AuditEvent = "AUDIT_REMINDER_DUE_5"
+	AuditEventReminderOverdue    AuditEvent = "AUDIT_REMINDER_OVERDUE"
+	AuditEventResubmissionNeeded AuditEvent = "AUDIT_RESUBMISSION_NEEDED"
+	AuditEventSampleSubmitted    AuditEvent = "AUDIT_SAMPLE_SUBMITTED"
+)
+
+// AuditEventItem is one control or population round an AuditEventInfo email
+// is about. Owner-assignment and reminder-digest emails carry more than one;
+// resubmission and sample-submitted emails always carry exactly one.
+type AuditEventItem struct {
+	ControlNumber string
+	Description   string
+	DueDate       string // "" if not applicable
+	// Tier is "Due in 10 days" | "Due in 5 days" | "Overdue" — reminder digest only.
+	Tier string
+	// Kind is "Control" | "Population" — labels which entity this item is about.
+	Kind string
+}
+
+// AuditEventInfo carries everything any audit template might render. Unlike
+// RiskEventInfo (one subject, many role-holders, identical content), every
+// audit event already has exactly one resolved recipient by the time it
+// reaches SendAuditEvent — Items is that recipient's personalized batch.
+type AuditEventInfo struct {
+	AuditName string
+	// Actor is whoever triggered this event — who assigned the owner, who
+	// rejected, who submitted the sample. Empty for the system-generated
+	// reminder digest, which has no actor.
+	Actor string
+	// Comment carries a rejection reason. Omitted from the body when empty.
+	Comment   string
+	DetailURL string
+	Items     []AuditEventItem
+}
+
+// auditEventTemplate is the per-event copy — the audit equivalent of
+// eventTemplate, minus the risk template's per-role "Who needs to act" block:
+// an audit event already has exactly one recipient (whoever Items is about),
+// so there is nothing left to resolve.
+type auditEventTemplate struct {
+	subject func(AuditEventInfo) string
+	lead    string
+	// actorLabel names what Actor did, for this event specifically. Empty for
+	// events with no actor (the reminder digest).
+	actorLabel string
+}
+
+// itemKinds returns the distinct AuditEventItem.Kind values present, in
+// first-seen order — used to phrase a subject that covers a mixed batch
+// ("2 controls and 1 population item") without listing every item.
+func itemKinds(items []AuditEventItem) []string {
+	seen := map[string]bool{}
+	var kinds []string
+	for _, it := range items {
+		if it.Kind != "" && !seen[it.Kind] {
+			seen[it.Kind] = true
+			kinds = append(kinds, it.Kind)
+		}
+	}
+	return kinds
+}
+
+func ownerAssignedSubject(i AuditEventInfo) string {
+	kinds := itemKinds(i.Items)
+	switch {
+	case len(i.Items) == 0:
+		return "New Audit Assignment"
+	case len(kinds) > 1:
+		return fmt.Sprintf("New Audit Assignment: %d items assigned to you", len(i.Items))
+	case len(i.Items) == 1:
+		return fmt.Sprintf("New Audit Assignment: %s", i.Items[0].ControlNumber)
+	default:
+		return fmt.Sprintf("New Audit Assignment: %d %ss assigned to you", len(i.Items), strings.ToLower(kinds[0]))
+	}
+}
+
+func reminderSubject(tier string) func(AuditEventInfo) string {
+	return func(i AuditEventInfo) string {
+		return fmt.Sprintf("Audit Reminder — %s: %d item(s) due", tier, len(i.Items))
+	}
+}
+
+// auditEventTemplates is the single place to see everything the audit module
+// sends. An AuditEvent with no entry here is a programming error and
+// SendAuditEvent rejects it rather than sending a blank email.
+var auditEventTemplates = map[AuditEvent]auditEventTemplate{
+	AuditEventOwnerAssigned: {
+		subject:    ownerAssignedSubject,
+		lead:       "You have been assigned as owner on the following item(s).",
+		actorLabel: "Assigned by",
+	},
+	AuditEventReminderDue10: {
+		subject:    reminderSubject("Due in 10 days"),
+		lead:       "The following item(s) you own are due in 10 days.",
+		actorLabel: "",
+	},
+	AuditEventReminderDue5: {
+		subject:    reminderSubject("Due in 5 days"),
+		lead:       "The following item(s) you own are due in 5 days.",
+		actorLabel: "",
+	},
+	AuditEventReminderOverdue: {
+		subject:    reminderSubject("Overdue"),
+		lead:       "The following item(s) you own are overdue.",
+		actorLabel: "",
+	},
+	AuditEventResubmissionNeeded: {
+		subject: func(i AuditEventInfo) string {
+			if len(i.Items) == 0 {
+				return "Resubmission Needed"
+			}
+			return fmt.Sprintf("Resubmission Needed: %s", i.Items[0].ControlNumber)
+		},
+		lead:       "This item was rejected and needs to be resubmitted.",
+		actorLabel: "Rejected by",
+	},
+	AuditEventSampleSubmitted: {
+		subject: func(i AuditEventInfo) string {
+			if len(i.Items) == 0 {
+				return "Sample Submitted — Evidence Needed"
+			}
+			return fmt.Sprintf("Sample Submitted — Evidence Needed: %s", i.Items[0].ControlNumber)
+		},
+		lead:       "A sample has been submitted for this control. Please submit evidence.",
+		actorLabel: "Submitted by",
+	},
+}
+
+// auditBodyTemplate renders the shared body for every audit event. Same
+// old-fashioned Outlook-safe table layout as bodyTemplate (see its comment),
+// and html/template for the same reason: several fields (Description,
+// Comment) are user-supplied free text.
+var auditBodyTemplate = template.Must(template.New("auditEvent").Parse(`<html>
+<body style="margin:0; padding:0; background-color:#f4f5f7;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f5f7; padding:24px 12px;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px; background-color:#ffffff; border:1px solid #e1e4e8; border-radius:6px; font-family:Arial,Helvetica,sans-serif; font-size:14px; color:#1a1a1a;">
+
+<tr><td style="padding:20px 24px 8px 24px; font-size:15px; line-height:1.5;">{{.Lead}}</td></tr>
+
+{{if .Info.AuditName}}<tr><td style="padding:0 24px 8px 24px; color:#57606a; font-size:13px;">Audit: {{.Info.AuditName}}</td></tr>{{end}}
+
+{{if .Info.Actor}}<tr><td style="padding:0 24px 8px 24px; font-size:13px;"><span style="color:#57606a;">{{.ActorLabel}}</span> {{.Info.Actor}}</td></tr>{{end}}
+
+{{if .Info.Items}}<tr><td style="padding:8px 24px 4px 24px;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:13px; border-collapse:collapse;">
+<tr style="color:#57606a; text-align:left;">
+<td style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Kind</td>
+<td style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Control No</td>
+<td style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Description</td>
+<td style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Due Date</td>
+<td style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Status</td>
+</tr>
+{{range .Info.Items}}<tr>
+<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0;">{{.Kind}}</td>
+<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; font-weight:bold;">{{.ControlNumber}}</td>
+<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0;">{{.Description}}</td>
+<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0;">{{.DueDate}}</td>
+<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0;">{{.Tier}}</td>
+</tr>{{end}}
+</table>
+</td></tr>{{end}}
+
+{{if .Info.Comment}}<tr><td style="padding:12px 24px 4px 24px;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0">
+<tr><td style="padding:12px 14px; background-color:#fff8e1; border-left:3px solid #f0ad4e; font-size:14px; line-height:1.5;">
+<span style="color:#57606a;">Comment</span><br>{{.Info.Comment}}
+</td></tr>
+</table>
+</td></tr>{{end}}
+
+<tr><td style="padding:20px 24px 24px 24px;">
+<a href="{{.Info.DetailURL}}" style="display:inline-block; padding:10px 20px; background-color:#ff7300; color:#ffffff; text-decoration:none; border-radius:4px; font-weight:bold; font-size:14px;">View in Audit Hub</a>
+</td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>`))
+
+// SendAuditEvent notifies one recipient about ev. Unlike SendRiskEvent (many
+// recipients, identical content), every audit event already has exactly one
+// resolved owner by the time it reaches this call — the batching across that
+// owner's items happens in the caller (handler/notify.go, the reminder job),
+// not here.
+//
+// Retries once on a transport failure to ride out a cold start; see
+// sendAttempts. Callers must expect this to block for up to two full client
+// timeouts and so should not run it on a request path.
+func (c *Client) SendAuditEvent(ctx context.Context, ev AuditEvent, to string, info AuditEventInfo) error {
+	tpl, ok := auditEventTemplates[ev]
+	if !ok {
+		return fmt.Errorf("emailer: no template for event %q", ev)
+	}
+	to = strings.TrimSpace(to)
+	if to == "" {
+		return fmt.Errorf("emailer: no recipient for event %q", ev)
+	}
+
+	var body bytes.Buffer
+	if err := auditBodyTemplate.Execute(&body, struct {
+		Lead       string
+		ActorLabel string
+		Info       AuditEventInfo
+	}{tpl.lead, tpl.actorLabel, info}); err != nil {
+		return fmt.Errorf("emailer: render template: %w", err)
+	}
+
+	reqBody := sendEmailRequest{
+		To:       []string{to},
+		From:     c.from,
+		Subject:  sanitizeSubject(tpl.subject(info)),
+		Template: base64.StdEncoding.EncodeToString(body.Bytes()),
+	}
+	b, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("emailer: marshal request: %w", err)
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= sendAttempts; attempt++ {
+		retryable, err := c.sendOnce(ctx, b)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if !retryable || attempt == sendAttempts {
+			break
+		}
+		slog.Warn("emailer: audit send failed, retrying",
+			"attempt", attempt, "of", sendAttempts, "err", err)
+	}
+	return lastErr
+}

@@ -120,6 +120,9 @@ type evidenceHandler struct {
 	// aiClient triggers async AI validation after a submission. It is nil when
 	// AI_VALIDATION_ENABLED is false, which disables the trigger entirely.
 	aiClient *aiagent.Client
+	// notify sends resubmission-needed and sample-submitted notification
+	// emails from decideRound and submitSample — see notify.go.
+	notify *Deps
 }
 
 // requireAssignment enforces resource-level authorization for the web-app evidence

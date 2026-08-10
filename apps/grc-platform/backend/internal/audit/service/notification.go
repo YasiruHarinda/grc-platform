@@ -18,16 +18,22 @@ package service
 
 import (
 	"context"
-	"errors"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/repository"
 )
 
-// NotificationService defines business operations for audit notifications.
+// NotificationService is the send-log for every audit-module email
+// (assignment, reminder, resubmission, sample-submitted) and the daily
+// reminder job's de-dup mechanism — a thin pass-through over
+// repository.NotificationRepository. See model.NotificationLogEntry and
+// audit_schema.sql's audit_notification comment for the full design.
 type NotificationService interface {
-	List(ctx context.Context, recipientID int) ([]*model.AuditNotification, error)
-	MarkRead(ctx context.Context, id, recipientID int) error
+	// Create logs one sent email. Called only after a successful send.
+	Create(ctx context.Context, n model.NotificationLogEntry) error
+	// Exists reports whether a matching (recipient, type, control/population,
+	// due date) row already exists — the reminder job's de-dup check.
+	Exists(ctx context.Context, recipientID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (bool, error)
 }
 
 type notificationService struct {
@@ -38,14 +44,10 @@ func NewNotificationService(repo repository.NotificationRepository) Notification
 	return &notificationService{repo: repo}
 }
 
-var errNotImplemented = errors.New("not implemented")
-
-func (s *notificationService) List(ctx context.Context, recipientID int) ([]*model.AuditNotification, error) {
-	// TODO: delegate to repo, filter by recipient_id
-	return nil, errNotImplemented
+func (s *notificationService) Create(ctx context.Context, n model.NotificationLogEntry) error {
+	return s.repo.Create(ctx, n)
 }
 
-func (s *notificationService) MarkRead(ctx context.Context, id, recipientID int) error {
-	// TODO: verify notification belongs to recipientID, set is_read=true via repo
-	return errNotImplemented
+func (s *notificationService) Exists(ctx context.Context, recipientID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (bool, error) {
+	return s.repo.Exists(ctx, recipientID, notifType, controlID, populationID, dueDateSnapshot)
 }

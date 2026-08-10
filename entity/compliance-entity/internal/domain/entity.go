@@ -328,6 +328,13 @@ type AuditControl struct {
 	PopulationDueDate     *string `json:"populationDueDate"`
 	PopulationOwnerName   *string `json:"populationOwnerName"`
 	PopulationTeamName    *string `json:"populationTeamName"`
+	// PopulationID/PopulationOwnerID/PopulationStatus are the IDs behind
+	// PopulationOwnerName/PopulationTeamName above (added for the audit
+	// notification reminder job, which needs to resolve and dedup against the
+	// population's own owner, not just display its name).
+	PopulationID      *int    `json:"populationId"`
+	PopulationOwnerID *int    `json:"populationOwnerId"`
+	PopulationStatus  *string `json:"populationStatus"`
 }
 
 // SearchControlsRequest is the payload for POST /audits/{auditId}/controls/search.
@@ -1356,6 +1363,56 @@ type ListAuditTrailResponse struct {
 	Total  int          `json:"total"`
 	Limit  int          `json:"limit"`
 	Offset int          `json:"offset"`
+}
+
+// =============================================================================
+// Audit Notification (audit_notification) — send-log for every audit-module
+// email, also the daily reminder job's de-dup mechanism. See audit_schema.sql
+// for the full column comment.
+// =============================================================================
+
+// AuditNotification is one logged email send.
+type AuditNotification struct {
+	ID              int64     `json:"id"`
+	RecipientID     int       `json:"recipientId"`
+	AuditID         *int      `json:"auditId"`
+	ControlID       *int      `json:"controlId"`
+	PopulationID    *int      `json:"populationId"`
+	Type            string    `json:"type"`
+	Channel         string    `json:"channel"`
+	DueDateSnapshot *string   `json:"dueDateSnapshot"` // YYYY-MM-DD
+	Message         *string   `json:"message"`
+	CreatedBy       *string   `json:"createdBy"`
+	CreatedOn       time.Time `json:"createdOn"`
+}
+
+// CreateAuditNotificationRequest is the payload for POST /audit/notifications.
+type CreateAuditNotificationRequest struct {
+	RecipientID     int     `json:"recipientId"`
+	AuditID         *int    `json:"auditId"`
+	ControlID       *int    `json:"controlId"`
+	PopulationID    *int    `json:"populationId"`
+	Type            string  `json:"type"`
+	DueDateSnapshot *string `json:"dueDateSnapshot"`
+	Message         *string `json:"message"`
+	CreatedBy       *string `json:"createdBy"`
+}
+
+// AuditNotificationExistsRequest is the payload for POST
+// /audit/notifications/exists — the reminder job's de-dup check. ControlID/
+// PopulationID/DueDateSnapshot are compared NULL-safely (a nil field matches
+// only a NULL column, not "any value").
+type AuditNotificationExistsRequest struct {
+	RecipientID     int     `json:"recipientId"`
+	Type            string  `json:"type"`
+	ControlID       *int    `json:"controlId"`
+	PopulationID    *int    `json:"populationId"`
+	DueDateSnapshot *string `json:"dueDateSnapshot"`
+}
+
+// AuditNotificationExistsResponse is returned by POST /audit/notifications/exists.
+type AuditNotificationExistsResponse struct {
+	Exists bool `json:"exists"`
 }
 
 // =============================================================================

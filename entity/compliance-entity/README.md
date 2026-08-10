@@ -279,6 +279,8 @@ here).
 | `GET` | `/audits/{auditId}/trail` | List trail |
 | `POST` | `/audit/dashboard/search` | Audit dashboard summary |
 | `POST` | `/audit/work-queue/search` | Work queue page |
+| `POST` | `/audit/notifications` | Log a sent audit-module email |
+| `POST` | `/audit/notifications/exists` | De-dup check for the reminder job |
 
 ### Files (Azure Blob byte storage — disabled when Azure is not configured)
 

@@ -126,7 +126,10 @@ const controlSelectCols = `
   p.comments                           AS population_comments,
   DATE_FORMAT(p.due_date, '%Y-%m-%d')  AS population_due_date,
   u_pop_owner.display_name             AS population_owner_name,
-  pop_team.name                        AS population_team_name`
+  pop_team.name                        AS population_team_name,
+  p.id                                 AS population_id,
+  p.owner_id                           AS population_owner_id,
+  p.status                             AS population_status`
 
 const controlFromClause = `
 FROM audit_control c
@@ -772,6 +775,8 @@ func scanControl(s scanner) (*domain.AuditControl, error) {
 	var overriddenBy sql.NullString
 	var overriddenAt sql.NullTime
 	var popDescription, popComments, popDueDate, popOwnerName, popTeamName sql.NullString
+	var popID, popOwnerID sql.NullInt64
+	var popStatus sql.NullString
 	err := s.Scan(
 		&c.ID, &c.AuditID,
 		&c.ControlNumber, &c.Description, &evidenceReq,
@@ -784,6 +789,7 @@ func scanControl(s scanner) (*domain.AuditControl, error) {
 		&c.CreatedOn, &c.UpdatedOn,
 		&c.StatusOverridden, &overriddenBy, &overriddenAt,
 		&popDescription, &popComments, &popDueDate, &popOwnerName, &popTeamName,
+		&popID, &popOwnerID, &popStatus,
 	)
 	if err != nil {
 		return nil, err
@@ -821,6 +827,9 @@ func scanControl(s scanner) (*domain.AuditControl, error) {
 	if overriddenAt.Valid {
 		c.OverriddenAt = &overriddenAt.Time
 	}
+	c.PopulationID = nullIntPtr(popID)
+	c.PopulationOwnerID = nullIntPtr(popOwnerID)
+	c.PopulationStatus = nullStrPtr(popStatus)
 	return &c, nil
 }
 
