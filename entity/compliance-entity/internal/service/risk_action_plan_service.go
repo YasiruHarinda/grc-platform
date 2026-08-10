@@ -29,6 +29,7 @@ import (
 type riskActionPlanService struct {
 	repo          repository.RiskActionPlanRepository
 	stepRepo      repository.RiskActionStepRepository
+	evidenceRepo  repository.RiskEvidenceRepository
 	escalationSvc RiskEscalationService
 	riskSvc       RiskService
 	userSvc       UserService
@@ -36,12 +37,13 @@ type riskActionPlanService struct {
 
 // NewRiskActionPlanService constructs a RiskActionPlanService. The extra
 // dependencies beyond repo back CompleteRiskActionPlan's cascade: verifying
-// every step is done, resolving the linked escalation, notifying the Risk
-// Assigner and (for a MANAGEMENT plan) the plan's creator, and reverting the
-// risk's workflow_status.
+// every step is done, verifying completion evidence has been attached,
+// resolving the linked escalation, notifying the Risk Assigner and (for a
+// MANAGEMENT plan) the plan's creator, and reverting the risk's workflow_status.
 func NewRiskActionPlanService(
 	repo repository.RiskActionPlanRepository,
 	stepRepo repository.RiskActionStepRepository,
+	evidenceRepo repository.RiskEvidenceRepository,
 	escalationSvc RiskEscalationService,
 	riskSvc RiskService,
 	userSvc UserService,
@@ -49,6 +51,7 @@ func NewRiskActionPlanService(
 	return &riskActionPlanService{
 		repo:          repo,
 		stepRepo:      stepRepo,
+		evidenceRepo:  evidenceRepo,
 		escalationSvc: escalationSvc,
 		riskSvc:       riskSvc,
 		userSvc:       userSvc,
@@ -170,6 +173,14 @@ func (s *riskActionPlanService) CompleteRiskActionPlan(ctx context.Context, plan
 			if st.Status != "COMPLETED" {
 				return domain.RiskActionPlan{}, &apierror.ValidationError{Msg: "all action steps must be COMPLETED before completing the plan"}
 			}
+		}
+
+		hasEvidence, err := s.evidenceRepo.HasCompletionEvidence(ctx, planID)
+		if err != nil {
+			return domain.RiskActionPlan{}, err
+		}
+		if !hasEvidence {
+			return domain.RiskActionPlan{}, &apierror.ValidationError{Msg: "at least one completion evidence file is required before completing this action plan"}
 		}
 
 		completedDate := time.Now().Format("2006-01-02")

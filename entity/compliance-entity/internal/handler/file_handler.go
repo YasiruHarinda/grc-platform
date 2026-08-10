@@ -46,15 +46,18 @@ const blobSegment = `[A-Za-z0-9 _-]+`
 // Upload/Read/Delete is enumerated here (see Human-Readable-Evidence-Blob-Paths
 // design in the GRC Backend's Resources/Docs). Audit Hub evidence lives under a
 // literal "audit/" top-level folder, kept separate from the Risk module's own
-// top-level tree (currently "risks/", unaffected by this design):
-//   - audit evidence:    audit/{auditName}/{controlNumber}/evidence/{file}
-//   - audit population:  audit/{auditName}/{controlNumber}/population/{file}
-//   - auditor sample:    audit/{auditName}/{controlNumber}/population/sample/{file}
-//   - risk evidence:     risks/{riskId}/evidence/{ts}/{file} (unaffected; still numeric-ID)
+// top-level tree — "risk/" (singular, matching audit/'s convention). The Risk
+// module's folder segment is the risk_code (e.g. "2026-ASG-Q2-001"), not the
+// numeric risk id, so it reuses the same blobSegment charset as audit names:
+//   - audit evidence:            audit/{auditName}/{controlNumber}/evidence/{file}
+//   - audit population:          audit/{auditName}/{controlNumber}/population/{file}
+//   - auditor sample:            audit/{auditName}/{controlNumber}/population/sample/{file}
+//   - risk evidence attachment:  risk/{riskCode}/risk-evidence-attachment/{file}
+//   - risk completion attachment: risk/{riskCode}/risk-action-plan-completion-attachment/{file}
 var validBlobPath = regexp.MustCompile(
 	`^(?:audit/` + blobSegment + `/` + blobSegment + `/(?:evidence|population)/[^/]+` +
 		`|audit/` + blobSegment + `/` + blobSegment + `/population/sample/[^/]+` +
-		`|risks/\d+/evidence/\d+/[^/]+)$`)
+		`|risk/` + blobSegment + `/(?:risk-evidence-attachment|risk-action-plan-completion-attachment)/[^/]+)$`)
 
 // validBlobPrefix permits the folder prefixes used for listing (they end in "/"):
 //   - audit/{auditName}/{controlNumber}/evidence/

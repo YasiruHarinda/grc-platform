@@ -54,10 +54,34 @@ func (s *riskEvidenceService) CreateRiskEvidence(ctx context.Context, riskID int
 	if !validRiskEvidenceTypes[req.EvidenceType] {
 		return domain.RiskEvidenceFile{}, &apierror.ValidationError{Msg: "evidenceType must be ACTION_PLAN_ATTACHMENT or FINAL_APPROVAL_ATTACHMENT"}
 	}
+	// FINAL_APPROVAL_ATTACHMENT ("Risk Action Plan Completion Attachment") is
+	// always evidence for one specific plan — a risk can have more than one
+	// STANDARD action plan, so without this link there'd be no way to tell
+	// which plan a completion file supports, or to gate that plan's own
+	// completion on its own evidence. ACTION_PLAN_ATTACHMENT ("Risk Evidence
+	// Attachment") is risk-level, uploaded before any plan necessarily exists,
+	// so it stays unlinked.
+	if req.EvidenceType == "FINAL_APPROVAL_ATTACHMENT" && (req.ActionPlanID == nil || *req.ActionPlanID <= 0) {
+		return domain.RiskEvidenceFile{}, &apierror.ValidationError{Msg: "actionPlanId is required for FINAL_APPROVAL_ATTACHMENT"}
+	}
+	if req.EvidenceType == "ACTION_PLAN_ATTACHMENT" {
+		req.ActionPlanID = nil
+	}
 	if req.CreatedBy == "" {
 		return domain.RiskEvidenceFile{}, &apierror.ValidationError{Msg: "createdBy is required"}
 	}
 	f, err := s.repo.CreateRiskEvidence(ctx, riskID, req)
+	if err != nil {
+		return domain.RiskEvidenceFile{}, err
+	}
+	return *f, nil
+}
+
+func (s *riskEvidenceService) GetRiskEvidenceByID(ctx context.Context, fileID int) (domain.RiskEvidenceFile, error) {
+	if fileID <= 0 {
+		return domain.RiskEvidenceFile{}, &apierror.ValidationError{Msg: "fileId must be a positive integer"}
+	}
+	f, err := s.repo.GetRiskEvidenceByID(ctx, fileID)
 	if err != nil {
 		return domain.RiskEvidenceFile{}, err
 	}
@@ -78,9 +102,12 @@ func (s *riskEvidenceService) ListRiskEvidence(ctx context.Context, riskID int) 
 	return *resp, nil
 }
 
-func (s *riskEvidenceService) DeleteRiskEvidence(ctx context.Context, fileID int) error {
+func (s *riskEvidenceService) DeleteRiskEvidence(ctx context.Context, riskID, fileID int) error {
+	if riskID <= 0 {
+		return &apierror.ValidationError{Msg: "riskId must be a positive integer"}
+	}
 	if fileID <= 0 {
 		return &apierror.ValidationError{Msg: "fileId must be a positive integer"}
 	}
-	return s.repo.DeleteRiskEvidence(ctx, fileID)
+	return s.repo.DeleteRiskEvidence(ctx, riskID, fileID)
 }

@@ -17,11 +17,23 @@
 package model
 
 // RiskEvidence represents a file attached to a risk, mapping to `risk_evidence`.
+//
+// EvidenceType is one of:
+//   - ACTION_PLAN_ATTACHMENT ("Risk Evidence Attachment") — uploaded from the
+//     Add Risk form; risk-level, ActionPlanID is always nil.
+//   - FINAL_APPROVAL_ATTACHMENT ("Risk Action Plan Completion Attachment") —
+//     uploaded by the action owner before completing a specific plan;
+//     ActionPlanID is always set (a risk can have more than one plan).
 type RiskEvidence struct {
 	ID           int    `json:"id"`
 	RiskID       int    `json:"risk_id"`
+	ActionPlanID *int   `json:"action_plan_id,omitempty"`
 	FileName     string `json:"file_name"`
 	FilePath     string `json:"file_path"`
 	Note         string `json:"note"`
 	EvidenceType string `json:"evidence_type"`
+	CreatedBy    string `json:"created_by"`
+	// DownloadURL is populated by the service at read time — the browser's
+	// authenticated download endpoint, never a direct Azure/entity URL.
+	DownloadURL *string `json:"download_url,omitempty"`
 }

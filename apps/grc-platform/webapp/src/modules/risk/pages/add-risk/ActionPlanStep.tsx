@@ -567,7 +567,7 @@ export default function ActionPlanStep({
       </Stack>
 
       {/* ── Evidence Attachments ─────────────────────────────────────────────── */}
-      {/* TODO: on submit, POST attachments to /api/v1/risks/{id}/evidence (backend endpoint not yet implemented) */}
+      {/* Uploaded on submit, after the risk is created — see AddRisk.tsx's onSubmit. */}
       <Stack gap={3}>
         <SectionHeader title="Evidence Attachments" />
         <EvidenceAttachments

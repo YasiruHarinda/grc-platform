@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -33,23 +33,27 @@ import {
   Briefcase,
   Calendar,
   Check,
+  CloudUpload,
   FileText,
   Link as LinkIcon,
   ListChecks,
   MessageSquare,
   Shield,
   Tag,
+  Trash2,
   TrendingUp,
   Users,
   Wrench,
   X,
 } from "@wso2/oxygen-ui-icons-react";
 import type { JSX, ReactNode } from "react";
-import type { ActionPlan, ActionPlanStep, Escalation, HistoryEntry, RiskDetail } from "../../api/riskApi";
+import type { ActionPlan, ActionPlanStep, Escalation, HistoryEntry, RiskDetail, RiskEvidence } from "../../api/riskApi";
+import { deleteRiskEvidence, fetchRiskEvidence, uploadRiskEvidence } from "../../api/riskApi";
 import RiskHistoryTimeline from "./RiskHistoryTimeline";
 import { RiskPrivilege } from "../../privileges";
 import { dialogPaperSx } from "../cardStyles";
 import { STATUS_CONFIG, calcAge, calcDue, formatDate } from "./utils";
+import { useAuthApiClient } from "@hooks/useAuthApiClient";
 
 // ActionPlan doesn't embed its steps (GET .../action-plans lists plans only;
 // steps come from a separate GET .../action-plans/{planId}/steps call) — the
@@ -237,11 +241,147 @@ function EmptyState({ icon, title, caption }: { icon: ReactNode; title: string; 
   );
 }
 
-// One card per action plan (STANDARD and/or MANAGEMENT). Step completion and
-// the final "Complete Action Plan" button are only shown to the plan's own
-// action_owner_id — the same COMPLETE_ACTION_STEPS_RISK-gated, ownership-checked
-// flow applies uniformly to both plan types.
+// The "Risk Action Plan Completion Attachment" upload — files go to Azure
+// (proxied through the backend) as soon as they're picked, matching the Audit
+// Hub's upload-immediately pattern. "Complete Action Plan" stays disabled
+// until at least one file exists for this plan (checked here for the button's
+// enabled state, and re-checked server-side as the real gate). Fetches any
+// evidence already attached (e.g. from a previous visit) on mount, so
+// reopening the drawer doesn't forget what was already uploaded.
+function CompletionEvidenceUpload({
+  riskId,
+  planId,
+  disabled,
+  onHasEvidenceChange,
+}: {
+  riskId: number;
+  planId: number;
+  disabled: boolean;
+  onHasEvidenceChange: (hasEvidence: boolean) => void;
+}): JSX.Element {
+  const authFetch = useAuthApiClient();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [files, setFiles] = useState<RiskEvidence[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchRiskEvidence(authFetch, riskId)
+      .then((all) => {
+        if (cancelled) return;
+        const existing = all.filter(
+          (e) => e.action_plan_id === planId && e.evidence_type === "FINAL_APPROVAL_ATTACHMENT",
+        );
+        setFiles(existing);
+        onHasEvidenceChange(existing.length > 0);
+      })
+      .catch(() => {
+        // Best-effort: if the list fails to load, the upload button still
+        // works and the plan simply stays gated until a file is attached.
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [riskId, planId]);
+
+  const handleFiles = async (selected: FileList | null): Promise<void> => {
+    if (!selected || selected.length === 0) return;
+    setUploading(true);
+    setError(null);
+    try {
+      for (const file of Array.from(selected)) {
+        const ev = await uploadRiskEvidence(authFetch, riskId, {
+          evidenceType: "FINAL_APPROVAL_ATTACHMENT",
+          actionPlanId: planId,
+          file,
+        });
+        setFiles((prev) => {
+          const next = [...prev, ev];
+          onHasEvidenceChange(next.length > 0);
+          return next;
+        });
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to upload file");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleRemove = async (fileId: number): Promise<void> => {
+    setError(null);
+    try {
+      await deleteRiskEvidence(authFetch, riskId, fileId);
+      setFiles((prev) => {
+        const next = prev.filter((f) => f.id !== fileId);
+        onHasEvidenceChange(next.length > 0);
+        return next;
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to remove file");
+    }
+  };
+
+  return (
+    <Stack gap={1} sx={{ pt: 0.5 }}>
+      <Typography variant="caption" fontWeight={600} color={files.length === 0 ? "error.main" : "text.secondary"}>
+        Completion Evidence {files.length === 0 && "(required)"}
+      </Typography>
+      {files.map((f) => (
+        <Stack key={f.id} direction="row" gap={1} alignItems="center">
+          <FileText size={14} />
+          <Typography variant="body2" sx={{ flex: 1, minWidth: 0 }} noWrap title={f.file_name}>
+            {f.file_name}
+          </Typography>
+          <IconButton
+            size="small"
+            disabled={disabled}
+            onClick={() => void handleRemove(f.id)}
+            aria-label={`Remove ${f.file_name}`}
+            sx={{ color: "error.main" }}
+          >
+            <Trash2 size={14} />
+          </IconButton>
+        </Stack>
+      ))}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        hidden
+        accept="image/*,.pdf"
+        onChange={(e) => {
+          void handleFiles(e.target.files);
+          e.target.value = "";
+        }}
+      />
+      <Button
+        size="small"
+        variant="outlined"
+        disabled={disabled || uploading}
+        startIcon={uploading ? <CircularProgress size={14} /> : <CloudUpload size={14} />}
+        onClick={() => fileInputRef.current?.click()}
+      >
+        {uploading ? "Uploading…" : "Attach Evidence"}
+      </Button>
+      {error && (
+        <Typography variant="caption" color="error.main">
+          {error}
+        </Typography>
+      )}
+    </Stack>
+  );
+}
+
+// One card per action plan. Step completion and the final "Complete Action
+// Plan" button are only shown to the plan's own action_owner_id — the same
+// COMPLETE_ACTION_STEPS_RISK-gated, ownership-checked flow. plan_type is
+// always STANDARD for new plans; MANAGEMENT only appears on historical rows
+// (retired — see RISK_MODULE_DESIGN.md §5.3).
 function ActionPlanCard({
+  riskId,
   plan,
   can,
   currentUserId,
@@ -251,6 +391,7 @@ function ActionPlanCard({
   onCompleteStep,
   onCompletePlan,
 }: {
+  riskId: number;
   plan: ActionPlanWithSteps;
   can: (privilege: string) => boolean;
   currentUserId: number | null;
@@ -268,6 +409,8 @@ function ActionPlanCard({
   const allStepsDone = plan.steps.length > 0 && plan.steps.every((s) => s.status === "COMPLETED");
   const isManagement = plan.plan_type === "MANAGEMENT";
   const ownerName = plan.action_owner_id !== null ? (userNames.get(plan.action_owner_id) ?? null) : null;
+  const readyToComplete = canComplete && allStepsDone && plan.status !== "COMPLETED";
+  const [hasCompletionEvidence, setHasCompletionEvidence] = useState(false);
 
   return (
     <SectionCard
@@ -315,8 +458,22 @@ function ActionPlanCard({
             ))}
           </Stack>
         )}
-        {canComplete && allStepsDone && plan.status !== "COMPLETED" && (
-          <Button variant="contained" size="small" fullWidth disabled={disabled} onClick={() => onCompletePlan(plan.id)}>
+        {readyToComplete && (
+          <CompletionEvidenceUpload
+            riskId={riskId}
+            planId={plan.id}
+            disabled={disabled}
+            onHasEvidenceChange={setHasCompletionEvidence}
+          />
+        )}
+        {readyToComplete && (
+          <Button
+            variant="contained"
+            size="small"
+            fullWidth
+            disabled={disabled || !hasCompletionEvidence}
+            onClick={() => onCompletePlan(plan.id)}
+          >
             Complete Action Plan
           </Button>
         )}
@@ -838,6 +995,7 @@ export default function RiskDetailDrawer({
                 actionPlans.map((plan) => (
                   <ActionPlanCard
                     key={plan.id}
+                    riskId={detail.id}
                     plan={plan}
                     can={can}
                     currentUserId={currentUserId}

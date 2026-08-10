@@ -21,61 +21,176 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
+	"strings"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/apierror"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/repository"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/blobpath"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/file"
 )
 
-const maxRiskEvidenceBytes = 25 << 20 // 25 MiB
+const maxRiskEvidenceBytes = 25 << 20 // 25 MiB — matches the entity's proxy-upload backstop
+
+// RiskRootFolder is the literal top-level Azure Blob folder for every risk's
+// evidence, kept separate from the Audit Hub's own top-level folder
+// (service.AuditRootFolder in the audit package).
+const RiskRootFolder = "risk"
+
+// The two evidence_type values, spelled out where the folder/validation logic
+// needs the literal string (mirrors risk_evidence.evidence_type in risk_schema.sql).
+const (
+	EvidenceTypeActionPlanAttachment    = "ACTION_PLAN_ATTACHMENT"    // "Risk Evidence Attachment" — risk-level, from the Add Risk form
+	EvidenceTypeFinalApprovalAttachment = "FINAL_APPROVAL_ATTACHMENT" // "Risk Action Plan Completion Attachment" — always tied to one plan
+)
+
+func riskEvidenceAttachmentFolderPath(riskCode string) string {
+	return RiskRootFolder + "/" + riskCode + "/risk-evidence-attachment/"
+}
+
+func riskActionPlanCompletionFolderPath(riskCode string) string {
+	return RiskRootFolder + "/" + riskCode + "/risk-action-plan-completion-attachment/"
+}
 
 // EvidenceService defines business operations for risk evidence files.
 type EvidenceService interface {
 	List(ctx context.Context, riskID int) ([]*model.RiskEvidence, error)
-	Upload(ctx context.Context, riskID int, fileName, contentType string, content io.Reader, createdBy string) (*model.RiskEvidence, error)
-	Delete(ctx context.Context, riskID, evidenceID int, byUserID string) error
+	// Upload validates evidenceType/actionPlanID, sanitizes fileName, streams
+	// the bytes to Azure (proxied through the Compliance Entity) under the
+	// risk's evidence-type-specific folder, and records the row. actionPlanID
+	// is required for FINAL_APPROVAL_ATTACHMENT and must belong to riskID;
+	// it is ignored (forced nil) for ACTION_PLAN_ATTACHMENT.
+	Upload(ctx context.Context, riskID int, evidenceType string, actionPlanID *int, fileName, contentType string, content io.Reader, note, createdBy string) (*model.RiskEvidence, error)
+	// Delete removes one evidence file. The caller must be the file's creator
+	// or hold the admin override. The blob in Azure is not deleted — only the
+	// DB record is removed (same rule the Audit Hub's evidence delete uses).
+	Delete(ctx context.Context, riskID, evidenceID int, actor string, isAdmin bool) error
+	// DownloadFile returns one evidence file's bytes (proxied via the
+	// Compliance Entity) plus its name and content type, by file ID.
+	DownloadFile(ctx context.Context, evidenceID int) (data []byte, fileName, contentType string, err error)
 }
 
 type evidenceService struct {
-	repo    repository.RiskEvidenceRepository
-	storage *file.Service
+	repo           repository.RiskEvidenceRepository
+	riskRepo       repository.RiskRepository
+	actionPlanRepo repository.ActionPlanRepository
+	storage        *file.Service
 }
 
-func NewEvidenceService(repo repository.RiskEvidenceRepository, storage *file.Service) EvidenceService {
-	return &evidenceService{repo: repo, storage: storage}
+// NewEvidenceService wires the evidence repository plus the risk and action
+// plan repositories — needed to resolve the risk's risk_code (the readable
+// blob path segment) and to verify a completion attachment's actionPlanID
+// actually belongs to the risk it's being attached to.
+func NewEvidenceService(
+	repo repository.RiskEvidenceRepository,
+	riskRepo repository.RiskRepository,
+	actionPlanRepo repository.ActionPlanRepository,
+	storage *file.Service,
+) EvidenceService {
+	return &evidenceService{repo: repo, riskRepo: riskRepo, actionPlanRepo: actionPlanRepo, storage: storage}
 }
 
 func (s *evidenceService) List(ctx context.Context, riskID int) ([]*model.RiskEvidence, error) {
-	return s.repo.List(ctx, riskID)
+	evidence, err := s.repo.List(ctx, riskID)
+	if err != nil {
+		return nil, err
+	}
+	// Attach a backend download URL to each file. The browser fetches this
+	// authenticated endpoint, which proxies the bytes from the Compliance
+	// Entity (the browser never contacts Azure directly).
+	for _, e := range evidence {
+		if e.ID == 0 {
+			continue
+		}
+		downloadURL := fmt.Sprintf("/api/v1/risks/%d/evidence/%d/download", riskID, e.ID)
+		e.DownloadURL = &downloadURL
+	}
+	return evidence, nil
 }
 
-func (s *evidenceService) Upload(ctx context.Context, riskID int, fileName, contentType string, content io.Reader, createdBy string) (*model.RiskEvidence, error) {
+func (s *evidenceService) Upload(ctx context.Context, riskID int, evidenceType string, actionPlanID *int, fileName, contentType string, content io.Reader, note, createdBy string) (*model.RiskEvidence, error) {
+	evidenceType = strings.ToUpper(evidenceType)
+	if evidenceType != EvidenceTypeActionPlanAttachment && evidenceType != EvidenceTypeFinalApprovalAttachment {
+		return nil, &apierror.Error{StatusCode: http.StatusBadRequest, Body: "evidenceType must be ACTION_PLAN_ATTACHMENT or FINAL_APPROVAL_ATTACHMENT"}
+	}
+
+	if evidenceType == EvidenceTypeFinalApprovalAttachment {
+		if actionPlanID == nil || *actionPlanID <= 0 {
+			return nil, &apierror.Error{StatusCode: http.StatusBadRequest, Body: "actionPlanId is required for FINAL_APPROVAL_ATTACHMENT"}
+		}
+		plan, err := s.actionPlanRepo.GetByID(ctx, *actionPlanID)
+		if err != nil {
+			return nil, err
+		}
+		if plan.RiskID != riskID {
+			return nil, &apierror.Error{StatusCode: http.StatusBadRequest, Body: "actionPlanId does not belong to this risk"}
+		}
+	} else {
+		// Risk-level evidence is never plan-scoped, regardless of what the
+		// caller sent.
+		actionPlanID = nil
+	}
+
+	risk, err := s.riskRepo.GetByID(ctx, riskID)
+	if err != nil {
+		return nil, err
+	}
+	riskCode := blobpath.SanitizeSegment(risk.RiskCode)
+
 	data, err := io.ReadAll(io.LimitReader(content, maxRiskEvidenceBytes+1))
 	if err != nil {
 		return nil, err
 	}
+	if len(data) == 0 {
+		return nil, &apierror.Error{StatusCode: http.StatusBadRequest, Body: "file is empty"}
+	}
 	if int64(len(data)) > maxRiskEvidenceBytes {
 		return nil, &apierror.Error{StatusCode: http.StatusRequestEntityTooLarge, Body: "file exceeds 25 MB limit"}
 	}
-	// Store under a per-risk evidence folder; the Compliance Entity writes to Azure
-	// (the backend never talks to Azure directly). The stored file_path is the
-	// relative blob name, downloaded later by proxy through the entity.
-	blobName := fmt.Sprintf("risks/%d/evidence/%d/%s", riskID, time.Now().UnixNano(), fileName)
+
+	stem, ext := blobpath.SanitizeFileName(fileName)
+	folder := riskEvidenceAttachmentFolderPath(riskCode)
+	if evidenceType == EvidenceTypeFinalApprovalAttachment {
+		folder = riskActionPlanCompletionFolderPath(riskCode)
+	}
+	blobName := folder + blobpath.BuildBlobName(stem, ext)
+
 	if err := s.storage.UploadBlob(ctx, blobName, contentType, data); err != nil {
 		return nil, err
 	}
-	// evidence_type defaults to ACTION_PLAN_ATTACHMENT for uploaded attachments.
-	ev, err := s.repo.Create(ctx, riskID, fileName, blobName, "", "ACTION_PLAN_ATTACHMENT", createdBy)
+
+	ev, err := s.repo.Create(ctx, riskID, actionPlanID, fileName, blobName, note, evidenceType, createdBy)
 	if err != nil {
-		// Best-effort blob cleanup so the orphaned file doesn't linger in Azure.
+		// Best-effort blob cleanup so a failed DB write doesn't leave an
+		// orphaned file in Azure.
 		_ = s.storage.Delete(ctx, blobName)
 		return nil, err
 	}
 	return ev, nil
 }
 
-func (s *evidenceService) Delete(ctx context.Context, riskID, evidenceID int, byUserID string) error {
-	return s.repo.Delete(ctx, riskID, evidenceID, byUserID)
+func (s *evidenceService) Delete(ctx context.Context, riskID, evidenceID int, actor string, isAdmin bool) error {
+	ev, err := s.repo.GetByID(ctx, evidenceID)
+	if err != nil {
+		return err
+	}
+	if ev.RiskID != riskID {
+		return &apierror.Error{StatusCode: http.StatusNotFound, Body: "evidence file not found"}
+	}
+	if !isAdmin && ev.CreatedBy != actor {
+		return &apierror.Error{StatusCode: http.StatusForbidden, Body: "forbidden"}
+	}
+	return s.repo.Delete(ctx, riskID, evidenceID)
+}
+
+func (s *evidenceService) DownloadFile(ctx context.Context, evidenceID int) (data []byte, fileName, contentType string, err error) {
+	ev, err := s.repo.GetByID(ctx, evidenceID)
+	if err != nil {
+		return nil, "", "", err
+	}
+	data, contentType, err = s.storage.ReadBlob(ctx, ev.FilePath)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return data, ev.FileName, contentType, nil
 }

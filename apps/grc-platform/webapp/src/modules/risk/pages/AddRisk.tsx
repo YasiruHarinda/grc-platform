@@ -49,6 +49,7 @@ import {
   fetchRiskScores,
   fetchSourceRegisterTeams,
   fetchUsers,
+  uploadRiskEvidence,
 } from "../api/riskApi";
 import type { ComplianceReference, RiskCategory, RiskScore, RiskTeam, UserOption } from "../api/riskApi";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
@@ -293,7 +294,20 @@ export default function AddRisk(): JSX.Element {
 
     setSubmitError(null);
     try {
-      await createRisk(authFetch, data);
+      const created = await createRisk(authFetch, data);
+
+      // Risk-level evidence attachments ("Risk Evidence Attachment"): the
+      // risk doesn't exist until the call above returns an id, so these are
+      // staged in form state through the whole wizard and only uploaded now.
+      for (const attachment of data.evidenceAttachments) {
+        if (!attachment.file) continue;
+        await uploadRiskEvidence(authFetch, created.id, {
+          evidenceType: "ACTION_PLAN_ATTACHMENT",
+          file: attachment.file,
+          note: attachment.note || undefined,
+        });
+      }
+
       setActiveStep(STEPS.length);
     } catch (err: unknown) {
       const apiErr = err as { status?: number; message?: string; data?: { next_sequence_id?: number } };

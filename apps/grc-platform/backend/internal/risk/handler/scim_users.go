@@ -29,9 +29,19 @@ import (
 // internal/audit/model/dashboard.go's asgardeoGroupRoles), not arbitrary
 // strings — the SCIM Operations Service is asked to match membership in
 // exactly these groups.
+//
+// TEMPORARY — DO NOT COMMIT: pointed at "DEFAULT/wso2-everyone" (a real group
+// with real members in the test org our current SCIM credentials reach)
+// instead of the real "grc-platform-management" / "grc-platform-risk-owner"
+// groups, which don't exist yet in that org — there's nothing to test against
+// until they're created (in the real "wso2" production org). Swap back to the
+// real group names below once those groups exist and SCIM_BASE_URL points at
+// the org that has them:
+//   managementGroup = "grc-platform-management"
+//   riskOwnerGroup  = "grc-platform-risk-owner"
 const (
-	managementGroup = "grc-platform-management"
-	riskOwnerGroup  = "grc-platform-risk-owner"
+	managementGroup = "DEFAULT/wso2-everyone"
+	riskOwnerGroup  = "DEFAULT/wso2-everyone"
 )
 
 // handleListManagementApprovers serves GET /api/v1/management-approvers:
