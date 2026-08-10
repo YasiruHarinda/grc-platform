@@ -126,9 +126,9 @@ export default function HeroBand({
               label={`${dueSoonCount} due this week`}
               onClick={onQueueClick}
               sx={{
-                color: "#3B82F6", fontWeight: 600,
-                bgcolor: "transparent", border: "1px solid #3B82F6",
-                "& .MuiChip-icon": { color: "#3B82F6" },
+                color: "#1D4ED8", fontWeight: 600,
+                bgcolor: "transparent", border: "1px solid #1D4ED8",
+                "& .MuiChip-icon": { color: "#1D4ED8" },
               }}
             />
           )}

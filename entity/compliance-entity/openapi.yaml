@@ -5395,6 +5395,14 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DashboardControlItem'
+        pendingItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardControlItem'
+        validationItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardControlItem'
         overdueControls:
           type: array
           items:
@@ -5416,6 +5424,8 @@ components:
           enum:
           - action-items
           - due-soon
+          - pending
+          - validation
           - overdue
           default: action-items
         page:

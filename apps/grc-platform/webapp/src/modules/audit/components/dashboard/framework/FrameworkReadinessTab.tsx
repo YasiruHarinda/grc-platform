@@ -15,7 +15,7 @@
 // under the License.
 
 import { useQueries } from "@tanstack/react-query";
-import { Box, Button, Chip, Paper, Typography } from "@wso2/oxygen-ui";
+import { Alert, Box, Button, Chip, Paper, Skeleton, Typography } from "@wso2/oxygen-ui";
 import type { JSX, ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
@@ -87,6 +87,14 @@ export default function FrameworkReadinessTab({ audits }: FrameworkReadinessTabP
     });
     return map;
   }, [controlQueries, selectedAuditIds]);
+
+  // Gates the detail panels below: until every selected audit's controls
+  // query has resolved, the framework's rollup is a mix of exact and
+  // rail-only (coarse) figures — showing that as if it were the finished
+  // breakdown would misrepresent partial data as complete (see
+  // computeFrameworkRollups' hasDetail, which is now `every`, not `some`).
+  const controlsLoading = controlQueries.some((q) => q.isLoading);
+  const controlsError = controlQueries.some((q) => q.isError);
 
   const rollups = useMemo(
     () => computeFrameworkRollups(audits, controlsByAuditId),
@@ -160,17 +168,27 @@ export default function FrameworkReadinessTab({ audits }: FrameworkReadinessTabP
             onSelect={setSelectedAuditId}
           />
 
-          <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "1fr 1fr 1fr" }, gap: 2, height: 420 }}>
-            <PanelCard title="Where we stand">
-              <StandPanel scope={scope} />
-            </PanelCard>
-            <PanelCard title="What's blocking">
-              <BlockerList scope={scope} showAuditLabel={selectedAuditId === null} />
-            </PanelCard>
-            <PanelCard title="Who owns the gap">
-              <FrameworkTeamBreakdown scope={scope} />
-            </PanelCard>
-          </Box>
+          {controlsError ? (
+            <Alert severity="error">Failed to load control details. Please refresh the page.</Alert>
+          ) : controlsLoading ? (
+            <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "1fr 1fr 1fr" }, gap: 2, height: 420 }}>
+              <Skeleton variant="rectangular" height="100%" sx={{ borderRadius: 2 }} />
+              <Skeleton variant="rectangular" height="100%" sx={{ borderRadius: 2 }} />
+              <Skeleton variant="rectangular" height="100%" sx={{ borderRadius: 2 }} />
+            </Box>
+          ) : (
+            <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "1fr 1fr 1fr" }, gap: 2, height: 420 }}>
+              <PanelCard title="Where we stand">
+                <StandPanel scope={scope} />
+              </PanelCard>
+              <PanelCard title="What's blocking">
+                <BlockerList scope={scope} showAuditLabel={selectedAuditId === null} />
+              </PanelCard>
+              <PanelCard title="Who owns the gap">
+                <FrameworkTeamBreakdown scope={scope} />
+              </PanelCard>
+            </Box>
+          )}
         </>
       )}
     </Box>

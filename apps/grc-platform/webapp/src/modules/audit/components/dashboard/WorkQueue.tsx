@@ -293,15 +293,20 @@ function TabPanel({ tab, canApprove, canSubmit, emptyText }: TabPanelProps): JSX
   // don't offer options that will only ever return zero rows.
   const tabStatuses = useMemo(() => statusesForTab(tab, canApprove, canSubmit), [tab, canApprove, canSubmit]);
 
-  // Map the selected action labels back to their statuses and merge with the raw
-  // status filter — both column filters constrain the same status column (union).
+  // Map the selected action labels back to their statuses. Status and Action
+  // needed are two facets of the same status column (actionLabel is a pure
+  // function of status), so when both filters have selections the row must
+  // satisfy both — intersect, not union — or a Status pick would surface rows
+  // whose action doesn't match, and vice versa.
   const actionGroups = useMemo(() => buildActionGroups(canApprove, tabStatuses), [canApprove, tabStatuses]);
   const effectiveStatuses = useMemo(() => {
-    const set = new Set<string>(statusFilter);
+    const actionStatuses = new Set<string>();
     for (const label of actionFilter) {
-      actionGroups.find((g) => g.label === label)?.statuses.forEach((s) => set.add(s));
+      actionGroups.find((g) => g.label === label)?.statuses.forEach((s) => actionStatuses.add(s));
     }
-    return [...set];
+    if (statusFilter.length === 0) return [...actionStatuses];
+    if (actionFilter.length === 0) return [...new Set(statusFilter)];
+    return statusFilter.filter((s) => actionStatuses.has(s));
   }, [statusFilter, actionFilter, actionGroups]);
 
   const { data, isLoading, isError } = useGetWorkQueue(tab, page + 1, {
@@ -392,7 +397,7 @@ function TabPanel({ tab, canApprove, canSubmit, emptyText }: TabPanelProps): JSX
           {controlNumber.trim() && (
             <Chip label={`Control: ${controlNumber.trim()}`} size="small" onDelete={() => { setControlInput(""); setControlNumber(""); setPage(0); }} />
           )}
-          <Button size="small" onClick={() => { setTeamFilter([]); setOwnerFilter([]); setAuditFilter([]); setStatusFilter([]); setActionFilter([]); setControlInput(""); setControlNumber(""); setPage(0); }}
+          <Button size="small" onClick={() => { setTeamFilter([]); setOwnerFilter([]); setAuditFilter([]); setStatusFilter([]); setActionFilter([]); setControlInput(""); setControlNumber(""); setDueSort("asc"); setPage(0); }}
             sx={{ textTransform: "none", fontSize: "0.75rem", py: 0.25 }}>
             Clear all
           </Button>

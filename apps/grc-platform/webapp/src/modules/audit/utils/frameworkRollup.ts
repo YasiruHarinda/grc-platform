@@ -75,14 +75,22 @@ function mergePhaseCounts(a: PhaseCounts, b: PhaseCounts): PhaseCounts {
   };
 }
 
+// isDueSoon is a pure temporal check — due within the window, not overdue, not
+// complete — independent of blockerReason's needsClarification precedence, so
+// a control that is both blocked and due soon still counts toward due-soon
+// totals (see blockerReason: it picks one reason per row for list display,
+// but that display priority must not suppress the aggregate due-soon count).
+function isDueSoon(control: AuditControl, today: Date): boolean {
+  if (control.isOverdue || control.status === "COMPLETE" || !control.dueDate) return false;
+  const due = new Date(`${control.dueDate}T00:00:00`);
+  const days = daysBetween(startOfDay(today), due);
+  return days >= 0 && days <= DUE_SOON_DAYS;
+}
+
 function blockerReason(control: AuditControl, today: Date): BlockerReason | null {
   if (control.isOverdue) return "overdue";
   if (STATUS_PHASE[control.status] === "BLOCKED") return "needsClarification";
-  if (control.status === "COMPLETE") return null;
-  if (!control.dueDate) return null;
-  const due = new Date(`${control.dueDate}T00:00:00`);
-  const days = daysBetween(startOfDay(today), due);
-  if (days >= 0 && days <= DUE_SOON_DAYS) return "dueSoon";
+  if (isDueSoon(control, today)) return "dueSoon";
   return null;
 }
 
@@ -163,9 +171,8 @@ function buildTeams(controls: AuditControl[], today: Date): TeamRollup[] {
       draft.overdueCount += 1;
       const owner = control.ownerName ?? "Unassigned";
       draft.assignees.set(owner, (draft.assignees.get(owner) ?? 0) + 1);
-    } else if (phase !== "COMPLETE" && control.dueDate) {
-      const days = daysBetween(startOfDay(today), new Date(`${control.dueDate}T00:00:00`));
-      if (days >= 0 && days <= DUE_SOON_DAYS) draft.dueSoonCount += 1;
+    } else if (isDueSoon(control, today)) {
+      draft.dueSoonCount += 1;
     }
   }
 
@@ -197,6 +204,9 @@ export function computeAuditRollup(audit: Audit, controls: AuditControl[] | unde
   const completionPercent = total > 0 ? (approved / total) * 100 : 0;
   const hasDetail = controls !== undefined;
   const blockers = hasDetail ? buildBlockers(audit, controls, today) : [];
+  // Independent of blockerReason's list-display priority — see isDueSoon —
+  // so a blocked-and-due-soon control still counts here, matching buildTeams.
+  const dueSoonCount = hasDetail ? controls.filter((c) => isDueSoon(c, today)).length : 0;
 
   return {
     id: audit.id,
@@ -205,7 +215,7 @@ export function computeAuditRollup(audit: Audit, controls: AuditControl[] | unde
     complete: approved,
     completionPercent,
     overdueCount: overdue,
-    dueSoonCount: blockers.filter((b) => b.reason === "dueSoon").length,
+    dueSoonCount,
     deadline: audit.periodEnd,
     phaseCounts: hasDetail
       ? tallyPhaseCounts(controls)
@@ -258,7 +268,7 @@ export function computeFrameworkRollups(
     const nearest = auditRollups[0]; // sorted by deadline ascending above
     const deadline = nearest ? nearest.deadline : "";
 
-    const hasDetail = auditRollups.some((a) => a.hasDetail);
+    const hasDetail = auditRollups.every((a) => a.hasDetail);
     const phaseCounts = auditRollups.reduce((acc, a) => mergePhaseCounts(acc, a.phaseCounts), { ...EMPTY_PHASE_COUNTS });
     const blockers = sortBlockers(auditRollups.flatMap((a) => a.blockers));
     // Built from the raw concatenated controls (not by merging per-audit

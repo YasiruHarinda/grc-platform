@@ -18,6 +18,7 @@ import { Box } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
 import type { PhaseCounts } from "@modules/audit/types/framework";
 import { DUE_SOON } from "@modules/audit/components/dashboard/dueDate";
+import { PHASE_LABELS } from "@modules/audit/utils/controlStatus";
 
 interface PhaseBarProps {
   counts: PhaseCounts;
@@ -36,15 +37,22 @@ export default function PhaseBar({ counts, completeColor, height = 8 }: PhaseBar
   const total = complete + inProgress + needsClarification + notStarted;
   const pct = (n: number) => (total > 0 ? (n / total) * 100 : 0);
 
-  const segments: { key: string; width: number; color: string; darkColor?: string }[] = [
-    { key: "complete", width: pct(complete), color: completeColor },
-    { key: "inProgress", width: pct(inProgress), color: "rgba(0,0,0,0.24)", darkColor: "rgba(255,255,255,0.32)" },
-    { key: "needsClarification", width: pct(needsClarification), color: DUE_SOON },
-    { key: "notStarted", width: pct(notStarted), color: "#E0E0E0" },
+  const segments: { key: string; label: string; count: number; width: number; color: string; darkColor?: string }[] = [
+    { key: "complete", label: PHASE_LABELS.COMPLETE, count: complete, width: pct(complete), color: completeColor },
+    { key: "inProgress", label: PHASE_LABELS.IN_PROGRESS, count: inProgress, width: pct(inProgress), color: "rgba(0,0,0,0.24)", darkColor: "rgba(255,255,255,0.32)" },
+    { key: "needsClarification", label: PHASE_LABELS.BLOCKED, count: needsClarification, width: pct(needsClarification), color: DUE_SOON },
+    { key: "notStarted", label: PHASE_LABELS.NOT_STARTED, count: notStarted, width: pct(notStarted), color: "#E0E0E0" },
   ];
+  // Width/color alone don't identify a segment to a screen reader (or to a
+  // sighted user who can't distinguish the two greys) — role="img" collapses
+  // the bar to one accessible element with this summary as its name; each
+  // segment's native title gives the same name/count on hover.
+  const summary = segments.map((s) => `${s.count} ${s.label}`).join(", ");
 
   return (
     <Box
+      role="img"
+      aria-label={`Phase breakdown: ${summary}`}
       sx={{
         display: "flex",
         width: "100%",
@@ -58,6 +66,7 @@ export default function PhaseBar({ counts, completeColor, height = 8 }: PhaseBar
       {segments.map((s) => s.width > 0 && (
         <Box
           key={s.key}
+          title={`${s.label}: ${s.count}`}
           sx={{
             width: `${s.width}%`,
             bgcolor: s.color,
