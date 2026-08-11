@@ -34,14 +34,13 @@ type dashboardHandler struct {
 }
 
 // deriveScopes computes the actor's view and work-queue row scopes purely from
-// their privileges — no role or group name is consulted. The two differ only for
-// the submitter (own_team dashboard, owned work queue). See ADR-0002.
+// their privileges — no role or group name is consulted. See ADR-0002.
 func deriveScopes(ctx context.Context) (view, workQueue model.Scope) {
 	switch {
 	case auth.HasPrivilege(ctx, privilege.ViewAllAudits):
 		return model.ScopeAll, model.ScopeAll
 	case auth.HasPrivilege(ctx, privilege.SubmitEvidence):
-		return model.ScopeOwnTeam, model.ScopeOwned
+		return model.ScopeOwned, model.ScopeOwned
 	case auth.HasPrivilege(ctx, privilege.ValidateEvidence):
 		return model.ScopeAssigned, model.ScopeAssigned
 	default:

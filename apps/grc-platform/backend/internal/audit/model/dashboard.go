@@ -127,10 +127,8 @@ type Scope string
 const (
 	// ScopeAll sees every row (org-wide read — holders of AUDIT_VIEW_ALL_AUDITS).
 	ScopeAll Scope = "all"
-	// ScopeOwnTeam sees the actor's audit teams' controls (submitter dashboards).
-	ScopeOwnTeam Scope = "own_team"
 	// ScopeOwned sees only controls the actor owns (owner_id = actor) — the
-	// submitter's work queue, narrower than their own_team dashboard.
+	// submitter's dashboard and work queue alike.
 	ScopeOwned Scope = "owned"
 	// ScopeAssigned sees only controls the actor audits (auditor_id = actor).
 	ScopeAssigned Scope = "assigned"
@@ -158,8 +156,7 @@ const (
 type DashboardFilter struct {
 	// ViewScope scopes dashboard stats, charts and lists.
 	ViewScope Scope
-	// WorkQueueScope scopes the work-queue tabs. Equals ViewScope for every role
-	// except the submitter (own_team view, owned work queue).
+	// WorkQueueScope scopes the work-queue tabs. Equals ViewScope for every role.
 	WorkQueueScope Scope
 	// WorkQueueClass selects the action-items lifecycle bucket for the actor.
 	WorkQueueClass WorkQueueClass

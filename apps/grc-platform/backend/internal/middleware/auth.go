@@ -46,7 +46,6 @@ type UserInfo struct {
 	Email   string
 	Groups  []string // Asgardeo role/group claims
 	Issuer  string   // the token's verified issuer (iss)
-	Scope   string   // the matched IdP's scope: config.ScopeFull | config.ScopeEvidenceApp
 }
 
 // Config holds JWT validation settings loaded from environment variables.
@@ -62,23 +61,6 @@ type Config struct {
 	// TestKeyFuncs maps issuer → jwt.Keyfunc, bypassing JWKS cache construction.
 	// Never set in production; used by unit tests to inject pre-built key functions.
 	TestKeyFuncs map[string]jwt.Keyfunc
-}
-
-// evidenceAppPrivilegeCeiling is the single source of truth for what an
-// evidence-app-scoped token (IdP-2) may ever do, no matter what groups it carries
-// or how AUTH_GROUP_ROLE_MAP_2 is (mis)configured. Resolved privileges are
-// intersected with this set for evidence-app tokens.
-var evidenceAppPrivilegeCeiling = map[string]bool{privilege.SubmitEvidence: true}
-
-// intersectCeiling drops any privilege not permitted by the ceiling.
-func intersectCeiling(privs, ceiling map[string]bool) map[string]bool {
-	out := make(map[string]bool, len(privs))
-	for p := range privs {
-		if ceiling[p] {
-			out[p] = true
-		}
-	}
-	return out
 }
 
 // idpRuntime pairs a configured IdP with its JWKS-backed key function.
@@ -273,7 +255,7 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 				return
 			}
 
-			info, idp, err := extractUserInfo(tokenStr, cfg, idps)
+			info, err := extractUserInfo(tokenStr, cfg, idps)
 			if err != nil {
 				slog.ErrorContext(r.Context(), "auth: token validation failed", "err", err)
 				writeAuthError(w, "You are not authorized to perform this action. Please try again.")
@@ -282,32 +264,12 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 
 			ctx := context.WithValue(r.Context(), userInfoKey, info)
 			if cfg.PrivilegeStore != nil {
-				privs := cfg.PrivilegeStore.Resolve(mapGroups(info.Groups, idp))
-				// Cap evidence-app-scoped tokens at the ceiling, independent of config.
-				if idp != nil && idp.Scope == config.ScopeEvidenceApp {
-					privs = intersectCeiling(privs, evidenceAppPrivilegeCeiling)
-				}
+				privs := cfg.PrivilegeStore.Resolve(info.Groups)
 				ctx = privilege.WithContext(ctx, privs)
 			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
-}
-
-// mapGroups applies an IdP's group→role map (dropping unmapped groups) so an
-// external IdP's group names never leak directly into GRC role resolution. When
-// the IdP has no map (nil), or in local dev (idp nil), groups pass through as-is.
-func mapGroups(groups []string, idp *config.IdPConfig) []string {
-	if idp == nil || idp.GroupRoleMap == nil {
-		return groups
-	}
-	mapped := make([]string, 0, len(groups))
-	for _, g := range groups {
-		if role, ok := idp.GroupRoleMap[g]; ok {
-			mapped = append(mapped, role)
-		}
-	}
-	return mapped
 }
 
 // UserInfoFromContext retrieves the authenticated user from the context.
@@ -339,33 +301,33 @@ func requestToken(r *http.Request) string {
 	return after
 }
 
-// extractUserInfo validates the token and returns the caller's identity plus the
-// IdP that issued it (nil in local-dev mode). In production it selects the IdP by
-// the token's iss claim: an unknown issuer is rejected with the same generic error
-// as any other invalid token, so the set of configured issuers is not leaked.
-func extractUserInfo(tokenStr string, cfg Config, idps map[string]idpRuntime) (*UserInfo, *config.IdPConfig, error) {
+// extractUserInfo validates the token and returns the caller's identity. In
+// production it selects the IdP by the token's iss claim: an unknown issuer is
+// rejected with the same generic error as any other invalid token, so the set of
+// configured issuers is not leaked.
+func extractUserInfo(tokenStr string, cfg Config, idps map[string]idpRuntime) (*UserInfo, error) {
 	if !cfg.TokenValidatorEnabled {
 		// Local dev: decode without signature verification. No IdP selection.
 		var c jwtClaims
 		if _, _, err := new(jwt.Parser).ParseUnverified(tokenStr, &c); err != nil {
-			return nil, nil, fmt.Errorf("decode token: %w", err)
+			return nil, fmt.Errorf("decode token: %w", err)
 		}
 		sub, err := c.GetSubject()
 		if err != nil || sub == "" {
-			return nil, nil, fmt.Errorf("token missing sub claim")
+			return nil, fmt.Errorf("token missing sub claim")
 		}
-		return &UserInfo{Subject: sub, Email: c.Email, Groups: c.Groups, Issuer: c.Issuer}, nil, nil
+		return &UserInfo{Subject: sub, Email: c.Email, Groups: c.Groups, Issuer: c.Issuer}, nil
 	}
 
 	// Read the issuer from the unverified token only to pick the IdP; nothing else
 	// from this parse is trusted.
 	var probe jwtClaims
 	if _, _, err := new(jwt.Parser).ParseUnverified(tokenStr, &probe); err != nil {
-		return nil, nil, fmt.Errorf("decode token: %w", err)
+		return nil, fmt.Errorf("decode token: %w", err)
 	}
 	rt, ok := idps[probe.Issuer]
 	if !ok {
-		return nil, nil, fmt.Errorf("unknown issuer")
+		return nil, fmt.Errorf("unknown issuer")
 	}
 
 	var c jwtClaims
@@ -377,23 +339,21 @@ func extractUserInfo(tokenStr string, cfg Config, idps map[string]idpRuntime) (*
 		jwt.WithValidMethods([]string{"RS256"}),
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("validate token: %w", err)
+		return nil, fmt.Errorf("validate token: %w", err)
 	}
 	if !token.Valid {
-		return nil, nil, fmt.Errorf("invalid token")
+		return nil, fmt.Errorf("invalid token")
 	}
 
 	sub, err := c.GetSubject()
 	if err != nil || sub == "" {
-		return nil, nil, fmt.Errorf("token missing sub claim")
+		return nil, fmt.Errorf("token missing sub claim")
 	}
 
-	idpCfg := rt.cfg
 	return &UserInfo{
 		Subject: sub,
 		Email:   c.Email,
 		Groups:  c.Groups,
 		Issuer:  rt.cfg.Issuer,
-		Scope:   rt.cfg.Scope,
-	}, &idpCfg, nil
+	}, nil
 }

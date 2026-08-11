@@ -24,8 +24,6 @@ type Scope string
 const (
 	// ScopeAll sees every row (org-wide read).
 	ScopeAll Scope = "all"
-	// ScopeOwnTeam sees the actor's audit teams' controls (by user_audit_team).
-	ScopeOwnTeam Scope = "own_team"
 	// ScopeOwned sees only controls the actor owns (owner_id = actor).
 	ScopeOwned Scope = "owned"
 	// ScopeAssigned sees only controls the actor audits (auditor_id = actor).

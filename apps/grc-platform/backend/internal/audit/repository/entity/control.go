@@ -234,17 +234,6 @@ func (r *controlRepo) Delete(ctx context.Context, auditID, controlID int) error 
 	return r.c.Delete(ctx, fmt.Sprintf("/audits/%d/controls/%d", auditID, controlID))
 }
 
-func (r *controlRepo) ListAssignedForEvidence(ctx context.Context, userEmail string) ([]*model.AssignedControlForEvidence, error) {
-	var resp struct {
-		Controls []*model.AssignedControlForEvidence `json:"controls"`
-	}
-	path := "/controls/assigned-for-evidence?email=" + url.QueryEscape(userEmail)
-	if err := r.c.Get(ctx, path, &resp); err != nil {
-		return nil, err
-	}
-	return resp.Controls, nil
-}
-
 func (r *controlRepo) AssignedAuditID(ctx context.Context, userEmail string, controlID int) (int, bool, error) {
 	var resp struct {
 		AuditID int `json:"auditId"`

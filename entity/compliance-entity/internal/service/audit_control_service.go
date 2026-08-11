@@ -376,20 +376,6 @@ func (s *controlService) CreateControl(ctx context.Context, auditID int, req dom
 	return *c, nil
 }
 
-func (s *controlService) ListAssignedForEvidence(ctx context.Context, userEmail string) (domain.ListAssignedControlsResponse, error) {
-	if userEmail == "" {
-		return domain.ListAssignedControlsResponse{}, &apierror.ValidationError{Msg: "email is required"}
-	}
-	controls, err := s.repo.ListAssignedForEvidence(ctx, userEmail)
-	if err != nil {
-		return domain.ListAssignedControlsResponse{}, err
-	}
-	if controls == nil {
-		controls = []domain.AssignedControlForEvidence{}
-	}
-	return domain.ListAssignedControlsResponse{Controls: controls}, nil
-}
-
 func (s *controlService) GetEvidenceAssignment(ctx context.Context, userEmail string, controlID int) (domain.EvidenceAssignmentResponse, error) {
 	if userEmail == "" {
 		return domain.EvidenceAssignmentResponse{}, &apierror.ValidationError{Msg: "email is required"}

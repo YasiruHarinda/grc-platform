@@ -68,10 +68,6 @@ func auditScopeWhere(scope domain.Scope, userEmail string) (string, []any) {
 	switch scope {
 	case "", domain.ScopeAll:
 		return "", nil
-	case domain.ScopeOwnTeam:
-		return ` AND EXISTS (SELECT 1 FROM audit_control c WHERE c.audit_id = a.id
-			AND c.team_id IN (SELECT uat.audit_team_id FROM user_audit_team uat JOIN ` + "`user`" + ` u ON u.id = uat.user_id WHERE u.email = ? AND uat.is_active = TRUE))`,
-			[]any{userEmail}
 	case domain.ScopeOwned:
 		return " AND EXISTS (SELECT 1 FROM audit_control c WHERE c.audit_id = a.id AND c.owner_id = (SELECT id FROM `user` WHERE email = ?))",
 			[]any{userEmail}

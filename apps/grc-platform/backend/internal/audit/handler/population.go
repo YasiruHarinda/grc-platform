@@ -32,8 +32,7 @@ import (
 // Web-app population submission routes. These mirror the evidence submission
 // flow (upload-link → upload → submit) but write POPULATION files against the
 // control's active population round, then advance the control to
-// POPULATION_INTERNAL_REVIEW. The Evidence Portal has its own equivalents under
-// /api/v1/evidence-app (see evidence_app.go).
+// POPULATION_INTERNAL_REVIEW.
 
 // activePopulationID resolves the active population round for an OE control.
 // Writes 409 and returns ok=false when there is none (e.g. DESIGN control).

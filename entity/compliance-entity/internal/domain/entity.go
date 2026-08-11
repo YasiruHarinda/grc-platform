@@ -340,31 +340,6 @@ type SearchControlsResponse struct {
 	Offset   int            `json:"offset"`
 }
 
-// AssignedControlForEvidence is a control a user's team must submit evidence for.
-// It is enriched with audit/product/framework so the Evidence Portal can render a
-// control without extra round-trips. The phase-aware base folder path is computed
-// by the GRC Backend (never trusted from a client), so it is not carried here.
-type AssignedControlForEvidence struct {
-	AuditID             int     `json:"auditId"`
-	AuditName           string  `json:"auditName"`
-	Product             string  `json:"product"`
-	Framework           string  `json:"framework"`
-	PeriodStart         string  `json:"periodStart"` // YYYY-MM-DD
-	PeriodEnd           string  `json:"periodEnd"`   // YYYY-MM-DD
-	ControlID           int     `json:"controlId"`
-	ControlNumber       string  `json:"controlNumber"`
-	Description         string  `json:"description"`
-	EvidenceRequirement *string `json:"evidenceRequirement"`
-	RequirementType     string  `json:"requirementType"` // DESIGN | OE
-	Status              string  `json:"status"`
-	DueDate             *string `json:"dueDate"` // YYYY-MM-DD
-}
-
-// ListAssignedControlsResponse is returned by GET /controls/assigned-for-evidence.
-type ListAssignedControlsResponse struct {
-	Controls []AssignedControlForEvidence `json:"controls"`
-}
-
 // EvidenceAssignmentResponse is returned by
 // GET /audit-controls/{controlId}/evidence-assignment?email=. A 200 with the
 // derived audit id means the user is assigned to this control right now (for

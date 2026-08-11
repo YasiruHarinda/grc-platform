@@ -21,8 +21,6 @@ import (
 	"crypto/rsa"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
-	"sync"
 	"testing"
 	"time"
 
@@ -30,7 +28,6 @@ import (
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/middleware"
-	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
 // ── shared test helpers ────────────────────────────────────────────────────────
@@ -105,12 +102,10 @@ func unsignedToken(issuer, sub, email string, groups []string) string {
 }
 
 // idpCfg builds a minimal IdPConfig for use with TestKeyFuncs.
-func idpCfg(issuer, audience, scope string, groupRoleMap map[string]string) config.IdPConfig {
+func idpCfg(issuer, audience string) config.IdPConfig {
 	return config.IdPConfig{
-		Issuer:       issuer,
-		Audience:     audience,
-		Scope:        scope,
-		GroupRoleMap: groupRoleMap,
+		Issuer:   issuer,
+		Audience: audience,
 	}
 }
 
@@ -186,7 +181,7 @@ func TestAuth_XJwtAssertion_ValidSignature_PopulatesContext(t *testing.T) {
 	const issuer = "https://idp.example.com"
 	cfg := middleware.Config{
 		TokenValidatorEnabled: true,
-		IdPs:                  []config.IdPConfig{idpCfg(issuer, "api", config.ScopeFull, nil)},
+		IdPs:                  []config.IdPConfig{idpCfg(issuer, "api")},
 		TestKeyFuncs:          map[string]jwt.Keyfunc{issuer: testKeyFunc},
 	}
 
@@ -222,7 +217,7 @@ func TestAuth_XJwtAssertion_UnsignedForgery_Returns401(t *testing.T) {
 	const issuer = "https://idp.example.com"
 	cfg := middleware.Config{
 		TokenValidatorEnabled: true,
-		IdPs:                  []config.IdPConfig{idpCfg(issuer, "api", config.ScopeFull, nil)},
+		IdPs:                  []config.IdPConfig{idpCfg(issuer, "api")},
 		TestKeyFuncs:          map[string]jwt.Keyfunc{issuer: testKeyFunc},
 	}
 
@@ -245,7 +240,7 @@ func TestAuth_XJwtAssertion_TakesPriorityOverBearerToken(t *testing.T) {
 	const issuer = "https://idp.example.com"
 	cfg := middleware.Config{
 		TokenValidatorEnabled: true,
-		IdPs:                  []config.IdPConfig{idpCfg(issuer, "api", config.ScopeFull, nil)},
+		IdPs:                  []config.IdPConfig{idpCfg(issuer, "api")},
 		TestKeyFuncs:          map[string]jwt.Keyfunc{issuer: testKeyFunc},
 	}
 
@@ -277,7 +272,7 @@ func TestAuth_UnknownIssuer_Returns401(t *testing.T) {
 	const knownIssuer = "https://idp.example.com"
 	cfg := middleware.Config{
 		TokenValidatorEnabled: true,
-		IdPs:                  []config.IdPConfig{idpCfg(knownIssuer, "api", config.ScopeFull, nil)},
+		IdPs:                  []config.IdPConfig{idpCfg(knownIssuer, "api")},
 		TestKeyFuncs:          map[string]jwt.Keyfunc{knownIssuer: testKeyFunc},
 	}
 
@@ -293,138 +288,3 @@ func TestAuth_UnknownIssuer_Returns401(t *testing.T) {
 	}
 }
 
-// TestAuth_IdP2TokenCappedAtSubmitEvidence verifies that a token from the evidence-app
-// IdP (ScopeEvidenceApp) has its resolved privileges intersected with the ceiling so
-// only SUBMIT_EVIDENCE survives, regardless of what the group→role map resolves to.
-func TestAuth_IdP2TokenCappedAtSubmitEvidence(t *testing.T) {
-	const issuer2 = "https://idp2.example.com"
-
-	// Role "full_access" has many privileges; evidence-app ceiling must strip all but SUBMIT_EVIDENCE.
-	store := privilege.NewForTest(map[string]map[string]bool{
-		"full_access": {
-			privilege.CreateAudit:    true,
-			privilege.ManageControls: true,
-			privilege.SubmitEvidence: true,
-		},
-	})
-
-	cfg := middleware.Config{
-		TokenValidatorEnabled: true,
-		PrivilegeStore:        store,
-		IdPs: []config.IdPConfig{idpCfg(issuer2, "api2", config.ScopeEvidenceApp, map[string]string{
-			"ext_group": "full_access",
-		})},
-		TestKeyFuncs: map[string]jwt.Keyfunc{issuer2: testKeyFunc},
-	}
-
-	tok := signedToken(issuer2, "api2", "ext-uid", "ext@example.com", []string{"ext_group"})
-
-	var privs map[string]bool
-	h := middleware.Auth(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		privs = privilege.FromContext(r.Context())
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/evidence-app/controls", nil)
-	req.Header.Set("Authorization", "Bearer "+tok)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("IdP-2 token: got %d, want 200", rec.Code)
-	}
-	if privs[privilege.CreateAudit] || privs[privilege.ManageControls] {
-		t.Error("IdP-2 token: ceiling did not strip non-evidence privileges")
-	}
-	if !privs[privilege.SubmitEvidence] {
-		t.Error("IdP-2 token: SUBMIT_EVIDENCE should be allowed by ceiling")
-	}
-}
-
-// TestIssuerScope_EvidenceAppToken_BlockedOutsidePath verifies that an
-// evidence-app-scoped token cannot reach routes outside /api/v1/evidence-app/.
-func TestIssuerScope_EvidenceAppToken_BlockedOutsidePath(t *testing.T) {
-	info := &middleware.UserInfo{Scope: "evidence-app"}
-	h := middleware.IssuerScope(okHandler())
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/audits", nil)
-	req = req.WithContext(middleware.WithUserInfo(req.Context(), info))
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("evidence-app token outside prefix: got %d, want 403", rec.Code)
-	}
-}
-
-// TestIssuerScope_EvidenceAppToken_AllowedOnPath verifies that the scope middleware
-// passes evidence-app tokens through when the path starts with /api/v1/evidence-app/.
-func TestIssuerScope_EvidenceAppToken_AllowedOnPath(t *testing.T) {
-	info := &middleware.UserInfo{Scope: "evidence-app"}
-	h := middleware.IssuerScope(okHandler())
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/evidence-app/controls", nil)
-	req = req.WithContext(middleware.WithUserInfo(req.Context(), info))
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("evidence-app token on prefix: got %d, want 200", rec.Code)
-	}
-}
-
-// TestRateLimiter_Blocks429WithRetryAfter verifies that exhausting the burst budget
-// returns 429 with a non-empty Retry-After header.
-func TestRateLimiter_Blocks429WithRetryAfter(t *testing.T) {
-	// burst=1 means the first request consumes the only token; the second is denied.
-	rl := middleware.NewRateLimiter(1, 1)
-	h := rl.Wrap(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
-
-	send := func() *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/evidence-app/controls/1/submit", nil)
-		req.Header.Set("X-Forwarded-For", "203.0.113.1")
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		return rec
-	}
-
-	if first := send(); first.Code != http.StatusOK {
-		t.Fatalf("first request (within burst): got %d, want 200", first.Code)
-	}
-
-	second := send()
-	if second.Code != http.StatusTooManyRequests {
-		t.Fatalf("second request (burst exhausted): got %d, want 429", second.Code)
-	}
-	ra := second.Header().Get("Retry-After")
-	if ra == "" {
-		t.Fatal("429 response missing Retry-After header")
-	}
-	secs, err := strconv.Atoi(ra)
-	if err != nil || secs < 1 {
-		t.Fatalf("Retry-After %q: want a positive integer seconds value", ra)
-	}
-}
-
-// TestRateLimiter_AllowsWithinBurst verifies that requests within the burst budget
-// are not rate-limited when spread across distinct callers.
-func TestRateLimiter_AllowsWithinBurst(t *testing.T) {
-	rl := middleware.NewRateLimiter(10, 5)
-	h := rl.Wrap(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
-
-	var wg sync.WaitGroup
-	for i := range 5 {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/evidence-app/controls", nil)
-			req.Header.Set("X-Forwarded-For", "10.0.0."+strconv.Itoa(i+1))
-			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, req)
-			if rec.Code != http.StatusOK {
-				t.Errorf("caller %d within burst: got %d, want 200", i, rec.Code)
-			}
-		}(i)
-	}
-	wg.Wait()
-}

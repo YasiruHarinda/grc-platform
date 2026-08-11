@@ -47,12 +47,6 @@ func (r *dashboardRepo) scopeWhere(ctx context.Context, scope domain.Scope, user
 	switch scope {
 	case domain.ScopeAll:
 		return "", nil, nil
-	case domain.ScopeOwnTeam:
-		// A user can belong to more than one audit team (user_audit_team is
-		// many-to-many), so scope to any of them via a subquery. A user with no
-		// team membership simply matches no rows.
-		return " AND c.team_id IN (SELECT uat.audit_team_id FROM user_audit_team uat JOIN `user` u ON u.id = uat.user_id WHERE u.email = ? AND uat.is_active = TRUE)",
-			[]any{userEmail}, nil
 	case domain.ScopeOwned:
 		uid, ok, err := r.userIDByEmail(ctx, userEmail)
 		if err != nil {
@@ -93,7 +87,6 @@ func (r *dashboardRepo) userIDByEmail(ctx context.Context, email string) (int64,
 func (r *dashboardRepo) Get(ctx context.Context, req domain.AuditDashboardRequest) (*domain.DashboardData, error) {
 	// Two scopes: the view scope drives stats/charts (baseWhere); the work-queue
 	// scope drives the action/due/pending/validation/overdue lists (queueWhere).
-	// They differ only for the submitter (own_team view, owned work queue).
 	scope, args, err := r.scopeWhere(ctx, req.Scope, req.UserEmail)
 	if err != nil {
 		return nil, err

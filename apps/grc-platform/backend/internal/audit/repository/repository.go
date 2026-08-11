@@ -95,10 +95,7 @@ type ControlRepository interface {
 	// be observed out of step with each other.
 	UpdateStatusWithSample(ctx context.Context, auditID, controlID int, status string, sampleReference string, updatedBy string) error
 	Delete(ctx context.Context, auditID, controlID int) error
-	// ListAssignedForEvidence returns all controls assigned to the team of userEmail
-	// that are in a status requiring evidence submission.
-	ListAssignedForEvidence(ctx context.Context, userEmail string) ([]*model.AssignedControlForEvidence, error)
-	// AssignedAuditID reports whether userEmail's team is assigned to controlID for
+	// AssignedAuditID reports whether userEmail is the owner of controlID for
 	// an actionable status, and returns the control's audit id (for server-side
 	// folder-path derivation). found=false means not assigned (403).
 	AssignedAuditID(ctx context.Context, userEmail string, controlID int) (auditID int, found bool, err error)

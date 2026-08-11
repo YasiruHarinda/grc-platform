@@ -108,8 +108,6 @@ func main() {
 	defer jobCancel()
 	go riskjob.NewEscalationJob(riskDeps.Risk, riskDeps.Escalation, riskDeps.NotifyEscalationSync).Start(jobCtx)
 
-	// Scope guard runs just inside Auth: an evidence-app-scoped token (IdP-2) is
-	// confined to /api/v1/evidence-app/* — 403 on any other route.
 	handler := middleware.SecurityHeaders(
 		middleware.CORS(cfg.CORSAllowedOrigin)(
 			middleware.CorrelationID(
@@ -120,7 +118,7 @@ func main() {
 						TokenValidatorEnabled: cfg.Auth.TokenValidatorEnabled,
 						PrivilegeStore:        privStore,
 					})(
-						middleware.IssuerScope(mux),
+						mux,
 					),
 				),
 			),

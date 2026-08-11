@@ -84,7 +84,6 @@ type ControlService interface {
 	BulkCreateControls(ctx context.Context, auditID int, req domain.BulkCreateControlsRequest) (domain.BulkCreateControlsResponse, error)
 	UpdateControl(ctx context.Context, auditID, controlID int, req domain.UpdateControlRequest) (domain.AuditControl, error)
 	DeleteControl(ctx context.Context, auditID, controlID int) error
-	ListAssignedForEvidence(ctx context.Context, userEmail string) (domain.ListAssignedControlsResponse, error)
 	// GetEvidenceAssignment confirms userEmail is assigned to an actionable control
 	// and returns its audit id (for server-side folder-path derivation).
 	GetEvidenceAssignment(ctx context.Context, userEmail string, controlID int) (domain.EvidenceAssignmentResponse, error)

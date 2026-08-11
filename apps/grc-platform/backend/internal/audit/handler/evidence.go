@@ -38,6 +38,66 @@ import (
 // through the backend, so bound them to protect memory and the gateway).
 const maxEvidenceUploadBytes = 25 << 20 // 25 MiB
 
+// channelWebApp tags audit-trail entries as originating from the GRC web app,
+// distinguishing them from other submission channels.
+const channelWebApp = "web-app"
+
+// fileNamesOf extracts file names for RecordEvidenceAction's fileNames param.
+func fileNamesOf(files []*model.AuditEvidenceFile) []string {
+	names := make([]string, 0, len(files))
+	for _, f := range files {
+		names = append(names, f.FileName)
+	}
+	return names
+}
+
+// recordEvidenceTrail appends a best-effort attribution entry. Failures are logged
+// and swallowed — they never affect the submission the user just made. fileNames
+// is nil for calls that have nothing file-shaped to attach (population/sample).
+func recordEvidenceTrail(ctx context.Context, trailSvc service.TrailService, auditID, controlID, evidenceID int, actor, via, issuer string, fileNames []string) {
+	if trailSvc == nil {
+		return
+	}
+	if err := trailSvc.RecordEvidenceAction(ctx, auditID, controlID, evidenceID, "UPLOADED", actor, via, issuer, fileNames); err != nil {
+		slog.WarnContext(ctx, "audit-trail attribution failed", "controlId", controlID, "via", via, "err", err)
+	}
+}
+
+// readUpload parses a bounded multipart upload (folderPath + file), returning the
+// folder path, base file name, sniffed content type, and bytes. It writes the error
+// response and returns ok=false on any failure. Shared by the population and
+// sample upload routes.
+func readUpload(w http.ResponseWriter, r *http.Request) (folderPath, fileName, contentType string, data []byte, ok bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxEvidenceUploadBytes)
+	if err := r.ParseMultipartForm(maxEvidenceUploadBytes); err != nil { // #nosec G120 -- body already bounded by MaxBytesReader above
+		response.WriteError(w, http.StatusRequestEntityTooLarge, "file too large or malformed upload (max 25 MB)")
+		return "", "", "", nil, false
+	}
+	folderPath = r.FormValue("folderPath")
+	f, header, err := r.FormFile("file")
+	if err != nil {
+		response.WriteError(w, http.StatusBadRequest, "file is required")
+		return "", "", "", nil, false
+	}
+	defer f.Close()
+
+	data, err = io.ReadAll(f)
+	if err != nil {
+		response.WriteError(w, http.StatusBadRequest, "could not read uploaded file")
+		return "", "", "", nil, false
+	}
+	contentType = header.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = http.DetectContentType(data)
+	}
+	fileName = filepath.Base(header.Filename)
+	if err := validateUploadFileType(fileName, contentType); err != nil {
+		response.WriteError(w, http.StatusBadRequest, err.Error())
+		return "", "", "", nil, false
+	}
+	return folderPath, fileName, contentType, data, true
+}
+
 type evidenceHandler struct {
 	svc        service.EvidenceService
 	controlSvc service.ControlService
@@ -57,7 +117,7 @@ type evidenceHandler struct {
 // derived audit id and ok=false after writing the response on failure.
 //
 // Users who hold ManageControls (compliance admin) or ViewAllAudits (org-wide
-// read, e.g. compliance team — see ADR-0002) bypass the team-assignment check —
+// read, e.g. compliance team — see ADR-0002) bypass the owner-assignment check —
 // they already have full or org-wide read/write over audit data, so the IDOR
 // restriction is redundant and would block legitimate submissions.
 func (h *evidenceHandler) requireAssignment(w http.ResponseWriter, r *http.Request, auditID, controlID int) bool {
@@ -412,8 +472,7 @@ func (h *evidenceHandler) triggerAIValidation(auditID, controlID, evidenceID int
 
 // triggerAIValidation kicks off an advisory AI validation, detached from the
 // request context so a client disconnect cannot cancel it. Best-effort and a
-// no-op when the AI agent client is nil (AI_VALIDATION_ENABLED=false). Shared by
-// the web-app and evidence-app submit paths.
+// no-op when the AI agent client is nil (AI_VALIDATION_ENABLED=false).
 func triggerAIValidation(aiClient *aiagent.Client, auditID, controlID, evidenceID int, actor string) {
 	if aiClient == nil {
 		return

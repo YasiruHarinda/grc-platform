@@ -146,11 +146,6 @@ func frameworkScopeWhere(scope domain.Scope, userEmail string) (string, []any) {
 	switch scope {
 	case "", domain.ScopeAll:
 		return "", nil
-	case domain.ScopeOwnTeam:
-		return ` AND EXISTS (SELECT 1 FROM audit a JOIN audit_control c ON c.audit_id = a.id
-			WHERE a.framework_id = audit_framework.id
-			AND c.team_id IN (SELECT uat.audit_team_id FROM user_audit_team uat JOIN ` + "`user`" + ` u ON u.id = uat.user_id WHERE u.email = ? AND uat.is_active = TRUE))`,
-			[]any{userEmail}
 	case domain.ScopeOwned:
 		return ` AND EXISTS (SELECT 1 FROM audit a JOIN audit_control c ON c.audit_id = a.id
 			WHERE a.framework_id = audit_framework.id AND c.owner_id = (SELECT id FROM ` + "`user`" + ` WHERE email = ?))`,

@@ -50,58 +50,6 @@ type AuditEvidence struct {
 	CreatedAt  time.Time            `json:"createdAt"`
 }
 
-// AssignedControlForEvidence is the flat, enriched control record the Compliance
-// Entity returns for the authenticated user's team. It is the transport type
-// unmarshalled from the entity; the evidence-app handler reshapes it into the
-// nested EvidenceAppControl contract (§3.1) with a phase-aware base folder path.
-type AssignedControlForEvidence struct {
-	AuditID             int     `json:"auditId"`
-	AuditName           string  `json:"auditName"`
-	Product             string  `json:"product"`
-	Framework           string  `json:"framework"`
-	PeriodStart         string  `json:"periodStart"`
-	PeriodEnd           string  `json:"periodEnd"`
-	ControlID           int     `json:"controlId"`
-	ControlNumber       string  `json:"controlNumber"`
-	Description         string  `json:"description"`
-	EvidenceRequirement *string `json:"evidenceRequirement"`
-	RequirementType     string  `json:"requirementType"`
-	Status              string  `json:"status"`
-	DueDate             *string `json:"dueDate"`
-}
-
-// EvidenceAppControl is one item in the GET /api/v1/evidence-app/controls response
-// (design §3.1). The audit and control are nested, and the backend computes two
-// derived fields the portal needs: the control's phase and the phase-aware base
-// folder path — both server-side, never trusted from a client.
-type EvidenceAppControl struct {
-	Audit          EvidenceAppAudit       `json:"audit"`
-	Control        EvidenceAppControlInfo `json:"control"`
-	BaseFolderPath string                 `json:"baseFolderPath"`
-}
-
-// EvidenceAppAudit is the audit context nested in EvidenceAppControl.
-type EvidenceAppAudit struct {
-	ID          int    `json:"id"`
-	Name        string `json:"name"`
-	Product     string `json:"product"`
-	Framework   string `json:"framework"`
-	PeriodStart string `json:"periodStart"`
-	PeriodEnd   string `json:"periodEnd"`
-}
-
-// EvidenceAppControlInfo is the control detail nested in EvidenceAppControl.
-type EvidenceAppControlInfo struct {
-	ID                  int     `json:"id"`
-	Number              string  `json:"number"`
-	Description         string  `json:"description"`
-	EvidenceRequirement *string `json:"evidenceRequirement"`
-	RequirementType     string  `json:"requirementType"` // DESIGN | OE
-	Status              string  `json:"status"`
-	Phase               string  `json:"phase"` // POPULATION | EVIDENCE
-	DueDate             *string `json:"dueDate"`
-}
-
 // UploadLinkResponse is returned by GET .../evidence/upload-link.
 // It gives the agent the folder path to use as a prefix when requesting
 // per-file upload URLs and when calling the submit endpoint.

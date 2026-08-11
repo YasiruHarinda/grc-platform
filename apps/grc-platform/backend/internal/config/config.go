@@ -19,7 +19,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"strings"
 	"time"
 )
 
@@ -64,29 +63,18 @@ type AIValidationConfig struct {
 	AgentAPIKey  string
 }
 
-// Auth scope values classify what an IdP's tokens are allowed to reach.
-// A full-scope token (IdP-1, the GRC web app) can reach the whole API; an
-// evidence-app-scoped token (IdP-2, the Evidence Portal) is restricted to
-// /api/v1/evidence-app/* and capped at the evidence-app privilege ceiling.
-const (
-	ScopeFull        = "full"
-	ScopeEvidenceApp = "evidence-app"
-)
-
 // IdPConfig describes one trusted identity provider (Asgardeo organization).
 // Tokens are validated against the matching issuer's JWKS/audience only.
 type IdPConfig struct {
 	Issuer       string
 	JWKSEndpoint string
 	Audience     string
-	Scope        string            // ScopeFull | ScopeEvidenceApp
-	GroupRoleMap map[string]string // external group -> GRC role name; nil = identity map
 }
 
 type AuthConfig struct {
-	// IdPs holds every trusted issuer. IdP-1 (index 0) is the GRC web app; IdP-2,
-	// when configured, is the Evidence Portal. Empty when TokenValidatorEnabled is
-	// false (local dev decodes tokens without verification).
+	// IdPs holds every trusted issuer — today, just the GRC web app. Empty when
+	// TokenValidatorEnabled is false (local dev decodes tokens without
+	// verification).
 	IdPs                  []IdPConfig
 	ClockSkew             time.Duration
 	TokenValidatorEnabled bool
@@ -274,13 +262,10 @@ func Load() (Config, error) {
 	}, nil
 }
 
-// loadIdPs builds the trusted-issuer list from the environment. IdP-1 (the GRC
-// web app) is always required. IdP-2 (the Evidence Portal) is optional — it is
-// appended only when AUTH_ISSUER_2 is set, so single-IdP deployments are
-// unchanged. When AUTH_ISSUER_2 is set, all of its companion vars are required
-// (fail fast), and its group→role map is parsed from AUTH_GROUP_ROLE_MAP_2.
+// loadIdPs builds the trusted-issuer list from the environment — today, just
+// the GRC web app's IdP.
 func loadIdPs() ([]IdPConfig, error) {
-	idp1 := IdPConfig{Scope: ScopeFull}
+	idp1 := IdPConfig{}
 	var err error
 	if idp1.JWKSEndpoint, err = mustEnv("AUTH_JWKS_ENDPOINT"); err != nil {
 		return nil, err
@@ -291,52 +276,7 @@ func loadIdPs() ([]IdPConfig, error) {
 	if idp1.Audience, err = mustEnv("AUTH_AUDIENCE"); err != nil {
 		return nil, err
 	}
-	idps := []IdPConfig{idp1}
-
-	if os.Getenv("AUTH_ISSUER_2") == "" {
-		return idps, nil // single-IdP deployment
-	}
-
-	idp2 := IdPConfig{Scope: ScopeEvidenceApp}
-	if idp2.Issuer, err = mustEnv("AUTH_ISSUER_2"); err != nil {
-		return nil, err
-	}
-	if idp2.JWKSEndpoint, err = mustEnv("AUTH_JWKS_ENDPOINT_2"); err != nil {
-		return nil, err
-	}
-	if idp2.Audience, err = mustEnv("AUTH_AUDIENCE_2"); err != nil {
-		return nil, err
-	}
-	rawMap, err := mustEnv("AUTH_GROUP_ROLE_MAP_2")
-	if err != nil {
-		return nil, err
-	}
-	if idp2.GroupRoleMap, err = parseGroupRoleMap(rawMap); err != nil {
-		return nil, err
-	}
-	return append(idps, idp2), nil
-}
-
-// parseGroupRoleMap parses a comma-separated list of ext=grc pairs
-// (e.g. "grc_evidence_submitter=audit_internal_team,other=role") into a map.
-func parseGroupRoleMap(raw string) (map[string]string, error) {
-	m := make(map[string]string)
-	for _, pair := range strings.Split(raw, ",") {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-		ext, grc, ok := strings.Cut(pair, "=")
-		ext, grc = strings.TrimSpace(ext), strings.TrimSpace(grc)
-		if !ok || ext == "" || grc == "" {
-			return nil, fmt.Errorf("invalid AUTH_GROUP_ROLE_MAP_2 entry %q: want ext=grc", pair)
-		}
-		m[ext] = grc
-	}
-	if len(m) == 0 {
-		return nil, fmt.Errorf("AUTH_GROUP_ROLE_MAP_2 must contain at least one ext=grc pair")
-	}
-	return m, nil
+	return []IdPConfig{idp1}, nil
 }
 
 func mustEnv(key string) (string, error) {

@@ -17,12 +17,12 @@
 -- with the matching suffix (or none). The group string lives ONLY here (as
 -- role.role_name) — application code never references it (see ADR-0002).
 --
--- Scope note: privileges are coarse booleans only. Row scope (all / own_team /
+-- Scope note: privileges are coarse booleans only. Row scope (all / owned /
 -- assigned) is DERIVED from these privileges at request time, not expressed here
 -- — see docs/adr/0001-audit-rbac-scope-model.md and docs/adr/0002-privilege-
 -- derived-scope.md. In particular AUDIT_VIEW_ALL_AUDITS is the org-wide-read
 -- signal: holders get `all` scope; a holder of AUDIT_SUBMIT_EVIDENCE without it
--- is `own_team`; a holder of AUDIT_VALIDATE_EVIDENCE without it is `assigned`.
+-- is `owned`; a holder of AUDIT_VALIDATE_EVIDENCE without it is `assigned`.
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -89,7 +89,7 @@ FROM (
   UNION ALL SELECT 'grc-platform-audit-compliance-team-stg', 'AUDIT_ADD_COMMENT'
   UNION ALL SELECT 'grc-platform-audit-compliance-team-stg', 'AUDIT_VIEW_INTERNAL_COMMENTS'
 
-  -- Audit Internal Team — submit (own team) + comment (4). No VIEW_ALL -> own_team scope.
+  -- Audit Internal Team — submit (owned controls only) + comment (4). No VIEW_ALL -> owned scope.
   UNION ALL SELECT 'grc-platform-audit-internal-team-stg', 'AUDIT_VIEW_AUDITS'
   UNION ALL SELECT 'grc-platform-audit-internal-team-stg', 'AUDIT_SUBMIT_EVIDENCE'
   UNION ALL SELECT 'grc-platform-audit-internal-team-stg', 'AUDIT_ADD_COMMENT'

@@ -36,9 +36,8 @@ type ControlRepository interface {
 	BulkCreateControls(ctx context.Context, auditID int, reqs []domain.CreateControlRequest) ([]domain.AuditControl, error)
 	UpdateControl(ctx context.Context, auditID, controlID int, req domain.UpdateControlRequest) (*domain.AuditControl, error)
 	DeleteControl(ctx context.Context, auditID, controlID int) error
-	ListAssignedForEvidence(ctx context.Context, userEmail string) ([]domain.AssignedControlForEvidence, error)
-	// GetEvidenceAssignment returns the control's audit id when userEmail's team is
-	// assigned to it and it is currently actionable, else sql.ErrNoRows.
+	// GetEvidenceAssignment returns the control's audit id when userEmail is the
+	// control's owner and it is currently actionable, else sql.ErrNoRows.
 	GetEvidenceAssignment(ctx context.Context, userEmail string, controlID int) (int, error)
 	// FindActivePopulation returns the active audit_population id for an OE control
 	// (status PENDING or COMPLIANCE_REJECTED), else sql.ErrNoRows.
@@ -51,9 +50,8 @@ type ControlRepository interface {
 	CountDeletionBlockers(ctx context.Context, controlID int) (evidenceCount int, activePopulationCount int, err error)
 }
 
-// evidenceActionableStatuses lists the control statuses for which a team member
-// may still submit (population or evidence). Kept as a single source of truth for
-// both ListAssignedForEvidence and GetEvidenceAssignment.
+// evidenceActionableStatuses lists the control statuses for which the owner
+// may still submit (population or evidence).
 const evidenceActionableStatuses = `'POPULATION_PENDING','POPULATION_NEED_CLARIFICATION',
 		'EVIDENCE_PENDING','EVIDENCE_NEED_CLARIFICATION','SUBMITTED_SAMPLE'`
 
@@ -62,57 +60,8 @@ type controlRepo struct{ db *sql.DB }
 // NewControlRepository constructs a ControlRepository.
 func NewControlRepository(db *sql.DB) ControlRepository { return &controlRepo{db: db} }
 
-// ListAssignedForEvidence returns the active-audit controls whose team the user
-// belongs to and whose status requires action (population or evidence), enriched
-// with audit/product/framework so the Evidence Portal can render each control in
-// one call.
-func (r *controlRepo) ListAssignedForEvidence(ctx context.Context, userEmail string) ([]domain.AssignedControlForEvidence, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT a.id, a.name, p.name AS product, f.name AS framework,
-		       DATE_FORMAT(a.period_start,'%Y-%m-%d'), DATE_FORMAT(a.period_end,'%Y-%m-%d'),
-		       c.id, c.control_number, c.description, c.evidence_requirement, c.requirement_type,
-		       c.status, DATE_FORMAT(c.due_date,'%Y-%m-%d') AS due_date
-		FROM audit_control c
-		JOIN audit           a ON a.id = c.audit_id
-		JOIN audit_product   p ON p.id = a.product_id
-		JOIN audit_framework f ON f.id = a.framework_id
-		JOIN audit_team      t ON t.id = c.team_id
-		JOIN user_audit_team uat ON uat.audit_team_id = t.id AND uat.is_active = TRUE
-		JOIN `+"`user`"+` u ON u.id = uat.user_id
-		WHERE u.email = ?
-		  AND a.status = 'ACTIVE'
-		  AND c.status IN (`+evidenceActionableStatuses+`)
-		ORDER BY a.id, c.control_number`, userEmail)
-	if err != nil {
-		return nil, fmt.Errorf("control.ListAssignedForEvidence: %w", err)
-	}
-	defer rows.Close()
-
-	out := []domain.AssignedControlForEvidence{}
-	for rows.Next() {
-		var ac domain.AssignedControlForEvidence
-		var evidenceReq, dueDate sql.NullString
-		if err := rows.Scan(
-			&ac.AuditID, &ac.AuditName, &ac.Product, &ac.Framework,
-			&ac.PeriodStart, &ac.PeriodEnd,
-			&ac.ControlID, &ac.ControlNumber, &ac.Description,
-			&evidenceReq, &ac.RequirementType, &ac.Status, &dueDate,
-		); err != nil {
-			return nil, fmt.Errorf("control.ListAssignedForEvidence scan: %w", err)
-		}
-		if evidenceReq.Valid {
-			ac.EvidenceRequirement = &evidenceReq.String
-		}
-		if dueDate.Valid {
-			ac.DueDate = &dueDate.String
-		}
-		out = append(out, ac)
-	}
-	return out, rows.Err()
-}
-
-// GetEvidenceAssignment returns the control's audit id when the user's team is
-// assigned to it and it is currently actionable. Returning the audit id lets the
+// GetEvidenceAssignment returns the control's audit id when the user is the
+// control's owner and it is currently actionable. Returning the audit id lets the
 // GRC Backend both (a) confirm assignment and (b) derive the audit for folder-path
 // binding from the DB, so the client never supplies it. Not found → sql.ErrNoRows.
 func (r *controlRepo) GetEvidenceAssignment(ctx context.Context, userEmail string, controlID int) (int, error) {
@@ -120,10 +69,8 @@ func (r *controlRepo) GetEvidenceAssignment(ctx context.Context, userEmail strin
 	err := r.db.QueryRowContext(ctx, `
 		SELECT c.audit_id
 		FROM audit_control c
-		JOIN audit      a ON a.id = c.audit_id
-		JOIN audit_team t ON t.id = c.team_id
-		JOIN user_audit_team uat ON uat.audit_team_id = t.id AND uat.is_active = TRUE
-		JOIN `+"`user`"+` u ON u.id = uat.user_id
+		JOIN audit  a ON a.id = c.audit_id
+		JOIN `+"`user`"+` u ON u.id = c.owner_id
 		WHERE u.email = ? AND c.id = ?
 		  AND a.status = 'ACTIVE'
 		  AND c.status IN (`+evidenceActionableStatuses+`)
@@ -260,9 +207,6 @@ func controlScopeWhere(scope domain.Scope, userEmail string) (string, []any) {
 	switch scope {
 	case "", domain.ScopeAll:
 		return "", nil
-	case domain.ScopeOwnTeam:
-		return " AND c.team_id IN (SELECT uat.audit_team_id FROM user_audit_team uat JOIN `user` u ON u.id = uat.user_id WHERE u.email = ? AND uat.is_active = TRUE)",
-			[]any{userEmail}
 	case domain.ScopeOwned:
 		return " AND c.owner_id = (SELECT id FROM `user` WHERE email = ?)", []any{userEmail}
 	case domain.ScopeAssigned:

@@ -151,7 +151,7 @@ const (
 
 // Audit Hub privilege names. All prefixed AUDIT_ so they group together apart
 // from the Risk Hub block above and stay collision-free in the shared privilege
-// table. Coarse booleans only — row scope ("own_team", "assigned") is DERIVED
+// table. Coarse booleans only — row scope ("owned", "assigned") is DERIVED
 // from these privileges at request time, never encoded here. See
 // docs/adr/0001-audit-rbac-scope-model.md and docs/adr/0002-privilege-derived-scope.md.
 const (
