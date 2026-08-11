@@ -20,8 +20,11 @@ if (!asgardeoClientID || !asgardeoBaseUrl) {
     .join(", ");
   // Logged, not thrown. This runs before createRoot().render() below, so a
   // throw here stops React mounting at all — the page stays blank and the
-  // only trace is in the browser console. Letting it mount lets the app say
-  // something about the failure instead. See issue #90.
+  // only trace is in the browser console. Mounting instead trades that for a
+  // page that renders normally and then fails at sign-in against an empty
+  // client id. Nothing under src/ renders this message today, so the console
+  // is the only signal either way. Surfacing it in the UI is still open —
+  // see issue #90.
   console.error(
     `[main] Missing required configuration: ${missing}. Set them in public/config.js (see README).`
   );
