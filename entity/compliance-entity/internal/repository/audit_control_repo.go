@@ -197,12 +197,13 @@ func buildControlFilters(seedWhere string, seedArgs []any, req domain.SearchCont
 
 // controlScopeWhere returns a WHERE fragment (starting with "AND") and its
 // bind args for the given row scope, mirroring audit_dashboard_repo.go's
-// scopeWhere (same `c` control alias, same user_audit_team join) so list/search
-// endpoints enforce the same row-scoping rule the dashboard already does. Unlike
-// the dashboard's version this never needs a DB round-trip to resolve the
-// caller's identity — auditor/owner match by a correlated subquery on email
-// instead of a pre-resolved user id — so it stays a pure string/args builder,
-// callable from buildControlFilters without a context or *sql.DB.
+// scopeWhere (same `c` control alias, same owner_id/auditor_id match against
+// the caller's own user id) so list/search endpoints enforce the same
+// row-scoping rule the dashboard already does. Unlike the dashboard's version
+// this never needs a DB round-trip to resolve the caller's identity —
+// auditor/owner match by a correlated subquery on email instead of a
+// pre-resolved user id — so it stays a pure string/args builder, callable
+// from buildControlFilters without a context or *sql.DB.
 func controlScopeWhere(scope domain.Scope, userEmail string) (string, []any) {
 	switch scope {
 	case "", domain.ScopeAll:
