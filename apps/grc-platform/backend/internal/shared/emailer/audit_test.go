@@ -85,7 +85,7 @@ func TestSendAuditEventSendsToSingleRecipient(t *testing.T) {
 	})
 
 	err := c.SendAuditEvent(context.Background(), AuditEventOwnerAssigned, "owner@example.com", AuditEventInfo{
-		Items: []AuditEventItem{{ControlNumber: "C-1", Kind: "Control"}},
+		Items: []AuditEventItem{{ControlNumber: "C-1", RequirementType: "Evidence Requirement"}},
 	})
 	if err != nil {
 		t.Fatalf("SendAuditEvent: %v", err)
@@ -130,11 +130,11 @@ func TestOwnerAssignedSubjectCoversMixedKinds(t *testing.T) {
 		items []AuditEventItem
 	}{
 		{"no items", nil},
-		{"one control", []AuditEventItem{{ControlNumber: "C-1", Kind: "Control"}}},
-		{"one population", []AuditEventItem{{ControlNumber: "C-1", Kind: "Population"}}},
+		{"one control", []AuditEventItem{{ControlNumber: "C-1", RequirementType: "Evidence Requirement"}}},
+		{"one population", []AuditEventItem{{ControlNumber: "C-1", RequirementType: "Population Requirement"}}},
 		{"mixed", []AuditEventItem{
-			{ControlNumber: "C-1", Kind: "Control"},
-			{ControlNumber: "C-1", Kind: "Population"},
+			{ControlNumber: "C-1", RequirementType: "Evidence Requirement"},
+			{ControlNumber: "C-1", RequirementType: "Population Requirement"},
 		}},
 	}
 	for _, tt := range tests {

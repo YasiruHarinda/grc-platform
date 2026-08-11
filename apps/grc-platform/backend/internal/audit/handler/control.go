@@ -217,10 +217,10 @@ func (h *controlHandler) notifyOwnerAssignments(ctx context.Context, auditID int
 		}
 		if req.OwnerID != nil {
 			add(*req.OwnerID, emailer.AuditEventItem{
-				ControlNumber: c.ControlNumber,
-				Description:   c.Description,
-				DueDate:       derefString(c.DueDate),
-				Kind:          "Control",
+				ControlNumber:   c.ControlNumber,
+				Description:     c.Description,
+				DueDate:         derefString(c.DueDate),
+				RequirementType: "Evidence Requirement",
 			}, notificationLogItem{
 				AuditID:   &auditID,
 				Type:      "OWNER_ASSIGNED_CONTROL",
@@ -229,10 +229,10 @@ func (h *controlHandler) notifyOwnerAssignments(ctx context.Context, auditID int
 		}
 		if req.Population != nil && req.Population.OwnerID != nil {
 			add(*req.Population.OwnerID, emailer.AuditEventItem{
-				ControlNumber: c.ControlNumber,
-				Description:   c.Description,
-				DueDate:       derefString(req.Population.DueDate),
-				Kind:          "Population",
+				ControlNumber:   c.ControlNumber,
+				Description:     c.Description,
+				DueDate:         derefString(req.Population.DueDate),
+				RequirementType: "Population Requirement",
 			}, notificationLogItem{
 				AuditID:      &auditID,
 				Type:         "OWNER_ASSIGNED_POPULATION",
@@ -273,10 +273,10 @@ func (h *controlHandler) notifyReassignments(ctx context.Context, auditID, contr
 	if result.ControlOwnerChanged && result.NewControlOwnerID != nil {
 		owner := *result.NewControlOwnerID
 		byOwner[owner] = append(byOwner[owner], emailer.AuditEventItem{
-			ControlNumber: c.ControlNumber,
-			Description:   c.Description,
-			DueDate:       derefString(c.DueDate),
-			Kind:          "Control",
+			ControlNumber:   c.ControlNumber,
+			Description:     c.Description,
+			DueDate:         derefString(c.DueDate),
+			RequirementType: "Evidence Requirement",
 		})
 		logsByOwner[owner] = append(logsByOwner[owner], notificationLogItem{
 			AuditID:   &auditID,
@@ -287,10 +287,10 @@ func (h *controlHandler) notifyReassignments(ctx context.Context, auditID, contr
 	if result.PopulationOwnerChanged && result.NewPopulationOwnerID != nil {
 		owner := *result.NewPopulationOwnerID
 		byOwner[owner] = append(byOwner[owner], emailer.AuditEventItem{
-			ControlNumber: c.ControlNumber,
-			Description:   c.Description,
-			DueDate:       derefString(c.PopulationDueDate),
-			Kind:          "Population",
+			ControlNumber:   c.ControlNumber,
+			Description:     c.Description,
+			DueDate:         derefString(c.PopulationDueDate),
+			RequirementType: "Population Requirement",
 		})
 		logsByOwner[owner] = append(logsByOwner[owner], notificationLogItem{
 			AuditID:      &auditID,

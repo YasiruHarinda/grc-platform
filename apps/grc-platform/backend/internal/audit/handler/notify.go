@@ -225,11 +225,11 @@ func (d *Deps) SendReminderDigestSync(ctx context.Context, ownerUserID int, item
 	logItems := make([]notificationLogItem, 0, len(items))
 	for _, it := range items {
 		emailItems = append(emailItems, emailer.AuditEventItem{
-			ControlNumber: it.ControlNumber,
-			Description:   it.Description,
-			DueDate:       it.DueDate,
-			Tier:          it.Tier,
-			Kind:          it.Kind,
+			ControlNumber:   it.ControlNumber,
+			Description:     it.Description,
+			DueDate:         it.DueDate,
+			Tier:            it.Tier,
+			RequirementType: it.RequirementType,
 		})
 		auditID, dedupSnapshot := it.AuditID, it.DedupSnapshot
 		logItems = append(logItems, notificationLogItem{
@@ -275,17 +275,22 @@ func (d *Deps) SendReminderDigestSync(ctx context.Context, ownerUserID int, item
 // the control's owner gets notified.
 func (d *Deps) notifyResubmission(ctx context.Context, control *model.AuditControl, controlStatus string, comment *string, actor string) {
 	var (
-		ownerID      *int
-		phase        string
-		logControlID *int
-		logPopID     *int
+		ownerID         *int
+		requirementType string
+		dueDate         string
+		logControlID    *int
+		logPopID        *int
 	)
 	switch controlStatus {
 	case "POPULATION_PENDING", "POPULATION_NEED_CLARIFICATION":
-		ownerID, phase = control.PopulationOwnerID, "Population"
+		ownerID = control.PopulationOwnerID
+		requirementType = "Population Requirement"
+		dueDate = derefString(control.PopulationDueDate)
 		logPopID = control.PopulationID
 	case "EVIDENCE_PENDING", "EVIDENCE_NEED_CLARIFICATION":
-		ownerID, phase = control.OwnerID, "Evidence"
+		ownerID = control.OwnerID
+		requirementType = "Evidence Requirement"
+		dueDate = derefString(control.DueDate)
 		logControlID = &control.ID
 	default:
 		return
@@ -304,8 +309,10 @@ func (d *Deps) notifyResubmission(ctx context.Context, control *model.AuditContr
 		Comment:   commentText,
 		DetailURL: d.detailURL(control.AuditID),
 		Items: []emailer.AuditEventItem{{
-			ControlNumber: control.ControlNumber,
-			Description:   phase + " phase: " + control.Description,
+			ControlNumber:   control.ControlNumber,
+			Description:     control.Description,
+			DueDate:         dueDate,
+			RequirementType: requirementType,
 		}},
 	}
 	logItems := []notificationLogItem{{

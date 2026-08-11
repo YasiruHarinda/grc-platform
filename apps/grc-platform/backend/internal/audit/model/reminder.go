@@ -33,13 +33,13 @@ type ReminderItem struct {
 	// Type is the audit_notification.type value for this item's tier:
 	// REMINDER_DUE_10 | REMINDER_DUE_5 | REMINDER_OVERDUE.
 	Type string
-	// ControlNumber/Description/DueDate/Tier/Kind mirror
+	// ControlNumber/Description/DueDate/Tier/RequirementType mirror
 	// emailer.AuditEventItem's display fields.
-	ControlNumber string
-	Description   string
-	DueDate       string
-	Tier          string
-	Kind          string // "Control" | "Population"
+	ControlNumber   string
+	Description     string
+	DueDate         string
+	Tier            string
+	RequirementType string // "Evidence Requirement" | "Population Requirement"
 	// DedupSnapshot is the date written to audit_notification.due_date_snapshot
 	// for this item's log row — distinct from DueDate (which is always the
 	// item's real due date, for display). For the DUE_10/DUE_5 tiers it's the

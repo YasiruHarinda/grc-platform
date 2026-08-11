@@ -259,10 +259,10 @@ func TestRunOnceBatchesControlAndPopulationIntoOneDigestPerOwner(t *testing.T) {
 	}
 	kinds := map[string]bool{}
 	for _, it := range gotItems {
-		kinds[it.Kind] = true
+		kinds[it.RequirementType] = true
 	}
-	if !kinds["Control"] || !kinds["Population"] {
-		t.Errorf("digest kinds = %v, want both Control and Population", kinds)
+	if !kinds["Evidence Requirement"] || !kinds["Population Requirement"] {
+		t.Errorf("digest requirement types = %v, want both Evidence Requirement and Population Requirement", kinds)
 	}
 }
 

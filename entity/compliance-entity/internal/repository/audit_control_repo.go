@@ -50,12 +50,6 @@ type ControlRepository interface {
 	// FindActivePopulation returns the active audit_population id for an OE control
 	// (status PENDING or COMPLIANCE_REJECTED), else sql.ErrNoRows.
 	FindActivePopulation(ctx context.Context, controlID int) (int, error)
-	// CountDeletionBlockers returns how many audit_evidence rows exist for the
-	// control and how many audit_population rows are still in progress (any
-	// status other than the terminal APPROVED). Used to block DeleteControl from
-	// silently cascading away real work (evidence/population records cascade-
-	// delete with the control at the DB level).
-	CountDeletionBlockers(ctx context.Context, controlID int) (evidenceCount int, activePopulationCount int, err error)
 }
 
 // evidenceActionableStatuses lists the control statuses for which the owner
@@ -452,36 +446,6 @@ func (r *controlRepo) BulkCreateControls(ctx context.Context, auditID int, reqs 
 		return nil, fmt.Errorf("control.BulkCreate fetch rows: %w", err)
 	}
 	return controls, nil
-}
-
-func (r *controlRepo) CountDeletionBlockers(ctx context.Context, controlID int) (int, int, error) {
-	var evidenceCount int
-	if err := r.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM audit_evidence WHERE control_id = ?", controlID,
-	).Scan(&evidenceCount); err != nil {
-		return 0, 0, fmt.Errorf("control.CountDeletionBlockers evidence(%d): %w", controlID, err)
-	}
-
-	// PENDING is the freshly-created, never-submitted state every OE control's
-	// population round starts in (see CreateControl/BulkCreateControls) — it
-	// must not count as "in progress" or an OE control could never be deleted
-	// before its team submits anything, unlike a DESIGN control (which has no
-	// audit_population row at all until work starts). But uploads land before
-	// submit flips the status away from PENDING, so a PENDING round can still
-	// hold real files — those must block deletion too, same as an APPROVED
-	// round (completed audit evidence), which is never safe to cascade away.
-	var activePopulationCount int
-	if err := r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM audit_population p
-		 WHERE p.control_id = ?
-		   AND (p.status <> 'PENDING'
-		        OR EXISTS (SELECT 1 FROM audit_evidence_file f WHERE f.population_id = p.id))`,
-		controlID,
-	).Scan(&activePopulationCount); err != nil {
-		return 0, 0, fmt.Errorf("control.CountDeletionBlockers population(%d): %w", controlID, err)
-	}
-
-	return evidenceCount, activePopulationCount, nil
 }
 
 func (r *controlRepo) DeleteControl(ctx context.Context, auditID, controlID int) error {

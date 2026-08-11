@@ -56,8 +56,9 @@ type AuditEventItem struct {
 	DueDate       string // "" if not applicable
 	// Tier is "Due in 10 days" | "Due in 5 days" | "Overdue" — reminder digest only.
 	Tier string
-	// Kind is "Control" | "Population" — labels which entity this item is about.
-	Kind string
+	// RequirementType is "Evidence Requirement" | "Population Requirement" —
+	// labels which requirement this item is about.
+	RequirementType string
 }
 
 // AuditEventInfo carries everything any audit template might render. Unlike
@@ -88,23 +89,24 @@ type auditEventTemplate struct {
 	actorLabel string
 }
 
-// itemKinds returns the distinct AuditEventItem.Kind values present, in
-// first-seen order — used to phrase a subject that covers a mixed batch
-// ("2 controls and 1 population item") without listing every item.
-func itemKinds(items []AuditEventItem) []string {
+// itemRequirementTypes returns the distinct AuditEventItem.RequirementType
+// values present, in first-seen order — used to phrase a subject that covers
+// a mixed batch ("2 evidence requirements and 1 population requirement")
+// without listing every item.
+func itemRequirementTypes(items []AuditEventItem) []string {
 	seen := map[string]bool{}
 	var kinds []string
 	for _, it := range items {
-		if it.Kind != "" && !seen[it.Kind] {
-			seen[it.Kind] = true
-			kinds = append(kinds, it.Kind)
+		if it.RequirementType != "" && !seen[it.RequirementType] {
+			seen[it.RequirementType] = true
+			kinds = append(kinds, it.RequirementType)
 		}
 	}
 	return kinds
 }
 
 func ownerAssignedSubject(i AuditEventInfo) string {
-	kinds := itemKinds(i.Items)
+	kinds := itemRequirementTypes(i.Items)
 	switch {
 	case len(i.Items) == 0:
 		return "New Audit Assignment"
@@ -188,14 +190,14 @@ var auditBodyTemplate = template.Must(template.New("auditEvent").Parse(`<html>
 {{if .Info.Items}}<tr><td style="padding:8px 24px 4px 24px;">
 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:13px; border-collapse:collapse;">
 <tr style="color:#57606a; text-align:left;">
-<td style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Kind</td>
+<td style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Requirement Type</td>
 <td style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Control No</td>
 <td style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Description</td>
 <td style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Due Date</td>
 <td style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Status</td>
 </tr>
 {{range .Info.Items}}<tr>
-<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0;">{{.Kind}}</td>
+<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0;">{{.RequirementType}}</td>
 <td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; font-weight:bold;">{{.ControlNumber}}</td>
 <td style="padding:6px 8px; border-bottom:1px solid #f0f0f0;">{{.Description}}</td>
 <td style="padding:6px 8px; border-bottom:1px solid #f0f0f0;">{{.DueDate}}</td>

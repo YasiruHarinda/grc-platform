@@ -219,15 +219,15 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 					dedupSnapshot = todayStr // re-fires daily — see model.ReminderItem.DedupSnapshot
 				}
 				queue(*c.OwnerID, model.ReminderItem{
-					AuditID:       c.AuditID,
-					ControlID:     &c.ID,
-					Type:          tier,
-					ControlNumber: c.ControlNumber,
-					Description:   c.Description,
-					DueDate:       *c.DueDate,
-					Tier:          tierLabel(tier),
-					Kind:          "Control",
-					DedupSnapshot: dedupSnapshot,
+					AuditID:         c.AuditID,
+					ControlID:       &c.ID,
+					Type:            tier,
+					ControlNumber:   c.ControlNumber,
+					Description:     c.Description,
+					DueDate:         *c.DueDate,
+					Tier:            tierLabel(tier),
+					RequirementType: "Evidence Requirement",
+					DedupSnapshot:   dedupSnapshot,
 				}, &c.ID, nil)
 			}
 		}
@@ -238,15 +238,15 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 					dedupSnapshot = todayStr
 				}
 				queue(*c.PopulationOwnerID, model.ReminderItem{
-					AuditID:       c.AuditID,
-					PopulationID:  c.PopulationID,
-					Type:          tier,
-					ControlNumber: c.ControlNumber,
-					Description:   c.Description,
-					DueDate:       *c.PopulationDueDate,
-					Tier:          tierLabel(tier),
-					Kind:          "Population",
-					DedupSnapshot: dedupSnapshot,
+					AuditID:         c.AuditID,
+					PopulationID:    c.PopulationID,
+					Type:            tier,
+					ControlNumber:   c.ControlNumber,
+					Description:     c.Description,
+					DueDate:         *c.PopulationDueDate,
+					Tier:            tierLabel(tier),
+					RequirementType: "Population Requirement",
+					DedupSnapshot:   dedupSnapshot,
 				}, nil, c.PopulationID)
 			}
 		}
