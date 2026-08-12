@@ -1,3 +1,7 @@
+# NOT IN USE on Choreo's React buildpack (see issue #90) — the Dockerfile
+# this supports doesn't run there. Kept so the component can be switched
+# back to the Dockerfile buildpack without a code change.
+
 node_modules
 dist
 .env

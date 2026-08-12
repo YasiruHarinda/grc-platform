@@ -1,0 +1,20 @@
+// Runtime configuration for the Evidence Portal web app.
+//
+// Loaded by index.html before the React bundle starts, and sets
+// `window.config` — the shape is declared in `src/config/portalConfig.ts`.
+// Copy this file to `config.js` (gitignored) and fill in real values for
+// local development. On Choreo, the React buildpack serves whatever
+// `config.js` is placed alongside the built app; this file only documents
+// what it must contain.
+window.config = {
+  // Asgardeo OAuth application. Required — the web app logs an error and
+  // will not be able to sign in if either is missing.
+  EVIDENCE_PORTAL_AUTH_CLIENT_ID: "your-client-id-here",
+  EVIDENCE_PORTAL_AUTH_BASE_URL: "https://api.asgardeo.io/t/<your-org>",
+
+  // Backend base URL. Leave empty (or omit) to keep API calls relative to
+  // "/api", which the Vite dev proxy and index.js both forward. Set to an
+  // absolute origin (no trailing slash, no "/api") when the browser must
+  // reach the backend directly, e.g. Choreo's React buildpack.
+  EVIDENCE_PORTAL_BACKEND_BASE_URL: "",
+};

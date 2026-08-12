@@ -1,3 +1,8 @@
+# NOT IN USE on Choreo's React buildpack (see issue #90) — that buildpack
+# builds and serves dist/ itself, so this Dockerfile never runs there. Kept,
+# with index.js, so the component can be switched back to the Dockerfile
+# buildpack without a code change.
+#
 # Stage 1: build the React app
 FROM node:20-alpine AS builder
 

@@ -27,3 +27,6 @@ dist-ssr
 .env
 .env.local
 .env.*.local
+
+# Runtime config (environment-specific, not committed — see config.js.example)
+config.js
