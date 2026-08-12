@@ -41,7 +41,7 @@ export interface WorkQueueFilters {
   dueSort?: DueSort;
 }
 
-export function useGetWorkQueue(tab: WorkQueueTab, page: number, filters: WorkQueueFilters = {}) {
+export function useGetWorkQueue(tab: WorkQueueTab, page: number, filters: WorkQueueFilters = {}, enabled = true) {
   const authFetch = useAuthApiClient();
   const {
     teamIds = [], ownerIds = [], auditIds = [], statuses = [],
@@ -63,5 +63,6 @@ export function useGetWorkQueue(tab: WorkQueueTab, page: number, filters: WorkQu
       return res.json() as Promise<WorkQueuePage>;
     },
     staleTime: 60 * 1000,
+    enabled,
   });
 }

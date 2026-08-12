@@ -5395,14 +5395,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DashboardControlItem'
-        pendingItems:
-          type: array
-          items:
-            $ref: '#/components/schemas/DashboardControlItem'
-        validationItems:
-          type: array
-          items:
-            $ref: '#/components/schemas/DashboardControlItem'
+        pendingCount:
+          type: integer
+        validationCount:
+          type: integer
         overdueControls:
           type: array
           items:

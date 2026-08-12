@@ -309,10 +309,16 @@ function TabPanel({ tab, canApprove, canSubmit, emptyText }: TabPanelProps): JSX
     return statusFilter.filter((s) => actionStatuses.has(s));
   }, [statusFilter, actionFilter, actionGroups]);
 
+  // Status and Action needed are intersected above, so when both have selections
+  // but share no status, the "correct" result is zero rows — not the backend's
+  // "no status filter" reading of an empty statuses array. Skip the request.
+  const hasContradictoryFilters =
+    statusFilter.length > 0 && actionFilter.length > 0 && effectiveStatuses.length === 0;
+
   const { data, isLoading, isError } = useGetWorkQueue(tab, page + 1, {
     teamIds: teamFilter, ownerIds: ownerFilter, auditIds: auditFilter,
     statuses: effectiveStatuses, controlNumber, dueSort,
-  });
+  }, !hasContradictoryFilters);
   const { data: teamsData } = useGetTeams();
   const { data: usersData } = useGetUsers();
   const { data: auditsData } = useGetAudits();
@@ -327,12 +333,12 @@ function TabPanel({ tab, canApprove, canSubmit, emptyText }: TabPanelProps): JSX
     .map((t) => ({ id: t.id, label: t.name }))
     .sort((a, b) => a.label.localeCompare(b.label));
 
-  // Process-owner filter options: union of the users list and the owners actually
+  // Process-owner filter options: union of internal users and the owners actually
   // present in the loaded queue rows. Deriving from the rows means the filter still
-  // works even when /audit/users is empty or a user isn't flagged INTERNAL.
+  // works even when /audit/users is empty or a row's owner isn't flagged INTERNAL.
   const owners: FilterOption<number>[] = useMemo(() => {
     const byId = new Map<number, string>();
-    (usersData ?? []).forEach((u) => byId.set(u.id, u.displayName));
+    (usersData ?? []).filter((u) => u.userType === "INTERNAL").forEach((u) => byId.set(u.id, u.displayName));
     items.forEach((it) => {
       if (it.ownerId != null && !byId.has(it.ownerId)) {
         byId.set(it.ownerId, it.processOwner || `#${it.ownerId}`);

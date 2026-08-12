@@ -138,8 +138,8 @@ export default function AuditDashboard(): JSX.Element {
   const awaitingCount = hasQueue ? (stats.totalActionItems ?? null) : null;
 
   const dueSoonCount = data.dueSoonItems?.length ?? 0;
-  const pendingCount = data.pendingItems?.length ?? 0;
-  const validationCount = data.validationItems?.length ?? 0;
+  const pendingCount = data.pendingCount ?? 0;
+  const validationCount = data.validationCount ?? 0;
 
   const userName =
     (claims?.given_name as string | undefined) ??

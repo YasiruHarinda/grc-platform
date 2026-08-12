@@ -133,6 +133,8 @@ export default function FrameworkReadinessTab({ audits }: FrameworkReadinessTabP
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
       <Box
+        role="tablist"
+        aria-label="Frameworks"
         sx={{
           display: "grid",
           gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr", lg: "1fr 1fr 1fr" },

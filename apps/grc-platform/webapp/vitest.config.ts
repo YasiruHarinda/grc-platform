@@ -14,26 +14,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { fileURLToPath, URL } from "node:url";
-import { defineConfig } from "vitest/config";
+import { defineConfig, mergeConfig } from "vitest/config";
+import viteConfig from "./vite.config";
 
-export default defineConfig({
-  resolve: {
-    alias: {
-      "@": fileURLToPath(new URL("./src", import.meta.url)),
-      "@assets": fileURLToPath(new URL("./src/assets", import.meta.url)),
-      "@constants": fileURLToPath(new URL("./src/constants", import.meta.url)),
-      "@components": fileURLToPath(new URL("./src/components", import.meta.url)),
-      "@config": fileURLToPath(new URL("./src/config", import.meta.url)),
-      "@context": fileURLToPath(new URL("./src/context", import.meta.url)),
-      "@hooks": fileURLToPath(new URL("./src/hooks", import.meta.url)),
-      "@layouts": fileURLToPath(new URL("./src/layouts", import.meta.url)),
-      "@modules": fileURLToPath(new URL("./src/modules", import.meta.url)),
-      "@providers": fileURLToPath(new URL("./src/providers", import.meta.url)),
-      "@utils": fileURLToPath(new URL("./src/utils", import.meta.url)),
+export default mergeConfig(
+  viteConfig,
+  defineConfig({
+    test: {
+      environment: "node",
     },
-  },
-  test: {
-    environment: "node",
-  },
-});
+  }),
+);
