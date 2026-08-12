@@ -19,6 +19,7 @@ package entity
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/repository"
@@ -34,14 +35,15 @@ func NewRiskEvidenceRepository(c *entityclient.Client) repository.RiskEvidenceRe
 
 // entRiskEvidence is the entity's camelCase risk evidence file.
 type entRiskEvidence struct {
-	ID           int     `json:"id"`
-	RiskID       int     `json:"riskId"`
-	ActionPlanID *int    `json:"actionPlanId"`
-	FileName     string  `json:"fileName"`
-	FilePath     string  `json:"filePath"`
-	Note         *string `json:"note"`
-	EvidenceType string  `json:"evidenceType"`
-	CreatedBy    *string `json:"createdBy"`
+	ID           int       `json:"id"`
+	RiskID       int       `json:"riskId"`
+	ActionPlanID *int      `json:"actionPlanId"`
+	FileName     string    `json:"fileName"`
+	FilePath     string    `json:"filePath"`
+	Note         *string   `json:"note"`
+	EvidenceType string    `json:"evidenceType"`
+	CreatedBy    *string   `json:"createdBy"`
+	CreatedOn    time.Time `json:"createdOn"`
 }
 
 func (e entRiskEvidence) toModel() *model.RiskEvidence {
@@ -52,6 +54,7 @@ func (e entRiskEvidence) toModel() *model.RiskEvidence {
 		FileName:     e.FileName,
 		FilePath:     e.FilePath,
 		EvidenceType: e.EvidenceType,
+		CreatedAt:    e.CreatedOn,
 	}
 	if e.Note != nil {
 		m.Note = *e.Note

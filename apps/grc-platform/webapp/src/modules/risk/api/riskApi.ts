@@ -653,6 +653,7 @@ export interface RiskEvidence {
   note: string;
   evidence_type: RiskEvidenceType;
   created_by: string;
+  created_at: string;
   download_url?: string;
 }
 

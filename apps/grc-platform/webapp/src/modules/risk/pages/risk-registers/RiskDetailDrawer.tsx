@@ -34,6 +34,8 @@ import {
   Calendar,
   Check,
   CloudUpload,
+  Download,
+  ExternalLink,
   FileText,
   Link as LinkIcon,
   ListChecks,
@@ -52,8 +54,9 @@ import { deleteRiskEvidence, fetchRiskEvidence, uploadRiskEvidence } from "../..
 import RiskHistoryTimeline from "./RiskHistoryTimeline";
 import { RiskPrivilege } from "../../privileges";
 import { dialogPaperSx } from "../cardStyles";
-import { STATUS_CONFIG, calcAge, calcDue, formatDate } from "./utils";
+import { STATUS_CONFIG, calcAge, calcDue, canViewInline, downloadBlob, formatDate, viewBlob } from "./utils";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
+import { BACKEND_BASE_URL } from "@config/apiConfig";
 
 // ActionPlan doesn't embed its steps (GET .../action-plans lists plans only;
 // steps come from a separate GET .../action-plans/{planId}/steps call) — the
@@ -241,24 +244,220 @@ function EmptyState({ icon, title, caption }: { icon: ReactNode; title: string; 
   );
 }
 
+// Persistent, read-first list of evidence files — reused for both risk-level
+// evidence (Risk Treatment tab) and per-plan completion evidence (Action
+// Plans tab), matching Audit's SubmittedEvidenceList row style (file name +
+// "Submitted {date} · {uploader}" + actions), but split into two explicit
+// actions instead of one adaptive "View" button per the design call: View
+// always fetches and re-checks the real Content-Type before ever rendering
+// it inline (never trusts the file extension), falling back to a normal
+// download when the type isn't in the safe-to-render set. Download always
+// forces a save regardless of type.
+function EvidenceList({
+  evidence,
+  canDelete,
+  disabled,
+  onDelete,
+}: {
+  evidence: RiskEvidence[];
+  canDelete: boolean;
+  disabled: boolean;
+  onDelete: (fileId: number) => void;
+}): JSX.Element | null {
+  const authFetch = useAuthApiClient();
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  if (evidence.length === 0) return null;
+
+  const fetchBlob = async (f: RiskEvidence): Promise<Blob> => {
+    if (!f.download_url) throw new Error("Download link unavailable");
+    const res = await authFetch(`${BACKEND_BASE_URL}${f.download_url}`);
+    if (!res.ok) throw new Error(`Download failed (${res.status})`);
+    return res.blob();
+  };
+
+  const handleView = async (f: RiskEvidence): Promise<void> => {
+    setError(null);
+    setBusyId(f.id);
+    try {
+      const blob = await fetchBlob(f);
+      if (canViewInline(blob.type)) {
+        viewBlob(blob);
+      } else {
+        // Not safe to render inline (or the server didn't say it was one of
+        // the allow-listed types) — download instead of refusing outright.
+        downloadBlob(blob, f.file_name);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to open file");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleDownload = async (f: RiskEvidence): Promise<void> => {
+    setError(null);
+    setBusyId(f.id);
+    try {
+      const blob = await fetchBlob(f);
+      downloadBlob(blob, f.file_name);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to download file");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <Stack gap={0.75}>
+      {error && (
+        <Typography variant="caption" color="error.main">
+          {error}
+        </Typography>
+      )}
+      {evidence.map((f) => (
+        <Stack
+          key={f.id}
+          direction="row"
+          gap={1}
+          alignItems="center"
+          sx={{ px: 1.25, py: 0.85, borderRadius: 1, border: "1px solid", borderColor: "divider", bgcolor: "action.hover" }}
+        >
+          <FileText size={14} />
+          <Stack sx={{ flex: 1, minWidth: 0 }}>
+            <Typography variant="body2" noWrap title={f.file_name}>
+              {f.file_name}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" noWrap>
+              Submitted {formatDate(f.created_at)}{f.created_by ? ` · ${f.created_by}` : ""}
+            </Typography>
+          </Stack>
+          <IconButton
+            size="small"
+            disabled={busyId === f.id}
+            onClick={() => void handleView(f)}
+            aria-label={`View ${f.file_name}`}
+          >
+            {busyId === f.id ? <CircularProgress size={13} /> : <ExternalLink size={14} />}
+          </IconButton>
+          <IconButton
+            size="small"
+            disabled={busyId === f.id}
+            onClick={() => void handleDownload(f)}
+            aria-label={`Download ${f.file_name}`}
+          >
+            <Download size={14} />
+          </IconButton>
+          {canDelete && (
+            <IconButton
+              size="small"
+              disabled={disabled}
+              onClick={() => onDelete(f.id)}
+              aria-label={`Remove ${f.file_name}`}
+              sx={{ color: "error.main" }}
+            >
+              <Trash2 size={14} />
+            </IconButton>
+          )}
+        </Stack>
+      ))}
+    </Stack>
+  );
+}
+
+// Risk-level evidence ("Risk Evidence Attachment") — attached only from the
+// Add Risk form at creation time (uploading here is a separate, undesigned
+// feature), so this is a persistent, always-shown display of whatever was
+// attached then. Delete is withdrawn once the risk owner has given their
+// (first) approval — canDelete is driven by detail.owner_first_approved_at
+// at the call site, the same backend-set-once flag handleOwnerApproveRisk
+// stamps, so this evidence locks in step with the approval it backed, the
+// same way completion evidence locks once its plan is COMPLETED.
+function RiskEvidenceSection({
+  riskId,
+  canDelete,
+  disabled,
+}: {
+  riskId: number;
+  canDelete: boolean;
+  disabled: boolean;
+}): JSX.Element {
+  const authFetch = useAuthApiClient();
+  const [files, setFiles] = useState<RiskEvidence[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetchRiskEvidence(authFetch, riskId)
+      .then((all) => {
+        if (cancelled) return;
+        setFiles(all.filter((e) => e.evidence_type === "ACTION_PLAN_ATTACHMENT"));
+      })
+      .catch(() => {
+        if (!cancelled) setError("Failed to load evidence");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [riskId]);
+
+  const handleRemove = (fileId: number): void => {
+    setError(null);
+    deleteRiskEvidence(authFetch, riskId, fileId)
+      .then(() => setFiles((prev) => prev.filter((f) => f.id !== fileId)))
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to remove file"));
+  };
+
+  return (
+    <SectionCard icon={<FileText size={16} />} iconBg="#ecfdf5" iconColor="#059669" title="Risk Evidence">
+      {loading ? (
+        <CircularProgress size={20} />
+      ) : error ? (
+        <Typography variant="body2" color="error.main">
+          {error}
+        </Typography>
+      ) : files.length > 0 ? (
+        <EvidenceList evidence={files} canDelete={canDelete} disabled={disabled} onDelete={handleRemove} />
+      ) : (
+        <Typography variant="body2" color="text.secondary">
+          No evidence attached to this risk.
+        </Typography>
+      )}
+    </SectionCard>
+  );
+}
+
 // The "Risk Action Plan Completion Attachment" upload — files go to Azure
 // (proxied through the backend) as soon as they're picked, matching the Audit
 // Hub's upload-immediately pattern. "Complete Action Plan" stays disabled
 // until at least one file exists for this plan (checked here for the button's
-// enabled state, and re-checked server-side as the real gate). Fetches any
-// evidence already attached (e.g. from a previous visit) on mount, so
-// reopening the drawer doesn't forget what was already uploaded.
-function CompletionEvidenceUpload({
+// enabled state, and re-checked server-side as the real gate). Mounted
+// unconditionally (not just while the plan is completable) so the list stays
+// visible after completion — delete is withdrawn once planCompleted, since
+// there's no server-side check stopping someone from deleting a completed
+// plan's proof after the fact and the UI is the only place that guards it.
+function CompletionEvidenceSection({
   riskId,
   planId,
+  planCompleted,
+  showUpload,
   disabled,
   onHasEvidenceChange,
 }: {
   riskId: number;
   planId: number;
+  planCompleted: boolean;
+  showUpload: boolean;
   disabled: boolean;
   onHasEvidenceChange: (hasEvidence: boolean) => void;
-}): JSX.Element {
+}): JSX.Element | null {
   const authFetch = useAuthApiClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<RiskEvidence[]>([]);
@@ -310,62 +509,51 @@ function CompletionEvidenceUpload({
     }
   };
 
-  const handleRemove = async (fileId: number): Promise<void> => {
+  const handleRemove = (fileId: number): void => {
     setError(null);
-    try {
-      await deleteRiskEvidence(authFetch, riskId, fileId);
-      setFiles((prev) => {
-        const next = prev.filter((f) => f.id !== fileId);
-        onHasEvidenceChange(next.length > 0);
-        return next;
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to remove file");
-    }
+    deleteRiskEvidence(authFetch, riskId, fileId)
+      .then(() => {
+        setFiles((prev) => {
+          const next = prev.filter((f) => f.id !== fileId);
+          onHasEvidenceChange(next.length > 0);
+          return next;
+        });
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to remove file"));
   };
+
+  if (files.length === 0 && !showUpload) return null;
 
   return (
     <Stack gap={1} sx={{ pt: 0.5 }}>
-      <Typography variant="caption" fontWeight={600} color={files.length === 0 ? "error.main" : "text.secondary"}>
-        Completion Evidence {files.length === 0 && "(required)"}
+      <Typography variant="caption" fontWeight={600} color={showUpload && files.length === 0 ? "error.main" : "text.secondary"}>
+        Completion Evidence {showUpload && files.length === 0 && "(required)"}
       </Typography>
-      {files.map((f) => (
-        <Stack key={f.id} direction="row" gap={1} alignItems="center">
-          <FileText size={14} />
-          <Typography variant="body2" sx={{ flex: 1, minWidth: 0 }} noWrap title={f.file_name}>
-            {f.file_name}
-          </Typography>
-          <IconButton
+      <EvidenceList evidence={files} canDelete={!planCompleted} disabled={disabled} onDelete={handleRemove} />
+      {showUpload && (
+        <>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            hidden
+            accept="image/*,.pdf"
+            onChange={(e) => {
+              void handleFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <Button
             size="small"
-            disabled={disabled}
-            onClick={() => void handleRemove(f.id)}
-            aria-label={`Remove ${f.file_name}`}
-            sx={{ color: "error.main" }}
+            variant="outlined"
+            disabled={disabled || uploading}
+            startIcon={uploading ? <CircularProgress size={14} /> : <CloudUpload size={14} />}
+            onClick={() => fileInputRef.current?.click()}
           >
-            <Trash2 size={14} />
-          </IconButton>
-        </Stack>
-      ))}
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        hidden
-        accept="image/*,.pdf"
-        onChange={(e) => {
-          void handleFiles(e.target.files);
-          e.target.value = "";
-        }}
-      />
-      <Button
-        size="small"
-        variant="outlined"
-        disabled={disabled || uploading}
-        startIcon={uploading ? <CircularProgress size={14} /> : <CloudUpload size={14} />}
-        onClick={() => fileInputRef.current?.click()}
-      >
-        {uploading ? "Uploading…" : "Attach Evidence"}
-      </Button>
+            {uploading ? "Uploading…" : "Attach Evidence"}
+          </Button>
+        </>
+      )}
       {error && (
         <Typography variant="caption" color="error.main">
           {error}
@@ -458,14 +646,14 @@ function ActionPlanCard({
             ))}
           </Stack>
         )}
-        {readyToComplete && (
-          <CompletionEvidenceUpload
-            riskId={riskId}
-            planId={plan.id}
-            disabled={disabled}
-            onHasEvidenceChange={setHasCompletionEvidence}
-          />
-        )}
+        <CompletionEvidenceSection
+          riskId={riskId}
+          planId={plan.id}
+          planCompleted={plan.status === "COMPLETED"}
+          showUpload={readyToComplete}
+          disabled={disabled}
+          onHasEvidenceChange={setHasCompletionEvidence}
+        />
         {readyToComplete && (
           <Button
             variant="contained"
@@ -986,6 +1174,12 @@ export default function RiskDetailDrawer({
                   {detail.remarks && <InfoTile label="Remarks">{detail.remarks}</InfoTile>}
                 </Stack>
               </SectionCard>
+
+              <RiskEvidenceSection
+                riskId={detail.id}
+                canDelete={!detail.owner_first_approved_at}
+                disabled={actionsDisabled}
+              />
             </TabPanel>
 
             <TabPanel value={tab} index={2}>
