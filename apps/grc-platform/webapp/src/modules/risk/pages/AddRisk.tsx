@@ -331,19 +331,25 @@ export default function AddRisk(): JSX.Element {
     // never be reported as a failed submission (that would invite a retry,
     // which would create a duplicate risk) and must never block reaching the
     // success step.
-    try {
-      // Risk-level evidence attachments ("Risk Evidence Attachment"): the
-      // risk doesn't exist until the call above returns an id, so these are
-      // staged in form state through the whole wizard and only uploaded now.
-      for (const attachment of data.evidenceAttachments) {
-        if (!attachment.file) continue;
+    // Risk-level evidence attachments ("Risk Evidence Attachment"): the risk
+    // doesn't exist until the call above returns an id, so these are staged
+    // in form state through the whole wizard and only uploaded now. Each
+    // upload is caught individually so one failure doesn't stop the rest of
+    // the batch from being attempted.
+    let anyAttachmentFailed = false;
+    for (const attachment of data.evidenceAttachments) {
+      if (!attachment.file) continue;
+      try {
         await uploadRiskEvidence(authFetch, created.id, {
           evidenceType: "ACTION_PLAN_ATTACHMENT",
           file: attachment.file,
           note: attachment.note || undefined,
         });
+      } catch {
+        anyAttachmentFailed = true;
       }
-    } catch {
+    }
+    if (anyAttachmentFailed) {
       setAttachmentWarning(
         "The risk was created, but one or more attachments failed to upload. Add them from the risk details view.",
       );
