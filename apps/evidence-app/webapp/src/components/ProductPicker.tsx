@@ -18,15 +18,22 @@ import Divider from "@mui/material/Divider";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import { PlusIcon, PenToSquareIcon, TrashIcon } from "@oxygen-ui/react-icons";
-import { productsApi, frameworksApi, controlsApi, evidenceApi, submissionsApi } from "../api/client";
+import { productsApi, frameworksApi, controlsApi, evidenceApi, submissionsApi, agentApi } from "../api/client";
 import ConfirmDeleteDialog from "./ConfirmDeleteDialog";
+import { timeAgo } from "../utils/timeAgo";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 
 type Product = { id: number; name: string; description?: string | null };
 type Framework = { id: number; product_id: number };
 type Control = { id: number; framework_id: number };
 type Evidence = { id: number; control_id: number };
-type Submission = { id: number; evidence_id: number };
+type Submission = { id: number; evidence_id: number; status: string };
+type AgentTask = {
+  status: string;
+  control_id: number | null;
+  started_at: string | null;
+  user_email: string;
+};
 
 type Props = {
   value: number | "";
@@ -89,17 +96,44 @@ export default function ProductPicker({
     queryFn: submissionsApi.list,
     enabled: !!deleteTarget,
   });
+  // Only fetched while the delete dialog is open, so we can warn about an
+  // agent run that's still (or claims to be) in progress against a control
+  // under this product.
+  const { data: allTasks = [], isLoading: isTasksLoading } = useQuery<AgentTask[]>({
+    queryKey: ["agent-tasks"],
+    queryFn: () => agentApi.listTasks(500),
+    enabled: !!deleteTarget,
+  });
 
-  const cascadeImpact = (productId: number) => {
-    const fwIds = allFrameworks.filter((f) => f.product_id === productId).map((f) => f.id);
-    const ctrlIds = allControls.filter((c) => fwIds.includes(c.framework_id)).map((c) => c.id);
+  // ctrlIds covers every control under every framework of this product (all
+  // descendants, not just direct children) — reused below for both the
+  // cascade counts and the running-task warning, so the tree is only walked
+  // once.
+  const cascadeImpact = (fwIds: number[], ctrlIds: number[]) => {
     const evIds = allEvidence.filter((e) => ctrlIds.includes(e.control_id)).map((e) => e.id);
-    const subCount = allSubmissions.filter((s) => evIds.includes(s.evidence_id)).length;
+    const subs = allSubmissions.filter((s) => evIds.includes(s.evidence_id));
+    const approvedCount = subs.filter((s) => s.status === "approved").length;
     return [
       { label: "frameworks", count: fwIds.length },
       { label: "controls", count: ctrlIds.length },
-      { label: "evidence files", count: evIds.length },
-      { label: "submission records", count: subCount },
+      { label: "evidence records", count: evIds.length },
+      { label: "submission records", count: subs.length },
+      { label: "approved submissions", count: approvedCount },
+    ];
+  };
+
+  // status = "running" isn't trustworthy on its own — a crashed Runner leaves
+  // that row forever, and there's no heartbeat column. Showing how long ago
+  // it started lets the Admin judge that instead of the system claiming it.
+  const activeRunWarnings = (ctrlIds: number[]): string[] => {
+    const activeRuns = allTasks.filter(
+      (t) => t.status === "running" && t.control_id !== null && ctrlIds.includes(t.control_id)
+    );
+    if (activeRuns.length === 0) return [];
+    return [
+      `${activeRuns.length} agent run${activeRuns.length === 1 ? "" : "s"} marked as in progress against controls in this product.`,
+      ...activeRuns.map((t) => `Started ${timeAgo(t.started_at)} by ${t.user_email}.`),
+      "If it is still running, deleting now will leave its evidence unlinked.",
     ];
   };
 
@@ -119,6 +153,13 @@ export default function ProductPicker({
       setDeleteError(err?.response?.data?.detail || "Failed to delete product.");
     },
   });
+
+  // Computed once per render and reused for both the cascade counts and the
+  // running-task warning below.
+  const deleteFwIds = deleteTarget
+    ? allFrameworks.filter((f) => f.product_id === deleteTarget.id).map((f) => f.id)
+    : [];
+  const deleteCtrlIds = allControls.filter((c) => deleteFwIds.includes(c.framework_id)).map((c) => c.id);
 
   return (
     <>
@@ -233,11 +274,16 @@ export default function ProductPicker({
         onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
         isPending={deleteMutation.isPending}
         impactLoading={
-          isFrameworksLoading || isControlsLoading || isEvidenceLoading || isSubmissionsLoading
+          isFrameworksLoading ||
+          isControlsLoading ||
+          isEvidenceLoading ||
+          isSubmissionsLoading ||
+          isTasksLoading
         }
         entityType="product"
         entityName={deleteTarget?.name ?? ""}
-        impact={deleteTarget ? cascadeImpact(deleteTarget.id) : []}
+        impact={deleteTarget ? cascadeImpact(deleteFwIds, deleteCtrlIds) : []}
+        warnings={deleteTarget ? activeRunWarnings(deleteCtrlIds) : []}
         error={deleteError}
       />
     </>

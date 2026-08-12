@@ -1,0 +1,5168 @@
+openapi: 3.0.3
+info:
+  title: GRC Platform Backend API
+  description: Public-facing API for the GRC Platform (Audit Hub and Risk Hub). Authenticates
+    callers via a Bearer JWT issued by Asgardeo and validated against the issuer's JWKS
+    (RS256, iss/aud checked). Most data access is proxied to the internal Compliance
+    Entity service; file uploads are proxied through this backend to Azure Blob Storage
+    rather than issuing direct SAS URLs to clients.
+  version: 1.0.0
+servers:
+- url: http://localhost:8081
+  description: Local development
+tags:
+- name: Health
+- name: Audit Dashboard
+- name: Audit Frameworks
+- name: Audit Framework Controls
+- name: Audit Products
+- name: Audit Users
+- name: Audit Teams
+- name: Audits
+- name: Audit Controls
+- name: Audit Trail
+- name: Audit Evidence
+- name: Audit Population
+- name: Audit Sample
+- name: Audit Comments
+- name: AI Validations
+- name: Evidence Portal
+- name: Risk Teams
+- name: Risk Scores
+- name: Risk Compliance References
+- name: Risk Categories
+- name: Risk User Pickers
+- name: Privileges
+- name: Employees
+- name: Risks
+- name: Risk Workflow
+- name: Risk Assessment
+- name: Risk Dashboard
+- name: Risk Analytics
+- name: Risk Action Plans
+- name: Risk Action Steps
+- name: Risk Escalations
+- name: Risk History
+- name: Users
+security:
+- bearerAuth: []
+paths:
+  /health:
+    get:
+      tags:
+      - Health
+      summary: Liveness/readiness probe
+      description: Special-cased ahead of the Auth middleware (GET /health only) — never requires a Bearer token.
+      operationId: healthCheck
+      security: []
+      responses:
+        '200':
+          description: Server is up
+  # ---------------------------------------------------------------------------
+  # Audit Hub
+  # ---------------------------------------------------------------------------
+  /api/v1/audit/dashboard:
+    get:
+      tags:
+      - Audit Dashboard
+      summary: Get the Audit Hub dashboard
+      description: Scoped to the caller's role (compliance admin/team, internal team, external auditor, management) derived from their JWT groups claim.
+      operationId: getAuditDashboard
+      responses:
+        '200':
+          description: Dashboard data scoped to the caller's role
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardData'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audit/work-queue:
+    get:
+      tags:
+      - Audit Dashboard
+      summary: Get a paginated work-queue page for the authenticated user
+      operationId: getAuditWorkQueue
+      parameters:
+      - name: tab
+        in: query
+        description: Which sub-list to page through.
+        schema:
+          type: string
+          enum:
+          - action-items
+          - due-soon
+          - overdue
+          default: action-items
+      - name: page
+        in: query
+        schema:
+          type: integer
+          default: 1
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 25
+          maximum: 100
+      - name: teamIds
+        in: query
+        description: Repeatable; restricts results to these audit_team IDs.
+        schema:
+          type: array
+          items:
+            type: integer
+        style: form
+        explode: true
+      - name: ownerIds
+        in: query
+        description: Repeatable; restricts results to these process-owner user IDs.
+        schema:
+          type: array
+          items:
+            type: integer
+        style: form
+        explode: true
+      responses:
+        '200':
+          description: Paginated work-queue page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkQueuePage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audit/frameworks:
+    get:
+      tags:
+      - Audit Frameworks
+      summary: List audit frameworks
+      description: Lookup data for the Create Audit form's framework dropdown.
+      operationId: listAuditFrameworks
+      responses:
+        '200':
+          description: List of frameworks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditFramework'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+      - Audit Frameworks
+      summary: Create an audit framework
+      operationId: createAuditFramework
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateFrameworkRequest'
+      responses:
+        '201':
+          description: Framework created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditFramework'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audit/frameworks/{id}/controls:
+    get:
+      tags:
+      - Audit Framework Controls
+      summary: List current controls for a framework
+      operationId: listAuditFrameworkControls
+      parameters:
+      - $ref: '#/components/parameters/FrameworkId'
+      responses:
+        '200':
+          description: List of current framework controls
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FrameworkControlListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+      - Audit Framework Controls
+      summary: Create a framework control
+      operationId: createAuditFrameworkControl
+      parameters:
+      - $ref: '#/components/parameters/FrameworkId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateFrameworkControlRequest'
+      responses:
+        '201':
+          description: Framework control created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditFrameworkControl'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audit/products:
+    get:
+      tags:
+      - Audit Products
+      summary: List audit products
+      description: Lookup data for the Create Audit form's product dropdown.
+      operationId: listAuditProducts
+      responses:
+        '200':
+          description: List of products
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditProduct'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+      - Audit Products
+      summary: Create an audit product
+      operationId: createAuditProduct
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProductRequest'
+      responses:
+        '201':
+          description: Product created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditProduct'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audit/users:
+    get:
+      tags:
+      - Audit Users
+      summary: List active users for owner/auditor assignment dropdowns
+      operationId: listAuditUsers
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserRef'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audit/teams:
+    get:
+      tags:
+      - Audit Teams
+      summary: List active audit teams for the team assignment dropdown
+      operationId: listAuditTeams
+      responses:
+        '200':
+          description: List of teams
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditTeam'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits:
+    get:
+      tags:
+      - Audits
+      summary: List audits
+      operationId: listAudits
+      responses:
+        '200':
+          description: List of audits
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+      - Audits
+      summary: Create an audit
+      operationId: createAudit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAuditRequest'
+      responses:
+        '201':
+          description: Audit created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Audit'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}:
+    get:
+      tags:
+      - Audits
+      summary: Get an audit by ID
+      operationId: getAudit
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      responses:
+        '200':
+          description: The audit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Audit'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      tags:
+      - Audits
+      summary: Update an audit
+      operationId: updateAudit
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAuditRequest'
+      responses:
+        '204':
+          description: Audit updated
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+      - Audits
+      summary: Soft-delete an audit
+      operationId: deleteAudit
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      responses:
+        '204':
+          description: Audit deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls:
+    get:
+      tags:
+      - Audit Controls
+      summary: List controls for an audit
+      operationId: listAuditControls
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      responses:
+        '200':
+          description: List of controls
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControlListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+      - Audit Controls
+      summary: Add a control to an audit
+      operationId: addAuditControl
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddControlRequest'
+      responses:
+        '201':
+          description: Control created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditControl'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/bulk:
+    post:
+      tags:
+      - Audit Controls
+      summary: Bulk-add controls to an audit
+      description: Used by the Create Audit form when copying controls from a previous audit or uploading a CSV.
+      operationId: bulkAddAuditControls
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkAddControlsRequest'
+      responses:
+        '201':
+          description: Controls created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControlListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}:
+    get:
+      tags:
+      - Audit Controls
+      summary: Get a control by ID
+      operationId: getAuditControl
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      responses:
+        '200':
+          description: The control
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditControl'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      tags:
+      - Audit Controls
+      summary: Update a control
+      operationId: updateAuditControl
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateControlRequest'
+      responses:
+        '204':
+          description: Control updated
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+      - Audit Controls
+      summary: Delete a control
+      operationId: deleteAuditControl
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      responses:
+        '204':
+          description: Control deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/status:
+    patch:
+      tags:
+      - Audit Controls
+      summary: Update a control's status
+      operationId: updateAuditControlStatus
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStatusRequest'
+      responses:
+        '204':
+          description: Status updated
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/trail:
+    get:
+      tags:
+      - Audit Trail
+      summary: List a control's immutable history
+      description: Append-only audit_trail events for the control, newest first — feeds the control drawer's History tab.
+      operationId: listControlTrail
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      responses:
+        '200':
+          description: Control trail entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrailListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/trail:
+    get:
+      tags:
+      - Audit Trail
+      summary: List an audit's whole activity log
+      description: Audit-level events plus every control's events together, newest first, for the audit-wide Activity Log page.
+      operationId: listAuditTrail
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - name: limit
+        in: query
+        schema:
+          type: integer
+      - name: offset
+        in: query
+        schema:
+          type: integer
+          minimum: 0
+      - name: controlId
+        in: query
+        description: Repeatable; OR-matched control-id filter.
+        schema:
+          type: array
+          items:
+            type: integer
+        style: form
+        explode: true
+      - name: from
+        in: query
+        description: Inclusive lower bound, YYYY-MM-DD.
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        description: Inclusive upper bound, YYYY-MM-DD.
+        schema:
+          type: string
+          format: date
+      responses:
+        '200':
+          description: Audit trail entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrailListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/evidence/upload-link:
+    get:
+      tags:
+      - Audit Evidence
+      summary: Get the evidence folder path for a control
+      description: Returns a deterministic Azure Blob prefix the client uses as the folder path for subsequent upload/submit calls in this round.
+      operationId: getEvidenceUploadLink
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      responses:
+        '200':
+          description: Upload link
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadLinkResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/evidence/upload:
+    post:
+      tags:
+      - Audit Evidence
+      summary: Upload one evidence file
+      description: The backend proxies file bytes to Azure using its own storage credential — no SAS URL is ever handed to the client.
+      operationId: uploadEvidenceFile
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - folderPath
+              - file
+              properties:
+                folderPath:
+                  type: string
+                  description: Folder path returned by the upload-link endpoint.
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: File uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileUploadResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/evidence/submit:
+    post:
+      tags:
+      - Audit Evidence
+      summary: Submit an evidence round
+      description: Records the accumulated uploaded files as a new evidence submission round and advances the control to EVIDENCE_INTERNAL_REVIEW.
+      operationId: submitEvidence
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitEvidenceRequest'
+      responses:
+        '201':
+          description: Evidence submitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditEvidence'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/evidence/files:
+    post:
+      tags:
+      - Audit Evidence
+      summary: Add files to the current evidence round
+      description: Appends files to the control's current SUBMITTED round instead of starting a new one — what "Add Files" uses while under internal review.
+      operationId: addEvidenceFiles
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitEvidenceRequest'
+      responses:
+        '200':
+          description: Files added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditEvidence'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/evidence/withdraw:
+    post:
+      tags:
+      - Audit Evidence
+      summary: Withdraw a submitted evidence round
+      description: Lets the submitter pull a round back while still under internal review (EVIDENCE_INTERNAL_REVIEW → EVIDENCE_PENDING) so files can be edited and resubmitted.
+      operationId: withdrawEvidence
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      responses:
+        '200':
+          description: Evidence withdrawn
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/evidence/review:
+    post:
+      tags:
+      - Audit Evidence
+      summary: Internal-reviewer decision on a submitted evidence round
+      description: Approve advances the control to EVIDENCE_UNDER_VALIDATION; reject sends it back to EVIDENCE_PENDING.
+      operationId: reviewEvidence
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewDecisionRequest'
+      responses:
+        '200':
+          description: Decision recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/evidence/validate:
+    post:
+      tags:
+      - Audit Evidence
+      summary: Assigned auditor's decision on evidence that passed internal review
+      description: Approve closes the control out (COMPLETE); reject sends it to EVIDENCE_NEED_CLARIFICATION. Auditor-gated — caller's email must match the control's assigned auditor.
+      operationId: validateEvidence
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewDecisionRequest'
+      responses:
+        '200':
+          description: Decision recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/evidence/files/{fileId}:
+    delete:
+      tags:
+      - Audit Evidence
+      summary: Delete a file from an evidence submission (audit-scoped)
+      description: Same deletion as DELETE /api/v1/evidence/files/{fileId}, but because audit/control are known it also reconciles the control back to EVIDENCE_PENDING when the last file is removed.
+      operationId: deleteAuditControlEvidenceFile
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      - $ref: '#/components/parameters/FileId'
+      responses:
+        '200':
+          description: File deleted; control status reconciled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/evidence:
+    get:
+      tags:
+      - Audit Evidence
+      summary: List evidence rounds for a control
+      operationId: listControlEvidence
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      responses:
+        '200':
+          description: Evidence rounds, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditEvidence'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/evidence/files/{fileId}/download:
+    get:
+      tags:
+      - Audit Evidence
+      summary: Download an evidence file
+      description: Proxies the file bytes from the Compliance Entity (which reads them from Azure) so the browser never contacts Azure directly.
+      operationId: downloadEvidenceFile
+      parameters:
+      - $ref: '#/components/parameters/FileId'
+      responses:
+        '200':
+          description: File bytes
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/evidence/files/{fileId}:
+    delete:
+      tags:
+      - Audit Evidence
+      summary: Delete an evidence file
+      description: Removes a single file's DB record (the Azure blob itself is not deleted). Caller must be the file's original uploader or hold ManageControls.
+      operationId: deleteEvidenceFile
+      parameters:
+      - $ref: '#/components/parameters/FileId'
+      responses:
+        '204':
+          description: File deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/population/upload-link:
+    get:
+      tags:
+      - Audit Population
+      summary: Get the population folder path for an OE control
+      operationId: getPopulationUploadLink
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      responses:
+        '200':
+          description: Upload link
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadLinkResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: This control has no active population phase (e.g. a DESIGN control) — use the evidence endpoints instead.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/population/upload:
+    post:
+      tags:
+      - Audit Population
+      summary: Upload one population file
+      description: Same proxied-upload mechanism as evidence upload; files land under the active population round.
+      operationId: uploadPopulationFile
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - folderPath
+              - file
+              properties:
+                folderPath:
+                  type: string
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: File uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileUploadResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/population/submit:
+    post:
+      tags:
+      - Audit Population
+      summary: Submit the population round
+      description: Records every blob at folderPath as a POPULATION file on the active round and advances the control to POPULATION_INTERNAL_REVIEW.
+      operationId: submitPopulation
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PopulationSubmitRequest'
+      responses:
+        '201':
+          description: Population submitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PopulationSubmitResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/population/review:
+    post:
+      tags:
+      - Audit Population
+      summary: Internal-reviewer decision on a submitted population round
+      description: Approve advances to POPULATION_UNDER_VALIDATION; reject sends the team back to POPULATION_PENDING and clears the round's POPULATION-kind files.
+      operationId: reviewPopulation
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewDecisionRequest'
+      responses:
+        '200':
+          description: Decision recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/population/validate:
+    post:
+      tags:
+      - Audit Population
+      summary: Assigned auditor's decision on a population that passed internal review
+      description: Approve moves the control to POPULATION_COMPLETE (sample phase next); reject sends it back to POPULATION_NEED_CLARIFICATION.
+      operationId: validatePopulation
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewDecisionRequest'
+      responses:
+        '200':
+          description: Decision recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/population:
+    get:
+      tags:
+      - Audit Population
+      summary: Get the control's population round and files
+      description: Returns the current round plus its files split into population[] (team-submitted) and sample[] (auditor-selected), and the auditor's sample note.
+      operationId: getPopulation
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      responses:
+        '200':
+          description: Population view
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PopulationView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/population/files/{fileId}:
+    delete:
+      tags:
+      - Audit Population
+      summary: Delete a population or sample file
+      description: POPULATION-kind files are editable by the team while the round is still open for edits; SAMPLE-kind files are editable by the assigned auditor while the sample is being selected. ManageControls can always remove either.
+      operationId: deletePopulationFile
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      - $ref: '#/components/parameters/FileId'
+      responses:
+        '204':
+          description: File deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/population/files/{fileId}/download:
+    get:
+      tags:
+      - Audit Population
+      summary: Download a population or sample file
+      operationId: downloadPopulationFile
+      parameters:
+      - $ref: '#/components/parameters/FileId'
+      responses:
+        '200':
+          description: File bytes
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/sample/upload-link:
+    get:
+      tags:
+      - Audit Sample
+      summary: Get the sample folder path
+      description: Auditor-gated. Only valid once the population has passed validation (POPULATION_COMPLETE, AWAITING_SAMPLE, or SUBMITTED_SAMPLE).
+      operationId: getSampleUploadLink
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      responses:
+        '200':
+          description: Upload link
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadLinkResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/sample/upload:
+    post:
+      tags:
+      - Audit Sample
+      summary: Upload one sample file
+      description: Auditor-gated; files land in a sample/ subfolder of the population round.
+      operationId: uploadSampleFile
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - folderPath
+              - file
+              properties:
+                folderPath:
+                  type: string
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: File uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileUploadResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/sample/submit:
+    post:
+      tags:
+      - Audit Sample
+      summary: Submit the sample selection
+      description: Records every blob at folderPath as a SAMPLE file, sets the control's sample note, and advances it to SUBMITTED_SAMPLE — the entry point to the evidence phase for the team. At least one of files or note is required.
+      operationId: submitSample
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SampleSubmitRequest'
+      responses:
+        '201':
+          description: Sample submitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SampleSubmitResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/sample/request-time:
+    post:
+      tags:
+      - Audit Sample
+      summary: Request more time before selecting a sample
+      description: POPULATION_COMPLETE → AWAITING_SAMPLE. A plain status flip; no note field.
+      operationId: requestSampleTime
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      responses:
+        '200':
+          description: Status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/comments:
+    get:
+      tags:
+      - Audit Comments
+      summary: List comments for a control
+      description: One thread per control, spanning both population and evidence phases. Internal-only comments are hidden from external auditors.
+      operationId: listControlComments
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      responses:
+        '200':
+          description: Comments
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+      - Audit Comments
+      summary: Add a comment to a control
+      operationId: addControlComment
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddCommentRequest'
+      responses:
+        '201':
+          description: Comment added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditComment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/evidence/{evidenceId}/ai-validations:
+    get:
+      tags:
+      - AI Validations
+      summary: List AI validation results for an evidence round
+      description: Advisory review hints only; the frontend never gates the workflow on these.
+      operationId: listAIValidations
+      parameters:
+      - name: evidenceId
+        in: path
+        required: true
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: AI validation results, latest first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIValidationListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/evidence-app/controls:
+    get:
+      tags:
+      - Evidence Portal
+      summary: List controls assigned to the caller for evidence submission
+      description: Evidence Portal proxy API (design §3.1). Callable by IdP-2 (portal) tokens and by IdP-1 users holding SUBMIT_EVIDENCE. Rate limited per authenticated email (10 req/s, burst 20).
+      operationId: listEvidenceAppControls
+      responses:
+        '200':
+          description: Assigned controls, enriched with audit/product/framework and a computed phase + base folder path
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EvidenceAppControl'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/evidence-app/controls/{controlId}/upload-link:
+    get:
+      tags:
+      - Evidence Portal
+      summary: Get the evidence folder path (Evidence Portal)
+      operationId: getEvidenceAppUploadLink
+      parameters:
+      - $ref: '#/components/parameters/ControlId'
+      responses:
+        '200':
+          description: Upload link
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadLinkResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/evidence-app/controls/{controlId}/upload:
+    post:
+      tags:
+      - Evidence Portal
+      summary: Upload one evidence file (Evidence Portal)
+      operationId: uploadEvidenceAppFile
+      parameters:
+      - $ref: '#/components/parameters/ControlId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - folderPath
+              - file
+              properties:
+                folderPath:
+                  type: string
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: File uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileUploadResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/evidence-app/controls/{controlId}/submit:
+    post:
+      tags:
+      - Evidence Portal
+      summary: Submit an evidence round (Evidence Portal)
+      operationId: submitEvidenceAppRound
+      parameters:
+      - $ref: '#/components/parameters/ControlId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitEvidenceRequest'
+      responses:
+        '201':
+          description: Evidence submitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditEvidence'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/evidence-app/controls/{controlId}/population/upload-link:
+    get:
+      tags:
+      - Evidence Portal
+      summary: Get the population folder path (Evidence Portal)
+      operationId: getEvidenceAppPopulationUploadLink
+      parameters:
+      - $ref: '#/components/parameters/ControlId'
+      responses:
+        '200':
+          description: Upload link
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadLinkResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/evidence-app/controls/{controlId}/population/upload:
+    post:
+      tags:
+      - Evidence Portal
+      summary: Upload one population file (Evidence Portal)
+      operationId: uploadEvidenceAppPopulationFile
+      parameters:
+      - $ref: '#/components/parameters/ControlId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - folderPath
+              - file
+              properties:
+                folderPath:
+                  type: string
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: File uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileUploadResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/evidence-app/controls/{controlId}/population/submit:
+    post:
+      tags:
+      - Evidence Portal
+      summary: Submit the population round (Evidence Portal)
+      operationId: submitEvidenceAppPopulation
+      parameters:
+      - $ref: '#/components/parameters/ControlId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PopulationSubmitRequest'
+      responses:
+        '201':
+          description: Population submitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PopulationSubmitResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  # ---------------------------------------------------------------------------
+  # Risk Hub
+  # ---------------------------------------------------------------------------
+  /api/v1/teams:
+    get:
+      tags:
+      - Risk Teams
+      summary: List risk teams
+      operationId: listRiskTeams
+      parameters:
+      - name: type
+        in: query
+        description: 'Semantic filter: SOURCE_REGISTER returns team_type IN (SOURCE_REGISTER, BOTH); ASSIGNMENT returns IN (ASSIGNMENT, BOTH). Omit for all ACTIVE teams.'
+        schema:
+          type: string
+          enum:
+          - SOURCE_REGISTER
+          - ASSIGNMENT
+      - name: mine
+        in: query
+        description: '"true" restricts the list to the caller''s own risk teams. Only narrows anything for a team-scoped-only caller (Risk Assigner/Owner); Compliance/Management/Admin always see every team regardless.'
+        schema:
+          type: string
+          enum:
+          - 'true'
+          - 'false'
+      responses:
+        '200':
+          description: List of teams
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Team'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risk-scores:
+    get:
+      tags:
+      - Risk Scores
+      summary: List the risk score matrix
+      description: Returns all 9 cells of the likelihood × impact matrix.
+      operationId: listRiskScores
+      responses:
+        '200':
+          description: Risk score matrix
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RiskScore'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/compliance-references:
+    get:
+      tags:
+      - Risk Compliance References
+      summary: List compliance references
+      operationId: listRiskComplianceReferences
+      responses:
+        '200':
+          description: List of compliance references
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ComplianceReference'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risk-categories:
+    get:
+      tags:
+      - Risk Categories
+      summary: List risk categories
+      description: Fixed-but-extensible risk classifications (e.g. "PII / Sensitive Data Exposure").
+      operationId: listRiskCategories
+      responses:
+        '200':
+          description: List of risk categories
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RiskCategory'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/management-approvers:
+    get:
+      tags:
+      - Risk User Pickers
+      summary: List platform users who are Management Approver candidates
+      description: Every platform user who is also a member of the grc-platform-management Asgardeo group, resolved live via the SCIM Operations Service (this platform keeps no user↔role table of its own).
+      operationId: listManagementApprovers
+      responses:
+        '200':
+          description: List of candidate users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risk-owner-candidates:
+    get:
+      tags:
+      - Risk User Pickers
+      summary: List platform users who are Risk Owner candidates
+      description: Every platform user who is also a member of the grc-platform-risk-owner Asgardeo group. The Add Risk form further intersects this with team membership client-side.
+      operationId: listRiskOwnerCandidates
+      responses:
+        '200':
+          description: List of candidate users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/me/privileges:
+    get:
+      tags:
+      - Privileges
+      summary: Get the authenticated caller's resolved privileges
+      description: Union of all the caller's roles' privileges via the role_privilege mapping. When no privilege store is configured (local dev), returns allowAll=true instead of an enumerated list.
+      operationId: getMyPrivileges
+      responses:
+        '200':
+          description: Resolved privileges
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrivilegesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/employees/search:
+    get:
+      tags:
+      - Employees
+      summary: Search active WSO2 employees by email substring
+      description: 'Sourced live from the HR entity service on every call — never persisted in the GRC platform''s own database. Backs the "Identified By: Employee" and "Action Owner" pickers.'
+      operationId: searchEmployees
+      parameters:
+      - name: q
+        in: query
+        required: true
+        description: Search substring; queries shorter than 2 characters return an empty list without calling the HR entity.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Matching employees
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EmployeeOption'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/next-sequence-id:
+    get:
+      tags:
+      - Risks
+      summary: Preview the next risk sequence number
+      description: Does not reserve the number — the actual risk_code is assigned atomically on create.
+      operationId: getNextRiskSequenceID
+      parameters:
+      - name: source_register_id
+        in: query
+        required: true
+        schema:
+          type: integer
+      - name: year
+        in: query
+        required: true
+        schema:
+          type: integer
+      - name: quarter
+        in: query
+        required: true
+        schema:
+          type: string
+          enum:
+          - Q1
+          - Q2
+          - Q3
+          - Q4
+      responses:
+        '200':
+          description: Next sequence number
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NextSequenceIDResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks:
+    get:
+      tags:
+      - Risks
+      summary: List risks
+      description: Spreadsheet-style column filtering — every multi-value field is OR-matched within itself and AND-matched against the others. A caller who holds only CompleteActionSteps (Action Owner) is scoped to risks where they own an action plan.
+      operationId: listRisks
+      parameters:
+      - name: statuses
+        in: query
+        description: Comma-separated workflow_status values.
+        schema:
+          type: string
+      - name: team_id
+        in: query
+        description: Comma-separated source_register_id values.
+        schema:
+          type: string
+      - name: level
+        in: query
+        description: Comma-separated LOW | MEDIUM | HIGH values.
+        schema:
+          type: string
+      - name: search
+        in: query
+        description: Matched against risk_code and risk_title.
+        schema:
+          type: string
+      - name: risk_type
+        in: query
+        description: Comma-separated NEW | UPDATED values.
+        schema:
+          type: string
+      - name: owner_id
+        in: query
+        description: Comma-separated owner user IDs.
+        schema:
+          type: string
+      - name: submitted_from
+        in: query
+        description: created_at >= this date (YYYY-MM-DD).
+        schema:
+          type: string
+          format: date
+      - name: submitted_to
+        in: query
+        description: created_at <= this date (YYYY-MM-DD).
+        schema:
+          type: string
+          format: date
+      - name: due_from
+        in: query
+        description: implementation_date >= this date (YYYY-MM-DD).
+        schema:
+          type: string
+          format: date
+      - name: due_to
+        in: query
+        description: implementation_date <= this date (YYYY-MM-DD).
+        schema:
+          type: string
+          format: date
+      - name: due_overdue
+        in: query
+        description: '"true" to additionally restrict to implementation_date < today.'
+        schema:
+          type: string
+          enum:
+          - 'true'
+          - 'false'
+      - name: open_escalation
+        in: query
+        description: '"true" restricts to risks carrying an unresolved (OPEN) escalation — what the Overdue Risks tab filters on.'
+        schema:
+          type: string
+          enum:
+          - 'true'
+          - 'false'
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 50
+          maximum: 200
+      - name: offset
+        in: query
+        schema:
+          type: integer
+          default: 0
+      responses:
+        '200':
+          description: Paginated risk list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskListPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+      - Risks
+      summary: Create a risk
+      description: Atomically generates a risk code and creates the risk, action plan, steps, compliance-reference links, and change-log entry inside one DB transaction.
+      operationId: createRisk
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRiskRequest'
+      responses:
+        '201':
+          description: Risk created
+          headers:
+            Location:
+              description: /api/v1/risks/{id}
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateRiskResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}:
+    get:
+      tags:
+      - Risks
+      summary: Get a risk by ID
+      operationId: getRisk
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      responses:
+        '200':
+          description: Risk detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      tags:
+      - Risks
+      summary: Update a risk
+      description: Changing implementation_date, email_subject, or action_steps on an IN_REMEDIATION risk moves it to PENDING_AMENDMENT. All other fields are free-edit.
+      operationId: updateRisk
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRiskRequest'
+      responses:
+        '204':
+          description: Risk updated
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}/owner-approve:
+    post:
+      tags:
+      - Risk Workflow
+      summary: Risk owner's approval
+      description: Handles PENDING_RISK_OWNER_APPROVAL, PENDING_AMENDMENT, and PENDING_OWNER_COMPLETION_APPROVAL.
+      operationId: ownerApproveRisk
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      responses:
+        '204':
+          description: Approved
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}/management-approve:
+    post:
+      tags:
+      - Risk Workflow
+      summary: Management approval
+      description: PENDING_MANAGEMENT_APPROVAL → PENDING_COMPLIANCE_REVIEW.
+      operationId: managementApproveRisk
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      responses:
+        '204':
+          description: Approved
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}/approve:
+    post:
+      tags:
+      - Risk Workflow
+      summary: Compliance approval
+      description: PENDING_COMPLIANCE_REVIEW → IN_REMEDIATION.
+      operationId: approveRisk
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      responses:
+        '204':
+          description: Approved
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}/reject:
+    post:
+      tags:
+      - Risk Workflow
+      summary: Reject a risk at its current pending-approval stage
+      description: Routes to PENDING_REVISION from any pending-approval stage and stores rejection_stage. The privilege required depends on which stage the risk is currently at (owner/management/compliance).
+      operationId: rejectRisk
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RejectRiskRequest'
+      responses:
+        '204':
+          description: Rejected
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}/complete:
+    post:
+      tags:
+      - Risk Workflow
+      summary: Mark remediation complete
+      description: IN_REMEDIATION → PENDING_OWNER_COMPLETION_APPROVAL.
+      operationId: completeRisk
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      responses:
+        '204':
+          description: Marked complete
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}/resubmit:
+    post:
+      tags:
+      - Risk Workflow
+      summary: Resubmit a rejected risk
+      description: PENDING_REVISION → PENDING_RISK_OWNER_APPROVAL; clears rejection info.
+      operationId: resubmitRisk
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      responses:
+        '204':
+          description: Resubmitted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}/close:
+    post:
+      tags:
+      - Risk Workflow
+      summary: Close a risk
+      description: PENDING_COMPLIANCE_CLOSURE → CLOSED.
+      operationId: closeRisk
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      responses:
+        '204':
+          description: Closed
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}/cancel:
+    post:
+      tags:
+      - Risk Workflow
+      summary: Cancel a risk
+      description: Soft-deletes a risk by moving it to CANCELLED. Only valid from PENDING_RISK_OWNER_APPROVAL.
+      operationId: cancelRisk
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      responses:
+        '204':
+          description: Cancelled
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}/assess:
+    post:
+      tags:
+      - Risk Assessment
+      summary: Record a residual risk assessment
+      description: Distinct from "Submit for Approval" — stores a new risk_assessment row (likelihood, impact, progress, reassessment_date).
+      operationId: assessRisk
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAssessmentRequest'
+      responses:
+        '201':
+          description: Assessment recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskAssessment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/dashboard:
+    get:
+      tags:
+      - Risk Dashboard
+      summary: Get the assembled risk dashboard
+      operationId: getRiskDashboard
+      parameters:
+      - name: register_id
+        in: query
+        description: Optional; scopes the payload to one source register.
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/analytics/summary:
+    get:
+      tags:
+      - Risk Analytics
+      summary: Get the assembled risk analytics page
+      operationId: getRiskAnalyticsSummary
+      parameters:
+      - name: register_id
+        in: query
+        description: Optional; scopes the payload to one source register.
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: Analytics summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}/action-plans:
+    post:
+      tags:
+      - Risk Action Plans
+      summary: Add a further action plan to a risk
+      description: Adds an additional STANDARD plan to a risk that already has one from registration. Restricted to the risk's Risk Assigner (or a compliance admin override).
+      operationId: createActionPlan
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateActionPlanRequest'
+      responses:
+        '201':
+          description: Action plan created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionPlan'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    get:
+      tags:
+      - Risk Action Plans
+      summary: List action plans for a risk
+      description: Visible to anyone who can view the risk, including MANAGEMENT plans (an Action-Owner-only caller is further scoped to risks where they own a plan).
+      operationId: listRiskActionPlans
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      responses:
+        '200':
+          description: Action plans
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ActionPlan'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}/action-plans/{planId}/steps:
+    get:
+      tags:
+      - Risk Action Steps
+      summary: List steps for an action plan
+      operationId: listRiskActionPlanSteps
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      - $ref: '#/components/parameters/PlanId'
+      responses:
+        '200':
+          description: Action plan steps
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ActionPlanStep'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}/action-plans/{planId}/steps/{stepId}:
+    patch:
+      tags:
+      - Risk Action Steps
+      summary: Update an action plan step
+      description: How an Action Owner marks a step complete — applies uniformly to STANDARD and MANAGEMENT plans. Requires the caller to be the plan's action_owner_id.
+      operationId: updateRiskActionPlanStep
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      - $ref: '#/components/parameters/PlanId'
+      - $ref: '#/components/parameters/StepId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateActionPlanStepRequest'
+      responses:
+        '204':
+          description: Step updated
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}/action-plans/{planId}/complete:
+    post:
+      tags:
+      - Risk Action Plans
+      summary: Complete an action plan
+      description: Requires every step to already be COMPLETED (enforced entity-side). Notifies the risk's assigner that the risk is ready to be reassessed and resubmitted.
+      operationId: completeRiskActionPlan
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      - $ref: '#/components/parameters/PlanId'
+      responses:
+        '200':
+          description: Action plan completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionPlan'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}/escalate:
+    post:
+      tags:
+      - Risk Escalations
+      summary: Manually escalate an overdue risk
+      description: Manual trigger for Compliance/Admin to escalate an overdue IN_REMEDIATION risk on demand rather than waiting for the daily job. Creates an OPEN escalation and flips the risk to ESCALATED; a risk that has already moved on returns a 409.
+      operationId: escalateRisk
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      responses:
+        '200':
+          description: Escalation created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Escalation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}/escalations:
+    get:
+      tags:
+      - Risk Escalations
+      summary: List escalation history for a risk
+      operationId: listRiskEscalations
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      responses:
+        '200':
+          description: Escalation history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Escalation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}/escalations/{escalationId}/comment:
+    post:
+      tags:
+      - Risk Escalations
+      summary: Answer an escalation with a comment
+      description: Replaces the old MANAGEMENT action plan as the way an escalation is answered — a comment alone returns the risk to its assigner (ESCALATED → IN_REMEDIATION). Deliberately not privilege-gated beyond an authenticated session; the entitled commenter for a MEDIUM/LOW risk is a line manager frozen on the escalation row at escalation time, who holds no Risk Hub privilege. The real check is an identity match in the service against the risk's Management Approver (HIGH) or the frozen leads (MEDIUM/LOW), or a compliance-admin override.
+      operationId: commentOnEscalation
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      - $ref: '#/components/parameters/EscalationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EscalationCommentRequest'
+      responses:
+        '200':
+          description: Comment recorded; risk returned to its assigner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Escalation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}/history:
+    get:
+      tags:
+      - Risk History
+      summary: Get a risk's full chronological history
+      description: Every workflow event and field edit, behind the drawer's History tab. Visible to anyone who can view the risk — scoped the same as every other risk-detail endpoint.
+      operationId: listRiskHistory
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      responses:
+        '200':
+          description: History entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/HistoryEntry'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  # ---------------------------------------------------------------------------
+  # Shared User endpoints
+  # ---------------------------------------------------------------------------
+  /api/v1/me/profile:
+    get:
+      tags:
+      - Users
+      summary: Get the signed-in user's name and profile photo
+      description: Looked up from the HR entity service by the caller's own email — Asgardeo's token doesn't carry name/picture claims for this application.
+      operationId: getMyProfile
+      responses:
+        '200':
+          description: Profile (empty fields when no matching HR record)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyProfileResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/users:
+    get:
+      tags:
+      - Users
+      summary: List active users
+      description: Used by both Risk and Audit form dropdowns.
+      operationId: listUsers
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/users/resolve:
+    post:
+      tags:
+      - Users
+      summary: Resolve an employee's email to an internal user, provisioning one if needed
+      description: Links an HR entity employee (as returned by GET /api/v1/employees/search) to an internal user.id, creating the row on the fly when it doesn't exist. The display name is always looked up from the HR entity, never taken from the request body.
+      operationId: resolveUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveUserRequest'
+      responses:
+        '200':
+          description: Resolved (or newly provisioned) user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Asgardeo-issued JWT, validated by signature (RS256 via JWKS), issuer, and audience. Sent as `Authorization Bearer <token>`. Not required for GET /health.
+  parameters:
+    AuditId:
+      name: id
+      in: path
+      required: true
+      description: Audit ID.
+      schema:
+        type: integer
+    ControlId:
+      name: controlId
+      in: path
+      required: true
+      schema:
+        type: integer
+    FrameworkId:
+      name: id
+      in: path
+      required: true
+      description: Framework ID.
+      schema:
+        type: integer
+    FileId:
+      name: fileId
+      in: path
+      required: true
+      schema:
+        type: integer
+    RiskId:
+      name: id
+      in: path
+      required: true
+      description: Risk ID.
+      schema:
+        type: integer
+    PlanId:
+      name: planId
+      in: path
+      required: true
+      schema:
+        type: integer
+    StepId:
+      name: stepId
+      in: path
+      required: true
+      schema:
+        type: integer
+    EscalationId:
+      name: escalationId
+      in: path
+      required: true
+      schema:
+        type: integer
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Missing or invalid credentials
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: The caller lacks the privilege required for this action
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: The resource is not in a state that allows this action
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UnprocessableEntity:
+      description: The request is well-formed but refers to something that could not be verified (e.g. an unrecognised employee email)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    PayloadTooLarge:
+      description: Uploaded file exceeds the 25 MiB limit
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    TooManyRequests:
+      description: Per-caller rate limit exceeded (Evidence Portal proxy group; 10 req/s sustained, burst 20)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    # --- Shared -----------------------------------------------------------
+    Error:
+      type: object
+      description: Standard JSON error envelope returned on every non-2xx response.
+      properties:
+        message:
+          type: string
+    StatusResponse:
+      type: object
+      description: Generic status-change acknowledgement.
+      properties:
+        status:
+          type: string
+    FileUploadResult:
+      type: object
+      description: Returned by every proxied file-upload endpoint once the backend has written the blob to Azure.
+      properties:
+        fileName:
+          type: string
+          description: Sanitized base file name.
+        blobName:
+          type: string
+          description: Full blob path the client echoes back on submit.
+        size:
+          type: integer
+          format: int64
+    # --- Users (shared) -----------------------------------------------------
+    User:
+      type: object
+      description: Mirrors the shared `user` table owned by the Compliance Entity.
+      properties:
+        id:
+          type: integer
+        display_name:
+          type: string
+        email:
+          type: string
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - INACTIVE
+          - REMOVED
+        risk_team_ids:
+          type: array
+          items:
+            type: integer
+          description: The user's risk-team memberships (zero or more); empty, never null, when the user belongs to no risk team.
+    MyProfileResponse:
+      type: object
+      properties:
+        first_name:
+          type: string
+        last_name:
+          type: string
+        thumbnail_url:
+          type: string
+    ResolveUserRequest:
+      type: object
+      required:
+      - email
+      properties:
+        email:
+          type: string
+    # --- Audit Hub: lookups -------------------------------------------------
+    UserRef:
+      type: object
+      description: Lightweight user record for owner/auditor assignment dropdowns.
+      properties:
+        id:
+          type: integer
+        displayName:
+          type: string
+        email:
+          type: string
+        userType:
+          type: string
+          enum:
+          - INTERNAL
+          - EXTERNAL
+        profileUrl:
+          type: string
+          nullable: true
+    AuditTeam:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+    AuditFramework:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        version:
+          type: string
+          nullable: true
+        status:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateFrameworkRequest:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+          nullable: true
+    AuditFrameworkControl:
+      type: object
+      description: One immutable version of a control definition from the framework catalog.
+      properties:
+        id:
+          type: integer
+        frameworkId:
+          type: integer
+        controlNumber:
+          type: string
+        description:
+          type: string
+        evidenceRequirement:
+          type: string
+          nullable: true
+        requirementType:
+          type: string
+          enum:
+          - DESIGN
+          - OE
+        controlType:
+          type: string
+          enum:
+          - CONFIG
+          - NON_CONFIG
+        scope:
+          type: string
+          enum:
+          - COMMON
+          - PRODUCT_SPECIFIC
+        version:
+          type: integer
+        isCurrent:
+          type: boolean
+        createdOn:
+          type: string
+          format: date-time
+    FrameworkControlListResponse:
+      type: object
+      properties:
+        controls:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditFrameworkControl'
+        total:
+          type: integer
+    CreateFrameworkControlRequest:
+      type: object
+      required:
+      - controlNumber
+      - description
+      - requirementType
+      - controlType
+      - scope
+      properties:
+        controlNumber:
+          type: string
+        description:
+          type: string
+        evidenceRequirement:
+          type: string
+          nullable: true
+        requirementType:
+          type: string
+          enum:
+          - DESIGN
+          - OE
+        controlType:
+          type: string
+          enum:
+          - CONFIG
+          - NON_CONFIG
+        scope:
+          type: string
+          enum:
+          - COMMON
+          - PRODUCT_SPECIFIC
+    AuditProduct:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        status:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateProductRequest:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+    # --- Audit Hub: audits & controls ---------------------------------------
+    AuditFrameworkRef:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        version:
+          type: string
+          nullable: true
+    AuditProductRef:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+    ControlCounts:
+      type: object
+      properties:
+        total:
+          type: integer
+        approved:
+          type: integer
+        overdue:
+          type: integer
+    Audit:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        framework:
+          $ref: '#/components/schemas/AuditFrameworkRef'
+        product:
+          $ref: '#/components/schemas/AuditProductRef'
+        periodStart:
+          type: string
+          format: date
+        periodEnd:
+          type: string
+          format: date
+        status:
+          type: string
+        scopeDescription:
+          type: string
+          nullable: true
+        controlCounts:
+          $ref: '#/components/schemas/ControlCounts'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    AuditListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Audit'
+        total:
+          type: integer
+    CreateAuditRequest:
+      type: object
+      required:
+      - name
+      - frameworkId
+      - productId
+      - periodStart
+      - periodEnd
+      properties:
+        name:
+          type: string
+        frameworkId:
+          type: integer
+        productId:
+          type: integer
+        periodStart:
+          type: string
+          format: date
+        periodEnd:
+          type: string
+          format: date
+        scopeDescription:
+          type: string
+          nullable: true
+    UpdateAuditRequest:
+      type: object
+      description: All fields optional; omitted/null means "do not change".
+      properties:
+        name:
+          type: string
+          nullable: true
+        periodStart:
+          type: string
+          format: date
+          nullable: true
+        periodEnd:
+          type: string
+          format: date
+          nullable: true
+        scopeDescription:
+          type: string
+          nullable: true
+        status:
+          type: string
+          nullable: true
+    PopulationDetails:
+      type: object
+      description: OE-control population-phase fields, mapping to a row in audit_population.
+      properties:
+        description:
+          type: string
+        referenceNumber:
+          type: integer
+          nullable: true
+        dueDate:
+          type: string
+          format: date
+          nullable: true
+        comments:
+          type: string
+          nullable: true
+        ownerId:
+          type: integer
+          nullable: true
+        teamId:
+          type: integer
+          nullable: true
+    AddControlRequest:
+      type: object
+      required:
+      - controlNumber
+      - description
+      - requirementType
+      - controlType
+      - scope
+      properties:
+        controlSource:
+          type: string
+          description: Defaults to MANUAL.
+          enum:
+          - MANUAL
+          - COPIED
+          - CSV
+        controlNumber:
+          type: string
+        description:
+          type: string
+        evidenceRequirement:
+          type: string
+          nullable: true
+        requirementType:
+          type: string
+          enum:
+          - DESIGN
+          - OE
+        controlType:
+          type: string
+          enum:
+          - CONFIG
+          - NON_CONFIG
+        scope:
+          type: string
+          enum:
+          - COMMON
+          - PRODUCT_SPECIFIC
+        ownerId:
+          type: integer
+          nullable: true
+        teamId:
+          type: integer
+          nullable: true
+        auditorId:
+          type: integer
+          nullable: true
+        dueDate:
+          type: string
+          format: date
+          nullable: true
+        population:
+          nullable: true
+          anyOf:
+          - $ref: '#/components/schemas/PopulationDetails'
+          description: OE controls only.
+        pushToFramework:
+          type: boolean
+          description: Also writes the control into the audit's framework catalog as a new version.
+        sourceFrameworkControlId:
+          type: integer
+          nullable: true
+          description: Set when pushToFramework edits an existing catalog control rather than creating the first version.
+    BulkAddControlsRequest:
+      type: object
+      properties:
+        controls:
+          type: array
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/AddControlRequest'
+    UpdateControlRequest:
+      type: object
+      description: All fields optional; omitted/null means "do not change".
+      properties:
+        controlNumber:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        evidenceRequirement:
+          type: string
+          nullable: true
+        requirementType:
+          type: string
+          nullable: true
+          enum:
+          - DESIGN
+          - OE
+        controlType:
+          type: string
+          nullable: true
+          enum:
+          - CONFIG
+          - NON_CONFIG
+        scope:
+          type: string
+          nullable: true
+          enum:
+          - COMMON
+          - PRODUCT_SPECIFIC
+        ownerId:
+          type: integer
+          nullable: true
+        teamId:
+          type: integer
+          nullable: true
+        auditorId:
+          type: integer
+          nullable: true
+        dueDate:
+          type: string
+          format: date
+          nullable: true
+        population:
+          nullable: true
+          anyOf:
+          - $ref: '#/components/schemas/PopulationDetails'
+          description: Set only when editing an OE control's population details; null leaves them unchanged.
+    UpdateStatusRequest:
+      type: object
+      required:
+      - status
+      properties:
+        status:
+          type: string
+        comment:
+          type: string
+          nullable: true
+    AuditControl:
+      type: object
+      description: A control under evaluation within an audit. Owns its full definition text directly (never FK-linked to the framework catalog).
+      properties:
+        id:
+          type: integer
+        auditId:
+          type: integer
+        ownerId:
+          type: integer
+          nullable: true
+        ownerName:
+          type: string
+          nullable: true
+        teamId:
+          type: integer
+          nullable: true
+        teamName:
+          type: string
+          nullable: true
+        auditorId:
+          type: integer
+          nullable: true
+        auditorName:
+          type: string
+          nullable: true
+        auditorEmail:
+          type: string
+          nullable: true
+          description: Backs the assigned-auditor gate for population/sample/evidence validation.
+        controlNumber:
+          type: string
+        description:
+          type: string
+        evidenceRequirement:
+          type: string
+          nullable: true
+        requirementType:
+          type: string
+          enum:
+          - DESIGN
+          - OE
+        controlType:
+          type: string
+          enum:
+          - CONFIG
+          - NON_CONFIG
+        scope:
+          type: string
+          enum:
+          - COMMON
+          - PRODUCT_SPECIFIC
+        dueDate:
+          type: string
+          format: date
+          nullable: true
+        status:
+          type: string
+        sampleReference:
+          type: string
+          nullable: true
+        sampleFileUrl:
+          type: string
+          nullable: true
+        sampleFileName:
+          type: string
+          nullable: true
+        comments:
+          type: string
+          nullable: true
+        controlSource:
+          type: string
+          enum:
+          - MANUAL
+          - COPIED
+          - CSV
+        isManuallyAdded:
+          type: boolean
+        isOverdue:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        populationDescription:
+          type: string
+          nullable: true
+        populationComments:
+          type: string
+          nullable: true
+        populationDueDate:
+          type: string
+          format: date
+          nullable: true
+        populationOwnerName:
+          type: string
+          nullable: true
+        populationTeamName:
+          type: string
+          nullable: true
+    ControlListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditControl'
+        total:
+          type: integer
+    # --- Audit Hub: evidence / population / sample --------------------------
+    AuditEvidenceFile:
+      type: object
+      properties:
+        id:
+          type: integer
+        evidenceId:
+          type: integer
+        fileName:
+          type: string
+        filePath:
+          type: string
+        fileType:
+          type: string
+          nullable: true
+        fileSize:
+          type: integer
+          format: int64
+          nullable: true
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        readUrl:
+          type: string
+          nullable: true
+          description: Backend proxy download URL, computed at list time.
+    AuditEvidence:
+      type: object
+      description: One evidence submission round for a control.
+      properties:
+        id:
+          type: integer
+        controlId:
+          type: integer
+        status:
+          type: string
+        folderPath:
+          type: string
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditEvidenceFile'
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    UploadLinkResponse:
+      type: object
+      properties:
+        folderPath:
+          type: string
+          description: Azure Blob prefix to use for this upload session (human-readable, deterministic — not per-session).
+        expiresAt:
+          type: string
+          format: date-time
+    EvidenceFileRef:
+      type: object
+      description: Identifies one already-uploaded blob by its stored blob name and original file name.
+      properties:
+        blobName:
+          type: string
+        fileName:
+          type: string
+    SubmitEvidenceRequest:
+      type: object
+      properties:
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/EvidenceFileRef'
+    PopulationSubmitRequest:
+      type: object
+      properties:
+        folderPath:
+          type: string
+    AuditPopulation:
+      type: object
+      description: One population round for an OE control. A control normally has exactly one round for its whole lifecycle.
+      properties:
+        id:
+          type: integer
+        controlId:
+          type: integer
+        status:
+          type: string
+          enum:
+          - PENDING
+          - SUBMITTED
+          - COMPLIANCE_APPROVED
+          - COMPLIANCE_REJECTED
+          - APPROVED
+          - AUDITOR_REJECTED
+        referenceNumber:
+          type: integer
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        dueDate:
+          type: string
+          format: date
+          nullable: true
+        comments:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    PopulationFile:
+      type: object
+      properties:
+        id:
+          type: integer
+        populationId:
+          type: integer
+        fileKind:
+          type: string
+          enum:
+          - POPULATION
+          - SAMPLE
+        fileName:
+          type: string
+        filePath:
+          type: string
+        fileType:
+          type: string
+          nullable: true
+        fileSize:
+          type: integer
+          format: int64
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        readUrl:
+          type: string
+          nullable: true
+    PopulationView:
+      type: object
+      properties:
+        round:
+          nullable: true
+          anyOf:
+          - $ref: '#/components/schemas/AuditPopulation'
+        populationFiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/PopulationFile'
+        sampleFiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/PopulationFile'
+        sampleReference:
+          type: string
+          nullable: true
+    PopulationSubmitResult:
+      type: object
+      properties:
+        populationId:
+          type: integer
+        controlId:
+          type: integer
+        status:
+          type: string
+        folderPath:
+          type: string
+        fileCount:
+          type: integer
+    ReviewDecisionRequest:
+      type: object
+      required:
+      - decision
+      properties:
+        decision:
+          type: string
+          enum:
+          - APPROVE
+          - REJECT
+        comment:
+          type: string
+          nullable: true
+    SampleSubmitRequest:
+      type: object
+      properties:
+        folderPath:
+          type: string
+        note:
+          type: string
+    SampleSubmitResult:
+      type: object
+      properties:
+        status:
+          type: string
+        fileCount:
+          type: integer
+    # --- Audit Hub: comments, trail, AI validation --------------------------
+    AuditComment:
+      type: object
+      properties:
+        id:
+          type: integer
+        controlId:
+          type: integer
+        parentCommentId:
+          type: integer
+          nullable: true
+        content:
+          type: string
+        isInternal:
+          type: boolean
+          description: Hides the comment from external auditors.
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    AddCommentRequest:
+      type: object
+      required:
+      - content
+      properties:
+        content:
+          type: string
+        isInternal:
+          type: boolean
+        parentCommentId:
+          type: integer
+          nullable: true
+    CommentListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditComment'
+    AuditTrailEntry:
+      type: object
+      description: One immutable event in a control's (or audit's) history.
+      properties:
+        id:
+          type: integer
+          format: int64
+        action:
+          type: string
+          enum:
+          - CREATED
+          - UPLOADED
+          - RESUBMITTED
+          - APPROVED
+          - REJECTED
+          - COMMENTED
+          - ESCALATED
+          - AI_VALIDATED
+          - EXPORTED
+          - UPDATED
+          - DELETED
+        controlId:
+          type: integer
+          nullable: true
+          description: Nil for audit-level events.
+        evidenceId:
+          type: integer
+          nullable: true
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        details:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Raw JSON recorded with the event (e.g. {"from","to","via"}), passed through untouched.
+    TrailListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditTrailEntry'
+        total:
+          type: integer
+    AIValidationLog:
+      type: object
+      description: One AI evidence-validation run. Advisory only — never gates the workflow.
+      properties:
+        id:
+          type: integer
+          format: int64
+        evidenceId:
+          type: integer
+        controlId:
+          type: integer
+        result:
+          type: string
+          enum:
+          - PASS
+          - FAIL
+          - UNCERTAIN
+          - PENDING
+          - ERROR
+        gapsFound:
+          type: string
+          nullable: true
+          description: JSON array of gap objects.
+        feedback:
+          type: string
+          nullable: true
+          description: JSON array of submitter-facing action strings.
+        summary:
+          type: string
+          nullable: true
+        confidenceScore:
+          type: number
+          format: double
+          nullable: true
+        createdBy:
+          type: string
+          nullable: true
+        createdOn:
+          type: string
+          format: date-time
+    AIValidationListResponse:
+      type: object
+      properties:
+        validations:
+          type: array
+          items:
+            $ref: '#/components/schemas/AIValidationLog'
+    # --- Audit Hub: dashboard -------------------------------------------------
+    AuditStats:
+      type: object
+      properties:
+        totalAudits:
+          type: integer
+        activeAudits:
+          type: integer
+        completedAudits:
+          type: integer
+        archivedAudits:
+          type: integer
+    DashboardStats:
+      type: object
+      properties:
+        totalControls:
+          type: integer
+        completedControls:
+          type: integer
+        overdueControls:
+          type: integer
+        evidenceRequiredControls:
+          type: integer
+        completionPercent:
+          type: number
+          format: double
+        totalActionItems:
+          type: integer
+    StatusCount:
+      type: object
+      properties:
+        status:
+          type: string
+        count:
+          type: integer
+    TeamCompletion:
+      type: object
+      properties:
+        team:
+          type: string
+        completed:
+          type: integer
+        total:
+          type: integer
+        overdue:
+          type: integer
+    TeamStatusCount:
+      type: object
+      properties:
+        team:
+          type: string
+        status:
+          type: string
+        count:
+          type: integer
+    ActionItem:
+      type: object
+      properties:
+        controlId:
+          type: integer
+        auditId:
+          type: integer
+        auditName:
+          type: string
+        controlNumber:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+        dueDate:
+          type: string
+          format: date
+        team:
+          type: string
+        processOwner:
+          type: string
+        teamId:
+          type: integer
+          nullable: true
+        ownerId:
+          type: integer
+          nullable: true
+    OverdueControl:
+      type: object
+      properties:
+        controlId:
+          type: integer
+        auditId:
+          type: integer
+        auditName:
+          type: string
+        controlNumber:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+        dueDate:
+          type: string
+          format: date
+        team:
+          type: string
+        processOwner:
+          type: string
+        teamId:
+          type: integer
+          nullable: true
+        ownerId:
+          type: integer
+          nullable: true
+    DashboardData:
+      type: object
+      properties:
+        auditStats:
+          $ref: '#/components/schemas/AuditStats'
+        stats:
+          $ref: '#/components/schemas/DashboardStats'
+        statusDistribution:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatusCount'
+        teamCompletion:
+          type: array
+          items:
+            $ref: '#/components/schemas/TeamCompletion'
+        teamStatusDistribution:
+          type: array
+          items:
+            $ref: '#/components/schemas/TeamStatusCount'
+        actionItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActionItem'
+        dueSoonItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActionItem'
+        overdueControls:
+          type: array
+          items:
+            $ref: '#/components/schemas/OverdueControl'
+    WorkQueuePage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActionItem'
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+    # --- Evidence Portal ------------------------------------------------------
+    EvidenceAppAudit:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        product:
+          type: string
+        framework:
+          type: string
+        periodStart:
+          type: string
+          format: date
+        periodEnd:
+          type: string
+          format: date
+    EvidenceAppControlInfo:
+      type: object
+      properties:
+        id:
+          type: integer
+        number:
+          type: string
+        description:
+          type: string
+        evidenceRequirement:
+          type: string
+          nullable: true
+        requirementType:
+          type: string
+          enum:
+          - DESIGN
+          - OE
+        status:
+          type: string
+        phase:
+          type: string
+          enum:
+          - POPULATION
+          - EVIDENCE
+        dueDate:
+          type: string
+          format: date
+          nullable: true
+    EvidenceAppControl:
+      type: object
+      properties:
+        audit:
+          $ref: '#/components/schemas/EvidenceAppAudit'
+        control:
+          $ref: '#/components/schemas/EvidenceAppControlInfo'
+        baseFolderPath:
+          type: string
+          description: Server-computed, phase-aware Azure Blob prefix — never trusted from a client.
+    # --- Risk Hub: lookups ------------------------------------------------------
+    Team:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        code:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        team_type:
+          type: string
+        status:
+          type: string
+    RiskScore:
+      type: object
+      description: One cell of the 3×3 likelihood × impact matrix.
+      properties:
+        id:
+          type: integer
+        likelihood:
+          type: integer
+        impact:
+          type: integer
+        risk_rating:
+          type: integer
+        risk_level:
+          type: string
+        color_code:
+          type: string
+    ComplianceReference:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+    PrivilegesResponse:
+      type: object
+      properties:
+        privileges:
+          type: array
+          items:
+            type: string
+        allowAll:
+          type: boolean
+          description: True only when no privilege store is configured (local dev) — signals the frontend to grant everything.
+    EmployeeOption:
+      type: object
+      description: Sourced live from the HR entity service; never persisted.
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+    NextSequenceIDResponse:
+      type: object
+      properties:
+        next_sequence_id:
+          type: integer
+    # --- Risk Hub: risks ------------------------------------------------------
+    CreateActionStepRequest:
+      type: object
+      properties:
+        description:
+          type: string
+    CreateRiskRequest:
+      type: object
+      required:
+      - year
+      - quarter
+      - source_register_id
+      - risk_title
+      - risk_description
+      - identified_by_type
+      - assigner_id
+      - risk_identified_date
+      - likelihood
+      - impact
+      - impact_description
+      - implementation_date
+      - reassessment_date
+      - assignment_team_id
+      - owner_id
+      - management_approver_id
+      - action_owner_id
+      - action_plan_description
+      - action_steps
+      - treatment_strategy
+      - email_subject
+      properties:
+        year:
+          type: integer
+        quarter:
+          type: string
+          enum:
+          - Q1
+          - Q2
+          - Q3
+          - Q4
+        source_register_id:
+          type: integer
+        risk_title:
+          type: string
+        risk_description:
+          type: string
+        compliance_reference_ids:
+          type: array
+          items:
+            type: integer
+        identified_by_type:
+          type: string
+          enum:
+          - EMPLOYEE
+          - EXTERNAL_PERSON
+          - TOOL
+        identified_by_name:
+          type: string
+          nullable: true
+          description: Ignored when identified_by_type is EMPLOYEE — the server derives it from identified_by_email instead.
+        identified_by_email:
+          type: string
+          nullable: true
+          description: Required when identified_by_type is EMPLOYEE.
+        assigner_id:
+          type: integer
+        risk_identified_date:
+          type: string
+          format: date
+        risk_category_ids:
+          type: array
+          items:
+            type: integer
+          description: Writes risk_category_reference rows. Genuinely many-to-many, though the Add Risk form only ever sends one today via a single-select dropdown.
+        likelihood:
+          type: integer
+          minimum: 1
+          maximum: 3
+        impact:
+          type: integer
+          minimum: 1
+          maximum: 3
+        impact_description:
+          type: string
+        implementation_date:
+          type: string
+          format: date
+        reassessment_date:
+          type: string
+          format: date
+        assignment_team_id:
+          type: integer
+        owner_id:
+          type: integer
+        management_approver_id:
+          type: integer
+          description: Required on every risk regardless of level or treatment strategy — names who approves PENDING_MANAGEMENT_APPROVAL/PENDING_MANAGEMENT_CLOSURE_APPROVAL (ACCEPT+HIGH risks only) and who an ESCALATED HIGH risk's escalation is answered by.
+        action_owner_id:
+          type: integer
+        action_plan_description:
+          type: string
+        action_steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/CreateActionStepRequest'
+        treatment_strategy:
+          type: string
+        progress:
+          type: string
+        git_issue_url:
+          type: string
+        email_subject:
+          type: string
+        remarks:
+          type: string
+    CreateRiskResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        risk_code:
+          type: string
+    RiskListItem:
+      type: object
+      description: Lightweight row DTO for GET /api/v1/risks; joins resolve display names so the table needs no secondary fetches.
+      properties:
+        id:
+          type: integer
+        risk_code:
+          type: string
+        risk_title:
+          type: string
+        source_register_name:
+          type: string
+        risk_level:
+          type: string
+        risk_level_color:
+          type: string
+        owner_name:
+          type: string
+        assigner_name:
+          type: string
+        workflow_status:
+          type: string
+        risk_type:
+          type: string
+          enum:
+          - NEW
+          - UPDATED
+        implementation_date:
+          type: string
+          format: date
+          nullable: true
+        rejection_comment:
+          type: string
+          nullable: true
+        rejection_stage:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    RiskListPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RiskListItem'
+        total:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer
+    ActionPlanStep:
+      type: object
+      properties:
+        id:
+          type: integer
+        plan_id:
+          type: integer
+        step_no:
+          type: integer
+        description:
+          type: string
+          nullable: true
+        status:
+          type: string
+        completed_date:
+          type: string
+          format: date
+          nullable: true
+    ActionPlanDetail:
+      type: object
+      description: ActionPlan with its steps embedded, used inside RiskDetail.
+      properties:
+        id:
+          type: integer
+        action_owner_id:
+          type: integer
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        status:
+          type: string
+        plan_type:
+          type: string
+          enum:
+          - STANDARD
+          - MANAGEMENT
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActionPlanStep'
+    RiskAssessment:
+      type: object
+      description: One residual risk reassessment entry.
+      properties:
+        id:
+          type: integer
+        risk_id:
+          type: integer
+        score_id:
+          type: integer
+        progress:
+          type: string
+        reassessment_date:
+          type: string
+          format: date
+        assessed_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        residual_likelihood:
+          type: integer
+        residual_impact:
+          type: integer
+        residual_rating:
+          type: integer
+        residual_level:
+          type: string
+        residual_color_code:
+          type: string
+        is_initial:
+          type: boolean
+          description: Marks a synthetic entry representing the risk's gross score, prepended so the assessment log shows the full lineage.
+    RiskDetail:
+      type: object
+      description: Enriched DTO returned by GET /api/v1/risks/{id}.
+      properties:
+        id:
+          type: integer
+        risk_code:
+          type: string
+        risk_year:
+          type: integer
+        risk_quarter:
+          type: string
+        risk_title:
+          type: string
+        risk_description:
+          type: string
+        risk_identified_date:
+          type: string
+          format: date
+          nullable: true
+        identified_by_type:
+          type: string
+          nullable: true
+        identified_by_name:
+          type: string
+          nullable: true
+        assigner_id:
+          type: integer
+        owner_id:
+          type: integer
+        management_approver_id:
+          type: integer
+        impact_description:
+          type: string
+          nullable: true
+        treatment_strategy:
+          type: string
+          nullable: true
+        source_register_id:
+          type: integer
+        assignment_team_id:
+          type: integer
+        progress:
+          type: string
+          nullable: true
+        implementation_date:
+          type: string
+          format: date
+          nullable: true
+        reassessment_date:
+          type: string
+          format: date
+          nullable: true
+        git_issue_url:
+          type: string
+          nullable: true
+        email_subject:
+          type: string
+          nullable: true
+        remarks:
+          type: string
+          nullable: true
+        workflow_status:
+          type: string
+        risk_type:
+          type: string
+          enum:
+          - NEW
+          - UPDATED
+        rejection_comment:
+          type: string
+          nullable: true
+        rejection_stage:
+          type: string
+          nullable: true
+        owner_first_approved_at:
+          type: string
+          format: date-time
+          nullable: true
+        compliance_approval_date:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        source_register_name:
+          type: string
+        assignment_team_name:
+          type: string
+        owner_name:
+          type: string
+        assigner_name:
+          type: string
+        management_approver_name:
+          type: string
+        compliance_approver_name:
+          type: string
+          nullable: true
+        gross_score:
+          nullable: true
+          anyOf:
+          - $ref: '#/components/schemas/RiskScore'
+          description: The original rating assigned at creation; immutable once a risk owner has approved the risk.
+        effective_score:
+          nullable: true
+          anyOf:
+          - $ref: '#/components/schemas/RiskScore'
+          description: The current residual score — the latest reassessment's score when one exists, else the gross score. This is what tables/headers should display.
+        compliance_references:
+          type: array
+          items:
+            $ref: '#/components/schemas/ComplianceReference'
+        risk_categories:
+          type: array
+          items:
+            $ref: '#/components/schemas/RiskCategory'
+        action_plan:
+          nullable: true
+          anyOf:
+          - $ref: '#/components/schemas/ActionPlanDetail'
+        assessments:
+          type: array
+          items:
+            $ref: '#/components/schemas/RiskAssessment'
+    UpdateActionStepRequest:
+      type: object
+      properties:
+        id:
+          type: integer
+          nullable: true
+        description:
+          type: string
+    UpdateRiskRequest:
+      type: object
+      required:
+      - risk_title
+      - risk_description
+      - email_subject
+      properties:
+        risk_title:
+          type: string
+        risk_description:
+          type: string
+        risk_identified_date:
+          type: string
+          format: date
+        identified_by_type:
+          type: string
+          description: Empty/omitted means "leave Identified By unchanged".
+          enum:
+          - ''
+          - EMPLOYEE
+          - EXTERNAL_PERSON
+          - TOOL
+        identified_by_name:
+          type: string
+          nullable: true
+        identified_by_email:
+          type: string
+          nullable: true
+        assigner_id:
+          type: integer
+          nullable: true
+        owner_id:
+          type: integer
+          nullable: true
+        management_approver_id:
+          type: integer
+          nullable: true
+        impact_description:
+          type: string
+        compliance_reference_ids:
+          type: array
+          items:
+            type: integer
+        risk_category_ids:
+          type: array
+          items:
+            type: integer
+        progress:
+          type: string
+        git_issue_url:
+          type: string
+        remarks:
+          type: string
+        treatment_strategy:
+          type: string
+        assignment_team_id:
+          type: integer
+          nullable: true
+        action_plan_description:
+          type: string
+        action_owner_id:
+          type: integer
+          nullable: true
+        implementation_date:
+          type: string
+          format: date
+          description: Restricted — changing this on an IN_REMEDIATION risk triggers PENDING_AMENDMENT.
+        email_subject:
+          type: string
+          description: Restricted — changing this on an IN_REMEDIATION risk triggers PENDING_AMENDMENT.
+        action_steps:
+          type: array
+          description: Restricted — changing this on an IN_REMEDIATION risk triggers PENDING_AMENDMENT.
+          items:
+            $ref: '#/components/schemas/UpdateActionStepRequest'
+        reassessment_date:
+          type: string
+          format: date
+          description: Full-edit only (editable before risk owner approval).
+        gross_score_id:
+          type: integer
+          nullable: true
+          description: Full-edit only (editable before risk owner approval).
+    RejectRiskRequest:
+      type: object
+      required:
+      - rejection_comment
+      properties:
+        rejection_comment:
+          type: string
+    CreateAssessmentRequest:
+      type: object
+      required:
+      - likelihood
+      - impact
+      - progress
+      - reassessment_date
+      properties:
+        likelihood:
+          type: integer
+          minimum: 1
+          maximum: 3
+        impact:
+          type: integer
+          minimum: 1
+          maximum: 3
+        progress:
+          type: string
+        reassessment_date:
+          type: string
+          format: date
+    # --- Risk Hub: action plans / escalations ----------------------------------
+    ActionPlan:
+      type: object
+      properties:
+        id:
+          type: integer
+        risk_id:
+          type: integer
+        action_owner_id:
+          type: integer
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        status:
+          type: string
+        completed_date:
+          type: string
+          format: date
+          nullable: true
+        plan_type:
+          type: string
+          description: Always STANDARD on new plans. MANAGEMENT plans were how an escalation used to be answered before that was replaced by a comment (see POST .../escalations/{escalationId}/comment); the value is kept only because historical rows may still carry it.
+          enum:
+          - STANDARD
+          - MANAGEMENT
+        created_by:
+          type: string
+          nullable: true
+    CreateActionPlanRequest:
+      type: object
+      properties:
+        description:
+          type: string
+        action_owner_id:
+          type: integer
+          nullable: true
+        plan_type:
+          type: string
+          enum:
+          - STANDARD
+          - MANAGEMENT
+        steps:
+          type: array
+          items:
+            type: string
+    UpdateActionPlanStepRequest:
+      type: object
+      properties:
+        description:
+          type: string
+        status:
+          type: string
+        completed_date:
+          type: string
+          format: date
+          nullable: true
+    RiskCategory:
+      type: object
+      description: A fixed-but-extensible risk classification (e.g. "PII / Sensitive Data Exposure").
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+    Escalation:
+      type: object
+      description: Created automatically by the compliance-entity's daily overdue-risk job, or manually via POST /api/v1/risks/{id}/escalate. Answered with a comment (POST .../escalations/{escalationId}/comment), which returns the risk to its assigner; the escalation itself stays OPEN until the assigner submits the risk for completion approval.
+      properties:
+        id:
+          type: integer
+        risk_id:
+          type: integer
+        new_treatment_strategy:
+          type: string
+          nullable: true
+        action_plan_id:
+          type: integer
+          nullable: true
+        decision:
+          type: string
+          nullable: true
+          description: The management/lead comment that returned the risk to its assigner. Nil until someone comments.
+        status:
+          type: string
+          enum:
+          - OPEN
+          - RESOLVED
+        created_at:
+          type: string
+          format: date-time
+    EscalationCommentRequest:
+      type: object
+      required:
+      - comment
+      properties:
+        comment:
+          type: string
+    HistoryEntry:
+      type: object
+      description: One event in a risk's history (risk_change_log). Either a field diff (field_changed + old_value/new_value) or an event (details) — CREATE is used for both risk creation and action-plan creation, so it does not always imply a field diff.
+      properties:
+        id:
+          type: integer
+          format: int64
+        risk_id:
+          type: integer
+        action:
+          type: string
+          enum:
+          - CREATE
+          - UPDATE
+          - DELETE
+          - SUBMIT
+          - APPROVE
+          - REJECT
+          - ESCALATE
+          - COMMENT
+          - ASSESS
+          - COMPLETE
+          - CLOSE
+          - CANCEL
+        field_changed:
+          type: string
+          nullable: true
+        old_value:
+          type: string
+          nullable: true
+        new_value:
+          type: string
+          nullable: true
+        details:
+          type: object
+          nullable: true
+          description: 'Passed through untouched; shape varies by action, e.g. {"from","to","role","comment","stage","level","previousLevel","overdueDays","plan"}.'
+          additionalProperties: true
+        created_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    # --- Risk Hub: dashboard ----------------------------------------------------
+    RiskStatusSummary:
+      type: object
+      properties:
+        total:
+          type: integer
+        open:
+          type: integer
+        closed:
+          type: integer
+        overdue:
+          type: integer
+    RegisterTreatmentCount:
+      type: object
+      properties:
+        register_name:
+          type: string
+        treatment_strategy:
+          type: string
+        count:
+          type: integer
+    RiskLevelCount:
+      type: object
+      properties:
+        risk_level:
+          type: string
+        color_code:
+          type: string
+        count:
+          type: integer
+    HeatmapCell:
+      type: object
+      properties:
+        likelihood:
+          type: integer
+        impact:
+          type: integer
+        risk_level:
+          type: string
+        color_code:
+          type: string
+        count:
+          type: integer
+    RegisterCertShare:
+      type: object
+      properties:
+        register_name:
+          type: string
+        cert_name:
+          type: string
+        count:
+          type: integer
+        percentage:
+          type: number
+          format: double
+    RegisterStatusLevelCount:
+      type: object
+      properties:
+        bucket:
+          type: string
+          description: CLOSED, or an open risk's treatment strategy.
+        risk_level:
+          type: string
+        color_code:
+          type: string
+        count:
+          type: integer
+    RegisterAnalytics:
+      type: object
+      description: One per-register dashboard section. Registers with no risks at all are omitted.
+      properties:
+        register_id:
+          type: integer
+        register_name:
+          type: string
+        open_count:
+          type: integer
+        heatmap:
+          type: array
+          items:
+            $ref: '#/components/schemas/HeatmapCell'
+        status_levels:
+          type: array
+          items:
+            $ref: '#/components/schemas/RegisterStatusLevelCount'
+    RepeatedRiskOccurrence:
+      type: object
+      properties:
+        register_name:
+          type: string
+        status:
+          type: string
+          enum:
+          - OPEN
+          - CLOSED
+        risk_level:
+          type: string
+        color_code:
+          type: string
+    RepeatedComplianceRisk:
+      type: object
+      description: One cert-tagged risk title that appears in two or more source registers.
+      properties:
+        risk_title:
+          type: string
+        occurrences:
+          type: array
+          items:
+            $ref: '#/components/schemas/RepeatedRiskOccurrence'
+    HighRiskItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        risk_code:
+          type: string
+        risk_title:
+          type: string
+        register_name:
+          type: string
+        owner_name:
+          type: string
+        identified_date:
+          type: string
+          format: date
+          nullable: true
+        treatment_strategy:
+          type: string
+          nullable: true
+        implementation_date:
+          type: string
+          format: date
+          nullable: true
+    DashboardSummary:
+      type: object
+      description: Full payload for GET /api/v1/risks/dashboard. CANCELLED risks are excluded everywhere; every field is open-risks-only except registers[].status_levels.
+      properties:
+        summary:
+          $ref: '#/components/schemas/RiskStatusSummary'
+        treatment_by_register:
+          type: array
+          items:
+            $ref: '#/components/schemas/RegisterTreatmentCount'
+        level_counts:
+          type: array
+          items:
+            $ref: '#/components/schemas/RiskLevelCount'
+        org_heatmap:
+          type: array
+          items:
+            $ref: '#/components/schemas/HeatmapCell'
+        cert_distribution:
+          type: array
+          items:
+            $ref: '#/components/schemas/RegisterCertShare'
+        registers:
+          type: array
+          items:
+            $ref: '#/components/schemas/RegisterAnalytics'
+        repeated_compliance_risks:
+          type: array
+          items:
+            $ref: '#/components/schemas/RepeatedComplianceRisk'
+        high_risks:
+          type: array
+          items:
+            $ref: '#/components/schemas/HighRiskItem'
+    # --- Risk Hub: analytics ----------------------------------------------------
+    AnalyticsKPIs:
+      type: object
+      properties:
+        new_risks_this_month:
+          type: integer
+        avg_days_to_close:
+          type: number
+          format: double
+          nullable: true
+        avg_effective_score:
+          type: number
+          format: double
+          nullable: true
+    TrendPoint:
+      type: object
+      properties:
+        month:
+          type: string
+          description: First-of-month date, YYYY-MM-01.
+        identified_count:
+          type: integer
+        closed_count:
+          type: integer
+        avg_score:
+          type: number
+          format: double
+          nullable: true
+    MonthLevelCount:
+      type: object
+      properties:
+        month:
+          type: string
+        risk_level:
+          type: string
+        color_code:
+          type: string
+        count:
+          type: integer
+    MonthRegisterCount:
+      type: object
+      properties:
+        month:
+          type: string
+        register_name:
+          type: string
+        count:
+          type: integer
+    RegisterShare:
+      type: object
+      properties:
+        register_name:
+          type: string
+        count:
+          type: integer
+    ComplianceShare:
+      type: object
+      properties:
+        compliance_name:
+          type: string
+        count:
+          type: integer
+    TreatmentShare:
+      type: object
+      properties:
+        treatment_strategy:
+          type: string
+        count:
+          type: integer
+    WorkflowStageCount:
+      type: object
+      properties:
+        workflow_status:
+          type: string
+        count:
+          type: integer
+    AgingRiskItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        risk_code:
+          type: string
+        risk_title:
+          type: string
+        register_name:
+          type: string
+        owner_name:
+          type: string
+        risk_level:
+          type: string
+        color_code:
+          type: string
+        identified_date:
+          type: string
+          format: date
+          nullable: true
+        age_days:
+          type: integer
+    AnalyticsSummary:
+      type: object
+      description: Full payload for GET /api/v1/risks/analytics/summary — the "over time" companion to DashboardSummary's point-in-time snapshot.
+      properties:
+        kpis:
+          $ref: '#/components/schemas/AnalyticsKPIs'
+        trend:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrendPoint'
+        level_distribution:
+          type: array
+          items:
+            $ref: '#/components/schemas/MonthLevelCount'
+        identified_by_register:
+          type: array
+          items:
+            $ref: '#/components/schemas/MonthRegisterCount'
+        closed_by_register:
+          type: array
+          items:
+            $ref: '#/components/schemas/MonthRegisterCount'
+        register_shares:
+          type: array
+          items:
+            $ref: '#/components/schemas/RegisterShare'
+        compliance_distribution:
+          type: array
+          items:
+            $ref: '#/components/schemas/ComplianceShare'
+        treatment_mix:
+          type: array
+          items:
+            $ref: '#/components/schemas/TreatmentShare'
+        workflow_funnel:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowStageCount'
+        aging_risks:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgingRiskItem'

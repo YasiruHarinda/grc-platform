@@ -59,7 +59,7 @@ var validBlobPath = regexp.MustCompile(
 		`|audit/` + blobSegment + `/` + blobSegment + `/population/sample/[^/]+` +
 		`|risk/` + blobSegment + `/(?:risk-evidence-attachment|risk-action-plan-completion-attachment)/[^/]+)$`)
 
-// validBlobPrefix permits the folder prefixes used for listing (they end in "/"):
+// validBlobPrefix permits the folder prefixes used for listing (trailing slash optional):
 //   - audit/{auditName}/{controlNumber}/evidence/
 //   - audit/{auditName}/{controlNumber}/population/
 //   - audit/{auditName}/{controlNumber}/population/sample/

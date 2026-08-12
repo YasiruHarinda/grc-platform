@@ -23,6 +23,7 @@ type Props = {
   entityType: string;
   entityName: string;
   impact?: CascadeImpact[];
+  warnings?: string[];
   error?: string | null;
 };
 
@@ -35,6 +36,7 @@ export default function ConfirmDeleteDialog({
   entityType,
   entityName,
   impact = [],
+  warnings = [],
   error = null,
 }: Props) {
   const totalImpact = impact.reduce((sum, i) => sum + i.count, 0);
@@ -65,6 +67,18 @@ export default function ConfirmDeleteDialog({
             </Box>
             .
           </Typography>
+
+          {warnings.length > 0 && (
+            <Alert severity="error" sx={{ "& .MuiAlert-message": { width: "100%" } }}>
+              <Stack spacing={0.25}>
+                {warnings.map((warning, i) => (
+                  <Typography key={i} variant="body2">
+                    {warning}
+                  </Typography>
+                ))}
+              </Stack>
+            </Alert>
+          )}
 
           {impactLoading ? (
             <Typography variant="caption" color="text.secondary">

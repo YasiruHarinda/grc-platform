@@ -9,6 +9,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Awaitable, Callable
+from urllib.parse import urlparse
 
 from browser_use import ActionResult, Agent, BrowserProfile, BrowserSession, Tools
 
@@ -112,7 +113,46 @@ _EACH_PAGE_RE = re.compile(r"^\s*EACH-PAGE\s*:\s*(.+)$", re.IGNORECASE | re.DOTA
 # subtask whose CAPTURE step differs: export the page as a PDF (after
 # expanding any "Load more" content) instead of the usual scrolling
 # screenshots. See _capture_evidence_pdf() and its use in execute_task().
+# When the text after "PDF:" contains a link, the step runs with no LLM at
+# all — see _first_http_url() and execute_task().
 _PDF_RE = re.compile(r"^\s*PDF\s*:\s*(.+)$", re.IGNORECASE | re.DOTALL)
+
+_HTTP_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+
+# Characters that end a sentence far more often than they end a link. Without
+# trimming them, "PDF: <url>/issues/61." would open ".../issues/61." — a 404
+# captured as evidence, with no agent around to notice.
+_URL_TAIL_PUNCT = ".,;:!?\"'"
+_URL_TAIL_BRACKETS = {")": "(", "]": "[", "}": "{"}
+
+
+def _first_http_url(text: str) -> str:
+    """The first http(s) link in `text`, with trailing sentence punctuation
+    trimmed off. Empty string when the text holds no link at all.
+
+    Used to decide whether a "PDF:" step needs an LLM. It does not, whenever
+    a link is present: the capture prints exactly ONE page, so the link is
+    the only part of the step that can change the outcome. Words around it
+    are either things the capture already does in code ("expand all
+    comments", "export as PDF") or things a one-page print cannot honour
+    anyway ("also check the linked PR" would navigate away and capture the
+    wrong page). See execute_task().
+    """
+    match = _HTTP_URL_RE.search(text or "")
+    if not match:
+        return ""
+    url = match.group(0)
+    while url:
+        tail = url[-1]
+        if tail in _URL_TAIL_PUNCT:
+            url = url[:-1]
+        # A closing bracket is only punctuation if nothing inside the url
+        # opened it, so a real link like /wiki/Foo_(bar) keeps its tail.
+        elif tail in _URL_TAIL_BRACKETS and url.count(_URL_TAIL_BRACKETS[tail]) < url.count(tail):
+            url = url[:-1]
+        else:
+            break
+    return url
 
 # "FILTER:" deterministically fills a list's own local filter/search box
 # (never the page's global search bar) via code, before any LLM is involved
@@ -138,7 +178,9 @@ def parse_subtasks(prompt: str) -> list[dict]:
     _expand_template_subtask() once the item count is known.
 
     "PDF: <instruction>" is a literal subtask that gets captured as a PDF
-    instead of scrolling screenshots.
+    instead of scrolling screenshots. If the instruction names a link,
+    execute_task opens it with a plain browser call and runs no LLM for that
+    step at all.
 
     "FILTER: <text>" deterministically fills the current page's own local
     list filter/search box with <text> — no LLM call for the common case.
@@ -352,14 +394,21 @@ async def _expand_template_subtask(
     context_prefix: str,
     max_steps: int,
     base_url: str | None = None,
-) -> list[str]:
-    """Run a discovery agent pass, then expand a template subtask into
-    concrete literal subtask strings.
+) -> list[dict]:
+    """Run a discovery pass, then expand a template subtask into concrete
+    subtask specs — dicts of {"text", "kind", ...} that execute_task splices
+    into its worklist.
 
     kind == "each": discovers a list of item names, substitutes each into
       `template_text` wherever "{item}" appears (or appends the name if the
-      placeholder is missing).
-    kind == "each_page": discovers the total page count, produces one
+      placeholder is missing). Always "literal" — the agent runs them.
+    kind == "each_page" ON AZURE: the page count is read from the grid's own
+      "1 - 10 of 34" label in code, and the generated subtasks are "azure_page"
+      specs carrying their page number, which execute_task walks to with the
+      pager arrows — no model at any point. See _azure_total_pages().
+    kind == "each_page" ELSEWHERE (AWS, GitHub): unchanged. Those consoles
+      render real numbered page links in the top frame, which the agent finds
+      and clicks reliably, so it discovers the total page count, produces one
       subtask for page 1 and one for the last page (or just page 1 if there's
       only one page), substituting "{page}". Each generated subtask is
       prefixed with an explicit instruction to navigate the pagination
@@ -436,12 +485,34 @@ async def _expand_template_subtask(
                 items = by_name
 
         return [
-            template_text.format(item=name) if "{item}" in template_text
-            else f"{template_text} (item: {name})"
+            {
+                "kind": "literal",
+                "text": template_text.format(item=name) if "{item}" in template_text
+                else f"{template_text} (item: {name})",
+            }
             for name in items if str(name).strip()
         ]
 
     if kind == "each_page":
+        def _page_text(p: int) -> str:
+            return template_text.format(page=p) if "{page}" in template_text else f"{template_text} (page: {p})"
+
+        # Azure first: the pager label answers "how many pages" exactly, so no
+        # model is asked to find a control it cannot see or do the division in
+        # its head. Falls through to the model path if the label is absent
+        # (an unpaginated blade, or a grid still showing skeletons).
+        if _is_azure_portal(base_url):
+            total_pages, page_size = await _azure_total_pages(browser)
+            if total_pages:
+                pages = [1] if total_pages <= 1 else [1, total_pages]
+                print(f"[runner]   EACH-PAGE: Azure pager reads {total_pages} page(s) "
+                      f"at {page_size}/page; capturing {pages}")
+                return [
+                    {"kind": "azure_page", "page": p, "page_size": page_size, "text": _page_text(p)}
+                    for p in pages
+                ]
+            print("[runner]   EACH-PAGE: no Azure pager label found; falling back to the model")
+
         discovery_task = DISCOVERY_EACH_PAGE_INSTRUCTIONS + context_prefix + location_note + template_text
         agent = Agent(task=discovery_task, llm=llm, browser=browser, use_vision=True, max_actions_per_step=3)
         history = await agent.run(max_steps=max_steps)
@@ -454,11 +525,13 @@ async def _expand_template_subtask(
             print(f"[runner]   EACH-PAGE: discovery did not return valid JSON, defaulting to 1 page. Got: {raw_result[:2000]!r}")
         pages = [1] if total_pages <= 1 else [1, total_pages]
         return [
-            (
-                f"Use the pagination control (usually at the bottom of the list/table) to navigate to "
-                f"page {p} of the results — if you are not already on it. Then: "
-                + (template_text.format(page=p) if "{page}" in template_text else f"{template_text} (page: {p})")
-            )
+            {
+                "kind": "literal",
+                "text": (
+                    f"Use the pagination control (usually at the bottom of the list/table) to navigate to "
+                    f"page {p} of the results — if you are not already on it. Then: " + _page_text(p)
+                ),
+            }
             for p in pages
         ]
 
@@ -1197,10 +1270,396 @@ async def _read_azure_list_names(browser: "BrowserSession") -> list[str]:
     return names
 
 
+# ── Azure grid pagination (read the range label, walk with the next arrow) ──
+#
+# Azure browse lists page with a "1 - 10 of 34" range label, a strip of page
+# numbers, and prev/next chevrons. None of it is reachable by the agent: the
+# whole pager sits inside Azure's cross-origin blade iframe, which
+# browser-use's own find_elements cannot see into. _cdp_eval_in_frames can.
+#
+# A real run showed what that costs. The agent searched
+# `button[aria-label^='Page ']`, got 0 elements, mis-clicked "More content
+# actions" three times, took two loop-detection nudges, gave up after nine
+# steps — and the page-1 screenshot was still filed as if it were page 4.
+# Its 0-element result was honest, though: the numbers carry no aria-label,
+# only text. They were always there; nothing could see them.
+#
+# So both halves of EACH-PAGE are code here. The range label gives the page
+# count exactly, with no arithmetic done in a model's head. The number strip
+# gives movement, VERIFIED by re-reading the label rather than assumed from a
+# click landing.
+# Defined as a FUNCTION rather than run directly, because two scripts need it:
+# the label read itself, and the frame score that decides which frame the pager
+# click should land in (see _AZURE_PAGE_SCORE_JS).
+_AZURE_LABEL_FN_JS = """
+  function findRangeLabel() {
+    // "1 - 10 of 34", "1 – 10 of 1,204", "1-10 of 34" — Azure varies the dash
+    // and thousands-separates the total on large subscriptions.
+    const RE = /(\\d[\\d,]*)\\s*[-\\u2013\\u2014]\\s*(\\d[\\d,]*)\\s+of\\s+(\\d[\\d,]*)/i;
+    const num = s => parseInt(String(s).replace(/,/g, ''), 10);
+    let best = null;
+    for (const el of deepQuery('span, div, p, td, label')) {
+      if (el.children.length > 0) continue;  // leaf nodes only — never a wrapper
+      const txt = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+      if (!txt || txt.length > 60) continue;
+      const m = txt.match(RE);
+      if (!m) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      // The grid's own pager sits at the FOOT of the list, so when more than one
+      // "x of y" is on screen the lowest one is the one that governs this list.
+      if (!best || rect.top > best.top) {
+        best = { first: num(m[1]), last: num(m[2]), total: num(m[3]), top: rect.top };
+      }
+    }
+    return best;
+  }
+"""
+
+_AZURE_RANGE_LABEL_JS = """
+(() => {
+  __SHADOW__
+  __LABEL_FN__
+  return findRangeLabel();
+})()
+"""
+
+# FALLBACK ONLY — see _AZURE_PAGE_NUMBERS_JS for the primary route. A real run
+# proved the forward arrow is not findable this way on the Virtual networks
+# blade: its chevrons are icons with no text, no aria-label and no button role,
+# so all three checks below miss and the walk reported "no next arrow found".
+# Kept for blades that render a labelled arrow and no page numbers at all.
+#
+# The match is anchored deliberately — "next page", exactly "next", or a bare
+# chevron. A loose \bnext\b also hits things like "Next steps wizard", and on
+# a read-only capture run clicking that would navigate away from the evidence
+# page entirely. "More content actions" (the button a real run mis-clicked
+# three times) and "Previous page" are both correctly skipped.
+_AZURE_NEXT_PAGE_JS = """
+(() => {
+  __SHADOW__
+  for (const el of deepQuery('button, a, [role="button"]')) {
+    const label = ((el.getAttribute('aria-label') || '') + ' ' +
+                   (el.getAttribute('title') || '') + ' ' +
+                   (el.textContent || '')).replace(/\\s+/g, ' ').trim().toLowerCase();
+    if (!label) continue;
+    if (!/\\bnext\\s*page\\b|^next$|^[>\\u203a\\u00bb]$/.test(label)) continue;
+    if (el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
+    if (el.className && String(el.className).toLowerCase().includes('disabled')) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    el.click();
+    return true;
+  }
+  return false;
+})()
+"""
+
+
+# PRIMARY route to another page. The blade renders a strip of page numbers
+# ("1 2 3 4 5") which a person clicks directly. They carry no aria-label — which
+# is why the agent's own `button[aria-label^='Page ']` found nothing and
+# concluded, wrongly, that Azure has no page numbers at all — but their text is
+# real and that is enough to find them.
+#
+# The strip is a WINDOW centred on the current page, not the whole range. Real
+# behaviour, measured by hand on a 25-page list: page 1 shows 1-5; clicking 4
+# shows 2-6; clicking 6 shows 4-8; and so on until 25 appears. So when the
+# target is not on screen, clicking the LARGEST visible number slides the window
+# forward and the target eventually comes into view. Nothing here assumes the
+# window is five wide or that a click advances by two — both are read fresh each
+# time, so a three- or nine-wide strip works unchanged.
+#
+# Picking the strip out of the page: collect small clickable elements whose text
+# is nothing but digits, group them by screen row, and keep the largest group
+# whose values run consecutively (…4,5,6,7…). That shape occurs in a pager and
+# essentially nowhere else, so the "Display count: 10" dropdown sitting on the
+# same row is not mistaken for a page number — it is a lone value, not a run.
+_AZURE_STRIP_FN_JS = """
+  function findPageStrip() {
+    const cands = [];
+    for (const el of deepQuery('a, button, [role="button"], [role="link"], li, span, div')) {
+      if (el.children.length > 0) continue;  // leaf nodes only
+      const txt = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+      if (!/^\\d{1,4}$/.test(txt)) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      if (rect.width > 80 || rect.height > 60) continue;  // a page chip is small
+      cands.push({ el: el, n: parseInt(txt, 10), top: rect.top, left: rect.left });
+    }
+    let best = null;
+    for (const seed of cands) {
+      // Every number on the row, in screen order, duplicates INCLUDED. Removing
+      // duplicates is what jammed a 29-page walk at page 9: "Display count: 10"
+      // sits to the LEFT of the numbers, so it claimed the value 10 and the real
+      // page-10 button was dropped as a repeat. That split 7,8,9,10,11 into
+      // 7,8,9 and 11, leaving 9 as the largest — the page it was already on, so
+      // it clicked itself forever. Only ever bites when the display count is
+      // also a real page number, which is why 20, 50, 100 and 200 per page all
+      // worked and only 10 did not.
+      const strip = cands.filter(c => Math.abs(c.top - seed.top) < 12)
+                         .sort((a, b) => a.left - b.left);
+      if (strip.length < 2) continue;  // a lone number is not a pager
+      // Longest consecutive RUN inside the row, not the whole row: the display
+      // count is a value on this line that is not a page, and requiring the
+      // entire row to run consecutively would let it disqualify the real strip
+      // beside it. A stray number simply ends one run and starts another.
+      let run = [strip[0]], bestRun = run;
+      for (let i = 1; i < strip.length; i++) {
+        run = (strip[i].n === strip[i - 1].n + 1) ? run.concat([strip[i]]) : [strip[i]];
+        if (run.length > bestRun.length) bestRun = run;
+      }
+      if (bestRun.length < 2) continue;
+      if (!best || bestRun.length > best.length) best = bestRun;
+    }
+    return best;
+  }
+"""
+
+_AZURE_PAGE_CLICK_JS = """
+(() => {
+  __SHADOW__
+  __STRIP_FN__
+  const strip = findPageStrip();
+  if (!strip) return null;
+  const TARGET = __TARGET__;
+  // The target if it is on screen, otherwise the largest number there — which
+  // slides the window forward without ever moving backwards.
+  const pick = strip.find(c => c.n === TARGET) || strip[strip.length - 1];
+  const clickable = pick.el.closest('a, button, [role="button"], [role="link"], li') || pick.el;
+  clickable.click();
+  return { clicked: pick.n, numbers: strip.map(c => c.n) };
+})()
+"""
+
+# Ranks a frame's claim to BE the live pager, so the click lands there and not
+# in a leftover blade frame. Azure keeps old iframes around, and taking the
+# first frame that answers is how a real 29-page walk stuck at page 9: it
+# clicked a dead strip over and over while the live page sat unchanged. The
+# user clicked the same number by hand, the live blade redrew, the stale frame
+# went away — and the runner's own clicks worked again all the way to 29.
+#
+# The range label is the tiebreaker because it comes from the grid itself: the
+# frame whose label agrees with where we currently ARE is the live one.
+_AZURE_PAGE_SCORE_JS = """
+(() => {
+  __SHADOW__
+  __STRIP_FN__
+  __LABEL_FN__
+  if (!findPageStrip()) return 0;          // no pager here at all
+  const label = findRangeLabel();
+  if (!label) return 1;                    // a strip, but nothing to confirm it
+  return label.first === __FIRST__ ? 3 : 2;  // 3 = agrees with where we are
+})()
+"""
+
+
+async def _azure_click_page_number(
+    browser: "BrowserSession", target_page: int, current_first: int
+) -> int | None:
+    """Click `target_page` in the pager's number strip, or the largest number
+    visible if the target is not on screen yet. Returns the number actually
+    clicked, or None when no page-number strip exists on this blade (the caller
+    then falls back to the arrow).
+
+    `current_first` is the range label's first index as we last read it, used
+    only to identify the live frame — see _AZURE_PAGE_SCORE_JS. Scoring every
+    frame instead of taking the first that answers is what `_run_in_best_frame`
+    exists for, and skipping it here is what made a 29-page walk stall on a
+    dead pager.
+    """
+    shadow = _SHADOW_WALK_JS
+    score_js = (_AZURE_PAGE_SCORE_JS
+                .replace("__SHADOW__", shadow)
+                .replace("__STRIP_FN__", _AZURE_STRIP_FN_JS)
+                .replace("__LABEL_FN__", _AZURE_LABEL_FN_JS)
+                .replace("__FIRST__", str(int(current_first))))
+    click_js = (_AZURE_PAGE_CLICK_JS
+                .replace("__SHADOW__", shadow)
+                .replace("__STRIP_FN__", _AZURE_STRIP_FN_JS)
+                .replace("__TARGET__", str(int(target_page))))
+    try:
+        result = await _run_in_best_frame(browser, score_js, click_js)
+    except Exception:
+        return None
+    if not isinstance(result, dict):
+        return None
+    clicked = result.get("clicked")
+    if not isinstance(clicked, (int, float)):
+        return None
+    return int(clicked)
+
+
+async def _azure_read_range(browser: "BrowserSession") -> dict | None:
+    """Read the Azure grid's "first - last of total" pager label, in code.
+
+    Returns {"first", "last", "total", "size"} or None when this page has no
+    such label (an unpaginated blade, or a list still rendering skeletons).
+    `size` is the rows-per-page implied by the CURRENT window, which is only
+    trustworthy on a full page — the last page is short, so callers must take
+    their page size from the first reading, not a later one.
+    """
+    js = (_AZURE_RANGE_LABEL_JS
+          .replace("__SHADOW__", _SHADOW_WALK_JS)
+          .replace("__LABEL_FN__", _AZURE_LABEL_FN_JS))
+    try:
+        found = await _cdp_eval_in_frames(browser, js)
+    except Exception:
+        return None
+    if not isinstance(found, dict):
+        return None
+    try:
+        first, last, total = int(found["first"]), int(found["last"]), int(found["total"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if first < 1 or last < first or total < last:
+        return None  # a nonsense reading (mid-render) is worse than no reading
+    return {"first": first, "last": last, "total": total, "size": last - first + 1}
+
+
+async def _azure_total_pages(browser: "BrowserSession") -> tuple[int, int]:
+    """(total_pages, page_size) for the Azure list currently on screen, or
+    (0, 0) if the pager label could not be read. Derived from the label rather
+    than counted, so it costs nothing and cannot be mis-divided."""
+    rng = await _azure_read_range(browser)
+    if not rng or rng["size"] <= 0:
+        return 0, 0
+    size = rng["size"]
+    total_pages = max(1, -(-rng["total"] // size))  # ceil without importing math
+    return total_pages, size
+
+
+# How many times one page step is attempted before the walk stops. Three is
+# enough to ride out a pager caught mid-redraw without letting a genuinely
+# stuck list spin: a step that cannot move will not move on the third try.
+_PAGER_CLICK_ATTEMPTS = 3
+
+
+async def _azure_wait_for_move(browser: "BrowserSession", before_first: int) -> dict | None:
+    """Wait for the range label's first index to change away from
+    `before_first`, and return the new reading. None if it never moved.
+
+    This is the only proof a click did anything. The label is authoritative
+    because it comes from the grid itself, not from whatever the click landed
+    on — so a click into a detached node reads as "did not move" rather than
+    as success.
+    """
+    for _ in range(12):  # up to ~6s — Azure re-renders the grid lazily
+        await asyncio.sleep(0.5)
+        candidate = await _azure_read_range(browser)
+        if candidate and candidate["first"] != before_first:
+            return candidate
+    return None
+
+
+async def _azure_go_to_page(browser: "BrowserSession", target_page: int, page_size: int) -> int:
+    """Walk the pager FORWARD to `target_page` and return the page actually
+    reached (0 if the pager could not be read at all).
+
+    Forward only, and by clicking page numbers: the target if it is on screen,
+    otherwise the largest number that is, which slides the window until the
+    target appears. A 2- or 3-page list therefore takes ONE click, because the
+    target is visible from the start. Blades with no number strip fall back to
+    the forward arrow, one page per press.
+
+    Whichever route is used, the range label is re-read after every click until
+    it moves, and a click that changed nothing is RETRIED before the walk gives
+    up. Retrying is not defensive padding here: the strip is a sliding window
+    with no jump-to-last, so page 29 of 29 costs about thirteen clicks in a row
+    and every one of them has to land. A real run died on its second click for
+    exactly this reason — it fired the moment the range label changed, while
+    Azure was still swapping the pager out, so it clicked a button that had
+    already been detached.
+
+    Only when every attempt at the same step fails does the walk stop, and it
+    still returns the page it actually reached rather than the one asked for.
+    """
+    if page_size <= 0:
+        return 0
+    rng = await _azure_read_range(browser)
+    if not rng:
+        return 0
+    page_of = lambda first: ((first - 1) // page_size) + 1  # noqa: E731
+    current = page_of(rng["first"])
+
+    # Worst case is one page per click (a two-wide strip, or the arrow
+    # fallback), so the target itself bounds the walk. The margin absorbs a
+    # pager that starts part-way through the range.
+    budget = target_page + 5
+
+    while current < target_page and budget > 0:
+        budget -= 1
+        before = rng["first"]
+        moved = None
+        route = ""
+
+        for attempt in range(_PAGER_CLICK_ATTEMPTS):
+            if attempt:
+                # Longer than the settle below: if the first click was lost to
+                # a mid-swap pager, the blade needs time to finish before the
+                # control is found again from scratch.
+                await asyncio.sleep(1.5)
+
+            clicked = await _azure_click_page_number(browser, target_page, before)
+            if clicked is not None:
+                route = f"page number {clicked}"
+            else:
+                try:
+                    arrow = await _cdp_eval_in_frames(
+                        browser, _AZURE_NEXT_PAGE_JS.replace("__SHADOW__", _SHADOW_WALK_JS)
+                    )
+                except Exception:
+                    arrow = None
+                if not arrow:
+                    continue  # nothing clickable this time round — try again
+                route = "next arrow"
+
+            moved = await _azure_wait_for_move(browser, before)
+            if moved:
+                break
+            print(f"[runner]   EACH-PAGE: clicked {route} on page {current} but the list did not move "
+                  f"(attempt {attempt + 1} of {_PAGER_CLICK_ATTEMPTS})")
+
+        if not moved:
+            if route:
+                print(f"[runner]   EACH-PAGE: gave up on page {current} — {route} would not move the list")
+            else:
+                print(f"[runner]   EACH-PAGE: no page numbers and no next arrow on page {current}; stopping there")
+            break
+
+        rng = moved
+        current = page_of(rng["first"])
+        print(f"[runner]   EACH-PAGE: clicked {route} → now on page {current}")
+        # The range label updates BEFORE the pager finishes redrawing, so the
+        # next click has to wait for the blade rather than for the label.
+        await asyncio.sleep(1.0)
+
+    return current
+
+
 def _is_azure_portal(url: str | None) -> bool:
     """True only when the browser is on the Azure Portal — the gate that keeps
-    all Azure-specific hardening from ever touching AWS/GitHub runs."""
-    return bool(url) and "portal.azure.com" in url
+    all Azure-specific hardening from ever touching AWS/GitHub runs.
+
+    Matched on the host, not by searching the whole URL. A substring test also
+    accepted addresses that merely *mention* the portal, and the realistic one
+    is not exotic: signing in to Azure goes through a Microsoft login page
+    carrying the portal as its post-login destination
+    (`.../authorize?...redirect_uri=https%3A%2F%2Fportal.azure.com%2F`). That
+    is a login page, not the portal, and it would have turned on the pager
+    walk, the scroll-offset capture and the extra tool instructions while
+    sitting on it.
+
+    Subdomains count. The failure that matters here is the gate reading False
+    on a real portal page, because that is the one that silently restores
+    every behaviour the Azure work replaced; a host Azure adds later should
+    keep working rather than quietly fall back.
+
+    Every caller reads its URL from `window.location.href`, so the value is
+    always absolute and always carries a scheme.
+    """
+    host = (urlparse(url).hostname or "").lower() if url else ""
+    return host == "portal.azure.com" or host.endswith(".portal.azure.com")
 
 
 # Registered only for Azure subtasks (see execute_task). Tells the LLM to reach
@@ -1310,6 +1769,58 @@ def _build_azure_tools(browser: "BrowserSession") -> "Tools":
     return tools
 
 
+# AZURE ONLY (see _capture_scrolling_screenshots). Sums every scroll offset on
+# the page into one number, so "did that wheel event move anything" becomes a
+# measurement rather than a guess about pixels.
+#
+# Why a sum of everything rather than window.scrollY: the Azure blade does not
+# scroll the document at all. The grid scrolls inside its own container, nested
+# in a cross-origin iframe, sometimes inside a shadow root. Adding every
+# element's scrollTop together sidesteps having to identify which container is
+# the real one — if anything anywhere moved, the total changes.
+_SCROLL_POSITION_JS = """
+(() => {
+  __SHADOW__
+  let total = (window.scrollY || 0);
+  const doc = document.scrollingElement;
+  if (doc) total += (doc.scrollTop || 0);
+  for (const el of deepQuery('*')) {
+    const st = el.scrollTop;
+    if (st) total += st;
+  }
+  return total;
+})()
+"""
+
+
+async def _scroll_signature(browser: "BrowserSession") -> float | None:
+    """One number standing for "how far down is everything scrolled", summed
+    across every frame. None when no frame could be read at all.
+
+    Deliberately NOT routed through _cdp_eval_in_frames: that returns the first
+    truthy frame, and at the top of a page every frame legitimately reads 0,
+    which is falsy. Summing every frame also means a page whose scrolling lives
+    in an iframe is measured the same way as one that scrolls its document.
+    """
+    js = _SCROLL_POSITION_JS.replace("__SHADOW__", _SHADOW_WALK_JS)
+    try:
+        client, session_ids = await _cdp_sessions(browser)
+    except Exception:
+        return None
+    if not client:
+        return None
+    total, read_any = 0.0, False
+    for sid in session_ids:
+        try:
+            value = await _cdp_eval_session(client, sid, js)
+        except Exception:
+            continue
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            total += float(value)
+            read_any = True
+    return total if read_any else None
+
+
 def _screens_nearly_identical(a: bytes, b: bytes, threshold: float = 0.015) -> bool:
     """Cheap perceptual comparison: downscale both images to a small grayscale
     thumbnail and compare mean absolute pixel difference. Used to detect
@@ -1382,44 +1893,74 @@ async def _capture_scrolling_screenshots(browser: "BrowserSession", max_shots: i
 
     paths: list[Path] = []
     probes: list[bytes] = []
+    positions: list[float | None] = []
+
+    # AZURE ONLY — everywhere else this stays False and every line below runs
+    # exactly as it always has. Comparing pictures works on AWS, GitHub and
+    # Wikipedia because their whole document scrolls, so every pixel shifts.
+    # It fails on Azure, where the left menu, top bar, command bar, filter row
+    # and pager never move and only a table of small grey text does: shrunk to
+    # a 64x64 grey thumbnail, one row of text averages out the same as the
+    # next, the mean difference lands under the threshold, and the run reads as
+    # "bottom reached" after two scrolls. The user watched the page scroll while
+    # that happened, so the frames were real — captured, then deleted by the
+    # trim below as duplicates. That is evidence loss, not a missing extra shot.
+    #
+    # So on Azure the stop signal is the scroll offset itself. If nothing moved,
+    # nothing moved; there is no judgement involved. Falls back to the pixel
+    # comparison per-step if no frame will report a position.
+    by_scroll = _is_azure_portal(url)
+
+    def _same_place(pos_a: float | None, pos_b: float | None, img_a: bytes, img_b: bytes) -> bool:
+        if by_scroll and pos_a is not None and pos_b is not None:
+            return abs(pos_a - pos_b) < 1.0
+        return _screens_nearly_identical(img_a, img_b)
 
     # First frame — top of the page.
     await _snap_here()
     probes.append(await _probe())
+    positions.append(await _scroll_signature(browser) if by_scroll else None)
 
     # Cover the WHOLE page: scroll ~0.9 viewport each step (≈10% overlap, so no
     # strip is ever skipped between shots) and ALWAYS take a screenshot at the new
     # position — we NEVER skip a capture, so no part of the page can be missed
-    # even if a frame happens to look similar to the previous one. The "looks the
-    # same" check only decides when to STOP: after TWO no-move scrolls in a row we
-    # conclude we've reached the bottom (a single one can be a wheel event that
-    # landed on a fixed/non-scrolling region and moved nothing). The couple of
-    # duplicate frames captured at the very bottom are trimmed afterward.
+    # even if a frame happens to look similar to the previous one. The "same
+    # place" check only decides when to STOP: after TWO no-move scrolls in a row
+    # we conclude we've reached the bottom (a single one can be a wheel event
+    # that landed on a fixed/non-scrolling region and moved nothing). The couple
+    # of duplicate frames captured at the very bottom are trimmed afterward.
     consecutive_same = 0
     for _ in range(max_shots - 1):
         await _wheel_scroll(browser, viewport_h * 0.9)
         await asyncio.sleep(0.5)
         probe = await _probe()
+        pos = await _scroll_signature(browser) if by_scroll else None
         await _snap_here()  # capture BEFORE deciding anything — never skip a strip
-        if _screens_nearly_identical(probes[-1], probe):
+        same = _same_place(positions[-1], pos, probes[-1], probe)
+        probes.append(probe)
+        positions.append(pos)
+        if same:
             consecutive_same += 1
-            probes.append(probe)
             if consecutive_same >= 2:
                 break  # two scrolls in a row moved nothing → bottom reached
             continue
         consecutive_same = 0
-        probes.append(probe)
 
     # Drop the trailing duplicate frames captured at the bottom (where scrolling
     # no longer moved the page), so evidence isn't padded with identical shots —
     # only exact trailing duplicates, never a real content frame.
-    while len(paths) > 1 and _screens_nearly_identical(probes[-1], probes[-2]):
+    while len(paths) > 1 and _same_place(positions[-2], positions[-1], probes[-2], probes[-1]):
         dup = paths.pop()
         probes.pop()
+        positions.pop()
         try:
             dup.unlink()
         except Exception:
             pass
+
+    if by_scroll:
+        print(f"[runner]   capture: {len(paths)} screenshot(s) over scroll "
+              f"{positions[0]} → {positions[-1]}")
 
     return paths
 
@@ -1439,6 +1980,11 @@ async def _capture_evidence_screenshots(browser: "BrowserSession", history) -> l
         await browser.take_screenshot(path=str(p), full_page=False)
         return [p]
     except Exception:
+        # `history` is None for subtasks that ran without an agent (a "PDF:"
+        # link, an EACH-PAGE Azure page walk), so there is no run to salvage
+        # a frame from — only the two attempts above could have produced one.
+        if history is None:
+            return []
         screenshots = history.screenshots()
         if screenshots:
             return [_save_screenshot_local(screenshots[-1])]
@@ -1817,12 +2363,12 @@ async def execute_task(
             base_url = await _cdp_eval(browser, "window.location.href")
 
             try:
-                expanded_texts = await _expand_template_subtask(
+                expanded = await _expand_template_subtask(
                     subtask_obj["kind"], subtask_obj["text"], llm, browser, context_prefix, max_steps,
                     base_url=base_url,
                 )
             except Exception as exc:
-                expanded_texts = []
+                expanded = []
                 subtask_obj["status"] = "completed"
                 subtask_obj["result"] = f"Discovery failed: {exc}"
                 subtask_obj["completed_at"] = time.time()
@@ -1830,7 +2376,7 @@ async def execute_task(
                 idx += 1
                 continue
 
-            if not expanded_texts:
+            if not expanded:
                 subtask_obj["status"] = "completed"
                 subtask_obj["result"] = "Discovery found no matching items."
                 subtask_obj["completed_at"] = time.time()
@@ -1839,9 +2385,11 @@ async def execute_task(
                 continue
 
             new_entries = [
-                {"index": 0, "text": t, "kind": "literal", "status": "pending", "result": None, "screenshots": [],
+                {"index": 0, "text": spec["text"], "kind": spec.get("kind", "literal"),
+                 "page": spec.get("page"), "page_size": spec.get("page_size"),
+                 "status": "pending", "result": None, "screenshots": [],
                  "usage": None, "base_url": base_url}
-                for t in expanded_texts
+                for spec in expanded
             ]
             subtask_states[idx:idx + 1] = new_entries
             for i, s in enumerate(subtask_states):
@@ -1912,41 +2460,118 @@ async def execute_task(
 
         snap = (counter.input_tokens, counter.output_tokens, counter.calls)
         is_pdf = subtask_obj.get("kind") == "pdf"
-        extra_instructions = PDF_EXPAND_INSTRUCTIONS if is_pdf else ""
 
-        # Azure Portal hardening — gated strictly on the current URL so AWS and
-        # GitHub runs are byte-for-byte unchanged (no extra tools, no extra
-        # instructions, no extra wait). On Azure we (1) hand the agent the two
-        # deterministic helpers (click_menu_item / fill_list_filter) that resolve
-        # their target fresh at click time and so survive Azure's constant
-        # re-rendering, and (2) let the blade settle before the run starts.
-        current_page_url = await _cdp_eval(browser, "window.location.href")
-        azure_tools = None
-        azure_instructions = ""
-        if _is_azure_portal(current_page_url):
-            azure_tools = _build_azure_tools(browser)
-            azure_instructions = AZURE_TOOL_INSTRUCTIONS
-            await asyncio.sleep(1.0)  # let the Ibiza blade finish rendering
+        # A "PDF:" step that names a link needs no model at all. Opening a
+        # link is a browser call, and _capture_evidence_pdf already expands
+        # every "Load more" and closes stray overlays in code before printing
+        # — so the agent's only real job here was already being redone
+        # deterministically afterwards. What it did add was the one risk a
+        # read-only capture cannot take: a stray click on "New issue",
+        # "Close issue" or an edit pencil while it looked around.
+        # PDF_EXPAND_INSTRUCTIONS can only ask it not to; skipping the agent
+        # means it cannot.
+        # Only the link is read, not the words around it — see
+        # _first_http_url() for why the rest of the step cannot matter here.
+        # A "PDF:" step with no link at all still needs the agent to find the
+        # page, so that path stays exactly as it was.
+        pdf_link = _first_http_url(subtask_obj["text"]) if is_pdf else ""
+        skip_agent = bool(pdf_link)
 
-        full_task = (
-            AGENT_INSTRUCTIONS + extra_instructions + azure_instructions
-            + context_prefix + subtask_location_note + subtask_obj["text"]
-        )
-        agent_kwargs = dict(
-            task=full_task, llm=llm, browser=browser,
-            use_vision=use_vision, max_actions_per_step=max_actions_per_step,
-        )
-        if azure_tools is not None:
-            agent_kwargs["tools"] = azure_tools
-        agent = Agent(**agent_kwargs)
-        history = await agent.run(max_steps=max_steps)
+        # An "azure_page" subtask was produced by EACH-PAGE against an Azure
+        # grid, whose pager has arrows but no page numbers (see
+        # _azure_go_to_page). Walking it is a handful of verified clicks in
+        # code; there is nothing here for a model to decide.
+        azure_page = subtask_obj.get("page") if subtask_obj.get("kind") == "azure_page" else None
 
+        history = None
+        page_note = ""
+        capture_skipped = False
+        if skip_agent:
+            print(f"[runner]   subtask {idx + 1}: PDF link — opening it directly, no model used")
+            try:
+                await browser.navigate_to(pdf_link)
+            except Exception as exc:
+                # The agent used to absorb this for us: a dead host or a
+                # navigation timeout came back as a poor agent result, not as
+                # an exception. Opening the link in code removes that buffer,
+                # and nothing above catches it, so one unreachable link would
+                # end the whole task and take every later subtask with it.
+                #
+                # Capturing anyway is NOT the answer. The browser is still on
+                # whatever page was there before, so the shot would be filed
+                # as evidence for a page it never reached — the same failure
+                # the Azure pager walk exists to prevent. Skip the capture and
+                # say so instead.
+                capture_skipped = True
+                page_note = (
+                    f"Could not open {pdf_link} ({exc}). No capture was made for this "
+                    f"step; the remaining steps were still run."
+                )
+                print(f"[runner]   {page_note}")
+            else:
+                await asyncio.sleep(1.0)  # let the page settle before capture
+        elif azure_page is not None:
+            print(f"[runner]   subtask {idx + 1}: Azure page {azure_page} — walking the pager, no model used")
+            reached = await _azure_go_to_page(browser, azure_page, subtask_obj.get("page_size") or 0)
+            if reached == azure_page:
+                page_note = f"Walked the Azure pager to page {azure_page} (no model was used for this step)."
+            elif reached:
+                # Say which page the screenshot is really of. Filing a page-1
+                # capture as "page 4" is the exact failure this replaced.
+                page_note = (
+                    f"Asked for page {azure_page} but the pager stopped at page {reached}; "
+                    f"the capture below is page {reached}, not page {azure_page}."
+                )
+            else:
+                page_note = (
+                    f"Could not read the Azure pager, so page {azure_page} was never reached; "
+                    f"the capture below is whatever page was already on screen."
+                )
+            print(f"[runner]   {page_note}")
+            await asyncio.sleep(0.6)  # let the grid finish drawing before capture
+        else:
+            extra_instructions = PDF_EXPAND_INSTRUCTIONS if is_pdf else ""
+
+            # Azure Portal hardening — gated strictly on the current URL so AWS and
+            # GitHub runs are byte-for-byte unchanged (no extra tools, no extra
+            # instructions, no extra wait). On Azure we (1) hand the agent the two
+            # deterministic helpers (click_menu_item / fill_list_filter) that resolve
+            # their target fresh at click time and so survive Azure's constant
+            # re-rendering, and (2) let the blade settle before the run starts.
+            current_page_url = await _cdp_eval(browser, "window.location.href")
+            azure_tools = None
+            azure_instructions = ""
+            if _is_azure_portal(current_page_url):
+                azure_tools = _build_azure_tools(browser)
+                azure_instructions = AZURE_TOOL_INSTRUCTIONS
+                await asyncio.sleep(1.0)  # let the Ibiza blade finish rendering
+
+            full_task = (
+                AGENT_INSTRUCTIONS + extra_instructions + azure_instructions
+                + context_prefix + subtask_location_note + subtask_obj["text"]
+            )
+            agent_kwargs = dict(
+                task=full_task, llm=llm, browser=browser,
+                use_vision=use_vision, max_actions_per_step=max_actions_per_step,
+            )
+            if azure_tools is not None:
+                agent_kwargs["tools"] = azure_tools
+            agent = Agent(**agent_kwargs)
+            history = await agent.run(max_steps=max_steps)
+
+        # Zero on the skip_agent path — the counter never moved, so the step
+        # honestly reports no tokens and no cost rather than a guess.
         in_t = counter.input_tokens - snap[0]
         out_t = counter.output_tokens - snap[1]
         calls = counter.calls - snap[2]
         cost = _compute_cost(in_t, out_t, settings.AGENT_MODEL)
 
-        result_text = str(history.final_result() or f"Subtask {idx + 1} completed")
+        if history is not None:
+            result_text = str(history.final_result() or f"Subtask {idx + 1} completed")
+        elif page_note:
+            result_text = page_note
+        else:
+            result_text = f"Opened {pdf_link} directly and captured it as a PDF (no model was used for this step)."
         all_results.append(result_text)
 
         subtask_obj["result"] = result_text
@@ -1966,7 +2591,11 @@ async def execute_task(
 
         # PDF: subtasks export the whole (expanded) page as one PDF; everything
         # else captures one screenshot per scroll position, same as before.
-        if is_pdf:
+        if capture_skipped:
+            # The page we were told to capture was never reached, so there is
+            # nothing on screen worth filing. See the navigate_to guard above.
+            local_paths = []
+        elif is_pdf:
             local_paths = await _capture_evidence_pdf(browser)
         else:
             local_paths = await _capture_evidence_screenshots(browser, history)
