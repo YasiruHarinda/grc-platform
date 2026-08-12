@@ -175,6 +175,8 @@ func (s *riskActionPlanService) CompleteRiskActionPlan(ctx context.Context, plan
 			}
 		}
 
+		// Pre-check for a clear, specific error in the common case (no
+		// evidence at all) without wasting an UPDATE attempt.
 		hasEvidence, err := s.evidenceRepo.HasCompletionEvidence(ctx, planID)
 		if err != nil {
 			return domain.RiskActionPlan{}, err
@@ -183,13 +185,20 @@ func (s *riskActionPlanService) CompleteRiskActionPlan(ctx context.Context, plan
 			return domain.RiskActionPlan{}, &apierror.ValidationError{Msg: "at least one completion evidence file is required before completing this action plan"}
 		}
 
+		// The actual write re-checks evidence atomically with the status
+		// update (see CompleteRiskActionPlan), so a concurrent delete of the
+		// evidence found above can't slip through the gap between the
+		// pre-check and this write the way two separate statements would
+		// allow.
 		completedDate := time.Now().Format("2006-01-02")
-		completedStatus := "COMPLETED"
-		updated, err := s.repo.UpdateRiskActionPlan(ctx, planID, domain.UpdateRiskActionPlanRequest{
-			Status:        &completedStatus,
-			CompletedDate: &completedDate,
-			UpdatedBy:     req.UpdatedBy,
-		})
+		completed, err := s.repo.CompleteRiskActionPlan(ctx, planID, completedDate, req.UpdatedBy)
+		if err != nil {
+			return domain.RiskActionPlan{}, err
+		}
+		if !completed {
+			return domain.RiskActionPlan{}, &apierror.ValidationError{Msg: "at least one completion evidence file is required before completing this action plan"}
+		}
+		updated, err := s.repo.GetRiskActionPlanByID(ctx, planID)
 		if err != nil {
 			return domain.RiskActionPlan{}, err
 		}

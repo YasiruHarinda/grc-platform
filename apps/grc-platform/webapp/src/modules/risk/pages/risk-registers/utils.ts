@@ -122,11 +122,16 @@ export function canViewInline(contentType: string): boolean {
 }
 
 // Opens a fetched evidence file inline in a new tab. Caller should only offer
-// this when canViewInline(blob.type) is true.
-export function viewBlob(blob: Blob): void {
+// this when canViewInline(blob.type) is true. Returns false if the browser
+// blocked the popup (window.open returns null then) — likely here since the
+// call happens after an await, and Safari in particular treats that as no
+// longer within the click's user-activation window. Caller should fall back
+// to downloadBlob in that case rather than leave the user with no result.
+export function viewBlob(blob: Blob): boolean {
   const objectUrl = URL.createObjectURL(blob);
-  window.open(objectUrl, "_blank", "noopener,noreferrer");
+  const opened = window.open(objectUrl, "_blank", "noopener,noreferrer");
   setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+  return opened !== null;
 }
 
 // Forces a fetched evidence file to save as fileName, regardless of type.

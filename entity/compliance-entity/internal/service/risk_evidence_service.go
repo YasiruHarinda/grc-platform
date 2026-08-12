@@ -26,12 +26,13 @@ import (
 )
 
 type riskEvidenceService struct {
-	repo repository.RiskEvidenceRepository
+	repo           repository.RiskEvidenceRepository
+	actionPlanRepo repository.RiskActionPlanRepository
 }
 
 // NewRiskEvidenceService constructs a RiskEvidenceService.
-func NewRiskEvidenceService(repo repository.RiskEvidenceRepository) RiskEvidenceService {
-	return &riskEvidenceService{repo: repo}
+func NewRiskEvidenceService(repo repository.RiskEvidenceRepository, actionPlanRepo repository.RiskActionPlanRepository) RiskEvidenceService {
+	return &riskEvidenceService{repo: repo, actionPlanRepo: actionPlanRepo}
 }
 
 // validRiskEvidenceTypes mirrors the risk_evidence.evidence_type ENUM in risk_schema.sql.
@@ -61,10 +62,25 @@ func (s *riskEvidenceService) CreateRiskEvidence(ctx context.Context, riskID int
 	// completion on its own evidence. ACTION_PLAN_ATTACHMENT ("Risk Evidence
 	// Attachment") is risk-level, uploaded before any plan necessarily exists,
 	// so it stays unlinked.
-	if req.EvidenceType == "FINAL_APPROVAL_ATTACHMENT" && (req.ActionPlanID == nil || *req.ActionPlanID <= 0) {
-		return domain.RiskEvidenceFile{}, &apierror.ValidationError{Msg: "actionPlanId is required for FINAL_APPROVAL_ATTACHMENT"}
-	}
-	if req.EvidenceType == "ACTION_PLAN_ATTACHMENT" {
+	if req.EvidenceType == "FINAL_APPROVAL_ATTACHMENT" {
+		if req.ActionPlanID == nil || *req.ActionPlanID <= 0 {
+			return domain.RiskEvidenceFile{}, &apierror.ValidationError{Msg: "actionPlanId is required for FINAL_APPROVAL_ATTACHMENT"}
+		}
+		// The caller (normally the GRC Backend) is expected to have already
+		// checked this, but this service has no auth of its own — see
+		// routes.go: "Authentication is handled upstream by the Choreo API
+		// Gateway" — so it can't assume every caller re-implements that
+		// check correctly. Re-validating here keeps a cross-risk
+		// (riskId, actionPlanId) pair from ever reaching the DB, rather than
+		// only guarding against it at read time (e.g. HasCompletionEvidence).
+		plan, err := s.actionPlanRepo.GetRiskActionPlanByID(ctx, *req.ActionPlanID)
+		if err != nil {
+			return domain.RiskEvidenceFile{}, err
+		}
+		if plan.RiskID != riskID {
+			return domain.RiskEvidenceFile{}, &apierror.ValidationError{Msg: "actionPlanId does not belong to this risk"}
+		}
+	} else {
 		req.ActionPlanID = nil
 	}
 	if req.CreatedBy == "" {

@@ -66,8 +66,11 @@ type EvidenceService interface {
 	// DB record is removed (same rule the Audit Hub's evidence delete uses).
 	Delete(ctx context.Context, riskID, evidenceID int, actor string, isAdmin bool) error
 	// DownloadFile returns one evidence file's bytes (proxied via the
-	// Compliance Entity) plus its name and content type, by file ID.
-	DownloadFile(ctx context.Context, evidenceID int) (data []byte, fileName, contentType string, err error)
+	// Compliance Entity) plus its name and content type. riskID must match
+	// the file's actual risk — the same cross-risk guard Delete uses —
+	// otherwise a caller who can view some risk could download another
+	// risk's evidence by fileId alone.
+	DownloadFile(ctx context.Context, riskID, evidenceID int) (data []byte, fileName, contentType string, err error)
 }
 
 type evidenceService struct {
@@ -177,16 +180,47 @@ func (s *evidenceService) Delete(ctx context.Context, riskID, evidenceID int, ac
 	if ev.RiskID != riskID {
 		return &apierror.Error{StatusCode: http.StatusNotFound, Body: "evidence file not found"}
 	}
+	// A COMPLETED plan's completion evidence is locked, not just from its
+	// creator but from the admin override too — this is the guarantee the
+	// evidence gate on "Complete Action Plan" exists for in the first place,
+	// so it can't be an ownership-overridable rule the way delete otherwise
+	// is. The UI already hides delete in this state; this is the server-side
+	// enforcement of that same rule.
+	if ev.EvidenceType == EvidenceTypeFinalApprovalAttachment && ev.ActionPlanID != nil {
+		plan, err := s.actionPlanRepo.GetByID(ctx, *ev.ActionPlanID)
+		if err != nil {
+			return err
+		}
+		if plan.Status == "COMPLETED" {
+			return &apierror.Error{StatusCode: http.StatusConflict, Body: "cannot delete completion evidence for an already-completed action plan"}
+		}
+	}
+	// Risk-level evidence locks the same way once the risk owner has given
+	// their (first) approval — same admin-non-overridable rule as completion
+	// evidence above, and the same flag the webapp's RiskEvidenceSection
+	// checks client-side (detail.owner_first_approved_at) to hide delete.
+	if ev.EvidenceType == EvidenceTypeActionPlanAttachment {
+		risk, err := s.riskRepo.GetByID(ctx, riskID)
+		if err != nil {
+			return err
+		}
+		if risk.OwnerFirstApprovedAt != nil {
+			return &apierror.Error{StatusCode: http.StatusConflict, Body: "cannot delete risk evidence after the risk owner has approved this risk"}
+		}
+	}
 	if !isAdmin && ev.CreatedBy != actor {
 		return &apierror.Error{StatusCode: http.StatusForbidden, Body: "forbidden"}
 	}
 	return s.repo.Delete(ctx, riskID, evidenceID)
 }
 
-func (s *evidenceService) DownloadFile(ctx context.Context, evidenceID int) (data []byte, fileName, contentType string, err error) {
+func (s *evidenceService) DownloadFile(ctx context.Context, riskID, evidenceID int) (data []byte, fileName, contentType string, err error) {
 	ev, err := s.repo.GetByID(ctx, evidenceID)
 	if err != nil {
 		return nil, "", "", err
+	}
+	if ev.RiskID != riskID {
+		return nil, "", "", &apierror.Error{StatusCode: http.StatusNotFound, Body: "evidence file not found"}
 	}
 	data, contentType, err = s.storage.ReadBlob(ctx, ev.FilePath)
 	if err != nil {

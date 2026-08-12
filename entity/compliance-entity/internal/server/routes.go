@@ -95,7 +95,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 		riskActionPlanRepo, riskActionStepRepo, riskEvidenceRepo,
 		riskEscalationSvc, riskSvc, userSvc,
 	)
-	riskEvidenceSvc := service.NewRiskEvidenceService(riskEvidenceRepo)
+	riskEvidenceSvc := service.NewRiskEvidenceService(riskEvidenceRepo, riskActionPlanRepo)
 	riskAssessmentSvc := service.NewRiskAssessmentService(riskAssessmentRepo)
 	privilegeSvc := service.NewPrivilegeService(privilegeRepo)
 	riskDashboardSvc := service.NewRiskDashboardService(riskDashboardRepo)

@@ -113,13 +113,21 @@ func (r *riskEvidenceRepo) DeleteRiskEvidence(ctx context.Context, riskID, fileI
 	return nil
 }
 
+// HasCompletionEvidence reports whether actionPlanID has at least one
+// FINAL_APPROVAL_ATTACHMENT row whose risk_id actually matches the plan's own
+// risk_id. CreateRiskEvidence now rejects a mismatched (riskId, actionPlanId)
+// pair before it can be written, so this join is belt-and-suspenders — it
+// keeps this specific gate correct even if a mismatched row ever reaches the
+// table some other way (a future write path, manual data fix, etc.).
 func (r *riskEvidenceRepo) HasCompletionEvidence(ctx context.Context, actionPlanID int) (bool, error) {
 	var exists bool
 	err := r.db.QueryRowContext(ctx,
 		`SELECT EXISTS(
 			SELECT 1 FROM risk_evidence
-			WHERE action_plan_id = ? AND evidence_type = 'FINAL_APPROVAL_ATTACHMENT'
-		)`, actionPlanID).Scan(&exists)
+			WHERE action_plan_id = ?
+			  AND risk_id = (SELECT risk_id FROM risk_action_plan WHERE id = ?)
+			  AND evidence_type = 'FINAL_APPROVAL_ATTACHMENT'
+		)`, actionPlanID, actionPlanID).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("risk_evidence.HasCompletionEvidence(%d): %w", actionPlanID, err)
 	}

@@ -72,11 +72,11 @@ func SanitizeFileName(name string) (stem, ext string) {
 	return stem, ext
 }
 
-// shortUUID returns 8 random hex characters, used as a collision-proof suffix on
-// every uploaded blob name so two files sharing a human name never overwrite
-// each other.
+// shortUUID returns 32 random hex characters (128 bits), used as a
+// collision-proof suffix on every uploaded blob name so two files sharing a
+// human name never overwrite each other.
 func shortUUID() string {
-	b := make([]byte, 4)
+	b := make([]byte, 16)
 	_, _ = rand.Read(b) // crypto/rand.Read never errors on the standard reader
 	return hex.EncodeToString(b)
 }

@@ -282,11 +282,10 @@ function EvidenceList({
     setBusyId(f.id);
     try {
       const blob = await fetchBlob(f);
-      if (canViewInline(blob.type)) {
-        viewBlob(blob);
-      } else {
-        // Not safe to render inline (or the server didn't say it was one of
-        // the allow-listed types) — download instead of refusing outright.
+      // Not safe to render inline (or the server didn't say it was one of the
+      // allow-listed types), or the browser blocked the popup — download
+      // instead of refusing outright either way.
+      if (!canViewInline(blob.type) || !viewBlob(blob)) {
         downloadBlob(blob, f.file_name);
       }
     } catch (err) {
@@ -440,9 +439,11 @@ function RiskEvidenceSection({
 // until at least one file exists for this plan (checked here for the button's
 // enabled state, and re-checked server-side as the real gate). Mounted
 // unconditionally (not just while the plan is completable) so the list stays
-// visible after completion — delete is withdrawn once planCompleted, since
-// there's no server-side check stopping someone from deleting a completed
-// plan's proof after the fact and the UI is the only place that guards it.
+// visible after completion — delete is withdrawn once planCompleted,
+// matching the server-side lock evidenceService.Delete now enforces (a
+// COMPLETED plan's completion evidence can't be deleted even by a
+// compliance-admin), so this is UI convenience on top of a real guarantee,
+// not the only thing enforcing it.
 function CompletionEvidenceSection({
   riskId,
   planId,

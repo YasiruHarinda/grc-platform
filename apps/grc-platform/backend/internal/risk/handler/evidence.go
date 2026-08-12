@@ -213,7 +213,7 @@ func (d *Deps) handleDownloadRiskEvidence(w http.ResponseWriter, r *http.Request
 		response.WriteError(w, http.StatusBadRequest, "fileId must be a positive integer")
 		return
 	}
-	data, fileName, contentType, err := d.Evidence.DownloadFile(r.Context(), fileID)
+	data, fileName, contentType, err := d.Evidence.DownloadFile(r.Context(), riskID, fileID)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
