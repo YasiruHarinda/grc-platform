@@ -1,7 +1,7 @@
 schemaVersion: "1.2"
 endpoints:
-  - name: sre-compliance-evidence-submission-portal-backend
-    displayName: SRE Compliance Evidence Submission Portal Backend
+  - name: evidence-portal-backend
+    displayName: Evidence Portal Backend
     service:
       basePath: /
       port: 8000
