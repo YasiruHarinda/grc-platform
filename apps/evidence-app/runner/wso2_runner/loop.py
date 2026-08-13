@@ -11,12 +11,45 @@ import httpx
 
 from wso2_runner import oauth
 from wso2_runner.agent import execute_task, open_login_browser, reset_browser
+from wso2_runner.azure_credential import ClientAuthenticationError, CredentialUnavailableError
 from wso2_runner.client import CloudClient
 from wso2_runner.config import settings
 
 
 def _runner_id() -> str:
     return f"{platform.node()}-{os.getpid()}"
+
+
+async def _fail_task_for_azure_auth(task: dict, client: CloudClient, cause: str) -> None:
+    """Mark `task` failed with a plain-language message when an Azure Entra
+    session dies mid-run, and print a message that's hard to miss in the
+    terminal.
+
+    v1 accepted behaviour: the task is failed rather than returned to the
+    queue (that needs backend support — out of scope, see #87). The caller
+    is responsible for stopping the poll loop afterwards — an expired or
+    missing Azure session cannot be fixed by continuing to poll; every
+    later task would fail the exact same way.
+    """
+    message = f"{cause} Run `az login`, then start the Runner again."
+
+    print()
+    print("=" * 70)
+    print(f"[runner] ✗ AZURE AUTHENTICATION PROBLEM — Task #{task['id']} failed")
+    print(f"[runner]   {message}")
+    print("[runner]   Stopping — the Runner cannot run further tasks until this is fixed.")
+    print("=" * 70)
+    print()
+
+    try:
+        await client.post_result(task["id"], {
+            "status": "failed",
+            "result": None,
+            "error": message,
+            "screenshots": [],
+        })
+    except Exception:
+        pass
 
 
 async def run_forever(
@@ -80,6 +113,28 @@ async def run_forever(
                         print(f"[runner] ■ Task #{task['id']} cancelled")
                     else:
                         print(f"[runner] ✓ Task #{task['id']} completed")
+                # Azure credential failures are reported by type, not as an
+                # ordinary task failure with a raw exception string — and
+                # unlike other task failures, the Runner cannot recover by
+                # retrying: every subsequent task would fail the same way,
+                # so it stops polling and exits instead of continuing.
+                # CredentialUnavailableError is a subclass of
+                # ClientAuthenticationError — it must be checked first or
+                # it's silently swallowed by the wider case.
+                except CredentialUnavailableError:
+                    await _fail_task_for_azure_auth(
+                        task, client,
+                        "Azure sign-in isn't available — the Azure CLI isn't installed, "
+                        "or nobody is signed in.",
+                    )
+                    raise SystemExit(1)
+                except ClientAuthenticationError:
+                    await _fail_task_for_azure_auth(
+                        task, client,
+                        "Your Azure session has expired or was rejected — you may be "
+                        "signed in to the wrong tenant, or lack access to Azure OpenAI.",
+                    )
+                    raise SystemExit(1)
                 except Exception as exc:
                     print(f"[runner] ✗ Task #{task['id']} failed: {exc}")
                     traceback.print_exc()

@@ -98,6 +98,43 @@ def start(
         )
         raise typer.Exit(1)
 
+    # Prove Azure auth works *before* the poll loop starts — not on first
+    # use. The credential otherwise authenticates lazily on first LLM call,
+    # which happens after a browser window has already opened and a task
+    # has already been consumed. api_key mode needs no such check; it
+    # behaves exactly as it always has.
+    if settings.AGENT_PROVIDER == "azure" and settings.AZURE_OPENAI_AUTH_MODE != "api_key":
+        from wso2_runner.azure_credential import (
+            ClientAuthenticationError,
+            CredentialUnavailableError,
+            attempt_token,
+        )
+
+        try:
+            asyncio.run(attempt_token())
+        # CredentialUnavailableError is a subclass of ClientAuthenticationError —
+        # it must be checked first or it's silently swallowed by the wider case.
+        except CredentialUnavailableError:
+            typer.echo(
+                "\n[runner] Azure sign-in not found — the Azure CLI isn't "
+                "installed, or nobody is signed in. Run this first:\n\n"
+                "    az login\n",
+                err=True,
+            )
+            raise typer.Exit(1)
+        except ClientAuthenticationError:
+            typer.echo(
+                "\n[runner] Azure sign-in was rejected — your session may "
+                "have expired, or you may be signed in to the wrong "
+                "tenant, or lack access to Azure OpenAI. Run this first:\n\n"
+                "    az login\n",
+                err=True,
+            )
+            raise typer.Exit(1)
+        except Exception as exc:
+            typer.echo(f"\n[runner] Azure authentication check failed: {exc}\n", err=True)
+            raise typer.Exit(1)
+
     from wso2_runner.loop import run_forever
 
     try:

@@ -13,6 +13,15 @@ None of these tests ever run the real polling loop, hit the network, or
 open a browser: `run_forever` is replaced with a recording async stub,
 `httpx.get` is stubbed for the `doctor` checks, and `configure`'s
 `CONFIG_DIR`/`CONFIG_FILE` are redirected into `tmp_path`.
+
+`start`'s Azure start-up gate (ticket #94) calls
+`wso2_runner.azure_credential.attempt_token()` before it ever reaches
+`run_forever`. `azure_credential` imports no `browser_use`, so it needs none
+of the sys.modules trickery above — `fake_run_forever` below stubs
+`attempt_token()` to succeed by default so every pre-existing `start` test
+that merely sets `AGENT_PROVIDER = "azure"` still reaches `run_forever`
+exactly as it did before this gate existed. The dedicated Azure gate tests
+further down override that stub to exercise the failure paths.
 """
 import sys
 import types
@@ -24,6 +33,7 @@ from typer.testing import CliRunner
 import wso2_runner.cli as cli
 import wso2_runner.config as config_mod
 from wso2_runner import oauth
+from wso2_runner.azure_credential import ClientAuthenticationError, CredentialUnavailableError
 from wso2_runner.config import settings
 
 runner = CliRunner()
@@ -34,6 +44,8 @@ def fake_run_forever(monkeypatch):
     """Import wso2_runner.loop (faking out browser_use via a stub agent
     module) and replace its run_forever with a recorder that returns
     immediately, patched at the site `start` actually imports it from.
+    Also stubs the Azure start-up gate's token check to succeed, so tests
+    that don't care about Azure auth still reach run_forever.
 
     Returns a list that the recorder appends
     (cloud_url, user_email, poll_interval) tuples to.
@@ -53,17 +65,28 @@ def fake_run_forever(monkeypatch):
         calls.append((cloud_url, user_email, poll_interval))
 
     monkeypatch.setattr(loop, "run_forever", _fake_run_forever)
+
+    import wso2_runner.azure_credential as azure_credential
+
+    async def _fake_attempt_token():
+        return "fake-token"
+
+    monkeypatch.setattr(azure_credential, "attempt_token", _fake_attempt_token)
+
     return calls
 
 
 @pytest.fixture(autouse=True)
 def _restore_agent_provider():
     """`settings` is a process-wide singleton `cli.py` reaches into by
-    importing it fresh each call; tests that mutate AGENT_PROVIDER must not
-    leak that mutation into other tests in this file or other test files."""
-    original = settings.AGENT_PROVIDER
+    importing it fresh each call; tests that mutate AGENT_PROVIDER (or the
+    Azure auth mode) must not leak that mutation into other tests in this
+    file or other test files."""
+    original_provider = settings.AGENT_PROVIDER
+    original_auth_mode = settings.AZURE_OPENAI_AUTH_MODE
     yield
-    settings.AGENT_PROVIDER = original
+    settings.AGENT_PROVIDER = original_provider
+    settings.AZURE_OPENAI_AUTH_MODE = original_auth_mode
 
 
 # ── start: user-resolution precedence ───────────────────────────────────
@@ -145,6 +168,97 @@ def test_start_exits_nonzero_and_prompts_configure_when_no_provider(fake_run_for
 
 
 def test_start_proceeds_to_run_forever_when_provider_configured(fake_run_forever):
+    settings.AGENT_PROVIDER = "anthropic"
+
+    result = runner.invoke(cli.app, ["start", "someone@wso2.com"])
+
+    assert result.exit_code == 0
+    assert fake_run_forever == [(None, "someone@wso2.com", None)]
+
+
+# ── start: Azure auth gate (entra mode, ticket #94) ─────────────────────
+
+
+def test_start_azure_entra_mode_checks_azure_auth_before_run_forever(fake_run_forever):
+    """Default mode is "entra" — the gate runs, succeeds (via the
+    fake_run_forever fixture's default stub), and start proceeds exactly as
+    it did before this gate existed."""
+    settings.AGENT_PROVIDER = "azure"
+    settings.AZURE_OPENAI_AUTH_MODE = "entra"
+
+    result = runner.invoke(cli.app, ["start", "someone@wso2.com"])
+
+    assert result.exit_code == 0
+    assert fake_run_forever == [(None, "someone@wso2.com", None)]
+
+
+def test_start_azure_api_key_mode_skips_the_azure_gate(fake_run_forever, monkeypatch):
+    """api_key mode must behave exactly as it did before this ticket — no
+    Azure token check at all, even if acquiring one would fail."""
+    import wso2_runner.azure_credential as azure_credential
+
+    async def _boom():
+        raise CredentialUnavailableError("must never be called in api_key mode")
+
+    monkeypatch.setattr(azure_credential, "attempt_token", _boom)
+    settings.AGENT_PROVIDER = "azure"
+    settings.AZURE_OPENAI_AUTH_MODE = "api_key"
+
+    result = runner.invoke(cli.app, ["start", "someone@wso2.com"])
+
+    assert result.exit_code == 0
+    assert fake_run_forever == [(None, "someone@wso2.com", None)]
+
+
+def test_start_exits_nonzero_when_azure_cli_unavailable(fake_run_forever, monkeypatch):
+    """No Azure CLI installed / nobody signed in — the narrower
+    CredentialUnavailableError case. Must exit non-zero, name `az login`,
+    and never reach run_forever (no browser opens, no task is consumed)."""
+    import wso2_runner.azure_credential as azure_credential
+
+    async def _unavailable():
+        raise CredentialUnavailableError("az cli not found")
+
+    monkeypatch.setattr(azure_credential, "attempt_token", _unavailable)
+    settings.AGENT_PROVIDER = "azure"
+    settings.AZURE_OPENAI_AUTH_MODE = "entra"
+
+    result = runner.invoke(cli.app, ["start", "someone@wso2.com"])
+
+    assert result.exit_code == 1
+    assert "az login" in result.output
+    assert fake_run_forever == []
+
+
+def test_start_exits_nonzero_when_azure_session_rejected(fake_run_forever, monkeypatch):
+    """Signed in, but authentication is rejected — e.g. wrong tenant, or
+    missing the Azure OpenAI role. Must exit non-zero, name `az login`, and
+    never reach run_forever."""
+    import wso2_runner.azure_credential as azure_credential
+
+    async def _rejected():
+        raise ClientAuthenticationError("token request rejected")
+
+    monkeypatch.setattr(azure_credential, "attempt_token", _rejected)
+    settings.AGENT_PROVIDER = "azure"
+    settings.AZURE_OPENAI_AUTH_MODE = "entra"
+
+    result = runner.invoke(cli.app, ["start", "someone@wso2.com"])
+
+    assert result.exit_code == 1
+    assert "az login" in result.output
+    assert fake_run_forever == []
+
+
+def test_start_non_azure_provider_never_reaches_the_azure_gate(fake_run_forever, monkeypatch):
+    """A provider other than "azure" must never attempt an Azure token
+    check, regardless of AZURE_OPENAI_AUTH_MODE."""
+    import wso2_runner.azure_credential as azure_credential
+
+    async def _boom():
+        raise CredentialUnavailableError("must never be called for a non-azure provider")
+
+    monkeypatch.setattr(azure_credential, "attempt_token", _boom)
     settings.AGENT_PROVIDER = "anthropic"
 
     result = runner.invoke(cli.app, ["start", "someone@wso2.com"])
