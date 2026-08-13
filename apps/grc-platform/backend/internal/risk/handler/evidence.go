@@ -83,6 +83,13 @@ func (d *Deps) handleUploadRiskEvidence(w http.ResponseWriter, r *http.Request) 
 		if !auth.RequirePrivilege(r.Context(), w, privilege.CreateRisk) {
 			return
 		}
+		// Matches handleCreateActionPlan's gate — this upload only ever
+		// happens right after the risk itself is created, via the Add Risk
+		// form, so the only legitimate caller is the risk's own assigner (or
+		// the compliance-admin override), not merely anyone who can view it.
+		if !d.requireRiskAssigner(w, r, riskID) {
+			return
+		}
 	case riskservice.EvidenceTypeFinalApprovalAttachment:
 		if !auth.RequirePrivilege(r.Context(), w, privilege.CompleteActionSteps) {
 			return

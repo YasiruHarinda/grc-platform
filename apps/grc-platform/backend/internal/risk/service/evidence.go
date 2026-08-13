@@ -138,6 +138,12 @@ func (s *evidenceService) Upload(ctx context.Context, riskID int, evidenceType s
 	if err != nil {
 		return nil, err
 	}
+	// Locks the same way Delete does, in the other direction: once the risk
+	// owner has approved, the evidence set they approved against must stay
+	// fixed — no new risk-level files appearing after the fact either.
+	if evidenceType == EvidenceTypeActionPlanAttachment && risk.OwnerFirstApprovedAt != nil {
+		return nil, &apierror.Error{StatusCode: http.StatusConflict, Body: "cannot add risk evidence after the risk owner has approved this risk"}
+	}
 	riskCode := blobpath.SanitizeSegment(risk.RiskCode)
 
 	data, err := io.ReadAll(io.LimitReader(content, maxRiskEvidenceBytes+1))
