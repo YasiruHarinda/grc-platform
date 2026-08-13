@@ -491,17 +491,20 @@ function CompletionEvidenceSection({
     setUploading(true);
     setError(null);
     try {
+      // Tracked locally rather than read back from state — setFiles updaters
+      // are expected to stay pure (no calling onHasEvidenceChange from
+      // inside one), and this loop needs each iteration's append visible to
+      // the next without waiting on a render.
+      let accumulated = files;
       for (const file of Array.from(selected)) {
         const ev = await uploadRiskEvidence(authFetch, riskId, {
           evidenceType: "FINAL_APPROVAL_ATTACHMENT",
           actionPlanId: planId,
           file,
         });
-        setFiles((prev) => {
-          const next = [...prev, ev];
-          onHasEvidenceChange(next.length > 0);
-          return next;
-        });
+        accumulated = [...accumulated, ev];
+        setFiles(accumulated);
+        onHasEvidenceChange(accumulated.length > 0);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to upload file");
@@ -514,11 +517,9 @@ function CompletionEvidenceSection({
     setError(null);
     deleteRiskEvidence(authFetch, riskId, fileId)
       .then(() => {
-        setFiles((prev) => {
-          const next = prev.filter((f) => f.id !== fileId);
-          onHasEvidenceChange(next.length > 0);
-          return next;
-        });
+        const next = files.filter((f) => f.id !== fileId);
+        setFiles(next);
+        onHasEvidenceChange(next.length > 0);
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to remove file"));
   };
