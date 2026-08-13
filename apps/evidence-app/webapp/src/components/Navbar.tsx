@@ -61,7 +61,7 @@ export default function Navbar({ onToggleSidebar }: NavbarProps) {
     signOut().catch((err) => {
       console.error("Sign-out failed:", err);
       setSignOutError(
-        "Sign-out failed — you are still signed in. Close the browser before leaving this machine.",
+        "Sign-out failed. You are still signed in. Close the browser before leaving this machine.",
       );
     });
   };

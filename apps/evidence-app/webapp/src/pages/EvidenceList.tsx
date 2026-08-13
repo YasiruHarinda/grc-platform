@@ -645,7 +645,7 @@ export default function EvidenceList() {
         Evidence
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Files captured manually or via the AI agent, linked to compliance controls — with review status and audit notes.
+        Files captured manually or via the AI agent, linked to compliance controls, with review status and audit notes.
       </Typography>
 
       <Stack direction="row" spacing={2} sx={{ mb: 3, flexWrap: "wrap", rowGap: 2 }}>
