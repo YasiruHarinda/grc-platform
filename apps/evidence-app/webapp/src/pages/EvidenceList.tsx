@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { getFileUrl } from "../api/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AxiosError } from "axios";
@@ -41,6 +41,9 @@ import {
   CircleCheckFilledIcon,
   ArrowUpRightFromSquareIcon,
   DrawingPencilIcon,
+  DownloadIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
 } from "@oxygen-ui/react-icons";
 import { evidenceApi, frameworksApi, controlsApi, productsApi, submissionsApi } from "../api/client";
 import { useCurrentUser } from "../hooks/useCurrentUser";
@@ -113,6 +116,63 @@ function relativeTime(iso: string): string {
 
 const STATUS_OPTIONS = ["pending", "approved", "rejected"] as const;
 
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"]);
+
+function isImageFile(fileName: string): boolean {
+  const ext = fileName.split(".").pop()?.toLowerCase();
+  return !!ext && IMAGE_EXTENSIONS.has(ext);
+}
+
+// Fallback tile for PDFs, other non-image files, and images whose retried
+// load still failed. Fills the same footprint as the <img> it replaces so
+// the grid layout does not shift.
+function FileFallbackCard({
+  fileName,
+  fileUrl,
+  variant,
+}: {
+  fileName: string;
+  fileUrl: string;
+  variant: "grid" | "preview";
+}) {
+  const isPreview = variant === "preview";
+  return (
+    <Box
+      sx={{
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: isPreview ? 1.5 : 0.75,
+        backgroundColor: "action.hover",
+        color: "text.secondary",
+        textAlign: "center",
+        p: isPreview ? 4 : 1.5,
+      }}
+    >
+      <DocumentIcon size={isPreview ? 48 : 28} />
+      <Typography variant={isPreview ? "body2" : "caption"} sx={{ wordBreak: "break-word", lineHeight: 1.3, px: 1 }}>
+        {fileName}
+      </Typography>
+      <Tooltip title="Download">
+        <IconButton
+          component="a"
+          href={fileUrl}
+          target="_blank"
+          rel="noreferrer"
+          size="small"
+          aria-label={`Download ${fileName}`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <DownloadIcon size={16} />
+        </IconButton>
+      </Tooltip>
+    </Box>
+  );
+}
+
 function StatCard({ label, value, accent }: { label: string; value: number; accent?: string }) {
   return (
     <Paper variant="outlined" sx={{ p: 2.25, flex: 1, minWidth: { xs: 140, sm: 160 } }}>
@@ -143,6 +203,12 @@ export default function EvidenceList() {
   // Gallery modal state
   const [galleryEvidenceId, setGalleryEvidenceId] = useState<number | null>(null);
   const [pendingDeleteFileId, setPendingDeleteFileId] = useState<number | null>(null);
+  // Full-size preview state — null means the dialog shows the grid
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+  // File ids that have already had one "expired link" retry, and file ids
+  // whose image failed to load even after that retry (shown as a card).
+  const [retriedFileIds, setRetriedFileIds] = useState<Set<number>>(new Set());
+  const [failedFileIds, setFailedFileIds] = useState<Set<number>>(new Set());
   // Rename dialog state
   const [renameTarget, setRenameTarget] = useState<{ id: number; currentText: string } | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -299,6 +365,56 @@ export default function EvidenceList() {
   // Deleting that would send an Evidence id to /evidence/files/{id}, so the
   // per-file delete control is hidden for the synthesized fallback.
   const galleryHasStoredFiles = !!(galleryEvidence?.files && galleryEvidence.files.length > 0);
+
+  // Reset to the grid whenever a different (or no) evidence is opened.
+  // Adjusted during render (React's documented pattern for resetting state
+  // when a value changes) rather than in an effect, so it takes effect
+  // before the first paint of the new gallery instead of causing an extra one.
+  const [prevGalleryEvidenceId, setPrevGalleryEvidenceId] = useState(galleryEvidenceId);
+  if (galleryEvidenceId !== prevGalleryEvidenceId) {
+    setPrevGalleryEvidenceId(galleryEvidenceId);
+    setPreviewIndex(null);
+  }
+
+  // The displayed preview index is clamped against the live file count
+  // rather than corrected via an effect. This means a delete needs no
+  // special-casing at all: removing a file that isn't last leaves the raw
+  // index unchanged, which lands on the file that shifted into its place —
+  // i.e. "advance to next" — and removing the last file clamps the display
+  // back to the new last file. Emptying the array clamps to null, which is
+  // exactly what shows the grid again.
+  const clampedPreviewIndex =
+    previewIndex != null && galleryFiles.length > 0 ? Math.min(previewIndex, galleryFiles.length - 1) : null;
+  const previewFile = clampedPreviewIndex != null ? galleryFiles[clampedPreviewIndex] ?? null : null;
+
+  // Left/right arrow keys move through the preview. Escape is handled by
+  // the Dialog's onClose (below) so it can distinguish "close preview" from
+  // "close dialog".
+  useEffect(() => {
+    if (clampedPreviewIndex == null) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "ArrowLeft") {
+        if (clampedPreviewIndex > 0) setPreviewIndex(clampedPreviewIndex - 1);
+      } else if (event.key === "ArrowRight") {
+        if (clampedPreviewIndex < galleryFiles.length - 1) setPreviewIndex(clampedPreviewIndex + 1);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [clampedPreviewIndex, galleryFiles.length]);
+
+  // An <img> failed to load — most likely its signed URL expired mid-review.
+  // Refetch the evidence list once to get fresh URLs; retry at most once per
+  // file so a genuinely missing blob settles into a card instead of looping.
+  const handleImageLoadError = (fileId: number) => {
+    if (failedFileIds.has(fileId)) return;
+    if (retriedFileIds.has(fileId)) {
+      setFailedFileIds((prev) => new Set(prev).add(fileId));
+      return;
+    }
+    setRetriedFileIds((prev) => new Set(prev).add(fileId));
+    queryClient.invalidateQueries({ queryKey: ["evidence"] });
+  };
 
   return (
     <Box>
@@ -457,7 +573,7 @@ export default function EvidenceList() {
                           </Typography>
                         </Stack>
                       ) : (
-                        <Typography variant="caption" color="text.disabled">—</Typography>
+                        <Typography variant="caption" color="text.disabled">No control</Typography>
                       )}
                     </TableCell>
 
@@ -761,7 +877,15 @@ export default function EvidenceList() {
       {/* ── Gallery Modal ─────────────────────────────────────────────────── */}
       <Dialog
         open={galleryEvidence != null}
-        onClose={() => { setGalleryEvidenceId(null); setPendingDeleteFileId(null); }}
+        onClose={(_event, reason) => {
+          if (reason === "escapeKeyDown" && clampedPreviewIndex != null) {
+            // First Escape leaves the preview and returns to the grid.
+            setPreviewIndex(null);
+            return;
+          }
+          setGalleryEvidenceId(null);
+          setPendingDeleteFileId(null);
+        }}
         maxWidth="md"
         fullWidth
         PaperProps={{ sx: { maxHeight: "90vh" } }}
@@ -783,9 +907,117 @@ export default function EvidenceList() {
         </DialogTitle>
 
         <DialogContent dividers sx={{ p: 2 }}>
+          {previewFile ? (
+            (() => {
+              const f = previewFile;
+              const idx = clampedPreviewIndex as number;
+              const isPendingFileDelete = pendingDeleteFileId === f.id;
+              const isFirst = idx === 0;
+              const isLast = idx === galleryFiles.length - 1;
+              const showImage = isImageFile(f.file_name) && !failedFileIds.has(f.id);
+              return (
+                <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1.5 }}>
+                  <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
+                    <Typography variant="caption" color="text.secondary">
+                      {idx + 1} of {galleryFiles.length}
+                    </Typography>
+                    <Stack direction="row" spacing={0.5}>
+                      {isPendingFileDelete ? (
+                        <Stack direction="row" spacing={0.5}>
+                          <Button
+                            size="small"
+                            variant="text"
+                            onClick={() => setPendingDeleteFileId(null)}
+                            disabled={deleteFileMutation.isPending}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            size="small"
+                            color="error"
+                            variant="contained"
+                            onClick={() => deleteFileMutation.mutate(f.id)}
+                            disabled={deleteFileMutation.isPending}
+                          >
+                            Delete
+                          </Button>
+                        </Stack>
+                      ) : (
+                        <>
+                          <Tooltip title="Download">
+                            <IconButton
+                              component="a"
+                              href={getFileUrl(f.file_url)}
+                              target="_blank"
+                              rel="noreferrer"
+                              size="small"
+                              aria-label="Download file"
+                            >
+                              <DownloadIcon size={16} />
+                            </IconButton>
+                          </Tooltip>
+                          {galleryHasStoredFiles && (isAdmin || galleryEvidence?.created_by === user?.email) && (
+                            <Tooltip title="Delete this screenshot">
+                              <IconButton
+                                size="small"
+                                color="error"
+                                aria-label="Delete screenshot"
+                                onClick={() => setPendingDeleteFileId(f.id)}
+                              >
+                                <TrashIcon size={16} />
+                              </IconButton>
+                            </Tooltip>
+                          )}
+                        </>
+                      )}
+                    </Stack>
+                  </Box>
+
+                  <Box sx={{ position: "relative", width: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <IconButton
+                      onClick={() => setPreviewIndex(idx - 1)}
+                      disabled={isFirst}
+                      aria-label="Previous screenshot"
+                      sx={{ position: "absolute", left: 0, zIndex: 1 }}
+                    >
+                      <ChevronLeftIcon size={20} />
+                    </IconButton>
+
+                    <Box sx={{ width: "100%", height: { xs: 320, sm: 440 }, display: "flex", alignItems: "center", justifyContent: "center", mx: 6 }}>
+                      {showImage ? (
+                        <Box
+                          component="img"
+                          src={getFileUrl(f.file_url)}
+                          alt={f.subtask ?? `Screenshot ${idx + 1}`}
+                          onError={() => handleImageLoadError(f.id)}
+                          sx={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+                        />
+                      ) : (
+                        <FileFallbackCard fileName={f.file_name} fileUrl={getFileUrl(f.file_url)} variant="preview" />
+                      )}
+                    </Box>
+
+                    <IconButton
+                      onClick={() => setPreviewIndex(idx + 1)}
+                      disabled={isLast}
+                      aria-label="Next screenshot"
+                      sx={{ position: "absolute", right: 0, zIndex: 1 }}
+                    >
+                      <ChevronRightIcon size={20} />
+                    </IconButton>
+                  </Box>
+
+                  <Typography variant="body2" color="text.secondary" sx={{ textAlign: "center" }}>
+                    {f.subtask ? f.subtask : `Screenshot ${idx + 1}`}
+                  </Typography>
+                </Box>
+              );
+            })()
+          ) : (
           <Box sx={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
             {galleryFiles.map((f, idx) => {
               const isPendingFileDelete = pendingDeleteFileId === f.id;
+              const showImage = isImageFile(f.file_name) && !failedFileIds.has(f.id);
               return (
                 <Box
                   key={f.id}
@@ -799,21 +1031,29 @@ export default function EvidenceList() {
                     transition: "border-color 0.15s ease",
                   }}
                 >
-                  <Link href={getFileUrl(f.file_url)} target="_blank" rel="noreferrer" sx={{ display: "block", lineHeight: 0 }}>
-                    <Box
-                      component="img"
-                      src={getFileUrl(f.file_url)}
-                      alt={f.subtask ?? `Screenshot ${idx + 1}`}
-                      sx={{
-                        width: "100%",
-                        aspectRatio: "16/11",
-                        objectFit: "cover",
-                        display: "block",
-                        transition: "opacity 0.15s ease",
-                        "&:hover": { opacity: 0.9 },
-                      }}
-                    />
-                  </Link>
+                  <Box
+                    onClick={() => setPreviewIndex(idx)}
+                    sx={{ display: "block", lineHeight: 0, cursor: "pointer", width: "100%", aspectRatio: "16/11", overflow: "hidden" }}
+                  >
+                    {showImage ? (
+                      <Box
+                        component="img"
+                        src={getFileUrl(f.file_url)}
+                        alt={f.subtask ?? `Screenshot ${idx + 1}`}
+                        onError={() => handleImageLoadError(f.id)}
+                        sx={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                          display: "block",
+                          transition: "opacity 0.15s ease",
+                          "&:hover": { opacity: 0.9 },
+                        }}
+                      />
+                    ) : (
+                      <FileFallbackCard fileName={f.file_name} fileUrl={getFileUrl(f.file_url)} variant="grid" />
+                    )}
+                  </Box>
                   <Box sx={{ px: 1, py: 0.75, background: "background.paper" }}>
                     <Typography variant="caption" color="text.secondary" sx={{ display: "block", lineHeight: 1.3, fontSize: "0.68rem" }}>
                       {f.subtask ? f.subtask : `Screenshot ${idx + 1}`}
@@ -843,25 +1083,42 @@ export default function EvidenceList() {
                         </Button>
                       </Stack>
                     ) : (
-                      galleryHasStoredFiles &&
-                      (isAdmin || galleryEvidence?.created_by === user?.email) && (
-                        <Tooltip title="Delete this screenshot">
+                      <Stack direction="row" spacing={0.5}>
+                        <Tooltip title="Download">
                           <IconButton
+                            component="a"
+                            href={getFileUrl(f.file_url)}
+                            target="_blank"
+                            rel="noreferrer"
                             size="small"
-                            aria-label="Delete screenshot"
-                            onClick={() => setPendingDeleteFileId(f.id)}
-                            sx={{ backgroundColor: "rgba(0,0,0,0.5)", color: "#fff", "&:hover": { backgroundColor: "rgba(200,0,0,0.8)" }, width: 28, height: 28 }}
+                            aria-label="Download screenshot"
+                            onClick={(ev) => ev.stopPropagation()}
+                            sx={{ backgroundColor: "rgba(0,0,0,0.5)", color: "#fff", "&:hover": { backgroundColor: "rgba(0,0,0,0.7)" }, width: 28, height: 28 }}
                           >
-                            <TrashIcon size={14} />
+                            <DownloadIcon size={14} />
                           </IconButton>
                         </Tooltip>
-                      )
+                        {galleryHasStoredFiles &&
+                          (isAdmin || galleryEvidence?.created_by === user?.email) && (
+                            <Tooltip title="Delete this screenshot">
+                              <IconButton
+                                size="small"
+                                aria-label="Delete screenshot"
+                                onClick={(ev) => { ev.stopPropagation(); setPendingDeleteFileId(f.id); }}
+                                sx={{ backgroundColor: "rgba(0,0,0,0.5)", color: "#fff", "&:hover": { backgroundColor: "rgba(200,0,0,0.8)" }, width: 28, height: 28 }}
+                              >
+                                <TrashIcon size={14} />
+                              </IconButton>
+                            </Tooltip>
+                          )}
+                      </Stack>
                     )}
                   </Box>
                 </Box>
               );
             })}
           </Box>
+          )}
         </DialogContent>
 
         <DialogActions sx={{ px: 2.5, py: 1.5 }}>
