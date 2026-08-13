@@ -95,8 +95,8 @@ type DashboardData struct {
 	TeamStatusDistribution []TeamStatusCount `json:"teamStatusDistribution"`
 	ActionItems            []ActionItem      `json:"actionItems"`
 	DueSoonItems           []ActionItem      `json:"dueSoonItems"`
-	PendingItems           []ActionItem      `json:"pendingItems"`
-	ValidationItems        []ActionItem      `json:"validationItems"`
+	PendingCount           int               `json:"pendingCount"`
+	ValidationCount        int               `json:"validationCount"`
 	OverdueControls        []OverdueControl  `json:"overdueControls"`
 }
 
