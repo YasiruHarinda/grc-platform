@@ -87,20 +87,29 @@ az login
 
 Then start the Runner again.
 
-### `wso2-runner doctor` — Azure sign-in states
+### `wso2-runner doctor` — Azure access states
 
-In `entra` mode (the default), `doctor` attempts a real Azure sign-in and
-reports one of five states. The Azure library can't always tell "wrong
-tenant" apart from "missing the role" by itself, so `doctor` names both
-possibilities and tells you how to tell them apart with `az account show`:
+In `entra` mode (the default), `doctor` signs in to Azure and then makes one
+real, free call to your Azure OpenAI endpoint. Both halves matter: signing in
+proves who you are, and only the call proves you are allowed to use it. Azure
+hands a token to anyone in the tenant, and the role assignment is checked by
+the endpoint when the token is presented — so a sign-in that succeeds is not
+on its own proof that anything will work.
 
 | State | Meaning | Fix |
 | --- | --- | --- |
 | Azure CLI is not installed | `az` isn't on your machine | Install the Azure CLI, then run `az login` |
 | Azure CLI is installed but nobody is signed in | No cached session | Run `az login` |
-| Signed in to the wrong tenant | Rejected — run `az account show` and compare its `tenantId` to `AZURE_TENANT_ID` in your config; they differ | `az login --tenant <AZURE_TENANT_ID>` |
-| Signed in to the right tenant but missing the role | Rejected — `az account show`'s `tenantId` matches `AZURE_TENANT_ID`, so it's not a tenant problem | Ask an admin to check your membership in the Azure OpenAI access group |
-| Azure sign-in works — token acquired | Everything is working | Nothing to do |
+| Signed in to the wrong tenant | Rejected at sign-in. Your CLI holds a session, but not for the tenant in your config | Run `az account show`, compare its `tenantId` to `AZURE_TENANT_ID`, then `az login --tenant <AZURE_TENANT_ID>` |
+| Signed in, but not allowed to call Azure OpenAI | You are authenticated and the endpoint refused the call. You are missing the Azure OpenAI role | Ask an administrator to grant you the role. `az login` will not fix this |
+| Access could not be confirmed | `AZURE_OPENAI_ENDPOINT` isn't set, or it couldn't be reached | Set the endpoint, or check your network. The Runner still starts |
+| Azure OpenAI access works | Everything is working | Nothing to do |
+
+`wso2-runner start` runs the same check before it takes any work, so a missing
+role stops you at the terminal rather than halfway through a task. The one
+exception is "access could not be confirmed": that only warns, and the Runner
+starts anyway — a check that can't reach a verdict must not stop a Runner that
+would have worked.
 
 In `api_key` mode (rollout-period only), `doctor` just checks that
 `AZURE_OPENAI_API_KEY` is set, same as before.

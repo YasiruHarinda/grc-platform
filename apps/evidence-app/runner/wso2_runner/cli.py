@@ -110,13 +110,15 @@ def start(
     # behaves exactly as it always has.
     if settings.AGENT_PROVIDER == "azure" and settings.AZURE_OPENAI_AUTH_MODE != "api_key":
         from wso2_runner.azure_credential import (
+            AzureAccessDeniedError,
+            AzureAccessUnverifiedError,
             ClientAuthenticationError,
             CredentialUnavailableError,
-            attempt_token,
+            verify_access,
         )
 
         try:
-            asyncio.run(attempt_token())
+            asyncio.run(verify_access())
         # CredentialUnavailableError is a subclass of ClientAuthenticationError —
         # it must be checked first or it's silently swallowed by the wider case.
         except CredentialUnavailableError:
@@ -131,11 +133,31 @@ def start(
             typer.echo(
                 "\n[runner] Azure sign-in was rejected — your session may "
                 "have expired, or you may be signed in to the wrong "
-                "tenant, or lack access to Azure OpenAI. Run this first:\n\n"
+                "tenant. Run this first:\n\n"
                 "    az login\n",
                 err=True,
             )
             raise typer.Exit(1)
+        except AzureAccessDeniedError:
+            # Signed in correctly and still refused. Nothing the engineer can
+            # do at a terminal fixes this, so `az login` is the wrong advice
+            # here -- it is the one failure that needs another person.
+            typer.echo(
+                "\n[runner] You are signed in, but your account is not "
+                "allowed to call Azure OpenAI. Ask an administrator to grant "
+                "you the Azure OpenAI role on the resource, then try "
+                "again.\n",
+                err=True,
+            )
+            raise typer.Exit(1)
+        except AzureAccessUnverifiedError as exc:
+            # Warn and carry on. See verify_access(): an inconclusive probe
+            # must never stop a runner that would have worked.
+            typer.echo(
+                f"\n[runner] Could not confirm Azure OpenAI access ({exc}). "
+                "Starting anyway -- if calls fail, run `wso2-runner doctor`.\n",
+                err=True,
+            )
         except Exception as exc:
             typer.echo(f"\n[runner] Azure authentication check failed: {exc}\n", err=True)
             raise typer.Exit(1)
@@ -225,16 +247,18 @@ def doctor(
         import shutil
 
         from wso2_runner.azure_credential import (
+            AzureAccessDeniedError,
+            AzureAccessUnverifiedError,
             ClientAuthenticationError,
             CredentialUnavailableError,
-            attempt_token,
+            verify_access,
         )
 
         # CredentialUnavailableError is a subclass of ClientAuthenticationError —
         # it must be checked first or it's silently swallowed by the wider case.
         try:
-            asyncio.run(attempt_token())
-            print("    ✓ Azure sign-in works — token acquired")
+            asyncio.run(verify_access())
+            print("    ✓ Azure OpenAI access works — signed in and authorised")
         except CredentialUnavailableError:
             # The credential could not even attempt authentication. The Azure
             # CLI's presence on PATH is the one extra signal we genuinely
@@ -246,20 +270,31 @@ def doctor(
             else:
                 print("    ✗ Azure CLI is installed but nobody is signed in — run: az login")
         except ClientAuthenticationError:
-            # Authentication was attempted and rejected. The library gives no
-            # way to tell "wrong tenant" apart from "right tenant but missing
-            # the role assignment" by type — both raise this same exception.
-            # Rather than guess from the message text, name both possibilities
-            # and how to tell them apart.
+            # Authentication was attempted and rejected. Because the
+            # credential is pinned to AZURE_TENANT_ID, this is the wrong
+            # tenant: the CLI holds a session, but not one that can produce a
+            # token for the tenant configured here.
             print(
-                "    ✗ Azure sign-in was rejected — either you're signed in to "
-                "the wrong tenant, or you're signed in to the right tenant but "
-                "lack the Azure OpenAI role assignment. Run `az account show` "
-                "and compare its tenantId to AZURE_TENANT_ID in your config: if "
-                "they differ, run `az login --tenant <AZURE_TENANT_ID>`; if "
-                "they match, ask an admin to check your group membership for "
-                "the Azure OpenAI role."
+                "    ✗ Azure sign-in was rejected — you appear to be signed in "
+                "to the wrong tenant. Run `az account show` and compare its "
+                "tenantId to AZURE_TENANT_ID in your config; if they differ, "
+                "run `az login --tenant <AZURE_TENANT_ID>`."
             )
+        except AzureAccessDeniedError:
+            # The state a token check alone can never see: authentication
+            # succeeded and the resource still refused the call. Azure AD
+            # issues a Cognitive Services token to any member of the tenant;
+            # the role is enforced by the resource, so only a real call
+            # reaches this.
+            print(
+                "    ✗ Azure sign-in works, but your account is not allowed to "
+                "call Azure OpenAI — you are missing the Azure OpenAI role on "
+                "the resource. `az login` will not fix this: ask an "
+                "administrator to grant you the role."
+            )
+        except AzureAccessUnverifiedError as exc:
+            print(f"    – Azure sign-in works, but access could not be confirmed: {exc}")
+            print("       Set AZURE_OPENAI_ENDPOINT, or check network access to it.")
         except Exception as exc:
             print(f"    ✗ Azure authentication check failed: {exc}")
     elif settings.AGENT_PROVIDER == "ollama":

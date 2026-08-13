@@ -20,6 +20,7 @@ rather than `async def test_...`.
 """
 import asyncio
 
+import httpx
 import pytest
 
 import wso2_runner.azure_credential as azure_credential
@@ -85,12 +86,14 @@ def _isolate_settings_and_module_cache():
     original_mode = settings.AZURE_OPENAI_AUTH_MODE
     original_tenant = settings.AZURE_TENANT_ID
     original_key = settings.AZURE_OPENAI_API_KEY
+    original_endpoint = settings.AZURE_OPENAI_ENDPOINT
     azure_credential._credential = None
     azure_credential._token_provider = None
     yield
     settings.AZURE_OPENAI_AUTH_MODE = original_mode
     settings.AZURE_TENANT_ID = original_tenant
     settings.AZURE_OPENAI_API_KEY = original_key
+    settings.AZURE_OPENAI_ENDPOINT = original_endpoint
     azure_credential._credential = None
     azure_credential._token_provider = None
 
@@ -221,3 +224,142 @@ def test_repeated_calls_reuse_one_credential(fake_vendor_credential):
     assert first is second
     assert len(fake_vendor_credential.created) == 1
     assert fake_vendor_credential.provider_builds == 1
+
+
+# ── (h) verify_access: proving access, not merely authentication ────────
+#
+# These are the tests for the gap a token check cannot see. Azure AD issues
+# a Cognitive Services token to any authenticated member of the tenant, so
+# an engineer without the role assignment authenticates perfectly and is
+# refused by the *resource* instead. Only a real call reaches that, which is
+# why verify_access exists on top of attempt_token.
+#
+# `_get` is replaced rather than the network being reached -- the same
+# fake-at-the-vendor-boundary approach the rest of this file uses. What is
+# actually under test is the classification: which status code means what.
+
+
+@pytest.fixture
+def probe(monkeypatch):
+    """Replaces azure_credential._get, records the request it was given, and
+    replies with whatever the test asks for -- an httpx.Response to return,
+    or an exception to raise."""
+    calls = []
+    box = {"outcome": httpx.Response(200, json={"data": []})}
+
+    async def fake_get(url, headers):
+        calls.append((url, headers))
+        outcome = box["outcome"]
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(azure_credential, "_get", fake_get)
+    return calls, box
+
+
+def _entra(endpoint="https://example.openai.azure.com"):
+    settings.AZURE_OPENAI_AUTH_MODE = "entra"
+    settings.AZURE_TENANT_ID = "tenant-h"
+    settings.AZURE_OPENAI_ENDPOINT = endpoint
+
+
+def test_verify_access_passes_when_the_resource_accepts_the_call(fake_vendor_credential, probe):
+    _entra()
+
+    assert asyncio.run(azure_credential.verify_access()) is None
+
+
+def test_verify_access_sends_the_token_as_a_bearer_to_the_configured_endpoint(
+    fake_vendor_credential, probe
+):
+    calls, _ = probe
+    _entra()
+
+    asyncio.run(azure_credential.verify_access())
+
+    url, headers = calls[0]
+    assert url.startswith("https://example.openai.azure.com/openai/models")
+    assert headers["Authorization"] == "Bearer fake-token"
+
+
+def test_verify_access_reports_a_forbidden_call_as_a_missing_role(fake_vendor_credential, probe):
+    """403 is the whole point of this function: authenticated, and refused."""
+    _, box = probe
+    _entra()
+    box["outcome"] = httpx.Response(403, json={"error": "PermissionDenied"})
+
+    with pytest.raises(azure_credential.AzureAccessDeniedError):
+        asyncio.run(azure_credential.verify_access())
+
+
+def test_verify_access_reports_an_unauthorized_call_as_a_missing_role(fake_vendor_credential, probe):
+    _, box = probe
+    _entra()
+    box["outcome"] = httpx.Response(401)
+
+    with pytest.raises(azure_credential.AzureAccessDeniedError):
+        asyncio.run(azure_credential.verify_access())
+
+
+def test_verify_access_cannot_judge_without_an_endpoint(fake_vendor_credential, probe):
+    calls, _ = probe
+    _entra(endpoint="")
+
+    with pytest.raises(azure_credential.AzureAccessUnverifiedError):
+        asyncio.run(azure_credential.verify_access())
+    assert calls == []
+
+
+def test_verify_access_treats_an_unreachable_endpoint_as_unverified_not_denied(
+    fake_vendor_credential, probe
+):
+    """A laptop on bad wifi must never be told to go and ask an
+    administrator for a role it already holds."""
+    _, box = probe
+    _entra()
+    box["outcome"] = httpx.ConnectError("no route to host")
+
+    with pytest.raises(azure_credential.AzureAccessUnverifiedError):
+        asyncio.run(azure_credential.verify_access())
+
+
+def test_verify_access_treats_an_unexpected_status_as_unverified_not_denied(
+    fake_vendor_credential, probe
+):
+    """Only 401 and 403 are unambiguous refusals. Anything else -- a 500, a
+    404 from an api-version that has no such route -- leaves the question
+    open, and this check may only ever block on an unambiguous refusal."""
+    _, box = probe
+    _entra()
+    box["outcome"] = httpx.Response(500, text="boom")
+
+    with pytest.raises(azure_credential.AzureAccessUnverifiedError):
+        asyncio.run(azure_credential.verify_access())
+
+
+def test_verify_access_never_probes_when_authentication_itself_failed(
+    fake_vendor_credential, probe
+):
+    """The token failure surfaces by its own type, unchanged, and no call is
+    attempted -- there is nothing to authorise without a token."""
+    calls, _ = probe
+    _entra()
+    fake_vendor_credential.created  # credential is built lazily below
+    azure_credential.resolve_llm_auth()
+    fake_vendor_credential.created[0].outcome = CredentialUnavailableError("no az cli")
+
+    with pytest.raises(CredentialUnavailableError):
+        asyncio.run(azure_credential.verify_access())
+    assert calls == []
+
+
+def test_verify_access_surfaces_a_wrong_tenant_rejection_by_type(fake_vendor_credential, probe):
+    calls, _ = probe
+    _entra()
+    azure_credential.resolve_llm_auth()
+    fake_vendor_credential.created[0].outcome = ClientAuthenticationError("wrong tenant")
+
+    with pytest.raises(ClientAuthenticationError):
+        asyncio.run(azure_credential.verify_access())
+    assert calls == []
