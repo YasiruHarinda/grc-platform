@@ -46,6 +46,15 @@ class RunnerSettings(BaseSettings):
     AZURE_OPENAI_ENDPOINT: str = ""
     AZURE_OPENAI_DEPLOYMENT: str = ""
     AZURE_OPENAI_API_VERSION: str = "2024-10-21"
+    # "entra" (default): each engineer's own Azure CLI session authorises
+    # calls, no credential written to disk. "api_key": fall back to
+    # AZURE_OPENAI_API_KEY above — reachable only by setting this
+    # explicitly, never as an implicit fallback.
+    AZURE_OPENAI_AUTH_MODE: str = "entra"   # "entra" | "api_key"
+    # Required when AZURE_OPENAI_AUTH_MODE is "entra" — pins the credential
+    # to one tenant so switching Azure tenants/subscriptions for other work
+    # doesn't intermittently break LLM access. Not needed in "api_key" mode.
+    AZURE_TENANT_ID: str = ""
 
     BROWSER_CHANNEL: str = "chrome"
 
