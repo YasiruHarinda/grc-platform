@@ -372,58 +372,39 @@ function EvidenceList({
 // (first) approval — canDelete is driven by detail.owner_first_approved_at
 // at the call site, the same backend-set-once flag handleOwnerApproveRisk
 // stamps, so this evidence locks in step with the approval it backed, the
-// same way completion evidence locks once its plan is COMPLETED.
+// same way completion evidence locks once its plan is COMPLETED. evidence is
+// this risk's ACTION_PLAN_ATTACHMENT slice, fetched once by the drawer.
 function RiskEvidenceSection({
   riskId,
+  evidence,
   canDelete,
   disabled,
+  onDeleted,
 }: {
   riskId: number;
+  evidence: RiskEvidence[];
   canDelete: boolean;
   disabled: boolean;
+  onDeleted: (fileId: number) => void;
 }): JSX.Element {
   const authFetch = useAuthApiClient();
-  const [files, setFiles] = useState<RiskEvidence[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    fetchRiskEvidence(authFetch, riskId)
-      .then((all) => {
-        if (cancelled) return;
-        setFiles(all.filter((e) => e.evidence_type === "ACTION_PLAN_ATTACHMENT"));
-      })
-      .catch(() => {
-        if (!cancelled) setError("Failed to load evidence");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [riskId]);
 
   const handleRemove = (fileId: number): void => {
     setError(null);
     deleteRiskEvidence(authFetch, riskId, fileId)
-      .then(() => setFiles((prev) => prev.filter((f) => f.id !== fileId)))
+      .then(() => onDeleted(fileId))
       .catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to remove file"));
   };
 
   return (
     <SectionCard icon={<FileText size={16} />} iconBg="#ecfdf5" iconColor="#059669" title="Risk Evidence">
-      {loading ? (
-        <CircularProgress size={20} />
-      ) : error ? (
+      {error ? (
         <Typography variant="body2" color="error.main">
           {error}
         </Typography>
-      ) : files.length > 0 ? (
-        <EvidenceList evidence={files} canDelete={canDelete} disabled={disabled} onDelete={handleRemove} />
+      ) : evidence.length > 0 ? (
+        <EvidenceList evidence={evidence} canDelete={canDelete} disabled={disabled} onDelete={handleRemove} />
       ) : (
         <Typography variant="body2" color="text.secondary">
           No evidence attached to this risk.
@@ -436,75 +417,51 @@ function RiskEvidenceSection({
 // The "Risk Action Plan Completion Attachment" upload — files go to Azure
 // (proxied through the backend) as soon as they're picked, matching the Audit
 // Hub's upload-immediately pattern. "Complete Action Plan" stays disabled
-// until at least one file exists for this plan (checked here for the button's
-// enabled state, and re-checked server-side as the real gate). Mounted
+// until at least one file exists for this plan (derived by the caller from
+// the evidence prop — see ActionPlanCard's hasCompletionEvidence). Mounted
 // unconditionally (not just while the plan is completable) so the list stays
 // visible after completion — delete is withdrawn once planCompleted,
 // matching the server-side lock evidenceService.Delete now enforces (a
 // COMPLETED plan's completion evidence can't be deleted even by a
 // compliance-admin), so this is UI convenience on top of a real guarantee,
-// not the only thing enforcing it.
+// not the only thing enforcing it. evidence is this plan's
+// FINAL_APPROVAL_ATTACHMENT slice, fetched once by the drawer.
 function CompletionEvidenceSection({
   riskId,
   planId,
+  evidence,
   planCompleted,
   showUpload,
   disabled,
-  onHasEvidenceChange,
+  onUploaded,
+  onDeleted,
 }: {
   riskId: number;
   planId: number;
+  evidence: RiskEvidence[];
   planCompleted: boolean;
   showUpload: boolean;
   disabled: boolean;
-  onHasEvidenceChange: (hasEvidence: boolean) => void;
+  onUploaded: (ev: RiskEvidence) => void;
+  onDeleted: (fileId: number) => void;
 }): JSX.Element | null {
   const authFetch = useAuthApiClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [files, setFiles] = useState<RiskEvidence[]>([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchRiskEvidence(authFetch, riskId)
-      .then((all) => {
-        if (cancelled) return;
-        const existing = all.filter(
-          (e) => e.action_plan_id === planId && e.evidence_type === "FINAL_APPROVAL_ATTACHMENT",
-        );
-        setFiles(existing);
-        onHasEvidenceChange(existing.length > 0);
-      })
-      .catch(() => {
-        // Best-effort: if the list fails to load, the upload button still
-        // works and the plan simply stays gated until a file is attached.
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [riskId, planId]);
 
   const handleFiles = async (selected: FileList | null): Promise<void> => {
     if (!selected || selected.length === 0) return;
     setUploading(true);
     setError(null);
     try {
-      // Tracked locally rather than read back from state — setFiles updaters
-      // are expected to stay pure (no calling onHasEvidenceChange from
-      // inside one), and this loop needs each iteration's append visible to
-      // the next without waiting on a render.
-      let accumulated = files;
       for (const file of Array.from(selected)) {
         const ev = await uploadRiskEvidence(authFetch, riskId, {
           evidenceType: "FINAL_APPROVAL_ATTACHMENT",
           actionPlanId: planId,
           file,
         });
-        accumulated = [...accumulated, ev];
-        setFiles(accumulated);
-        onHasEvidenceChange(accumulated.length > 0);
+        onUploaded(ev);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to upload file");
@@ -516,22 +473,18 @@ function CompletionEvidenceSection({
   const handleRemove = (fileId: number): void => {
     setError(null);
     deleteRiskEvidence(authFetch, riskId, fileId)
-      .then(() => {
-        const next = files.filter((f) => f.id !== fileId);
-        setFiles(next);
-        onHasEvidenceChange(next.length > 0);
-      })
+      .then(() => onDeleted(fileId))
       .catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to remove file"));
   };
 
-  if (files.length === 0 && !showUpload) return null;
+  if (evidence.length === 0 && !showUpload) return null;
 
   return (
     <Stack gap={1} sx={{ pt: 0.5 }}>
-      <Typography variant="caption" fontWeight={600} color={showUpload && files.length === 0 ? "error.main" : "text.secondary"}>
-        Completion Evidence {showUpload && files.length === 0 && "(required)"}
+      <Typography variant="caption" fontWeight={600} color={showUpload && evidence.length === 0 ? "error.main" : "text.secondary"}>
+        Completion Evidence {showUpload && evidence.length === 0 && "(required)"}
       </Typography>
-      <EvidenceList evidence={files} canDelete={!planCompleted} disabled={disabled} onDelete={handleRemove} />
+      <EvidenceList evidence={evidence} canDelete={!planCompleted} disabled={disabled} onDelete={handleRemove} />
       {showUpload && (
         <>
           <input
@@ -573,6 +526,7 @@ function CompletionEvidenceSection({
 function ActionPlanCard({
   riskId,
   plan,
+  evidence,
   can,
   currentUserId,
   disabled,
@@ -580,9 +534,12 @@ function ActionPlanCard({
   userNames,
   onCompleteStep,
   onCompletePlan,
+  onEvidenceUploaded,
+  onEvidenceDeleted,
 }: {
   riskId: number;
   plan: ActionPlanWithSteps;
+  evidence: RiskEvidence[];
   can: (privilege: string) => boolean;
   currentUserId: number | null;
   disabled: boolean;
@@ -590,6 +547,8 @@ function ActionPlanCard({
   userNames: Map<number, string>;
   onCompleteStep: (planId: number, stepId: number) => void;
   onCompletePlan: (planId: number) => void;
+  onEvidenceUploaded: (ev: RiskEvidence) => void;
+  onEvidenceDeleted: (fileId: number) => void;
 }): JSX.Element {
   const isOwner = plan.action_owner_id !== null && plan.action_owner_id === currentUserId;
   // Mirrors the backend gate: steps/plan can only be completed while the
@@ -600,7 +559,10 @@ function ActionPlanCard({
   const isManagement = plan.plan_type === "MANAGEMENT";
   const ownerName = plan.action_owner_id !== null ? (userNames.get(plan.action_owner_id) ?? null) : null;
   const readyToComplete = canComplete && allStepsDone && plan.status !== "COMPLETED";
-  const [hasCompletionEvidence, setHasCompletionEvidence] = useState(false);
+  // Derived straight from the evidence prop now that it's fetched once by
+  // the drawer, rather than tracked in local state fed by a callback from
+  // CompletionEvidenceSection.
+  const hasCompletionEvidence = evidence.length > 0;
 
   return (
     <SectionCard
@@ -651,10 +613,12 @@ function ActionPlanCard({
         <CompletionEvidenceSection
           riskId={riskId}
           planId={plan.id}
+          evidence={evidence}
           planCompleted={plan.status === "COMPLETED"}
           showUpload={readyToComplete}
           disabled={disabled}
-          onHasEvidenceChange={setHasCompletionEvidence}
+          onUploaded={onEvidenceUploaded}
+          onDeleted={onEvidenceDeleted}
         />
         {readyToComplete && (
           <Button
@@ -953,9 +917,41 @@ export default function RiskDetailDrawer({
   // Reset to the first tab whenever a different risk is opened, so the
   // drawer doesn't retain the previous risk's active tab.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTab(0);
   }, [detail?.id]);
+
+  // Fetched once here rather than by each section — RiskEvidenceSection and
+  // every ActionPlanCard used to each fetch GET .../evidence independently
+  // (N+1 identical requests for a risk with N plans). Filtered slices are
+  // handed down as props instead.
+  const authFetch = useAuthApiClient();
+  const [evidence, setEvidence] = useState<RiskEvidence[]>([]);
+  useEffect(() => {
+    if (!detail?.id) return;
+    let cancelled = false;
+    // The drawer doesn't remount between risks (same instance, detail swaps
+    // — see the tab-reset effect above), so without this the previous
+    // risk's evidence would stay visible until the new fetch resolves.
+    setEvidence([]);
+    fetchRiskEvidence(authFetch, detail.id)
+      .then((all) => {
+        if (!cancelled) setEvidence(all);
+      })
+      .catch(() => {
+        // Best-effort: sections simply show no evidence until the drawer is
+        // reopened rather than blocking the rest of the drawer on this.
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail?.id]);
+  const handleEvidenceUploaded = (ev: RiskEvidence): void => {
+    setEvidence((prev) => [...prev, ev]);
+  };
+  const handleEvidenceDeleted = (fileId: number): void => {
+    setEvidence((prev) => prev.filter((e) => e.id !== fileId));
+  };
 
   return (
     <Drawer
@@ -1179,8 +1175,10 @@ export default function RiskDetailDrawer({
 
               <RiskEvidenceSection
                 riskId={detail.id}
+                evidence={evidence.filter((e) => e.evidence_type === "ACTION_PLAN_ATTACHMENT")}
                 canDelete={!detail.owner_first_approved_at}
                 disabled={actionsDisabled}
+                onDeleted={handleEvidenceDeleted}
               />
             </TabPanel>
 
@@ -1193,6 +1191,9 @@ export default function RiskDetailDrawer({
                     key={plan.id}
                     riskId={detail.id}
                     plan={plan}
+                    evidence={evidence.filter(
+                      (e) => e.action_plan_id === plan.id && e.evidence_type === "FINAL_APPROVAL_ATTACHMENT",
+                    )}
                     can={can}
                     currentUserId={currentUserId}
                     disabled={actionsDisabled}
@@ -1200,6 +1201,8 @@ export default function RiskDetailDrawer({
                     userNames={userNames}
                     onCompleteStep={onCompleteStep}
                     onCompletePlan={onCompletePlan}
+                    onEvidenceUploaded={handleEvidenceUploaded}
+                    onEvidenceDeleted={handleEvidenceDeleted}
                   />
                 ))
               ) : (
