@@ -199,6 +199,10 @@ export default function EvidenceList() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Evidence ids with a zip download in flight -- per-row so one slow
+  // build doesn't disable every row's button, but a row can't be clicked
+  // twice while its own zip is still being built.
+  const [downloadingIds, setDownloadingIds] = useState<Set<number>>(new Set());
 
   // Gallery modal state
   const [galleryEvidenceId, setGalleryEvidenceId] = useState<number | null>(null);
@@ -282,6 +286,37 @@ export default function EvidenceList() {
       setActionError(err?.response?.data?.detail || "Failed to update status.");
     },
   });
+
+  // Not a useMutation: react-query's mutation state is shared across every
+  // call site, so a second row's click would show as "pending" on the
+  // first row too. downloadingIds (above) is the per-row equivalent.
+  async function handleDownload(id: number) {
+    if (downloadingIds.has(id)) return;
+    setDownloadingIds((prev) => new Set(prev).add(id));
+    try {
+      const response = await evidenceApi.download(id);
+      const disposition = response.headers["content-disposition"] as string | undefined;
+      const filenameMatch = disposition?.match(/filename="?([^";]+)"?/);
+      const filename = filenameMatch?.[1] || `evidence-${id}.zip`;
+
+      const url = URL.createObjectURL(response.data as Blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setActionError("Failed to download evidence.");
+    } finally {
+      setDownloadingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
 
   const controlById = useMemo(() => {
     const m = new Map<number, Control>();
@@ -701,6 +736,20 @@ export default function EvidenceList() {
                         </Stack>
                       ) : (
                         <Stack direction="row" spacing={0.5} justifyContent="center">
+                          <Tooltip title="Download all as zip">
+                            <IconButton
+                              size="small"
+                              aria-label="Download evidence"
+                              onClick={() => handleDownload(e.id)}
+                              disabled={downloadingIds.has(e.id)}
+                            >
+                              {downloadingIds.has(e.id) ? (
+                                <CircularProgress size={16} />
+                              ) : (
+                                <DownloadIcon size={16} />
+                              )}
+                            </IconButton>
+                          </Tooltip>
                           <Tooltip title="Rename">
                             <IconButton
                               size="small"
@@ -852,6 +901,20 @@ export default function EvidenceList() {
                     </Stack>
                   ) : (
                     <Stack direction="row" spacing={0.5}>
+                      <Tooltip title="Download all as zip">
+                        <IconButton
+                          size="small"
+                          aria-label="Download evidence"
+                          onClick={() => handleDownload(e.id)}
+                          disabled={downloadingIds.has(e.id)}
+                        >
+                          {downloadingIds.has(e.id) ? (
+                            <CircularProgress size={16} />
+                          ) : (
+                            <DownloadIcon size={16} />
+                          )}
+                        </IconButton>
+                      </Tooltip>
                       <Tooltip title="Rename">
                         <IconButton size="small" aria-label="Rename evidence" onClick={() => { setRenameTarget({ id: e.id, currentText: displayText }); setRenameValue(displayText); }}>
                           <DrawingPencilIcon size={16} />

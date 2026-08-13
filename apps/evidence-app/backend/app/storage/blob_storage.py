@@ -121,6 +121,23 @@ def save_file(file: UploadFile, *, prefix: str = "", label: str | None = None) -
     return unique_name, f"/uploads/{unique_name}"
 
 
+def read_file(file_name: str) -> bytes:
+    """Download a blob by name and return its bytes.
+
+    Mirrors the shape of `delete_file` below, but the failure mode is the
+    opposite on purpose: `delete_file` treats a missing blob as a no-op
+    because "already gone" is success for a delete, while a missing blob
+    here is not a success under any name -- the caller asked to read bytes
+    that don't exist, and letting `ResourceNotFoundError` propagate is the
+    correct outcome. This is what lets `app.storage.evidence_zip` fail loudly
+    on a missing file rather than silently building a short zip.
+    """
+    blob = _get_blob_service().get_blob_client(
+        container=settings.AZURE_STORAGE_CONTAINER, blob=file_name
+    )
+    return blob.download_blob().readall()
+
+
 def delete_file(file_name: str) -> None:
     """Delete a blob by name. Missing blobs are treated as already deleted."""
     blob = _get_blob_service().get_blob_client(

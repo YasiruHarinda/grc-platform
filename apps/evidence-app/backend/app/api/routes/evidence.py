@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi.responses import Response
 from sqlalchemy.orm import Session, selectinload
 from app.auth import User, get_current_user
 from app.database import get_db
@@ -9,6 +10,7 @@ from app.models.submission import Submission
 from app.schemas.evidence import EvidenceResponse, EvidenceUpdate
 from app.storage.blob_paths import build_control_prefix, sanitize_title
 from app.storage.blob_storage import save_file, delete_file, delete_files
+from app.storage.evidence_zip import build_evidence_zip
 
 router = APIRouter(prefix="/evidence", tags=["Evidence"])
 
@@ -197,3 +199,39 @@ def delete_evidence(evidence_id: int, db: Session = Depends(get_db), user: User 
     # delete_framework/delete_product. A failed commit must not strand
     # Evidence rows pointing at blobs that were already removed.
     delete_files(file_names)
+
+
+# Appended after every other route deliberately, so this two-segment path
+# (`/{evidence_id}/download`) never gets a chance to disturb the existing
+# ordering above -- in particular `/files/{file_id}`, which has to stay
+# ahead of the single-segment `/{evidence_id}` routes. See spec issue #92.
+@router.get("/{evidence_id}/download")
+def download_evidence(
+    evidence_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    """Zip of one Evidence's files, in `sort_order`, laid out under a
+    readable `product/framework/control/{title}/` (or, with no Control,
+    bare `{title}/`) folder -- see `app.storage.evidence_zip` for the layout
+    and ADR 0003 for why this is a safe addition alongside the signed-link
+    display path rather than a reversion of it.
+
+    Reuses `_authorize_evidence_access` exactly as `get_evidence` and
+    `delete_evidence` do -- this endpoint is never more permissive than
+    viewing the Evidence. 404s both when the Evidence itself doesn't exist
+    (via that shared check) and when it has no files: an empty zip would be
+    a confusing "success".
+    """
+    evidence = (
+        db.query(Evidence).options(selectinload(Evidence.files)).filter(Evidence.id == evidence_id).first()
+    )
+    _authorize_evidence_access(evidence, user)
+    if not evidence.files:
+        raise HTTPException(status_code=404, detail="Evidence has no files")
+
+    zip_bytes = build_evidence_zip(evidence, evidence.files)
+    filename = f"{sanitize_title(evidence.title)}.zip"
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

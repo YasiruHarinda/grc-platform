@@ -143,6 +143,12 @@ export const evidenceApi = {
     api.patch(`/evidence/${id}`, { description }).then((r) => r.data),
   delete: (id: number) => api.delete(`/evidence/${id}`),
   deleteFile: (fileId: number) => api.delete(`/evidence/files/${fileId}`),
+  // Goes through `api` (not a plain anchor/window.open) because this
+  // endpoint is authenticated and only axios attaches the bearer token.
+  // Returns the full response, not just `.data` -- the caller needs the
+  // `Content-Disposition` header to name the downloaded file.
+  download: (id: number) =>
+    api.get(`/evidence/${id}/download`, { responseType: "blob" }),
 };
 
 export const submissionsApi = {
