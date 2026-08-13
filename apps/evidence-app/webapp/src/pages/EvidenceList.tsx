@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect } from "react";
 import { getFileUrl } from "../api/client";
+import { stableFileUrl, forgetFileUrl } from "../utils/stableFileUrl";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AxiosError } from "axios";
 import Box from "@mui/material/Box";
@@ -18,6 +19,8 @@ import TableRow from "@mui/material/TableRow";
 import Button from "@mui/material/Button";
 import IconButton from "@mui/material/IconButton";
 import CircularProgress from "@mui/material/CircularProgress";
+import LinearProgress from "@mui/material/LinearProgress";
+import Skeleton from "@mui/material/Skeleton";
 import Link from "@mui/material/Link";
 import Stack from "@mui/material/Stack";
 import Chip from "@mui/material/Chip";
@@ -31,6 +34,9 @@ import DialogActions from "@mui/material/DialogActions";
 import TextField from "@mui/material/TextField";
 import Snackbar from "@mui/material/Snackbar";
 import Alert from "@mui/material/Alert";
+import useMediaQuery from "@mui/material/useMediaQuery";
+import { useTheme } from "@mui/material/styles";
+import type { SxProps, Theme } from "@mui/material/styles";
 import {
   DocumentIcon,
   TrashIcon,
@@ -173,6 +179,90 @@ function FileFallbackCard({
   );
 }
 
+// Shared by the real desktop table and its loading skeleton, so the two
+// can never drift out of sync on column widths -- the skeleton's whole job
+// is to promise a shape that the real table then delivers on.
+function EvidenceTableHead() {
+  const headerSx = {
+    py: 1.5,
+    px: 2,
+    fontWeight: 600,
+    color: "text.secondary",
+    textTransform: "uppercase" as const,
+    fontSize: "0.72rem",
+    letterSpacing: "0.04em",
+  };
+  return (
+    <TableHead>
+      <TableRow>
+        <TableCell sx={{ width: "11%", ...headerSx }}>Date & Time</TableCell>
+        <TableCell sx={{ width: "21%", ...headerSx }}>Control</TableCell>
+        <TableCell sx={{ width: "11%", ...headerSx }}>Screenshots</TableCell>
+        <TableCell sx={{ width: "14%", ...headerSx }}>Status</TableCell>
+        <TableCell sx={{ width: "10%", ...headerSx }}>Source</TableCell>
+        <TableCell sx={{ width: "24%", ...headerSx }}>Task</TableCell>
+        <TableCell sx={{ width: "9%", ...headerSx }} align="center">Actions</TableCell>
+      </TableRow>
+    </TableHead>
+  );
+}
+
+// A thumbnail that fades in over a neutral placeholder once it has actually
+// downloaded, instead of popping in abruptly or leaving a blank tile that
+// shifts the grid once it resolves. The "loaded" flag needs a component of
+// its own -- useState can't be called from inside the .map() that renders
+// each row's thumbnails, only from a real component.
+//
+// `loading="lazy"` and `decoding="async"` live here too, since every
+// call site wants both: lazy so a thumbnail below the fold doesn't compete
+// for one of the browser's ~6 connections-per-host with the ones on screen,
+// async so decoding it doesn't block the row it just appeared in.
+function Thumbnail({
+  src,
+  alt,
+  onError,
+  sx,
+}: {
+  src: string;
+  alt: string;
+  onError?: () => void;
+  sx?: SxProps<Theme>;
+}) {
+  const [loaded, setLoaded] = useState(false);
+  return (
+    <Box
+      sx={{
+        width: "100%",
+        height: "100%",
+        overflow: "hidden",
+        borderRadius: 1,
+        backgroundColor: "action.hover",
+      }}
+    >
+      <Box
+        component="img"
+        src={src}
+        alt={alt}
+        loading="lazy"
+        decoding="async"
+        onLoad={() => setLoaded(true)}
+        onError={onError}
+        sx={[
+          {
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            display: "block",
+            opacity: loaded ? 1 : 0,
+            transition: "opacity 0.2s ease, transform 0.15s ease",
+          },
+          ...(Array.isArray(sx) ? sx : [sx]),
+        ]}
+      />
+    </Box>
+  );
+}
+
 function StatCard({ label, value, accent }: { label: string; value: number; accent?: string }) {
   return (
     <Paper variant="outlined" sx={{ p: 2.25, flex: 1, minWidth: { xs: 140, sm: 160 } }}>
@@ -190,9 +280,77 @@ function StatCard({ label, value, accent }: { label: string; value: number; acce
   );
 }
 
+// Its own component, holding its own `value` state, so a keystroke re-renders
+// one text field instead of the whole table -- before this split, `renameValue`
+// lived in `EvidenceList` itself and every row, `<Select>` and `<Tooltip>` on
+// the page re-rendered on every character typed.
+function RenameEvidenceDialog({
+  target,
+  isSaving,
+  onClose,
+  onSave,
+}: {
+  target: { id: number; currentText: string } | null;
+  isSaving: boolean;
+  onClose: () => void;
+  onSave: (id: number, description: string) => void;
+}) {
+  const [value, setValue] = useState(target?.currentText ?? "");
+
+  // Load the target row's current text into the field whenever a different
+  // (or no) row becomes the rename target. Adjusted during render rather
+  // than in an effect, matching the pattern the gallery already uses for
+  // its own "reset when the identity changes" state further down this file
+  // -- it takes effect before the first paint of the new target instead of
+  // flashing the previous row's text for one frame.
+  const [prevTargetId, setPrevTargetId] = useState(target?.id ?? null);
+  if ((target?.id ?? null) !== prevTargetId) {
+    setPrevTargetId(target?.id ?? null);
+    setValue(target?.currentText ?? "");
+  }
+
+  const trimmed = value.trim();
+  const save = () => {
+    if (target && trimmed) onSave(target.id, trimmed);
+  };
+
+  return (
+    <Dialog open={target != null} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>Rename Evidence</DialogTitle>
+      <DialogContent sx={{ pt: "12px !important" }}>
+        <TextField
+          autoFocus
+          fullWidth
+          label="Name"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && trimmed) save();
+          }}
+          size="small"
+        />
+      </DialogContent>
+      <DialogActions sx={{ px: 2.5, py: 1.5 }}>
+        <Button onClick={onClose} disabled={isSaving}>
+          Cancel
+        </Button>
+        <Button variant="contained" disabled={!trimmed || isSaving} onClick={save}>
+          {isSaving ? "Saving…" : "Save"}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
 export default function EvidenceList() {
   const queryClient = useQueryClient();
   const { user, isAdmin } = useCurrentUser();
+  const theme = useTheme();
+  // `noSsr: true` matters here: without it this hook returns `false` on the
+  // very first render (there's no way to know the viewport before paint),
+  // so a phone would briefly mount the desktop table and download every
+  // image in it -- exactly what mounting only one layout is meant to avoid.
+  const isMobile = useMediaQuery(theme.breakpoints.down("md"), { noSsr: true });
   const [productId, setProductId] = useState<number | "">("");
   const [frameworkId, setFrameworkId] = useState<number | "">("");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
@@ -213,29 +371,43 @@ export default function EvidenceList() {
   // whose image failed to load even after that retry (shown as a card).
   const [retriedFileIds, setRetriedFileIds] = useState<Set<number>>(new Set());
   const [failedFileIds, setFailedFileIds] = useState<Set<number>>(new Set());
-  // Rename dialog state
+  // Rename dialog state -- just which row, and whether a save is in flight.
+  // The text itself lives in RenameEvidenceDialog now, so a keystroke there
+  // no longer re-renders this component (and everything under it).
   const [renameTarget, setRenameTarget] = useState<{ id: number; currentText: string } | null>(null);
-  const [renameValue, setRenameValue] = useState("");
 
+  // staleTime: 60_000 on each of these five, and only here -- not on the
+  // QueryClient in main.tsx, which would also change Dashboard, Agent, Cost
+  // and all three pickers. Per-observer staleTime means visiting Evidence,
+  // leaving, and coming back within a minute costs nothing: no refetch, no
+  // re-signed URLs, no re-downloaded screenshots. refetchOnWindowFocus is
+  // left at its default (true) deliberately -- see EvidenceList's stableFileUrl
+  // usage below for why a focus refetch is now cheap rather than something
+  // to avoid.
   const { data: products = [] } = useQuery<Product[]>({
     queryKey: ["products"],
     queryFn: productsApi.list,
+    staleTime: 60_000,
   });
   const { data: allFrameworks = [] } = useQuery<Framework[]>({
     queryKey: ["frameworks"],
     queryFn: () => frameworksApi.list(),
+    staleTime: 60_000,
   });
   const { data: allControls = [] } = useQuery<Control[]>({
     queryKey: ["controls"],
     queryFn: () => controlsApi.list(),
+    staleTime: 60_000,
   });
-  const { data: evidence = [], isLoading } = useQuery<Evidence[]>({
+  const { data: evidence = [], isLoading, isFetching } = useQuery<Evidence[]>({
     queryKey: ["evidence"],
     queryFn: evidenceApi.list,
+    staleTime: 60_000,
   });
   const { data: submissions = [] } = useQuery<Submission[]>({
     queryKey: ["submissions"],
     queryFn: submissionsApi.list,
+    staleTime: 60_000,
   });
 
   const deleteMutation = useMutation({
@@ -253,9 +425,20 @@ export default function EvidenceList() {
 
   const renameMutation = useMutation({
     mutationFn: ({ id, description }: { id: number; description: string }) =>
-      evidenceApi.rename(id, description),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["evidence"] });
+      evidenceApi.rename(id, description) as Promise<Evidence>,
+    onSuccess: (updated, variables) => {
+      // Write the PATCH's own response straight into the cache instead of
+      // invalidating. The PATCH (backend/app/api/routes/evidence.py) already
+      // returns the full updated row -- refetching to get it back would
+      // re-sign, and so re-download, every screenshot on the page just to
+      // change one word of text. Only `description` is copied: the response
+      // also carries freshly re-signed `file_url`/`files`, and adopting
+      // those would rotate this row's links and undo exactly the caching
+      // change stableFileUrl makes. Dashboard.tsx reads this same cache
+      // entry, so it picks up the new name too.
+      queryClient.setQueryData<Evidence[]>(["evidence"], (prev) =>
+        prev?.map((row) => (row.id === variables.id ? { ...row, description: updated.description } : row))
+      );
       setRenameTarget(null);
     },
     onError: (err: AxiosError<{ detail?: string }>) => {
@@ -441,13 +624,18 @@ export default function EvidenceList() {
   // An <img> failed to load — most likely its signed URL expired mid-review.
   // Refetch the evidence list once to get fresh URLs; retry at most once per
   // file so a genuinely missing blob settles into a card instead of looping.
-  const handleImageLoadError = (fileId: number) => {
+  const handleImageLoadError = (fileId: number, fileUrl: string) => {
     if (failedFileIds.has(fileId)) return;
     if (retriedFileIds.has(fileId)) {
       setFailedFileIds((prev) => new Set(prev).add(fileId));
       return;
     }
     setRetriedFileIds((prev) => new Set(prev).add(fileId));
+    // Drop this blob's cached URL *before* the refetch below lands, so the
+    // stable-url cache accepts the freshly re-signed link the refetch
+    // brings back instead of handing the same (broken) URL straight out
+    // again on the next render.
+    forgetFileUrl(getFileUrl(fileUrl));
     queryClient.invalidateQueries({ queryKey: ["evidence"] });
   };
 
@@ -536,27 +724,179 @@ export default function EvidenceList() {
         </Stack>
       </Paper>
 
+      {/* Background refetch indicator. Cached data keeps the rows on screen
+          during a refetch (that's the point of staleTime below) -- this
+          just makes that refresh visible instead of silent. Skipped while
+          isLoading, since the skeleton already says "loading" then. */}
+      {isFetching && !isLoading && <LinearProgress sx={{ mb: 2, height: 2, borderRadius: 1 }} />}
+
       {isLoading ? (
-        <Box display="flex" justifyContent="center" py={6}>
-          <CircularProgress />
-        </Box>
+        // Skeleton rows instead of a centred spinner: the page's shape
+        // appears immediately, in the layout that's actually going to be
+        // used, rather than a blank page saying only "wait".
+        isMobile ? (
+          <Stack spacing={1.5}>
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Paper key={i} variant="outlined" sx={{ p: 2 }}>
+                <Stack spacing={1}>
+                  <Skeleton variant="text" width="30%" />
+                  <Skeleton variant="text" width="70%" />
+                  <Stack direction="row" spacing={0.75}>
+                    <Skeleton variant="rounded" width={80} height={56} />
+                    <Skeleton variant="rounded" width={80} height={56} />
+                    <Skeleton variant="rounded" width={80} height={56} />
+                  </Stack>
+                </Stack>
+              </Paper>
+            ))}
+          </Stack>
+        ) : (
+          <TableContainer component={Paper} variant="outlined">
+            <Table sx={{ tableLayout: "fixed" }}>
+              <EvidenceTableHead />
+              <TableBody>
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <TableRow key={i} sx={{ "& > td": { py: 1.25, px: 2 } }}>
+                    <TableCell><Skeleton variant="text" width="80%" /><Skeleton variant="text" width="50%" /></TableCell>
+                    <TableCell><Skeleton variant="text" width="60%" /><Skeleton variant="text" width="90%" /></TableCell>
+                    <TableCell><Skeleton variant="rounded" width={72} height={52} /></TableCell>
+                    <TableCell><Skeleton variant="rounded" width="85%" height={26} /></TableCell>
+                    <TableCell><Skeleton variant="rounded" width={70} height={20} /></TableCell>
+                    <TableCell><Skeleton variant="text" width="90%" /></TableCell>
+                    <TableCell align="center"><Skeleton variant="circular" width={20} height={20} sx={{ mx: "auto" }} /></TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )
+      ) : isMobile ? (
+        // Mobile cards. `useMediaQuery` (above, with `noSsr: true`) picks
+        // between this and the desktop table below, so only one of the two
+        // is ever mounted -- CSS `display: none` still downloads the
+        // images inside it, which is what made a desktop visit pull four
+        // images per row instead of one.
+        <Stack spacing={1.5}>
+          {filtered.length === 0 && (
+            <Paper variant="outlined" sx={{ py: 8, textAlign: "center" }}>
+              <Stack alignItems="center" spacing={1}>
+                <Box sx={{ color: "text.disabled" }}><DocumentIcon size={48} /></Box>
+                <Typography color="text.secondary">
+                  {enriched.length === 0 ? "No evidence found" : "No evidence matches the current filters"}
+                </Typography>
+                {enriched.length === 0 ? (
+                  <Typography variant="caption" color="text.disabled">Upload via Submit or run the AI agent.</Typography>
+                ) : (
+                  <Link component="button" type="button" underline="hover" sx={{ fontSize: "0.85rem" }}
+                    onClick={() => { setProductId(""); setFrameworkId(""); setSourceFilter("all"); setStatusFilter("all"); }}>
+                    Clear filters
+                  </Link>
+                )}
+              </Stack>
+            </Paper>
+          )}
+          {filtered.map((e) => {
+            const displayText = (e.description?.trim() || e.title || "Untitled").replace(/^AI Agent:\s*/, "");
+            const isPendingDelete = pendingDeleteId === e.id;
+            const files = e.files && e.files.length ? e.files : [{ id: e.id, file_name: e.file_name, file_url: e.file_url }];
+            const extraCount = files.length - 3;
+            return (
+              <Paper key={e.id} variant="outlined" sx={{ p: 2 }}>
+                <Stack spacing={1}>
+                  <Stack direction="row" justifyContent="space-between" alignItems="center">
+                    <Tooltip title={new Date(e.created_at).toLocaleString()}>
+                      <Typography variant="caption" color="text.secondary">{relativeTime(e.created_at)}</Typography>
+                    </Tooltip>
+                    <Chip
+                      icon={e._isAI ? <BoltIcon size={14} /> : <CircleUserIcon size={14} />}
+                      label={e._isAI ? "AI Agent" : "Manual"}
+                      size="small"
+                      color={e._isAI ? "primary" : "default"}
+                      variant={e._isAI ? "filled" : "outlined"}
+                      sx={{ fontWeight: 600 }}
+                    />
+                  </Stack>
+                  <Typography variant="body2" fontWeight={500} sx={{ lineHeight: 1.35 }}>
+                    {displayText}
+                  </Typography>
+                  <Stack direction="row" spacing={0.75} flexWrap="wrap" rowGap={0.75}>
+                    {files.slice(0, 3).map((f, i) => (
+                      <Box key={f.id} sx={{ position: "relative", width: 80, height: 56, cursor: "pointer" }}
+                        onClick={() => { if (i === 2 && extraCount > 0) setGalleryEvidenceId(e.id); else window.open(getFileUrl(f.file_url), "_blank", "noreferrer"); }}>
+                        <Thumbnail
+                          src={stableFileUrl(getFileUrl(f.file_url))}
+                          alt=""
+                          sx={{ border: "1px solid", borderColor: "divider" }}
+                        />
+                        {i === 2 && extraCount > 0 && (
+                          <Box sx={{ position: "absolute", inset: 0, borderRadius: 1, backgroundColor: "rgba(0,0,0,0.55)",
+                            display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: "0.7rem", fontWeight: 700 }}>
+                            +{extraCount}
+                          </Box>
+                        )}
+                      </Box>
+                    ))}
+                  </Stack>
+                  {files.length > 1 && (
+                    <Link component="button" type="button" underline="hover"
+                      onClick={() => setGalleryEvidenceId(e.id)}
+                      sx={{ fontSize: "0.72rem", fontWeight: 600, color: "primary.main", alignSelf: "flex-start", background: "none", border: "none", cursor: "pointer", textAlign: "left" }}>
+                      View all {files.length} screenshots →
+                    </Link>
+                  )}
+                  {e._control && (
+                    <Stack direction="row" spacing={0.5} flexWrap="wrap" rowGap={0.5}>
+                      {e._product && (
+                        <Chip label={e._product.name} size="small"
+                          sx={{ height: 20, fontSize: "0.65rem", fontWeight: 700, backgroundColor: "rgba(255,115,0,0.10)", color: "primary.main", textTransform: "uppercase", letterSpacing: "0.04em" }} />
+                      )}
+                      <Chip label={`${e._framework?.name ?? "?"} · ${e._control.control_ref}`} size="small" variant="outlined" sx={{ fontWeight: 600 }} />
+                    </Stack>
+                  )}
+                  {isPendingDelete ? (
+                    <Stack direction="row" spacing={1}>
+                      <Button size="small" variant="text" onClick={() => setPendingDeleteId(null)} disabled={deleteMutation.isPending}>Cancel</Button>
+                      <Button size="small" color="error" variant="contained" onClick={() => deleteMutation.mutate(e.id)} disabled={deleteMutation.isPending}>Confirm Delete</Button>
+                    </Stack>
+                  ) : (
+                    <Stack direction="row" spacing={0.5}>
+                      <Tooltip title="Download all as zip">
+                        <IconButton
+                          size="small"
+                          aria-label="Download evidence"
+                          onClick={() => handleDownload(e.id)}
+                          disabled={downloadingIds.has(e.id)}
+                        >
+                          {downloadingIds.has(e.id) ? (
+                            <CircularProgress size={16} />
+                          ) : (
+                            <DownloadIcon size={16} />
+                          )}
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Rename">
+                        <IconButton size="small" aria-label="Rename evidence" onClick={() => setRenameTarget({ id: e.id, currentText: displayText })}>
+                          <DrawingPencilIcon size={16} />
+                        </IconButton>
+                      </Tooltip>
+                      {(isAdmin || e.created_by === user?.email) && (
+                        <Tooltip title="Delete evidence">
+                          <IconButton size="small" color="error" aria-label="Delete evidence" onClick={() => setPendingDeleteId(e.id)}>
+                            <TrashIcon size={16} />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                    </Stack>
+                  )}
+                </Stack>
+              </Paper>
+            );
+          })}
+        </Stack>
       ) : (
-        <>
-        {/* Desktop table — hidden on mobile */}
-        <Box sx={{ display: { xs: "none", md: "block" } }}>
         <TableContainer component={Paper} variant="outlined">
           <Table sx={{ tableLayout: "fixed" }}>
-            <TableHead>
-              <TableRow>
-                <TableCell sx={{ width: "11%", py: 1.5, px: 2, fontWeight: 600, color: "text.secondary", textTransform: "uppercase", fontSize: "0.72rem", letterSpacing: "0.04em" }}>Date & Time</TableCell>
-                <TableCell sx={{ width: "21%", py: 1.5, px: 2, fontWeight: 600, color: "text.secondary", textTransform: "uppercase", fontSize: "0.72rem", letterSpacing: "0.04em" }}>Control</TableCell>
-                <TableCell sx={{ width: "11%", py: 1.5, px: 2, fontWeight: 600, color: "text.secondary", textTransform: "uppercase", fontSize: "0.72rem", letterSpacing: "0.04em" }}>Screenshots</TableCell>
-                <TableCell sx={{ width: "14%", py: 1.5, px: 2, fontWeight: 600, color: "text.secondary", textTransform: "uppercase", fontSize: "0.72rem", letterSpacing: "0.04em" }}>Status</TableCell>
-                <TableCell sx={{ width: "10%", py: 1.5, px: 2, fontWeight: 600, color: "text.secondary", textTransform: "uppercase", fontSize: "0.72rem", letterSpacing: "0.04em" }}>Source</TableCell>
-                <TableCell sx={{ width: "24%", py: 1.5, px: 2, fontWeight: 600, color: "text.secondary", textTransform: "uppercase", fontSize: "0.72rem", letterSpacing: "0.04em" }}>Task</TableCell>
-                <TableCell sx={{ width: "9%",  py: 1.5, px: 2, fontWeight: 600, color: "text.secondary", textTransform: "uppercase", fontSize: "0.72rem", letterSpacing: "0.04em" }} align="center">Actions</TableCell>
-              </TableRow>
-            </TableHead>
+            <EvidenceTableHead />
             <TableBody>
               {filtered.map((e) => {
                 const displayText = (e.description?.trim() || e.title || "Untitled").replace(/^AI Agent:\s*/, "");
@@ -613,20 +953,13 @@ export default function EvidenceList() {
                     </TableCell>
 
                     <TableCell>
-                      <Box sx={{ position: "relative", display: "inline-block", cursor: "pointer" }} onClick={() => setGalleryEvidenceId(e.id)}>
-                        <Box
-                          component="img"
-                          src={getFileUrl(files[0].file_url)}
+                      <Box sx={{ position: "relative", width: 72, height: 52, cursor: "pointer" }} onClick={() => setGalleryEvidenceId(e.id)}>
+                        <Thumbnail
+                          src={stableFileUrl(getFileUrl(files[0].file_url))}
                           alt=""
                           sx={{
-                            width: 72,
-                            height: 52,
-                            objectFit: "cover",
-                            borderRadius: 1,
                             border: "1px solid",
                             borderColor: "divider",
-                            display: "block",
-                            transition: "transform 0.15s ease",
                             "&:hover": { transform: "scale(1.05)", borderColor: "primary.main" },
                           }}
                         />
@@ -754,10 +1087,7 @@ export default function EvidenceList() {
                             <IconButton
                               size="small"
                               aria-label="Rename evidence"
-                              onClick={() => {
-                                setRenameTarget({ id: e.id, currentText: displayText });
-                                setRenameValue(displayText);
-                              }}
+                              onClick={() => setRenameTarget({ id: e.id, currentText: displayText })}
                             >
                               <DrawingPencilIcon size={16} />
                             </IconButton>
@@ -817,124 +1147,6 @@ export default function EvidenceList() {
             </TableBody>
           </Table>
         </TableContainer>
-        </Box>
-
-        {/* Mobile cards — hidden on desktop */}
-        <Stack spacing={1.5} sx={{ display: { md: "none" } }}>
-          {filtered.length === 0 && (
-            <Paper variant="outlined" sx={{ py: 8, textAlign: "center" }}>
-              <Stack alignItems="center" spacing={1}>
-                <Box sx={{ color: "text.disabled" }}><DocumentIcon size={48} /></Box>
-                <Typography color="text.secondary">
-                  {enriched.length === 0 ? "No evidence found" : "No evidence matches the current filters"}
-                </Typography>
-                {enriched.length === 0 ? (
-                  <Typography variant="caption" color="text.disabled">Upload via Submit or run the AI agent.</Typography>
-                ) : (
-                  <Link component="button" type="button" underline="hover" sx={{ fontSize: "0.85rem" }}
-                    onClick={() => { setProductId(""); setFrameworkId(""); setSourceFilter("all"); setStatusFilter("all"); }}>
-                    Clear filters
-                  </Link>
-                )}
-              </Stack>
-            </Paper>
-          )}
-          {filtered.map((e) => {
-            const displayText = (e.description?.trim() || e.title || "Untitled").replace(/^AI Agent:\s*/, "");
-            const isPendingDelete = pendingDeleteId === e.id;
-            const files = e.files && e.files.length ? e.files : [{ id: e.id, file_name: e.file_name, file_url: e.file_url }];
-            const extraCount = files.length - 3;
-            return (
-              <Paper key={e.id} variant="outlined" sx={{ p: 2 }}>
-                <Stack spacing={1}>
-                  <Stack direction="row" justifyContent="space-between" alignItems="center">
-                    <Tooltip title={new Date(e.created_at).toLocaleString()}>
-                      <Typography variant="caption" color="text.secondary">{relativeTime(e.created_at)}</Typography>
-                    </Tooltip>
-                    <Chip
-                      icon={e._isAI ? <BoltIcon size={14} /> : <CircleUserIcon size={14} />}
-                      label={e._isAI ? "AI Agent" : "Manual"}
-                      size="small"
-                      color={e._isAI ? "primary" : "default"}
-                      variant={e._isAI ? "filled" : "outlined"}
-                      sx={{ fontWeight: 600 }}
-                    />
-                  </Stack>
-                  <Typography variant="body2" fontWeight={500} sx={{ lineHeight: 1.35 }}>
-                    {displayText}
-                  </Typography>
-                  <Stack direction="row" spacing={0.75} flexWrap="wrap" rowGap={0.75}>
-                    {files.slice(0, 3).map((f, i) => (
-                      <Box key={f.id} sx={{ display: "block", lineHeight: 0, position: "relative", cursor: "pointer" }}
-                        onClick={() => { if (i === 2 && extraCount > 0) setGalleryEvidenceId(e.id); else window.open(getFileUrl(f.file_url), "_blank", "noreferrer"); }}>
-                        <Box component="img" src={getFileUrl(f.file_url)} alt=""
-                          sx={{ width: 80, height: 56, objectFit: "cover", borderRadius: 1, border: "1px solid", borderColor: "divider", display: "block" }} />
-                        {i === 2 && extraCount > 0 && (
-                          <Box sx={{ position: "absolute", inset: 0, borderRadius: 1, backgroundColor: "rgba(0,0,0,0.55)",
-                            display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: "0.7rem", fontWeight: 700 }}>
-                            +{extraCount}
-                          </Box>
-                        )}
-                      </Box>
-                    ))}
-                  </Stack>
-                  {files.length > 1 && (
-                    <Link component="button" type="button" underline="hover"
-                      onClick={() => setGalleryEvidenceId(e.id)}
-                      sx={{ fontSize: "0.72rem", fontWeight: 600, color: "primary.main", alignSelf: "flex-start", background: "none", border: "none", cursor: "pointer", textAlign: "left" }}>
-                      View all {files.length} screenshots →
-                    </Link>
-                  )}
-                  {e._control && (
-                    <Stack direction="row" spacing={0.5} flexWrap="wrap" rowGap={0.5}>
-                      {e._product && (
-                        <Chip label={e._product.name} size="small"
-                          sx={{ height: 20, fontSize: "0.65rem", fontWeight: 700, backgroundColor: "rgba(255,115,0,0.10)", color: "primary.main", textTransform: "uppercase", letterSpacing: "0.04em" }} />
-                      )}
-                      <Chip label={`${e._framework?.name ?? "?"} · ${e._control.control_ref}`} size="small" variant="outlined" sx={{ fontWeight: 600 }} />
-                    </Stack>
-                  )}
-                  {isPendingDelete ? (
-                    <Stack direction="row" spacing={1}>
-                      <Button size="small" variant="text" onClick={() => setPendingDeleteId(null)} disabled={deleteMutation.isPending}>Cancel</Button>
-                      <Button size="small" color="error" variant="contained" onClick={() => deleteMutation.mutate(e.id)} disabled={deleteMutation.isPending}>Confirm Delete</Button>
-                    </Stack>
-                  ) : (
-                    <Stack direction="row" spacing={0.5}>
-                      <Tooltip title="Download all as zip">
-                        <IconButton
-                          size="small"
-                          aria-label="Download evidence"
-                          onClick={() => handleDownload(e.id)}
-                          disabled={downloadingIds.has(e.id)}
-                        >
-                          {downloadingIds.has(e.id) ? (
-                            <CircularProgress size={16} />
-                          ) : (
-                            <DownloadIcon size={16} />
-                          )}
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Rename">
-                        <IconButton size="small" aria-label="Rename evidence" onClick={() => { setRenameTarget({ id: e.id, currentText: displayText }); setRenameValue(displayText); }}>
-                          <DrawingPencilIcon size={16} />
-                        </IconButton>
-                      </Tooltip>
-                      {(isAdmin || e.created_by === user?.email) && (
-                        <Tooltip title="Delete evidence">
-                          <IconButton size="small" color="error" aria-label="Delete evidence" onClick={() => setPendingDeleteId(e.id)}>
-                            <TrashIcon size={16} />
-                          </IconButton>
-                        </Tooltip>
-                      )}
-                    </Stack>
-                  )}
-                </Stack>
-              </Paper>
-            );
-          })}
-        </Stack>
-        </>
       )}
 
       {/* ── Gallery Modal ─────────────────────────────────────────────────── */}
@@ -1048,11 +1260,15 @@ export default function EvidenceList() {
 
                     <Box sx={{ width: "100%", height: { xs: 320, sm: 440 }, display: "flex", alignItems: "center", justifyContent: "center", mx: 6 }}>
                       {showImage ? (
+                        // No loading="lazy" here, deliberately: this is the
+                        // full-size image the user just asked to see, not a
+                        // thumbnail waiting to scroll into view -- it should
+                        // start loading immediately.
                         <Box
                           component="img"
-                          src={getFileUrl(f.file_url)}
+                          src={stableFileUrl(getFileUrl(f.file_url))}
                           alt={f.subtask ?? `Screenshot ${idx + 1}`}
-                          onError={() => handleImageLoadError(f.id)}
+                          onError={() => handleImageLoadError(f.id, f.file_url)}
                           sx={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
                         />
                       ) : (
@@ -1096,22 +1312,14 @@ export default function EvidenceList() {
                 >
                   <Box
                     onClick={() => setPreviewIndex(idx)}
-                    sx={{ display: "block", lineHeight: 0, cursor: "pointer", width: "100%", aspectRatio: "16/11", overflow: "hidden" }}
+                    sx={{ cursor: "pointer", width: "100%", aspectRatio: "16/11", overflow: "hidden" }}
                   >
                     {showImage ? (
-                      <Box
-                        component="img"
-                        src={getFileUrl(f.file_url)}
+                      <Thumbnail
+                        src={stableFileUrl(getFileUrl(f.file_url))}
                         alt={f.subtask ?? `Screenshot ${idx + 1}`}
-                        onError={() => handleImageLoadError(f.id)}
-                        sx={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "cover",
-                          display: "block",
-                          transition: "opacity 0.15s ease",
-                          "&:hover": { opacity: 0.9 },
-                        }}
+                        onError={() => handleImageLoadError(f.id, f.file_url)}
+                        sx={{ "&:hover": { opacity: 0.9 } }}
                       />
                     ) : (
                       <FileFallbackCard fileName={f.file_name} fileUrl={getFileUrl(f.file_url)} variant="grid" />
@@ -1192,45 +1400,12 @@ export default function EvidenceList() {
       </Dialog>
 
       {/* ── Rename Dialog ─────────────────────────────────────────────────── */}
-      <Dialog
-        open={renameTarget != null}
+      <RenameEvidenceDialog
+        target={renameTarget}
+        isSaving={renameMutation.isPending}
         onClose={() => setRenameTarget(null)}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle>Rename Evidence</DialogTitle>
-        <DialogContent sx={{ pt: "12px !important" }}>
-          <TextField
-            autoFocus
-            fullWidth
-            label="Name"
-            value={renameValue}
-            onChange={(e) => setRenameValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && renameValue.trim() && renameTarget) {
-                renameMutation.mutate({ id: renameTarget.id, description: renameValue.trim() });
-              }
-            }}
-            size="small"
-          />
-        </DialogContent>
-        <DialogActions sx={{ px: 2.5, py: 1.5 }}>
-          <Button onClick={() => setRenameTarget(null)} disabled={renameMutation.isPending}>
-            Cancel
-          </Button>
-          <Button
-            variant="contained"
-            disabled={!renameValue.trim() || renameMutation.isPending}
-            onClick={() => {
-              if (renameTarget) {
-                renameMutation.mutate({ id: renameTarget.id, description: renameValue.trim() });
-              }
-            }}
-          >
-            {renameMutation.isPending ? "Saving…" : "Save"}
-          </Button>
-        </DialogActions>
-      </Dialog>
+        onSave={(id, description) => renameMutation.mutate({ id, description })}
+      />
 
       <Snackbar
         open={actionError != null}
