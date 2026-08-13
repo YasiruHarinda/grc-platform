@@ -36,10 +36,15 @@ def configure():
     lines = [f"AGENT_PROVIDER={provider}", f"AGENT_MODEL={model}"]
 
     if provider == "azure":
-        lines.append("AZURE_OPENAI_API_KEY=" + typer.prompt("Azure OpenAI API key", hide_input=True))
+        # No API key prompt here, deliberately — the Runner authorises Azure
+        # OpenAI calls with the engineer's own Entra identity (az login),
+        # not a shared secret written to disk. See azure_credential.py.
         lines.append("AZURE_OPENAI_ENDPOINT=" + typer.prompt("Azure OpenAI endpoint (https://...)"))
         lines.append("AZURE_OPENAI_DEPLOYMENT=" + typer.prompt("Deployment name", default=model))
         lines.append("AZURE_OPENAI_API_VERSION=2024-10-21")
+        lines.append("AZURE_TENANT_ID=" + typer.prompt("Azure tenant ID"))
+        print("\n  Next: run `az login` to sign in with your own Azure identity.")
+        print("  The Runner uses that session to call Azure OpenAI — no key is stored.")
     elif provider == "anthropic":
         lines.append("ANTHROPIC_API_KEY=" + typer.prompt("Anthropic API key", hide_input=True))
     elif provider == "gemini":
@@ -209,8 +214,54 @@ def doctor(
         print("    ✗ ANTHROPIC_API_KEY is not set")
     elif settings.AGENT_PROVIDER == "gemini" and not settings.GEMINI_API_KEY:
         print("    ✗ GEMINI_API_KEY is not set")
-    elif settings.AGENT_PROVIDER == "azure" and not settings.AZURE_OPENAI_API_KEY:
+    elif settings.AGENT_PROVIDER == "azure" and settings.AZURE_OPENAI_AUTH_MODE == "api_key" and not settings.AZURE_OPENAI_API_KEY:
         print("    ✗ AZURE_OPENAI_API_KEY is not set")
+    elif settings.AGENT_PROVIDER == "azure" and settings.AZURE_OPENAI_AUTH_MODE != "api_key":
+        # entra mode: a non-empty AZURE_OPENAI_API_KEY proves nothing — it
+        # could be revoked, and it isn't even used in this mode. Attempt a
+        # real token instead, the same way the start-up gate (ticket #94)
+        # does, but without forcing an interactive login (see [2] above —
+        # doctor only ever reads a session that already exists).
+        import shutil
+
+        from wso2_runner.azure_credential import (
+            ClientAuthenticationError,
+            CredentialUnavailableError,
+            attempt_token,
+        )
+
+        # CredentialUnavailableError is a subclass of ClientAuthenticationError —
+        # it must be checked first or it's silently swallowed by the wider case.
+        try:
+            asyncio.run(attempt_token())
+            print("    ✓ Azure sign-in works — token acquired")
+        except CredentialUnavailableError:
+            # The credential could not even attempt authentication. The Azure
+            # CLI's presence on PATH is the one extra signal we genuinely
+            # have, so use it to tell "not installed" apart from "installed,
+            # nobody signed in" — the library's own exception doesn't
+            # distinguish these two, so we don't invent a way to.
+            if shutil.which("az") is None:
+                print("    ✗ Azure CLI is not installed — install it, then run: az login")
+            else:
+                print("    ✗ Azure CLI is installed but nobody is signed in — run: az login")
+        except ClientAuthenticationError:
+            # Authentication was attempted and rejected. The library gives no
+            # way to tell "wrong tenant" apart from "right tenant but missing
+            # the role assignment" by type — both raise this same exception.
+            # Rather than guess from the message text, name both possibilities
+            # and how to tell them apart.
+            print(
+                "    ✗ Azure sign-in was rejected — either you're signed in to "
+                "the wrong tenant, or you're signed in to the right tenant but "
+                "lack the Azure OpenAI role assignment. Run `az account show` "
+                "and compare its tenantId to AZURE_TENANT_ID in your config: if "
+                "they differ, run `az login --tenant <AZURE_TENANT_ID>`; if "
+                "they match, ask an admin to check your group membership for "
+                "the Azure OpenAI role."
+            )
+        except Exception as exc:
+            print(f"    ✗ Azure authentication check failed: {exc}")
     elif settings.AGENT_PROVIDER == "ollama":
         try:
             r = httpx.get("http://localhost:11434/api/tags", timeout=5)
