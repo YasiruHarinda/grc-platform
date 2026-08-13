@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useDeferredValue } from "react";
 import { getFileUrl } from "../api/client";
 import { stableFileUrl, forgetFileUrl } from "../utils/stableFileUrl";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -21,6 +21,7 @@ import IconButton from "@mui/material/IconButton";
 import CircularProgress from "@mui/material/CircularProgress";
 import LinearProgress from "@mui/material/LinearProgress";
 import Skeleton from "@mui/material/Skeleton";
+import Pagination from "@mui/material/Pagination";
 import Link from "@mui/material/Link";
 import Stack from "@mui/material/Stack";
 import Chip from "@mui/material/Chip";
@@ -119,6 +120,17 @@ function relativeTime(iso: string): string {
   }
   return date.toLocaleDateString();
 }
+
+// How many rows are drawn at once. Every row is roughly 35 MUI components,
+// and React builds all of them synchronously before the browser is allowed
+// to paint anything -- which is why drawing the whole list froze the page,
+// down to the sidebar button not even showing its pressed state.
+const ROWS_PER_PAGE = 25;
+
+// A single shared empty array for useDeferredValue's initial value. It has to
+// keep the same identity across renders: a fresh [] each time would never
+// compare equal, so the "still drawing" check below would never turn off.
+const NO_ROWS: never[] = [];
 
 const STATUS_OPTIONS = ["pending", "approved", "rejected"] as const;
 
@@ -558,6 +570,43 @@ export default function EvidenceList() {
     }).sort((a, b) => b.id - a.id);
   }, [enriched, productId, frameworkId, sourceFilter, statusFilter]);
 
+  // ── One page at a time, drawn in two steps ────────────────────────────
+  const [page, setPage] = useState(0);
+
+  // Changing a filter returns the reader to the first page, rather than
+  // leaving them on a page number the new result set may not reach.
+  // Adjusted during render -- the same pattern the gallery uses further
+  // down -- so it takes effect before the first paint rather than causing
+  // an extra one.
+  const filterSignature = `${productId}|${frameworkId}|${sourceFilter}|${statusFilter}`;
+  const [prevFilterSignature, setPrevFilterSignature] = useState(filterSignature);
+  if (filterSignature !== prevFilterSignature) {
+    setPrevFilterSignature(filterSignature);
+    setPage(0);
+  }
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / ROWS_PER_PAGE));
+  // Clamped rather than corrected in an effect: deleting the last row on the
+  // last page shrinks the list out from under this page number, and clamping
+  // lands on the new last page instead of an empty one.
+  const safePage = Math.min(page, pageCount - 1);
+  const pageStart = safePage * ROWS_PER_PAGE;
+  const pageRows = useMemo(
+    () => filtered.slice(pageStart, pageStart + ROWS_PER_PAGE),
+    [filtered, pageStart]
+  );
+
+  // Draw the page in two steps. The second argument matters more than it
+  // looks: without it useDeferredValue does not defer on a mount at all,
+  // and a mount is exactly this case, since navigating here builds the page
+  // from scratch every time. With it, the first render uses NO_ROWS, so the
+  // heading, stat cards and filters paint straight away above skeleton
+  // rows, and React fills the real rows in afterwards at a priority it is
+  // free to interrupt. The total work is the same; what changes is that the
+  // browser is no longer blocked from painting while it happens.
+  const deferredRows = useDeferredValue(pageRows, NO_ROWS);
+  const isDrawingRows = deferredRows !== pageRows;
+
   const stats = useMemo(() => {
     const total = enriched.length;
     const ai = enriched.filter((e) => e._isAI).length;
@@ -719,7 +768,13 @@ export default function EvidenceList() {
           </Box>
           <Box sx={{ flex: 1 }} />
           <Typography variant="body2" color="text.secondary">
-            Showing <strong>{filtered.length}</strong> of {enriched.length}
+            Showing{" "}
+            <strong>
+              {filtered.length === 0
+                ? 0
+                : `${pageStart + 1}-${pageStart + pageRows.length}`}
+            </strong>{" "}
+            of {filtered.length}
           </Typography>
         </Stack>
       </Paper>
@@ -730,10 +785,17 @@ export default function EvidenceList() {
           isLoading, since the skeleton already says "loading" then. */}
       {isFetching && !isLoading && <LinearProgress sx={{ mb: 2, height: 2, borderRadius: 1 }} />}
 
-      {isLoading ? (
+      {isLoading || isDrawingRows ? (
         // Skeleton rows instead of a centred spinner: the page's shape
         // appears immediately, in the layout that's actually going to be
         // used, rather than a blank page saying only "wait".
+        //
+        // Shown for two different reasons now. `isLoading` is the first
+        // fetch, with no data yet. `isDrawingRows` is the gap opened up by
+        // useDeferredValue above, where the data is already in hand and
+        // React is still building the rows. Both want the same placeholder,
+        // and rendering the real list with the deferred (empty) rows
+        // instead would flash "No evidence found" for a frame.
         isMobile ? (
           <Stack spacing={1.5}>
             {Array.from({ length: 4 }).map((_, i) => (
@@ -795,7 +857,7 @@ export default function EvidenceList() {
               </Stack>
             </Paper>
           )}
-          {filtered.map((e) => {
+          {deferredRows.map((e) => {
             const displayText = (e.description?.trim() || e.title || "Untitled").replace(/^AI Agent:\s*/, "");
             const isPendingDelete = pendingDeleteId === e.id;
             const files = e.files && e.files.length ? e.files : [{ id: e.id, file_name: e.file_name, file_url: e.file_url }];
@@ -898,7 +960,7 @@ export default function EvidenceList() {
           <Table sx={{ tableLayout: "fixed" }}>
             <EvidenceTableHead />
             <TableBody>
-              {filtered.map((e) => {
+              {deferredRows.map((e) => {
                 const displayText = (e.description?.trim() || e.title || "Untitled").replace(/^AI Agent:\s*/, "");
                 const isPendingDelete = pendingDeleteId === e.id;
                 const files = e.files && e.files.length ? e.files : [{ id: e.id, file_name: e.file_name, file_url: e.file_url }];
@@ -1147,6 +1209,22 @@ export default function EvidenceList() {
             </TableBody>
           </Table>
         </TableContainer>
+      )}
+
+      {/* The pager sits outside the branch above on purpose: it stays usable
+          while the rows themselves are still being drawn, and it is driven
+          by the full filtered list rather than the page currently on
+          screen. Hidden entirely when everything already fits on one page. */}
+      {filtered.length > ROWS_PER_PAGE && (
+        <Stack direction="row" justifyContent="center" sx={{ mt: 2.5 }}>
+          <Pagination
+            count={pageCount}
+            page={safePage + 1}
+            onChange={(_, value) => setPage(value - 1)}
+            color="primary"
+            shape="rounded"
+          />
+        </Stack>
       )}
 
       {/* ── Gallery Modal ─────────────────────────────────────────────────── */}
