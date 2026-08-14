@@ -234,3 +234,27 @@ def test_content_disposition_filename_is_the_sanitised_title(db_session, enginee
 
     assert response.status_code == 200
     assert response.headers["content-disposition"] == 'attachment; filename="console-screenshot.zip"'
+
+
+# --- Streaming -------------------------------------------------------------
+#
+# The archive is spooled and streamed rather than returned as one bytes
+# object, so a large collection cannot pin the whole zip in a worker. The
+# response must still be byte-identical and still declare its length, so the
+# browser shows a real progress bar.
+
+
+def test_streamed_archive_declares_its_length_and_matches_the_body(db_session, engineer_client):
+    evidence, _files = build_evidence(
+        db_session,
+        ("one.png", b"first file bytes"),
+        ("two.png", b"second file bytes"),
+    )
+
+    response = engineer_client.get(f"/api/evidence/{evidence.id}/download")
+
+    assert response.status_code == 200
+    assert int(response.headers["content-length"]) == len(response.content)
+    archive = _open_zip(response)
+    assert archive.testzip() is None
+    assert len(archive.namelist()) == 2

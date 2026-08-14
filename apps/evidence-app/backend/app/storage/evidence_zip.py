@@ -1,5 +1,5 @@
-"""Builds an in-memory zip archive of one Evidence's files, laid out so a
-human can browse it after extracting (spec issue #92).
+"""Builds a zip archive of one Evidence's files, laid out so a human can
+browse it after extracting (spec issue #92).
 
 Kept out of `blob_storage.py` deliberately, for the same reason
 `blob_paths.py` is kept separate from it (see that module's docstring):
@@ -35,9 +35,11 @@ title in the entry name. Pulling out just the uuid+extension and rebuilding
 the label from this module's own `title` gives one consistent entry-name
 shape regardless of whether the underlying blob happened to have a label.
 """
-import io
+import os
 import re
+import tempfile
 import zipfile
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 from app.storage.blob_paths import build_control_prefix, sanitize_title
@@ -75,10 +77,28 @@ def _uuid_and_extension(blob_name: str) -> str:
     return match.group(0) if match else basename
 
 
-def build_evidence_zip(evidence: "Evidence", files: list["EvidenceFile"]) -> bytes:
-    """Build an in-memory zip of `files`, which the caller must have already
-    ordered by `sort_order` -- this function trusts that order and does not
-    re-sort, so entry `01` is whichever file is first in `files`.
+# Past this much the archive spills to a temporary file on disk instead of
+# staying in memory. A single upload is capped at 15 MB
+# (`blob_storage.MAX_UPLOAD_SIZE_BYTES`) but the number of files on one
+# Evidence is not capped, so an agent collection can total far more than any
+# one file. Holding all of that per concurrent download would put the ceiling
+# on worker memory rather than on disk, where it belongs.
+_SPOOL_MAX_BYTES = 16 * 1024 * 1024
+
+# Size of each chunk handed to the response while streaming the archive back.
+_STREAM_CHUNK_BYTES = 64 * 1024
+
+
+def build_evidence_zip(
+    evidence: "Evidence", files: list["EvidenceFile"]
+) -> tempfile.SpooledTemporaryFile:
+    """Build a zip of `files`, which the caller must have already ordered by
+    `sort_order` -- this function trusts that order and does not re-sort, so
+    entry `01` is whichever file is first in `files`.
+
+    Returns an open temporary file positioned at the start. Ownership passes
+    to the caller, which must close it; `stream_archive` below does that and
+    is the intended way to consume the result.
 
     Callers are responsible for checking `files` is non-empty first: an
     empty zip is a confusing success, not something this function decides
@@ -88,7 +108,7 @@ def build_evidence_zip(evidence: "Evidence", files: list["EvidenceFile"]) -> byt
     folder = f"{build_control_prefix(evidence.control)}{title}" if evidence.control_id else title
     width = _entry_number_width(len(files))
 
-    buffer = io.BytesIO()
+    buffer = tempfile.SpooledTemporaryFile(max_size=_SPOOL_MAX_BYTES)
     with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
         for position, evidence_file in enumerate(files, start=1):
             entry_name = (
@@ -97,4 +117,25 @@ def build_evidence_zip(evidence: "Evidence", files: list["EvidenceFile"]) -> byt
             )
             archive.writestr(entry_name, read_file(evidence_file.file_name))
 
-    return buffer.getvalue()
+    buffer.seek(0)
+    return buffer
+
+
+def archive_size(archive: tempfile.SpooledTemporaryFile) -> int:
+    """Byte length of a built archive, leaving it positioned back at the
+    start. Lets the response still send a Content-Length, so the browser
+    shows a real progress bar rather than an unknown-length download."""
+    size = archive.seek(0, os.SEEK_END)
+    archive.seek(0)
+    return size
+
+
+def stream_archive(archive: tempfile.SpooledTemporaryFile) -> Iterator[bytes]:
+    """Yield the archive a chunk at a time and close it when done, including
+    when the client disconnects part-way through and the response closes the
+    generator early."""
+    try:
+        while chunk := archive.read(_STREAM_CHUNK_BYTES):
+            yield chunk
+    finally:
+        archive.close()

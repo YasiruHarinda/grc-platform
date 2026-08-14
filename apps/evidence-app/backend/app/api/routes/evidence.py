@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session, selectinload
 from app.auth import User, get_current_user
 from app.database import get_db
@@ -10,7 +10,7 @@ from app.models.submission import Submission
 from app.schemas.evidence import EvidenceResponse, EvidenceUpdate
 from app.storage.blob_paths import build_control_prefix, sanitize_title
 from app.storage.blob_storage import save_file, delete_file, delete_files
-from app.storage.evidence_zip import build_evidence_zip
+from app.storage.evidence_zip import archive_size, build_evidence_zip, stream_archive
 
 router = APIRouter(prefix="/evidence", tags=["Evidence"])
 
@@ -228,10 +228,13 @@ def download_evidence(
     if not evidence.files:
         raise HTTPException(status_code=404, detail="Evidence has no files")
 
-    zip_bytes = build_evidence_zip(evidence, evidence.files)
+    archive = build_evidence_zip(evidence, evidence.files)
     filename = f"{sanitize_title(evidence.title)}.zip"
-    return Response(
-        content=zip_bytes,
+    return StreamingResponse(
+        stream_archive(archive),
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(archive_size(archive)),
+        },
     )
