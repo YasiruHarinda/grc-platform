@@ -156,9 +156,16 @@ function isImageFile(fileName: string): boolean {
 }
 
 // Enter and Space fire a click on a real <button>. The tiles below cannot be
-// buttons: each already contains its own button or download link, and nesting
+// buttons: each may contain its own button or download link, and nesting
 // interactive elements inside a button is invalid HTML. So they keep their
 // markup and are given the keyboard behaviour a button would have brought.
+//
+// The same reasoning applies to the ARIA version of the pair, which is why
+// each tile below takes the button role *only* when it has no interactive
+// child of its own: a container announcing itself as a button while holding
+// a link is what axe reports as nested-interactive, and a screen reader
+// announces the two ambiguously. When the tile does have such a child, that
+// child is already reachable and does the same job, so nothing is lost.
 function activateOnKey(activate: () => void) {
   return (event: ReactKeyboardEvent) => {
     if (event.key === "Enter" || event.key === " ") {
@@ -1106,12 +1113,18 @@ export default function EvidenceList() {
 
                     <TableCell>
                       <Box
-                        role="button"
-                        tabIndex={0}
-                        aria-label={`View screenshots for ${displayText}`}
+                        // With more than one file this tile holds the "View all
+                        // screenshots" IconButton, which opens the same gallery
+                        // and is already a real button, so it is the keyboard
+                        // path and this container stays a plain box.
+                        role={files.length > 1 ? undefined : "button"}
+                        tabIndex={files.length > 1 ? undefined : 0}
+                        aria-label={files.length > 1 ? undefined : `View screenshots for ${displayText}`}
                         sx={{ position: "relative", width: 72, height: 52, cursor: "pointer" }}
                         onClick={() => setGalleryEvidenceId(e.id)}
-                        onKeyDown={activateOnKey(() => setGalleryEvidenceId(e.id))}
+                        onKeyDown={
+                          files.length > 1 ? undefined : activateOnKey(() => setGalleryEvidenceId(e.id))
+                        }
                       >
                         {isImageFile(files[0].file_name) && !failedFileKeys.has(fileKey(files[0])) ? (
                           <Thumbnail
@@ -1497,11 +1510,15 @@ export default function EvidenceList() {
                   }}
                 >
                   <Box
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Open ${f.subtask ?? `screenshot ${idx + 1}`}`}
+                    // For a non-image this holds FileFallbackCard, which has its
+                    // own download link. That link is the useful action for a
+                    // PDF anyway, and the preview would only show the same card,
+                    // so the tile stays a plain box in that case.
+                    role={showImage ? "button" : undefined}
+                    tabIndex={showImage ? 0 : undefined}
+                    aria-label={showImage ? `Open ${f.subtask ?? `screenshot ${idx + 1}`}` : undefined}
                     onClick={() => setPreviewIndex(idx)}
-                    onKeyDown={activateOnKey(() => setPreviewIndex(idx))}
+                    onKeyDown={showImage ? activateOnKey(() => setPreviewIndex(idx)) : undefined}
                     sx={{ cursor: "pointer", width: "100%", aspectRatio: "16/11", overflow: "hidden" }}
                   >
                     {showImage ? (
