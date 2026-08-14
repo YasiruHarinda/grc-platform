@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect, useDeferredValue } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { getFileUrl } from "../api/client";
 import { stableFileUrl, forgetFileUrl } from "../utils/stableFileUrl";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -141,6 +142,19 @@ function isImageFile(fileName: string): boolean {
   return !!ext && IMAGE_EXTENSIONS.has(ext);
 }
 
+// Enter and Space fire a click on a real <button>. The tiles below cannot be
+// buttons: each already contains its own button or download link, and nesting
+// interactive elements inside a button is invalid HTML. So they keep their
+// markup and are given the keyboard behaviour a button would have brought.
+function activateOnKey(activate: () => void) {
+  return (event: ReactKeyboardEvent) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      activate();
+    }
+  };
+}
+
 // Fallback tile for PDFs, other non-image files, and images whose retried
 // load still failed. Fills the same footprint as the <img> it replaces so
 // the grid layout does not shift.
@@ -151,8 +165,34 @@ function FileFallbackCard({
 }: {
   fileName: string;
   fileUrl: string;
-  variant: "grid" | "preview";
+  variant: "grid" | "preview" | "tile";
 }) {
+  // The list thumbnails are 72x52 and 80x56. The file name and the download
+  // button used below would spill straight out of one, so a tile gets the
+  // icon alone -- the tile itself already opens the file when clicked, and
+  // the name is there on hover.
+  if (variant === "tile") {
+    return (
+      <Box
+        title={fileName}
+        sx={{
+          width: "100%",
+          height: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: "action.hover",
+          color: "text.secondary",
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: 1,
+        }}
+      >
+        <DocumentIcon size={20} />
+      </Box>
+    );
+  }
+
   const isPreview = variant === "preview";
   return (
     <Box
@@ -903,22 +943,38 @@ export default function EvidenceList() {
                     {displayText}
                   </Typography>
                   <Stack direction="row" spacing={0.75} flexWrap="wrap" rowGap={0.75}>
-                    {files.slice(0, 3).map((f, i) => (
-                      <Box key={f.id} sx={{ position: "relative", width: 80, height: 56, cursor: "pointer" }}
-                        onClick={() => { if (i === 2 && extraCount > 0) setGalleryEvidenceId(e.id); else window.open(getFileUrl(f.file_url), "_blank", "noreferrer"); }}>
-                        <Thumbnail
-                          src={stableFileUrl(getFileUrl(f.file_url))}
-                          alt=""
-                          sx={{ border: "1px solid", borderColor: "divider" }}
-                        />
-                        {i === 2 && extraCount > 0 && (
+                    {files.slice(0, 3).map((f, i) => {
+                      const isOverflowTile = i === 2 && extraCount > 0;
+                      const openTile = () => {
+                        if (isOverflowTile) setGalleryEvidenceId(e.id);
+                        else window.open(getFileUrl(f.file_url), "_blank", "noreferrer");
+                      };
+                      return (
+                      <Box key={f.id} role="button" tabIndex={0}
+                        aria-label={isOverflowTile ? `View all ${files.length} screenshots` : `Open ${f.file_name}`}
+                        sx={{ position: "relative", width: 80, height: 56, cursor: "pointer" }}
+                        onClick={openTile}
+                        onKeyDown={activateOnKey(openTile)}>
+                        {isImageFile(f.file_name) && !failedFileIds.has(f.id) ? (
+                          <Thumbnail
+                            src={stableFileUrl(getFileUrl(f.file_url))}
+                            alt=""
+                            onError={() => handleImageLoadError(f.id, f.file_url)}
+                            onLoad={() => handleImageLoadSuccess(f.id)}
+                            sx={{ border: "1px solid", borderColor: "divider" }}
+                          />
+                        ) : (
+                          <FileFallbackCard fileName={f.file_name} fileUrl={getFileUrl(f.file_url)} variant="tile" />
+                        )}
+                        {isOverflowTile && (
                           <Box sx={{ position: "absolute", inset: 0, borderRadius: 1, backgroundColor: "rgba(0,0,0,0.55)",
                             display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: "0.7rem", fontWeight: 700 }}>
                             +{extraCount}
                           </Box>
                         )}
                       </Box>
-                    ))}
+                      );
+                    })}
                   </Stack>
                   {files.length > 1 && (
                     <Link component="button" type="button" underline="hover"
@@ -1036,16 +1092,33 @@ export default function EvidenceList() {
                     </TableCell>
 
                     <TableCell>
-                      <Box sx={{ position: "relative", width: 72, height: 52, cursor: "pointer" }} onClick={() => setGalleryEvidenceId(e.id)}>
-                        <Thumbnail
-                          src={stableFileUrl(getFileUrl(files[0].file_url))}
-                          alt=""
-                          sx={{
-                            border: "1px solid",
-                            borderColor: "divider",
-                            "&:hover": { transform: "scale(1.05)", borderColor: "primary.main" },
-                          }}
-                        />
+                      <Box
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`View screenshots for ${displayText}`}
+                        sx={{ position: "relative", width: 72, height: 52, cursor: "pointer" }}
+                        onClick={() => setGalleryEvidenceId(e.id)}
+                        onKeyDown={activateOnKey(() => setGalleryEvidenceId(e.id))}
+                      >
+                        {isImageFile(files[0].file_name) && !failedFileIds.has(files[0].id) ? (
+                          <Thumbnail
+                            src={stableFileUrl(getFileUrl(files[0].file_url))}
+                            alt=""
+                            onError={() => handleImageLoadError(files[0].id, files[0].file_url)}
+                            onLoad={() => handleImageLoadSuccess(files[0].id)}
+                            sx={{
+                              border: "1px solid",
+                              borderColor: "divider",
+                              "&:hover": { transform: "scale(1.05)", borderColor: "primary.main" },
+                            }}
+                          />
+                        ) : (
+                          <FileFallbackCard
+                            fileName={files[0].file_name}
+                            fileUrl={getFileUrl(files[0].file_url)}
+                            variant="tile"
+                          />
+                        )}
                         {files.length > 1 && (
                           <Tooltip title={`View all ${files.length} screenshots`}>
                             <IconButton
@@ -1411,7 +1484,11 @@ export default function EvidenceList() {
                   }}
                 >
                   <Box
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open ${f.subtask ?? `screenshot ${idx + 1}`}`}
                     onClick={() => setPreviewIndex(idx)}
+                    onKeyDown={activateOnKey(() => setPreviewIndex(idx))}
                     sx={{ cursor: "pointer", width: "100%", aspectRatio: "16/11", overflow: "hidden" }}
                   >
                     {showImage ? (
