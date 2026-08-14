@@ -1,6 +1,15 @@
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# The two ways the Runner can authorise Azure OpenAI calls. Named here and
+# imported everywhere else, rather than each caller spelling the string out:
+# a bare "api_key" repeated across modules is the kind of thing that survives
+# a rename in one file and silently changes meaning in another.
+AZURE_AUTH_ENTRA = "entra"
+AZURE_AUTH_API_KEY = "api_key"
+AzureAuthMode = Literal["entra", "api_key"]
 
 # Config lives in the user's home dir — works whether installed via pip or cloned.
 # The repo's runner/.env (if present) is loaded first so a clone with that file
@@ -50,7 +59,12 @@ class RunnerSettings(BaseSettings):
     # calls, no credential written to disk. "api_key": fall back to
     # AZURE_OPENAI_API_KEY above — reachable only by setting this
     # explicitly, never as an implicit fallback.
-    AZURE_OPENAI_AUTH_MODE: str = "entra"   # "entra" | "api_key"
+    # Typed, not a bare str, so a misspelling is rejected at start-up with a
+    # message naming the valid values. Left as a free string, anything that
+    # wasn't exactly "api_key" quietly meant entra, so an engineer rolling
+    # back with "apikey" stayed on entra and got a puzzling sign-in error
+    # instead of being told their setting was wrong.
+    AZURE_OPENAI_AUTH_MODE: AzureAuthMode = AZURE_AUTH_ENTRA
     # Required when AZURE_OPENAI_AUTH_MODE is "entra" — pins the credential
     # to one tenant so switching Azure tenants/subscriptions for other work
     # doesn't intermittently break LLM access. Not needed in "api_key" mode.

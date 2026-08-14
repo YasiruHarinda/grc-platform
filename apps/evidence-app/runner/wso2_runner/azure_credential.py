@@ -30,7 +30,7 @@ from azure.core.exceptions import ClientAuthenticationError  # noqa: F401 (re-ex
 from azure.identity import CredentialUnavailableError  # noqa: F401 (re-exported for callers)
 from azure.identity.aio import AzureCliCredential, get_bearer_token_provider
 
-from wso2_runner.config import settings
+from wso2_runner.config import AZURE_AUTH_API_KEY, settings
 
 # Resource scope for Azure OpenAI / Azure Cognitive Services data-plane calls.
 _COGNITIVE_SERVICES_SCOPE = "https://cognitiveservices.azure.com/.default"
@@ -116,7 +116,7 @@ def resolve_llm_auth() -> TokenProvider | None:
     that merely happens to be present never switches the mode on its own.
     There is no implicit fallback in either direction.
     """
-    if settings.AZURE_OPENAI_AUTH_MODE == "api_key":
+    if settings.AZURE_OPENAI_AUTH_MODE == AZURE_AUTH_API_KEY:
         return None
     return _get_token_provider()
 

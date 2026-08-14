@@ -94,7 +94,7 @@ def start(
     if user is None:
         user = os.environ.get("USER_EMAIL") or None
 
-    from wso2_runner.config import settings, CONFIG_FILE
+    from wso2_runner.config import AZURE_AUTH_API_KEY, settings, CONFIG_FILE
     if not settings.AGENT_PROVIDER:
         typer.echo(
             "\n[runner] No LLM config found. Run this first:\n\n"
@@ -108,7 +108,7 @@ def start(
     # which happens after a browser window has already opened and a task
     # has already been consumed. api_key mode needs no such check; it
     # behaves exactly as it always has.
-    if settings.AGENT_PROVIDER == "azure" and settings.AZURE_OPENAI_AUTH_MODE != "api_key":
+    if settings.AGENT_PROVIDER == "azure" and settings.AZURE_OPENAI_AUTH_MODE != AZURE_AUTH_API_KEY:
         from wso2_runner.azure_credential import (
             AzureAccessDeniedError,
             AzureAccessUnverifiedError,
@@ -180,7 +180,7 @@ def doctor(
     import httpx
 
     from wso2_runner import oauth
-    from wso2_runner.config import settings
+    from wso2_runner.config import AZURE_AUTH_API_KEY, settings
 
     url = server or settings.CLOUD_URL
 
@@ -236,9 +236,9 @@ def doctor(
         print("    ✗ ANTHROPIC_API_KEY is not set")
     elif settings.AGENT_PROVIDER == "gemini" and not settings.GEMINI_API_KEY:
         print("    ✗ GEMINI_API_KEY is not set")
-    elif settings.AGENT_PROVIDER == "azure" and settings.AZURE_OPENAI_AUTH_MODE == "api_key" and not settings.AZURE_OPENAI_API_KEY:
+    elif settings.AGENT_PROVIDER == "azure" and settings.AZURE_OPENAI_AUTH_MODE == AZURE_AUTH_API_KEY and not settings.AZURE_OPENAI_API_KEY:
         print("    ✗ AZURE_OPENAI_API_KEY is not set")
-    elif settings.AGENT_PROVIDER == "azure" and settings.AZURE_OPENAI_AUTH_MODE != "api_key":
+    elif settings.AGENT_PROVIDER == "azure" and settings.AZURE_OPENAI_AUTH_MODE != AZURE_AUTH_API_KEY:
         # entra mode: a non-empty AZURE_OPENAI_API_KEY proves nothing — it
         # could be revoked, and it isn't even used in this mode. Attempt a
         # real token instead, the same way the start-up gate (ticket #94)

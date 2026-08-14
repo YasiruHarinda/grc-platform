@@ -85,3 +85,43 @@ def test_unknown_setting_is_ignored_not_fatal():
     assert not hasattr(s, "SOME_UNEXPECTED_SETTING")
     # A real field still resolves normally alongside the ignored one.
     assert s.CLOUD_URL
+
+
+# --- Azure auth mode -------------------------------------------------------
+#
+# The mode used to be a plain string compared against "api_key", so every
+# other value, including a misspelling, silently meant entra. Someone rolling
+# back to the key path with "apikey" stayed on entra and got a sign-in error
+# that said nothing about the real cause. Typing it turns that into a
+# start-up error naming both valid values.
+
+
+def test_azure_auth_mode_defaults_to_entra(monkeypatch):
+    monkeypatch.delenv("AZURE_OPENAI_AUTH_MODE", raising=False)
+    monkeypatch.setenv("ASGARDEO_ORG", "test-org")
+
+    settings = RunnerSettings(_env_file=None)
+
+    assert settings.AZURE_OPENAI_AUTH_MODE == "entra"
+
+
+@pytest.mark.parametrize("mode", ["entra", "api_key"])
+def test_azure_auth_mode_accepts_both_documented_values(monkeypatch, mode):
+    monkeypatch.setenv("ASGARDEO_ORG", "test-org")
+    monkeypatch.setenv("AZURE_OPENAI_AUTH_MODE", mode)
+
+    assert RunnerSettings(_env_file=None).AZURE_OPENAI_AUTH_MODE == mode
+
+
+@pytest.mark.parametrize("typo", ["apikey", "api-key", "API_KEY", "Entra", ""])
+def test_azure_auth_mode_rejects_anything_else_and_names_the_valid_values(monkeypatch, typo):
+    monkeypatch.setenv("ASGARDEO_ORG", "test-org")
+    monkeypatch.setenv("AZURE_OPENAI_AUTH_MODE", typo)
+
+    with pytest.raises(ValidationError) as excinfo:
+        RunnerSettings(_env_file=None)
+
+    message = str(excinfo.value)
+    assert "AZURE_OPENAI_AUTH_MODE" in message
+    # The engineer has to be able to fix it from the error alone.
+    assert "entra" in message and "api_key" in message
