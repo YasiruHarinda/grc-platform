@@ -63,10 +63,17 @@ OpenAI call with your own signed-in Azure identity — no credential is ever
 written to disk. `wso2-runner configure` asks for these and reminds you to
 run `az login`; it never asks for a key.
 
-Access is granted through **one Entra group**, assigned the Azure OpenAI
-role once on the Azure OpenAI resource. A new joiner is added to that
-group and needs no per-person Azure change; removing someone from the
-group ends their access.
+Access comes from the **Cognitive Services OpenAI User** role on the Azure
+OpenAI resource. Today that role is granted **per person**, so a new joiner
+has to be granted it individually before their first run, and it has to be
+removed individually when they leave. Ask whoever owns the Azure OpenAI
+resource to grant it to you.
+
+Moving this to a single Entra group, so joining the group is all that is
+needed, is planned but not done. Until then, `wso2-runner doctor` and
+`wso2-runner start` both check that you can actually call the endpoint, so
+a missing role shows up before a run starts rather than part-way through
+one.
 
 Anthropic and Gemini still use a plain API key — set the matching key in
 your `.env`. Ollama needs no key at all.
