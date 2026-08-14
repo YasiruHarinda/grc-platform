@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, useDeferredValue } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { getFileUrl } from "../api/client";
-import { stableFileUrl, forgetFileUrl } from "../utils/stableFileUrl";
+import { stableFileUrl, forgetFileUrl, fileUrlKey } from "../utils/stableFileUrl";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AxiosError } from "axios";
 import Box from "@mui/material/Box";
@@ -136,6 +136,19 @@ const NO_ROWS: never[] = [];
 const STATUS_OPTIONS = ["pending", "approved", "rejected"] as const;
 
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"]);
+
+// Identity for the per-file bookkeeping below, keyed on the blob path rather
+// than on `id`. Both list views and `galleryFiles` synthesize a fallback entry
+// for evidence with no stored EvidenceFile rows, and that entry's `id` is the
+// *Evidence* id, so two different tables' ids end up in one set: once
+// EvidenceFile 7's link expires, a legacy Evidence with id 7 reads as already
+// retried and settles into a document card instead of refetching. A blob path
+// cannot collide that way. This is the same reasoning `stableFileUrl` uses for
+// its own cache. The id fallback only applies to a URL that will not parse, no
+// worse than keying on the id throughout as this used to.
+function fileKey(file: { id: number; file_url: string }): string {
+  return fileUrlKey(getFileUrl(file.file_url)) ?? `id:${file.id}`;
+}
 
 function isImageFile(fileName: string): boolean {
   const ext = fileName.split(".").pop()?.toLowerCase();
@@ -426,8 +439,8 @@ export default function EvidenceList() {
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   // File ids that have already had one "expired link" retry, and file ids
   // whose image failed to load even after that retry (shown as a card).
-  const [retriedFileIds, setRetriedFileIds] = useState<Set<number>>(new Set());
-  const [failedFileIds, setFailedFileIds] = useState<Set<number>>(new Set());
+  const [retriedFileKeys, setRetriedFileKeys] = useState<Set<string>>(new Set());
+  const [failedFileKeys, setFailedFileKeys] = useState<Set<string>>(new Set());
   // Rename dialog state -- just which row, and whether a save is in flight.
   // The text itself lives in RenameEvidenceDialog now, so a keystroke there
   // no longer re-renders this component (and everything under it).
@@ -718,13 +731,13 @@ export default function EvidenceList() {
   // An <img> failed to load — most likely its signed URL expired mid-review.
   // Refetch the evidence list once to get fresh URLs; retry at most once per
   // file so a genuinely missing blob settles into a card instead of looping.
-  const handleImageLoadError = (fileId: number, fileUrl: string) => {
-    if (failedFileIds.has(fileId)) return;
-    if (retriedFileIds.has(fileId)) {
-      setFailedFileIds((prev) => new Set(prev).add(fileId));
+  const handleImageLoadError = (key: string, fileUrl: string) => {
+    if (failedFileKeys.has(key)) return;
+    if (retriedFileKeys.has(key)) {
+      setFailedFileKeys((prev) => new Set(prev).add(key));
       return;
     }
-    setRetriedFileIds((prev) => new Set(prev).add(fileId));
+    setRetriedFileKeys((prev) => new Set(prev).add(key));
     // Drop this blob's cached URL *before* the refetch below lands, so the
     // stable-url cache accepts the freshly re-signed link the refetch
     // brings back instead of handing the same (broken) URL straight out
@@ -740,11 +753,11 @@ export default function EvidenceList() {
   // Returns the previous Set untouched when there is nothing to drop: every
   // image on the page calls this on load, and handing back a new Set each
   // time would re-render the whole list for nothing.
-  const handleImageLoadSuccess = (fileId: number) => {
-    setRetriedFileIds((prev) => {
-      if (!prev.has(fileId)) return prev;
+  const handleImageLoadSuccess = (key: string) => {
+    setRetriedFileKeys((prev) => {
+      if (!prev.has(key)) return prev;
       const next = new Set(prev);
-      next.delete(fileId);
+      next.delete(key);
       return next;
     });
   };
@@ -955,12 +968,12 @@ export default function EvidenceList() {
                         sx={{ position: "relative", width: 80, height: 56, cursor: "pointer" }}
                         onClick={openTile}
                         onKeyDown={activateOnKey(openTile)}>
-                        {isImageFile(f.file_name) && !failedFileIds.has(f.id) ? (
+                        {isImageFile(f.file_name) && !failedFileKeys.has(fileKey(f)) ? (
                           <Thumbnail
                             src={stableFileUrl(getFileUrl(f.file_url))}
                             alt=""
-                            onError={() => handleImageLoadError(f.id, f.file_url)}
-                            onLoad={() => handleImageLoadSuccess(f.id)}
+                            onError={() => handleImageLoadError(fileKey(f), f.file_url)}
+                            onLoad={() => handleImageLoadSuccess(fileKey(f))}
                             sx={{ border: "1px solid", borderColor: "divider" }}
                           />
                         ) : (
@@ -1100,12 +1113,12 @@ export default function EvidenceList() {
                         onClick={() => setGalleryEvidenceId(e.id)}
                         onKeyDown={activateOnKey(() => setGalleryEvidenceId(e.id))}
                       >
-                        {isImageFile(files[0].file_name) && !failedFileIds.has(files[0].id) ? (
+                        {isImageFile(files[0].file_name) && !failedFileKeys.has(fileKey(files[0])) ? (
                           <Thumbnail
                             src={stableFileUrl(getFileUrl(files[0].file_url))}
                             alt=""
-                            onError={() => handleImageLoadError(files[0].id, files[0].file_url)}
-                            onLoad={() => handleImageLoadSuccess(files[0].id)}
+                            onError={() => handleImageLoadError(fileKey(files[0]), files[0].file_url)}
+                            onLoad={() => handleImageLoadSuccess(fileKey(files[0]))}
                             sx={{
                               border: "1px solid",
                               borderColor: "divider",
@@ -1361,7 +1374,7 @@ export default function EvidenceList() {
               const isPendingFileDelete = pendingDeleteFileId === f.id;
               const isFirst = idx === 0;
               const isLast = idx === galleryFiles.length - 1;
-              const showImage = isImageFile(f.file_name) && !failedFileIds.has(f.id);
+              const showImage = isImageFile(f.file_name) && !failedFileKeys.has(fileKey(f));
               return (
                 <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1.5 }}>
                   <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
@@ -1440,8 +1453,8 @@ export default function EvidenceList() {
                           component="img"
                           src={stableFileUrl(getFileUrl(f.file_url))}
                           alt={f.subtask ?? `Screenshot ${idx + 1}`}
-                          onError={() => handleImageLoadError(f.id, f.file_url)}
-                          onLoad={() => handleImageLoadSuccess(f.id)}
+                          onError={() => handleImageLoadError(fileKey(f), f.file_url)}
+                          onLoad={() => handleImageLoadSuccess(fileKey(f))}
                           sx={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
                         />
                       ) : (
@@ -1469,7 +1482,7 @@ export default function EvidenceList() {
           <Box sx={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
             {galleryFiles.map((f, idx) => {
               const isPendingFileDelete = pendingDeleteFileId === f.id;
-              const showImage = isImageFile(f.file_name) && !failedFileIds.has(f.id);
+              const showImage = isImageFile(f.file_name) && !failedFileKeys.has(fileKey(f));
               return (
                 <Box
                   key={f.id}
@@ -1495,8 +1508,8 @@ export default function EvidenceList() {
                       <Thumbnail
                         src={stableFileUrl(getFileUrl(f.file_url))}
                         alt={f.subtask ?? `Screenshot ${idx + 1}`}
-                        onError={() => handleImageLoadError(f.id, f.file_url)}
-                        onLoad={() => handleImageLoadSuccess(f.id)}
+                        onError={() => handleImageLoadError(fileKey(f), f.file_url)}
+                        onLoad={() => handleImageLoadSuccess(fileKey(f))}
                         sx={{ "&:hover": { opacity: 0.9 } }}
                       />
                     ) : (

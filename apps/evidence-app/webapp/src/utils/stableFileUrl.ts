@@ -51,9 +51,16 @@ function expiryMs(url: string): number | null {
   }
 }
 
-// Same "don't throw on anything" reasoning as expiryMs: a URL we can't
-// parse can't be cached, so it's returned as-is and the map is left alone.
-function pathKey(url: string): string | null {
+/**
+ * The blob's identity: the path part of a signed URL, which re-signing never
+ * changes. Exported because `EvidenceList.tsx` needs the same identity for
+ * its own per-file bookkeeping, and for the same reason described above --
+ * a numeric id there can come from two different tables and collide.
+ *
+ * Same "don't throw on anything" reasoning as expiryMs: a URL we can't parse
+ * has no path to key on, so callers get null and decide for themselves.
+ */
+export function fileUrlKey(url: string): string | null {
   try {
     return new URL(url).pathname;
   } catch {
@@ -71,7 +78,7 @@ function pathKey(url: string): string | null {
  * them nothing, since a download isn't a repeated request.
  */
 export function stableFileUrl(url: string): string {
-  const key = pathKey(url);
+  const key = fileUrlKey(url);
   if (key == null) return url;
 
   const expiresAt = expiryMs(url);
@@ -95,7 +102,7 @@ export function stableFileUrl(url: string): string {
  * of handing back the same broken one.
  */
 export function forgetFileUrl(url: string): void {
-  const key = pathKey(url);
+  const key = fileUrlKey(url);
   if (key == null) return;
   cache.delete(key);
 }
