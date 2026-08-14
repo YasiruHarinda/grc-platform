@@ -236,6 +236,30 @@ def test_content_disposition_filename_is_the_sanitised_title(db_session, enginee
     assert response.headers["content-disposition"] == 'attachment; filename="console-screenshot.zip"'
 
 
+# --- Reaching the browser across origins -----------------------------------
+#
+# The webapp can be served from its own origin, addressing the backend by an
+# absolute URL with no proxy in between (see `webapp/src/api/client.ts` and
+# issue #90). That makes the download cross-origin, and CORS hides every
+# response header from the page except a short safe-list that
+# `Content-Disposition` is not on. Without `expose_headers` the browser reads
+# no filename and saves the archive as `evidence-{id}.zip`, silently undoing
+# the naming the rest of this module exists to get right.
+
+
+def test_content_disposition_is_exposed_to_a_cross_origin_caller(db_session, engineer_client):
+    evidence, _files = build_evidence(db_session, ("shot.png", b"cors bytes"))
+
+    response = engineer_client.get(
+        f"/api/evidence/{evidence.id}/download",
+        headers={"Origin": "http://localhost:5173"},
+    )
+
+    assert response.status_code == 200
+    exposed = response.headers["access-control-expose-headers"]
+    assert "Content-Disposition" in exposed
+
+
 # --- Streaming -------------------------------------------------------------
 #
 # The archive is spooled and streamed rather than returned as one bytes
