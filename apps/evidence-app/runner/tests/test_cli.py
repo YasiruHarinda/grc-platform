@@ -15,10 +15,11 @@ open a browser: `run_forever` is replaced with a recording async stub,
 `CONFIG_DIR`/`CONFIG_FILE` are redirected into `tmp_path`.
 
 `start`'s Azure start-up gate (ticket #94) calls
-`wso2_runner.azure_credential.attempt_token()` before it ever reaches
-`run_forever`. `azure_credential` imports no `browser_use`, so it needs none
-of the sys.modules trickery above — `fake_run_forever` below stubs
-`attempt_token()` to succeed by default so every pre-existing `start` test
+`wso2_runner.azure_credential.verify_access()` before it ever reaches
+`run_forever` — a real access check that signs in *and* calls the endpoint,
+not just a token fetch. `azure_credential` imports no `browser_use`, so it
+needs none of the sys.modules trickery above — `fake_run_forever` below stubs
+`verify_access()` to succeed by default so every pre-existing `start` test
 that merely sets `AGENT_PROVIDER = "azure"` still reaches `run_forever`
 exactly as it did before this gate existed. The dedicated Azure gate tests
 further down override that stub to exercise the failure paths.
@@ -44,7 +45,7 @@ def fake_run_forever(monkeypatch):
     """Import wso2_runner.loop (faking out browser_use via a stub agent
     module) and replace its run_forever with a recorder that returns
     immediately, patched at the site `start` actually imports it from.
-    Also stubs the Azure start-up gate's token check to succeed, so tests
+    Also stubs the Azure start-up gate's access check to succeed, so tests
     that don't care about Azure auth still reach run_forever.
 
     Returns a list that the recorder appends
@@ -521,7 +522,7 @@ def test_doctor_reports_azure_key_present_in_api_key_mode(monkeypatch):
 
 # ── doctor: Azure entra-mode LLM check, ticket #95 ──────────────────────
 #
-# These fake attempt_token() at the wso2_runner.azure_credential module
+# These fake verify_access() at the wso2_runner.azure_credential module
 # boundary — the same seam the `start` gate tests above use — so no test
 # here needs the Azure CLI, network access, or a real tenant.
 

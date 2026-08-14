@@ -345,7 +345,7 @@ def test_verify_access_never_probes_when_authentication_itself_failed(
     attempted -- there is nothing to authorise without a token."""
     calls, _ = probe
     _entra()
-    fake_vendor_credential.created  # credential is built lazily below
+    # The credential is built lazily by resolve_llm_auth() below.
     azure_credential.resolve_llm_auth()
     fake_vendor_credential.created[0].outcome = CredentialUnavailableError("no az cli")
 
