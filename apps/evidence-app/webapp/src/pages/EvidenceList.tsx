@@ -233,11 +233,13 @@ function Thumbnail({
   src,
   alt,
   onError,
+  onLoad,
   sx,
 }: {
   src: string;
   alt: string;
   onError?: () => void;
+  onLoad?: () => void;
   sx?: SxProps<Theme>;
 }) {
   const [loaded, setLoaded] = useState(false);
@@ -257,7 +259,10 @@ function Thumbnail({
         alt={alt}
         loading="lazy"
         decoding="async"
-        onLoad={() => setLoaded(true)}
+        onLoad={() => {
+          setLoaded(true);
+          onLoad?.();
+        }}
         onError={onError}
         sx={[
           {
@@ -686,6 +691,22 @@ export default function EvidenceList() {
     // again on the next render.
     forgetFileUrl(getFileUrl(fileUrl));
     queryClient.invalidateQueries({ queryKey: ["evidence"] });
+  };
+
+  // An <img> loaded — drop its retry record, so a *later* expiry in the same
+  // session gets its own refetch instead of being read as a second failure
+  // and settling into a fallback card a refetch would have fixed.
+  //
+  // Returns the previous Set untouched when there is nothing to drop: every
+  // image on the page calls this on load, and handing back a new Set each
+  // time would re-render the whole list for nothing.
+  const handleImageLoadSuccess = (fileId: number) => {
+    setRetriedFileIds((prev) => {
+      if (!prev.has(fileId)) return prev;
+      const next = new Set(prev);
+      next.delete(fileId);
+      return next;
+    });
   };
 
   return (
@@ -1347,6 +1368,7 @@ export default function EvidenceList() {
                           src={stableFileUrl(getFileUrl(f.file_url))}
                           alt={f.subtask ?? `Screenshot ${idx + 1}`}
                           onError={() => handleImageLoadError(f.id, f.file_url)}
+                          onLoad={() => handleImageLoadSuccess(f.id)}
                           sx={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
                         />
                       ) : (
@@ -1397,6 +1419,7 @@ export default function EvidenceList() {
                         src={stableFileUrl(getFileUrl(f.file_url))}
                         alt={f.subtask ?? `Screenshot ${idx + 1}`}
                         onError={() => handleImageLoadError(f.id, f.file_url)}
+                        onLoad={() => handleImageLoadSuccess(f.id)}
                         sx={{ "&:hover": { opacity: 0.9 } }}
                       />
                     ) : (
