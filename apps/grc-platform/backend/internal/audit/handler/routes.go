@@ -59,6 +59,10 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	cmh := &commentHandler{svc: deps.Comment}
 	avh := &aiValidationHandler{svc: deps.AIValidation}
 
+	// Current user (shared by both hubs — resolved privilege set unions RISK_*
+	// and AUDIT_* names).
+	mux.HandleFunc("GET /api/v1/me/privileges", deps.handleGetMyPrivileges)
+
 	// Dashboard.
 	mux.HandleFunc("GET /api/v1/audit/dashboard", dh.getDashboard)
 	mux.HandleFunc("GET /api/v1/audit/work-queue", dh.getWorkQueue)

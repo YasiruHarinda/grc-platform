@@ -84,9 +84,6 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/v1/management-approvers", d.handleListManagementApprovers)
 	mux.HandleFunc("GET /api/v1/risk-owner-candidates", d.handleListRiskOwnerCandidates)
 
-	// Current user
-	mux.HandleFunc("GET /api/v1/me/privileges", d.handleGetMyPrivileges)
-
 	// Employees (HR entity)
 	mux.HandleFunc("GET /api/v1/employees/search", d.handleSearchEmployees)
 
