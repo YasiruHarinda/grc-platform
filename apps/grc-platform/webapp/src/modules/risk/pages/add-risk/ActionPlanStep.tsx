@@ -42,7 +42,11 @@ import { useAuthApiClient } from "@hooks/useAuthApiClient";
 const MIN_EMPLOYEE_SEARCH_LEN = 2;
 const EMPLOYEE_SEARCH_DEBOUNCE_MS = 300;
 
-function FieldLabel({ children }: { children: ReactNode }): JSX.Element {
+// `required` renders the asterisk convention users expect on a form: the field
+// must be filled before the step will submit. It mirrors the `rules.required`
+// on the same Controller — keep the two in step, or the form will either
+// promise something it doesn't enforce or enforce something it didn't warn about.
+function FieldLabel({ children, required }: { children: ReactNode; required?: boolean }): JSX.Element {
   return (
     <Typography
       variant="body2"
@@ -51,6 +55,14 @@ function FieldLabel({ children }: { children: ReactNode }): JSX.Element {
       sx={{ display: "block", mb: 1 }}
     >
       {children}
+      {required && (
+        // Inherits the label's colour rather than fixing one: the form sits on a
+        // dark card in dark mode and a light one otherwise, so a hard-coded
+        // colour would be invisible in one of them.
+        <Box component="span" aria-hidden="true" sx={{ color: "inherit", ml: 0.4 }}>
+          *
+        </Box>
+      )}
     </Typography>
   );
 }
@@ -172,7 +184,7 @@ export default function ActionPlanStep({
             control={control}
             render={({ field, fieldState }) => (
               <Box>
-                <FieldLabel>Assignment Team</FieldLabel>
+                <FieldLabel required>Assignment Team</FieldLabel>
                 <ComplexSelect
                   {...field}
                   fullWidth
@@ -205,7 +217,7 @@ export default function ActionPlanStep({
             control={control}
             render={({ field, fieldState }) => (
               <Box>
-                <FieldLabel>Risk Owner</FieldLabel>
+                <FieldLabel required>Risk Owner</FieldLabel>
                 <ComplexSelect
                   {...field}
                   fullWidth
@@ -244,7 +256,7 @@ export default function ActionPlanStep({
             control={control}
             render={({ field, fieldState }) => (
               <Box>
-                <FieldLabel>Management Approver</FieldLabel>
+                <FieldLabel required>Management Approver</FieldLabel>
                 <ComplexSelect
                   {...field}
                   fullWidth
@@ -344,6 +356,7 @@ export default function ActionPlanStep({
                 <TextField
                   {...params}
                   label="Action Owner"
+                  required
                   placeholder="Search by email"
                   error={!!fieldState.error || !!actionOwnerError}
                   helperText={
@@ -452,7 +465,7 @@ export default function ActionPlanStep({
           control={control}
           render={({ field, fieldState }) => (
             <Box>
-              <FieldLabel>Treatment Strategy</FieldLabel>
+              <FieldLabel required>Treatment Strategy</FieldLabel>
               <ComplexSelect
                 {...field}
                 fullWidth
@@ -538,6 +551,7 @@ export default function ActionPlanStep({
                   if (e.target.value) clearErrors("emailSubject");
                 }}
                 label="Email Subject"
+                required
                 fullWidth
                 placeholder="RE: Risk remediation for…"
                 error={!!fieldState.error}

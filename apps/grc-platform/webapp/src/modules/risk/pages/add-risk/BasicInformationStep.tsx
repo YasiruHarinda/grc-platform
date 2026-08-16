@@ -50,7 +50,11 @@ const EMPLOYEE_SEARCH_DEBOUNCE_MS = 300;
 
 const { DatePicker, LocalizationProvider } = DatePickers;
 
-function FieldLabel({ children }: { children: ReactNode }): JSX.Element {
+// `required` renders the asterisk convention users expect on a form: the field
+// must be filled before the step will submit. It mirrors the `rules.required`
+// on the same Controller — keep the two in step, or the form will either
+// promise something it doesn't enforce or enforce something it didn't warn about.
+function FieldLabel({ children, required }: { children: ReactNode; required?: boolean }): JSX.Element {
   return (
     <Typography
       variant="body2"
@@ -59,6 +63,14 @@ function FieldLabel({ children }: { children: ReactNode }): JSX.Element {
       sx={{ display: "block", mb: 1 }}
     >
       {children}
+      {required && (
+        // Inherits the label's colour rather than fixing one: the form sits on a
+        // dark card in dark mode and a light one otherwise, so a hard-coded
+        // colour would be invisible in one of them.
+        <Box component="span" aria-hidden="true" sx={{ color: "inherit", ml: 0.4 }}>
+          *
+        </Box>
+      )}
     </Typography>
   );
 }
@@ -164,7 +176,7 @@ export default function BasicInformationStep({
               rules={{ required: "Year is required" }}
               render={({ field, fieldState }) => (
                 <Box>
-                  <FieldLabel>Year</FieldLabel>
+                  <FieldLabel required>Year</FieldLabel>
                   <ComplexSelect
                     {...field}
                     fullWidth
@@ -194,7 +206,7 @@ export default function BasicInformationStep({
               rules={{ required: "Quarter is required" }}
               render={({ field, fieldState }) => (
                 <Box>
-                  <FieldLabel>Quarter</FieldLabel>
+                  <FieldLabel required>Quarter</FieldLabel>
                   <ComplexSelect
                     {...field}
                     fullWidth
@@ -224,7 +236,7 @@ export default function BasicInformationStep({
               rules={{ required: "Please select a source register" }}
               render={({ field, fieldState }) => (
                 <Box>
-                  <FieldLabel>Source Register</FieldLabel>
+                  <FieldLabel required>Source Register</FieldLabel>
                   <ComplexSelect
                     {...field}
                     fullWidth
@@ -297,6 +309,7 @@ export default function BasicInformationStep({
                   if (e.target.value) clearErrors("riskTitle");
                 }}
                 label="Risk Title"
+                required
                 fullWidth
                 error={!!fieldState.error}
                 helperText={fieldState.error?.message}
@@ -318,6 +331,7 @@ export default function BasicInformationStep({
                   if (e.target.value) clearErrors("riskDescription");
                 }}
                 label="Risk Description"
+                required
                 fullWidth
                 multiline
                 rows={4}
@@ -381,7 +395,7 @@ export default function BasicInformationStep({
             rules={{ required: "Risk category is required" }}
             render={({ field, fieldState }) => (
               <Box>
-                <FieldLabel>Risk Category</FieldLabel>
+                <FieldLabel required>Risk Category</FieldLabel>
                 <ComplexSelect
                   {...field}
                   fullWidth
@@ -420,7 +434,12 @@ export default function BasicInformationStep({
             rules={{ required: "Please select who identified this risk" }}
             render={({ field, fieldState }) => (
               <FormControl error={!!fieldState.error}>
-                <FormLabel sx={{ fontWeight: 500 }}>Risk Identified By</FormLabel>
+                <FormLabel sx={{ fontWeight: 500 }}>
+                  Risk Identified By
+                  <Box component="span" aria-hidden="true" sx={{ color: "inherit", ml: 0.4 }}>
+                    *
+                  </Box>
+                </FormLabel>
                 <RadioGroup
                   name={field.name}
                   value={field.value}
@@ -451,7 +470,7 @@ export default function BasicInformationStep({
               rules={{ required: "Please select the employee who identified this risk" }}
               render={({ field, fieldState }) => (
                 <Box>
-                  <FieldLabel>Select Employee</FieldLabel>
+                  <FieldLabel required>Select Employee</FieldLabel>
                   <Autocomplete
                     options={employeeOptions}
                     loading={employeeSearchLoading}
@@ -517,6 +536,7 @@ export default function BasicInformationStep({
                     if (e.target.value) clearErrors("identifiedByName");
                   }}
                   label="Name of the person who identified"
+                  required
                   fullWidth
                   error={!!fieldState.error}
                   helperText={fieldState.error?.message}
@@ -539,6 +559,7 @@ export default function BasicInformationStep({
                     if (e.target.value) clearErrors("identifiedByName");
                   }}
                   label="Name of the tool"
+                  required
                   fullWidth
                   error={!!fieldState.error}
                   helperText={fieldState.error?.message}
@@ -554,7 +575,7 @@ export default function BasicInformationStep({
             rules={{ required: "Risk identified date is required" }}
             render={({ field, fieldState }) => (
               <Box>
-                <FieldLabel>Risk Identified Date</FieldLabel>
+                <FieldLabel required>Risk Identified Date</FieldLabel>
                 <DatePicker
                   value={field.value}
                   onChange={(newValue) => {
@@ -594,7 +615,7 @@ export default function BasicInformationStep({
             rules={{ required: "Please select an assignee" }}
             render={({ field, fieldState }) => (
               <Box>
-                <FieldLabel>Risk Assigned To</FieldLabel>
+                <FieldLabel required>Risk Assigned To</FieldLabel>
                 <ComplexSelect
                   {...field}
                   fullWidth

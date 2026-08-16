@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Box,
@@ -80,7 +80,9 @@ interface RiskDetailDrawerProps extends DrawerActions {
   loading: boolean;
   error: string;
   actionsDisabled: boolean;
-  can: (privilege: string) => boolean;
+  // No `can` prop: this drawer derives its own from the risk's
+  // effective_privileges. Passing the session-wide set in would reintroduce
+  // exactly the bug that change fixed — see the comment in the component body.
   onClose: () => void;
   // Full action-plan list (STANDARD + MANAGEMENT) — separate from
   // detail.action_plan, which only ever embeds the STANDARD one.
@@ -238,12 +240,12 @@ function EmptyState({ icon, title, caption }: { icon: ReactNode; title: string; 
 }
 
 // One card per action plan (STANDARD and/or MANAGEMENT). Step completion and
-// the final "Complete Action Plan" button are only shown to the plan's own
-// action_owner_id — the same COMPLETE_ACTION_STEPS_RISK-gated, ownership-checked
-// flow applies uniformly to both plan types.
+// the final "Complete Action Plan" button are shown only to the plan's own
+// action_owner_id, uniformly for both plan types. That ownership IS the
+// authorisation — there is no privilege to check, which is why this takes no
+// `can`: see canComplete below.
 function ActionPlanCard({
   plan,
-  can,
   currentUserId,
   disabled,
   riskStatus,
@@ -252,7 +254,6 @@ function ActionPlanCard({
   onCompletePlan,
 }: {
   plan: ActionPlanWithSteps;
-  can: (privilege: string) => boolean;
   currentUserId: number | null;
   disabled: boolean;
   riskStatus: string;
@@ -264,7 +265,12 @@ function ActionPlanCard({
   // Mirrors the backend gate: steps/plan can only be completed while the
   // risk is actively being remediated, not before compliance approval.
   const riskActive = riskStatus === "IN_REMEDIATION" || riskStatus === "ESCALATED";
-  const canComplete = can(RiskPrivilege.CompleteActionSteps) && isOwner && riskActive;
+  // Being the plan's action owner IS the authorisation — no privilege check.
+  // RISK_COMPLETE_ACTION_STEPS was retired along with the action-owner role,
+  // because an Action Owner may be any employee and hold no role at all; the
+  // server now authorises this purely on action_owner_id. Gating on a privilege
+  // nobody can hold would hide the button from the only person who may use it.
+  const canComplete = isOwner && riskActive;
   const allStepsDone = plan.steps.length > 0 && plan.steps.every((s) => s.status === "COMPLETED");
   const isManagement = plan.plan_type === "MANAGEMENT";
   const ownerName = plan.action_owner_id !== null ? (userNames.get(plan.action_owner_id) ?? null) : null;
@@ -566,7 +572,6 @@ export default function RiskDetailDrawer({
   loading,
   error,
   actionsDisabled,
-  can,
   onClose,
   actionPlans,
   actionPlansError,
@@ -579,6 +584,25 @@ export default function RiskDetailDrawer({
   onCompletePlan,
   ...actions
 }: RiskDetailDrawerProps): JSX.Element {
+  // Every action in this drawer is gated on what the caller may do ON THIS
+  // RISK, not on what they may do somewhere. A user can hold different roles in
+  // different registers — Risk Owner in one, read-only in another — so the
+  // session-wide set (canAnywhere, from GET /me/privileges) is the union across
+  // all of them and would render an Approve button on risks the server refuses.
+  //
+  // effective_privileges comes back on the risk itself, already resolved in its
+  // source register by the same rule the server enforces. Deriving it here from
+  // a grant list instead would put a second copy of the access rule in the
+  // browser, which is how the two drift apart.
+  //
+  // The session-wide set is deliberately NOT accepted as a prop: it is the
+  // right answer for nav and route gating, and the wrong one for anything on a
+  // specific risk.
+  const can = useMemo(() => {
+    const granted = new Set(detail?.effective_privileges ?? []);
+    return (p: string): boolean => granted.has(p);
+  }, [detail]);
+
   const status = detail?.workflow_status ?? "";
   const statusCfg = STATUS_CONFIG[status] ?? { label: status, color: "default" as const };
   const isOverdue = !!detail && calcDue(detail.implementation_date).daysLeft < 0;
@@ -839,7 +863,6 @@ export default function RiskDetailDrawer({
                   <ActionPlanCard
                     key={plan.id}
                     plan={plan}
-                    can={can}
                     currentUserId={currentUserId}
                     disabled={actionsDisabled}
                     riskStatus={status}

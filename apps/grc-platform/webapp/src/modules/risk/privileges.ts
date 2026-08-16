@@ -51,5 +51,9 @@ export const RiskPrivilege = {
   // Assigner under ManageActionPlans. Seeded INACTIVE server-side, so it
   // resolves for nobody — nothing should check it.
   CreateManagementActionPlan: "RISK_CREATE_MANAGEMENT_ACTION_PLAN",
+  // RETIRED with the action-owner role. Completing a plan's steps is authorised
+  // by being its action_owner_id — the identity, not a privilege — because an
+  // Action Owner may be any employee and hold no role at all. Seeded INACTIVE
+  // server-side, so it resolves for nobody: anything gating on it renders never.
   CompleteActionSteps:        "RISK_COMPLETE_ACTION_STEPS",
 } as const;

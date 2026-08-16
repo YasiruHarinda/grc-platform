@@ -52,6 +52,7 @@ import {
 } from "../api/riskApi";
 import type { ComplianceReference, RiskCategory, RiskScore, RiskTeam, UserOption } from "../api/riskApi";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
+import { RiskPrivilege } from "../privileges";
 
 const STEPS = ["Basic Information", "Risk Assessment", "Risk Treatment Plan"] as const;
 
@@ -181,7 +182,12 @@ export default function AddRisk(): JSX.Element {
     if (!isSignedIn && !isMockAuth) return;
     setFetchError(null);
     Promise.all([
-      fetchSourceRegisterTeams(authFetch),
+      // Only registers the caller may actually raise a risk in. The server
+      // checks RISK_CREATE *in the chosen register*, so anything broader would
+      // offer choices that 403 on submit.
+      fetchSourceRegisterTeams(authFetch, true, RiskPrivilege.CreateRisk),
+      // Assignment teams stay unrestricted — you routinely hand remediation to
+      // a team you don't belong to, and being assigned confers no authority.
       fetchAssignmentTeams(authFetch),
       fetchRiskScores(authFetch),
       fetchComplianceReferences(authFetch),

@@ -92,7 +92,6 @@ import type {
 } from "../api/riskApi";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
-import { useRiskPrivileges } from "../hooks/useRiskPrivileges";
 import { darkCardSx } from "./cardStyles";
 import RiskDetailDrawer from "./risk-registers/RiskDetailDrawer";
 import type { ActionPlanWithSteps } from "./risk-registers/RiskDetailDrawer";
@@ -355,7 +354,10 @@ function FilterBar({
 
 export default function RiskRegisters(): JSX.Element {
   const authFetch = useAuthApiClient();
-  const { can } = useRiskPrivileges();
+  // No privilege hook here any more: the only consumer was the detail drawer,
+  // which now gates on the risk's own effective_privileges. The Registers list
+  // itself needs none — the server returns exactly the rows this caller may
+  // see, so there is nothing left to hide client-side.
 
   const [activeTab, setActiveTab] = useState<TabKey>("approved");
   const [approvedFilter, setApprovedFilter] = useState<"" | "open" | "closed">("");
@@ -1052,7 +1054,6 @@ export default function RiskRegisters(): JSX.Element {
         loading={drawerLoading}
         error={drawerError}
         actionsDisabled={actionInFlight}
-        can={can}
         onClose={closeDrawer}
         actionPlans={actionPlans}
         actionPlansError={actionPlansError}
