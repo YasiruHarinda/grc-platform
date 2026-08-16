@@ -237,6 +237,47 @@ func (s *Set) RegisterScopeIDs() []int {
 	return s.scopeIDsWithBasis("", true)
 }
 
+// RegisterScopeIDsFor returns the register-capable team ids where the caller
+// holds priv SPECIFICALLY — not merely where they hold some grant.
+//
+// RegisterScopeIDs alone cannot be used to scope a privilege-gated aggregate: it
+// only knows "a register-scoped grant exists on this team", not which
+// privileges that grant carries. A caller can hold different roles in
+// different registers, so a register reachable through one role's grant is not
+// necessarily one where THIS privilege is held. Every risk role today happens
+// to bundle the view privileges with everything else it grants, which is why
+// that gap has no visible effect yet — but nothing enforces the bundling, and
+// a future narrower role would silently leak that register's aggregate data
+// into a page the grant never authorised.
+//
+// Pair with HasGlobal(priv) for the "sees everything" bypass: a caller holding
+// priv at GLOBAL scope needs no restriction, including for registers created
+// after the grant was made.
+func (s *Set) RegisterScopeIDsFor(priv string) []int {
+	if s == nil {
+		return nil
+	}
+	seen := map[int]bool{}
+	out := []int{}
+	for _, g := range s.grants {
+		if g.ScopeType == ScopeGlobal {
+			continue
+		}
+		if g.ScopeTeamType != TeamSourceRegister && g.ScopeTeamType != TeamBoth {
+			continue
+		}
+		if !s.byTeam[g.ScopeID][priv] {
+			continue
+		}
+		if !seen[g.ScopeID] {
+			seen[g.ScopeID] = true
+			out = append(out, g.ScopeID)
+		}
+	}
+	sort.Ints(out)
+	return out
+}
+
 // scopeIDsWithBasis collects distinct, sorted scope ids. basis "" means any.
 // registerCapableOnly additionally requires the team to be usable as a register.
 func (s *Set) scopeIDsWithBasis(basis string, registerCapableOnly bool) []int {

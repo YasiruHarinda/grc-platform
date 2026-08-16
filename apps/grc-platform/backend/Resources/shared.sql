@@ -117,6 +117,47 @@ CREATE TABLE IF NOT EXISTS `role` (
   UNIQUE KEY uq_role_name (role_name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Evolution guard for `role` — module and scope_basis are new columns on a
+-- table that pre-dates them. On a FRESH database the CREATE TABLE above already
+-- creates both, so this is a no-op there. On an EXISTING database (staging,
+-- production), CREATE TABLE IF NOT EXISTS silently does nothing when `role`
+-- already exists, and without this block the two columns would never appear —
+-- not as NULL, but genuinely MISSING, which fails every query the moment the
+-- new backend queries them (GetRoleByID, ListRoles, grantSelect).
+--
+-- Deliberately not `ADD COLUMN IF NOT EXISTS`: that syntax needs MySQL
+-- 8.0.29+, and nothing in this repo pins a MySQL patch version. The
+-- information_schema guard below is portable to any MySQL 8.
+--
+-- module gets a DEFAULT so existing rows backfill immediately rather than
+-- failing the NOT NULL constraint; shared_seed_data.sql's role INSERT
+-- (ON DUPLICATE KEY UPDATE module = VALUES(module)) corrects it to the real
+-- value for every seeded role right after this runs. scope_basis is nullable
+-- by design (NULL means GLOBAL-only) and needs no default for the same reason.
+SET @role_has_module = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'role' AND COLUMN_NAME = 'module'
+);
+SET @add_module_sql = IF(@role_has_module = 0,
+  'ALTER TABLE `role` ADD COLUMN module ENUM(''RISK'',''AUDIT'',''SHARED'') NOT NULL DEFAULT ''RISK'' AFTER description',
+  'SELECT 1');
+PREPARE add_module_stmt FROM @add_module_sql;
+EXECUTE add_module_stmt;
+DEALLOCATE PREPARE add_module_stmt;
+
+SET @role_has_scope_basis = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'role' AND COLUMN_NAME = 'scope_basis'
+);
+SET @add_scope_basis_sql = IF(@role_has_scope_basis = 0,
+  'ALTER TABLE `role` ADD COLUMN scope_basis ENUM(''SOURCE_REGISTER'',''ASSIGNMENT_TEAM'') NULL '
+  'COMMENT ''Which risk column a grant on this role scopes by; NULL for GLOBAL-only roles. See table comment'' '
+  'AFTER module',
+  'SELECT 1');
+PREPARE add_scope_basis_stmt FROM @add_scope_basis_sql;
+EXECUTE add_scope_basis_stmt;
+DEALLOCATE PREPARE add_scope_basis_stmt;
+
 
 -- -----------------------------------------------------------------------------
 -- privilege

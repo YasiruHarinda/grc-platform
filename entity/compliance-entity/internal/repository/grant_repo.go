@@ -49,6 +49,19 @@ func NewGrantRepository(db *sql.DB) GrantRepository { return &grantRepo{db: db} 
 // lists; each is guarded on scope_type so a RISK_TEAM id can never accidentally
 // match an audit team with the same numeric id (scope_id has no FK — it points
 // at two different tables — so nothing else prevents that).
+//
+// A team-scoped grant is excluded once its team is no longer ACTIVE.
+// Deactivating a register/team (PATCH /risk/teams/{id} et al.) is a real,
+// reachable admin action; without this, a grant scoped to a retired team would
+// keep conferring full access to it forever — nothing else in the
+// authorisation path re-checks team status once a grant is resolved.
+//
+// This has to live in the WHERE clause, not the LEFT JOINs' own ON conditions:
+// a LEFT JOIN with a failing ON predicate still returns the grant row, just
+// with the joined columns NULLed — it does not exclude the row. GLOBAL grants
+// are exempted explicitly, since they match neither join at all (scope_id is
+// the 0 sentinel) and must not be swept up by a team-status condition that
+// does not apply to them.
 const grantSelect = `
 	SELECT g.id, g.role_id, r.role_name, r.module, COALESCE(r.scope_basis,'') AS scope_basis,
 	       g.scope_type, g.scope_id,
@@ -60,7 +73,10 @@ const grantSelect = `
 	LEFT JOIN risk_team  rt ON g.scope_type = 'RISK_TEAM'  AND rt.id = g.scope_id
 	LEFT JOIN audit_team at ON g.scope_type = 'AUDIT_TEAM' AND at.id = g.scope_id
 	WHERE  g.status = 'ACTIVE'
-	  AND  r.status = 'ACTIVE'`
+	  AND  r.status = 'ACTIVE'
+	  AND  (g.scope_type = 'GLOBAL'
+	        OR (g.scope_type = 'RISK_TEAM'  AND rt.status = 'ACTIVE')
+	        OR (g.scope_type = 'AUDIT_TEAM' AND at.status = 'ACTIVE'))`
 
 // scanGrants materialises rows produced by grantSelect.
 func scanGrants(rows *sql.Rows) ([]domain.UserGrant, error) {

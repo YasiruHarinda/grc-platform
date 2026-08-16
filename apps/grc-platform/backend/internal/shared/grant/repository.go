@@ -66,7 +66,11 @@ func (r *entityRepository) ForEmail(ctx context.Context, email string) (int, []G
 			// are personally named on, which is nothing until provisioned.
 			return 0, nil, nil
 		}
-		return 0, nil, fmt.Errorf("load grants for %s: %w", email, err)
+		// No email in the message: this runs on every request, gets logged via
+		// slog.ErrorContext on any entity outage, and the correlation ID
+		// already ties the log line to the request without putting a user
+		// identifier in application logs.
+		return 0, nil, fmt.Errorf("load grants: %w", err)
 	}
 	return resp.UserID, resp.Grants, nil
 }

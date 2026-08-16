@@ -5728,6 +5728,12 @@ components:
           description: >-
             Determines which scope types this role may be granted against. The
             role decides the module; the scope decides the breadth.
+        scopeBasis:
+          type: string
+          enum: [SOURCE_REGISTER, ASSIGNMENT_TEAM]
+          description: >-
+            Which column of a risk a grant on this role scopes by. Omitted for
+            GLOBAL-only roles.
         status:
           type: string
           enum: [ACTIVE, INACTIVE]
@@ -5764,6 +5770,18 @@ components:
         scopeId:
           type: integer
           description: 0 when scopeType is GLOBAL; otherwise a risk_team or audit_team id.
+        scopeBasis:
+          type: string
+          enum: [SOURCE_REGISTER, ASSIGNMENT_TEAM]
+          description: >-
+            The role's scope basis: SOURCE_REGISTER matches where a risk was
+            raised, ASSIGNMENT_TEAM matches where the work was routed. Omitted
+            for GLOBAL-only roles.
+        scopeTeamType:
+          type: string
+          enum: [SOURCE_REGISTER, ASSIGNMENT, BOTH, AUDIT_TEAM]
+          description: >-
+            The scoped team's own team_type. Omitted for GLOBAL grants.
         scopeName:
           type: string
           description: The team's display name. Omitted for GLOBAL grants.

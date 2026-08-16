@@ -43,20 +43,23 @@ func (d *Deps) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		registerID = &id
 	}
 
-	// Team scoping: a caller without a GLOBAL grant sees only the registers and
-	// assignment teams they hold a grant on. A caller with no grants at all
-	// gets a zeroed dashboard — the aggregate counterpart of seeing only the
-	// risks they are personally named on, which do not aggregate meaningfully.
-	// Fails closed like handleListRisks' equivalent scoping: an empty team list
-	// means "unrestricted" downstream, so it must never reach the query.
+	// Scoped to registers where the caller specifically holds ViewRiskDashboard
+	// — not seesEveryRisk (RISK_VIEW_RISKS), and not RegisterScopeIDs (any
+	// grant at all). A caller can hold different privileges in different
+	// registers, so this page's own privilege is what decides which registers
+	// contribute to it. A caller with no grants at all gets a zeroed dashboard
+	// — the aggregate counterpart of seeing only the risks they are personally
+	// named on, which do not aggregate meaningfully. Fails closed like
+	// handleListRisks' equivalent scoping: an empty list means "unrestricted"
+	// downstream, so it must never reach the query.
 	var registerIDs []int
-	if !seesEveryRisk(r.Context()) {
-		// Register-capable scopes only. These pages aggregate per register, so a
-		// grant on an ASSIGNMENT-only team (HR, Legal) contributes nothing —
-		// there is no register page for it to appear on. A grant on a BOTH team
-		// does contribute, which is why "Risk Owner @ Asgardeo" still gets an
-		// Asgardeo dashboard while "Risk Owner @ HR" gets none.
-		registerIDs = callerGrants(r.Context()).RegisterScopeIDs()
+	if !callerGrants(r.Context()).HasGlobal(privilege.ViewRiskDashboard) {
+		// Register-capable scopes only: a grant on an ASSIGNMENT-only team (HR,
+		// Legal) contributes nothing — there is no register page for it to
+		// appear on. A grant on a BOTH team does contribute, which is why
+		// "Risk Owner @ Asgardeo" still gets an Asgardeo dashboard while
+		// "Risk Owner @ HR" gets none.
+		registerIDs = callerGrants(r.Context()).RegisterScopeIDsFor(privilege.ViewRiskDashboard)
 		if len(registerIDs) == 0 {
 			response.WriteJSONValue(w, http.StatusOK, model.DashboardSummary{
 				TreatmentByRegister:     []model.RegisterTreatmentCount{},

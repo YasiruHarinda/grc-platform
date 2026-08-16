@@ -479,6 +479,11 @@ export default function RiskAssessmentStep({ riskScores }: RiskAssessmentStepPro
                       },
                       textField: {
                         fullWidth: true,
+                        // No label prop is set on this slot — FieldLabel above
+                        // renders it separately — so `required` here only sets
+                        // aria-required on the input; it cannot produce a
+                        // second, MUI-rendered asterisk to duplicate FieldLabel's.
+                        required: true,
                         error: !!fieldState.error,
                         helperText:
                           fieldState.error?.message ??
@@ -519,6 +524,10 @@ export default function RiskAssessmentStep({ riskScores }: RiskAssessmentStepPro
                       },
                       textField: {
                         fullWidth: true,
+                        // Same rationale as Implementation Date above: no
+                        // label prop on this slot, so `required` only sets
+                        // aria-required — no duplicate visible asterisk.
+                        required: true,
                         error: !!fieldState.error,
                         helperText:
                           fieldState.error?.message ??
