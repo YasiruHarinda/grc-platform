@@ -376,7 +376,11 @@ USE grc_platform;
 			scope = fmt.Sprintf("RISK_TEAM %d", g.scopeID)
 			note = fmt.Sprintf("risk_team.id = %d", g.scopeID)
 		}
-		fmt.Fprintf(&b, "-- %s: %s @ %s (%s)\n", g.email, g.roleName, scope, note)
+		// sqlComment, not the raw value: a `--` comment only runs to end of
+		// line, so a newline in an email or role name would end the comment
+		// early and leave the rest of the value as an unguarded top-level SQL
+		// statement in a file meant to be piped straight into mysql.
+		fmt.Fprintf(&b, "-- %s: %s @ %s (%s)\n", sqlComment(g.email), sqlComment(g.roleName), scope, note)
 		fmt.Fprintf(&b, `INSERT INTO user_role_grant (user_id, role_id, scope_type, scope_id, created_by)
 SELECT u.id, r.id, '%s', %d, 'backfill'
 FROM   `+"`user`"+` u
@@ -402,6 +406,14 @@ ORDER  BY u.email, r.role_name, g.scope_id;
 // own directory, but a generated .sql file that someone will run as root is not
 // the place to assume that.
 func sqlEscape(s string) string { return strings.ReplaceAll(s, "'", "''") }
+
+// sqlComment neutralises line terminators so a value can never break out of a
+// single-line `--` comment. Separate from sqlEscape: a raw newline inside a
+// quoted '...' string literal is legal SQL and stays part of the value, so the
+// INSERT statements don't need this — only the plain-text comment lines do.
+var commentLineBreaks = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ")
+
+func sqlComment(s string) string { return commentLineBreaks.Replace(s) }
 
 func renderReport(f findings, rowCount int) string {
 	var b strings.Builder
