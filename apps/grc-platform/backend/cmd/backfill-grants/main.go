@@ -92,6 +92,16 @@ var orgWidePrivileges = map[string]bool{
 	"RISK_MANAGE_SCORES":          true,
 }
 
+// manageUsersPrivilege gates User Management — provisioning users and granting
+// or revoking roles. The Compliance Entity refuses to grant any role carrying it
+// at anything other than GLOBAL scope (see grant_service.validateScope), because
+// a scoped grant-manager would need an escalation rule that does not exist yet.
+//
+// This command writes SQL straight into user_role_grant, bypassing that service
+// entirely, so it has to honour the same rule or it can produce rows the API
+// would have rejected.
+const manageUsersPrivilege = "MANAGE_USERS"
+
 type role struct {
 	ID       int    `json:"id"`
 	RoleName string `json:"roleName"`
@@ -120,6 +130,10 @@ type findings struct {
 	// is nothing to scope a grant to. Matches today's behaviour (an empty
 	// page), but worth eyeballing.
 	scopedRoleNoTeams []string
+	// manageUsersNotGlobal: the role carries MANAGE_USERS but is not SHARED, so
+	// it would be scoped to a team — which the entity refuses. Needs a human
+	// decision, so no grant is emitted at all.
+	manageUsersNotGlobal []string
 }
 
 func main() {
@@ -195,7 +209,22 @@ func main() {
 		// privilege alone would emit RISK_TEAM rows the entity rejects, since
 		// grc-platform-admin carries MANAGE_USERS rather than any of the
 		// org-wide risk privileges below.
-		global := r.Module == "SHARED" || isOrgWide(rpResp.RolePrivileges[r.RoleName])
+		privs := rpResp.RolePrivileges[r.RoleName]
+		global := r.Module == "SHARED" || isOrgWide(privs)
+
+		// A non-SHARED role carrying MANAGE_USERS cannot be placed. Emitting
+		// team-scoped grants would write rows the entity's API refuses; quietly
+		// promoting it to GLOBAL would widen every OTHER privilege it carries
+		// from one team to every team, which is a privilege escalation this
+		// tool has no business performing on someone's behalf. Report it and
+		// let a human decide whether the role or the scope is wrong.
+		if !global && hasPrivilege(privs, manageUsersPrivilege) {
+			found.manageUsersNotGlobal = append(found.manageUsersNotGlobal,
+				fmt.Sprintf("%s (module %s, %d member(s)) — carries %s but is not SHARED",
+					r.RoleName, r.Module, len(emails), manageUsersPrivilege))
+			continue
+		}
+
 		fmt.Printf("  %-42s %-6s %d member(s)\n", r.RoleName, scopeLabel(global), len(emails))
 
 		for _, email := range emails {
@@ -256,6 +285,15 @@ func main() {
 	fmt.Println("no findings; every group member was placed.")
 }
 
+func hasPrivilege(privs []string, want string) bool {
+	for _, p := range privs {
+		if p == want {
+			return true
+		}
+	}
+	return false
+}
+
 func isOrgWide(privs []string) bool {
 	for _, p := range privs {
 		if orgWidePrivileges[p] {
@@ -282,7 +320,8 @@ func add(rows *[]grantRow, seen map[string]bool, g grantRow) {
 }
 
 func (f findings) total() int {
-	return len(f.inGroupNoUser) + len(f.hasTeamsNoRole) + len(f.scopedRoleNoTeams)
+	return len(f.inGroupNoUser) + len(f.hasTeamsNoRole) + len(f.scopedRoleNoTeams) +
+		len(f.manageUsersNotGlobal)
 }
 
 // renderSQL emits INSERTs that resolve ids by natural key rather than hardcoding
@@ -390,6 +429,13 @@ func renderReport(f findings, rowCount int) string {
 			"  membership, and this backfill produces nothing for them — so they are\n"+
 			"  locked out at cutover. Decide what role each should hold and grant it.",
 		f.hasTeamsNoRole)
+
+	section("CARRIES MANAGE_USERS BUT IS NOT A SHARED ROLE",
+		"  NO GRANTS WERE EMITTED for these roles, so their members get nothing.\n"+
+			"  A role that hands out authority may only be granted GLOBAL, and a\n"+
+			"  non-SHARED role would be scoped to a team. Either move MANAGE_USERS\n"+
+			"  off the role, or make the role SHARED — then re-run.",
+		f.manageUsersNotGlobal)
 
 	section("TEAM-SCOPED ROLE, BUT NO TEAM MEMBERSHIPS",
 		"  Nothing to scope a grant to. This matches today's behaviour (they get\n"+
