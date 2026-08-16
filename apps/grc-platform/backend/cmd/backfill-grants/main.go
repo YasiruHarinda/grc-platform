@@ -264,11 +264,14 @@ func main() {
 	}
 
 	// ── Write ────────────────────────────────────────────────────────────────
-	if err := os.WriteFile(*outPath, []byte(renderSQL(rows)), 0o644); err != nil {
+	// 0o600, not 0o644: every line in these files is someone's email paired
+	// with their exact role and scope — a full authorization map for the org.
+	// World-readable would leak that to any other local account.
+	if err := os.WriteFile(*outPath, []byte(renderSQL(rows)), 0o600); err != nil {
 		fatal("write %s: %v", *outPath, err)
 	}
 	report := renderReport(found, len(rows))
-	if err := os.WriteFile(*reportPath, []byte(report), 0o644); err != nil {
+	if err := os.WriteFile(*reportPath, []byte(report), 0o600); err != nil {
 		fatal("write %s: %v", *reportPath, err)
 	}
 
