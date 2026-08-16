@@ -55,6 +55,24 @@ func (h *RiskEvidenceHandler) CreateRiskEvidence(w http.ResponseWriter, r *http.
 	_ = json.NewEncoder(w).Encode(f)
 }
 
+// GetRiskEvidence handles GET /risk-evidence/{fileId}. Flat by fileId (not
+// nested under riskId) — mirrors the Audit Hub's GET /evidence-files/{fileId},
+// used by the GRC Backend to check file ownership before allowing a delete.
+func (h *RiskEvidenceHandler) GetRiskEvidence(w http.ResponseWriter, r *http.Request) {
+	fileID, err := strconv.Atoi(r.PathValue("fileId"))
+	if err != nil {
+		writeServiceError(w, r, &apierror.ValidationError{Msg: "fileId must be a positive integer"})
+		return
+	}
+	f, err := h.svc.GetRiskEvidenceByID(r.Context(), fileID)
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(f)
+}
+
 // ListRiskEvidence handles GET /risks/{riskId}/evidence.
 func (h *RiskEvidenceHandler) ListRiskEvidence(w http.ResponseWriter, r *http.Request) {
 	riskID, err := strconv.Atoi(r.PathValue("riskId"))
@@ -71,14 +89,21 @@ func (h *RiskEvidenceHandler) ListRiskEvidence(w http.ResponseWriter, r *http.Re
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// DeleteRiskEvidence handles DELETE /risk-evidence/{fileId}.
+// DeleteRiskEvidence handles DELETE /risks/{riskId}/evidence/{fileId}. Scoped
+// by riskId so a caller can never delete another risk's file by guessing its
+// fileId — a mismatch 404s exactly like a missing file.
 func (h *RiskEvidenceHandler) DeleteRiskEvidence(w http.ResponseWriter, r *http.Request) {
+	riskID, err := strconv.Atoi(r.PathValue("riskId"))
+	if err != nil {
+		writeServiceError(w, r, &apierror.ValidationError{Msg: "riskId must be a positive integer"})
+		return
+	}
 	fileID, err := strconv.Atoi(r.PathValue("fileId"))
 	if err != nil {
 		writeServiceError(w, r, &apierror.ValidationError{Msg: "fileId must be a positive integer"})
 		return
 	}
-	if err := h.svc.DeleteRiskEvidence(r.Context(), fileID); err != nil {
+	if err := h.svc.DeleteRiskEvidence(r.Context(), riskID, fileID); err != nil {
 		writeServiceError(w, r, err)
 		return
 	}

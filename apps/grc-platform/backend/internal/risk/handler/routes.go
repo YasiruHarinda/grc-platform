@@ -138,8 +138,15 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	// Replaces the MANAGEMENT action plan that used to serve this purpose.
 	mux.HandleFunc("POST /api/v1/risks/{id}/escalations/{escalationId}/comment", d.handleEscalationComment)
 
+	// Evidence files ("Risk Evidence Attachment" at creation and "Risk Action
+	// Plan Completion Attachment" before completing a plan — see
+	// internal/risk/service/evidence.go).
+	mux.HandleFunc("POST /api/v1/risks/{id}/evidence", d.handleUploadRiskEvidence)
+	mux.HandleFunc("GET /api/v1/risks/{id}/evidence", d.handleListRiskEvidence)
+	mux.HandleFunc("DELETE /api/v1/risks/{id}/evidence/{fileId}", d.handleDeleteRiskEvidence)
+	mux.HandleFunc("GET /api/v1/risks/{id}/evidence/{fileId}/download", d.handleDownloadRiskEvidence)
+
 	// TODO: remaining routes
-	// GET/POST/DELETE /api/v1/risks/{id}/evidence
 	// POST/PUT /api/v1/teams
 	// POST/PUT /api/v1/risk-scores
 	// POST   /api/v1/compliance-references

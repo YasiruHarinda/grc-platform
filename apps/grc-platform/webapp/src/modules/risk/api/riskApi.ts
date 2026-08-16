@@ -640,6 +640,62 @@ export async function createRisk(
   return handleResponse<CreateRiskResponse>(res);
 }
 
+// ── Risk evidence ───────────────────────────────────────────────────────────
+
+export type RiskEvidenceType = "ACTION_PLAN_ATTACHMENT" | "FINAL_APPROVAL_ATTACHMENT";
+
+export interface RiskEvidence {
+  id: number;
+  risk_id: number;
+  action_plan_id?: number;
+  file_name: string;
+  file_path: string;
+  note: string;
+  evidence_type: RiskEvidenceType;
+  created_by: string;
+  created_at: string;
+  download_url?: string;
+}
+
+/**
+ * Uploads one evidence file for a risk. Bytes travel browser -> backend ->
+ * Compliance Entity -> Azure; no SAS is ever handed to the client.
+ *
+ * `evidenceType` is ACTION_PLAN_ATTACHMENT ("Risk Evidence Attachment",
+ * risk-level, no actionPlanId) or FINAL_APPROVAL_ATTACHMENT ("Risk Action
+ * Plan Completion Attachment", actionPlanId required — the plan being
+ * completed).
+ */
+export async function uploadRiskEvidence(
+  authFetch: AuthFetch,
+  riskId: number,
+  params: { evidenceType: RiskEvidenceType; file: File; actionPlanId?: number; note?: string },
+): Promise<RiskEvidence> {
+  const form = new FormData();
+  form.append("evidenceType", params.evidenceType);
+  form.append("file", params.file, params.file.name);
+  if (params.actionPlanId !== undefined) form.append("actionPlanId", String(params.actionPlanId));
+  if (params.note) form.append("note", params.note);
+
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/evidence`, {
+    method: "POST",
+    body: form,
+  });
+  return handleResponse<RiskEvidence>(res);
+}
+
+export async function fetchRiskEvidence(authFetch: AuthFetch, riskId: number): Promise<RiskEvidence[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/evidence`);
+  return handleResponse<RiskEvidence[]>(res);
+}
+
+export async function deleteRiskEvidence(authFetch: AuthFetch, riskId: number, fileId: number): Promise<void> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/evidence/${fileId}`, {
+    method: "DELETE",
+  });
+  return handleResponse<void>(res);
+}
+
 export async function fetchRisks(
   authFetch: AuthFetch,
   params: ListRisksParams = {},

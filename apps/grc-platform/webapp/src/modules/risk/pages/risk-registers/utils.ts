@@ -99,6 +99,51 @@ export function formatDate(dateStr: string | null | undefined): string {
   return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+// Content types safe to open inline in a new tab: none of them can carry
+// script that executes in this app's origin. Everything else is only ever
+// offered as a download. This matters because the backend's
+// Content-Disposition: attachment header has no effect here — the file is
+// fetched via JS and opened as a blob: URL, which the browser renders by
+// content type regardless of that header.
+const SAFE_INLINE_CONTENT_TYPES = new Set([
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "text/plain",
+  "text/csv",
+]);
+
+// Whether a fetched evidence file can be safely opened inline (see
+// SAFE_INLINE_CONTENT_TYPES) rather than only downloaded.
+export function canViewInline(contentType: string): boolean {
+  return SAFE_INLINE_CONTENT_TYPES.has(contentType.split(";")[0].trim().toLowerCase());
+}
+
+// Opens a fetched evidence file inline in a new tab. Caller should only offer
+// this when canViewInline(blob.type) is true. Returns false if the browser
+// blocked the popup (window.open returns null then) — likely here since the
+// call happens after an await, and Safari in particular treats that as no
+// longer within the click's user-activation window. Caller should fall back
+// to downloadBlob in that case rather than leave the user with no result.
+export function viewBlob(blob: Blob): boolean {
+  const objectUrl = URL.createObjectURL(blob);
+  const opened = window.open(objectUrl, "_blank", "noopener,noreferrer");
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+  return opened !== null;
+}
+
+// Forces a fetched evidence file to save as fileName, regardless of type.
+export function downloadBlob(blob: Blob, fileName: string): void {
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = fileName;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+}
+
 // Statuses for each pending-approval tab.
 export const PENDING_OWNER_STATUSES = [
   "PENDING_RISK_OWNER_APPROVAL",
