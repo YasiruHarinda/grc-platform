@@ -119,7 +119,10 @@ func callerGrants(ctx context.Context) *grant.Set {
 // gets them past the route gate, that would hand them every risk in the
 // system.
 func seesEveryRisk(ctx context.Context) bool {
-	return callerGrants(ctx).HasGlobal(privilege.ViewRisks)
+	// Local dev allows every privilege check, so it must also see every risk.
+	// These helpers read the grant set directly instead of going through
+	// auth.HasPrivilege, so they have to apply that mode themselves.
+	return auth.AllowAll(ctx) || callerGrants(ctx).HasGlobal(privilege.ViewRisks)
 }
 
 // isTeamScopedOnly reports whether the caller is limited to the teams they hold
@@ -135,7 +138,10 @@ func isTeamScopedOnly(ctx context.Context) bool {
 // deliberately accepts people who have never held a platform role — so this is
 // an ordinary state, not a broken one.
 func holdsNoGrants(ctx context.Context) bool {
-	return callerGrants(ctx).IsEmpty()
+	// Never true in local dev: there is no grant set there, and treating that
+	// as "holds nothing" would scope a developer to the risks they happen to
+	// own an action plan on.
+	return !auth.AllowAll(ctx) && callerGrants(ctx).IsEmpty()
 }
 
 // callerUserID resolves the authenticated caller to their internal user id,

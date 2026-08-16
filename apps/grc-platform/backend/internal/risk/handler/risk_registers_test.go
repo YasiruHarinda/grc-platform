@@ -56,13 +56,10 @@ const (
 	choreo   = 2
 )
 
-// ownerIn / assignerIn / complianceIn build the three grant shapes these tests
-// need, scoped to one register.
+// ownerIn / complianceIn build the grant shapes these tests need, scoped to
+// one register.
 func ownerIn(team int) map[int]map[string]bool {
 	return map[int]map[string]bool{team: {privilege.ViewRisks: true, privilege.OwnerApproveRisk: true}}
-}
-func assignerIn(team int) map[int]map[string]bool {
-	return map[int]map[string]bool{team: {privilege.ViewRisks: true, privilege.CreateRisk: true}}
 }
 func complianceIn(team int) map[int]map[string]bool {
 	return map[int]map[string]bool{team: {privilege.ViewRisks: true, privilege.ComplianceApproveRisk: true}}
@@ -333,3 +330,28 @@ func TestDescribeActor(t *testing.T) {
 }
 
 var errStub = errors.New("entity unavailable")
+
+// TestLocalDevAllowAllClassification guards the local-dev mode
+// (AUTH_TOKEN_VALIDATOR_ENABLED=false), where no privilege store is configured
+// and every privilege check is meant to pass.
+//
+// The classification helpers read the grant set directly rather than going
+// through auth.HasPrivilege, so they must honour that mode themselves —
+// otherwise a local developer is authenticated, allowed past every route gate,
+// and then scoped to nothing: an empty dashboard and a risk list filtered to
+// rows they happen to be the action owner of.
+func TestLocalDevAllowAllClassification(t *testing.T) {
+	// Exactly what the middleware leaves behind in that mode: a user, but no
+	// privilege map and no grant set.
+	ctx := middleware.WithUserInfo(context.Background(), &middleware.UserInfo{Email: "dev@wso2.com"})
+
+	if !seesEveryRisk(ctx) {
+		t.Error("local dev must see every risk — the mode allows every privilege check")
+	}
+	if isTeamScopedOnly(ctx) {
+		t.Error("local dev must not be team-scoped")
+	}
+	if holdsNoGrants(ctx) {
+		t.Error("local dev must not be treated as a caller with no grants")
+	}
+}

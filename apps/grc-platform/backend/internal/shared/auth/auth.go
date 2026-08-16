@@ -95,8 +95,27 @@ func RequirePrivilege(ctx context.Context, w http.ResponseWriter, priv string) b
 // was not configured (local dev). Callers that need to distinguish "sees
 // everything" from "scoped to these teams" — list and dashboard scoping — read
 // it directly rather than going through a privilege check.
+//
+// Anything reading this must also handle AllowAll: the grant set is nil in
+// local dev, and treating that as "holds nothing" would scope a developer to
+// nothing in the one mode that is supposed to permit everything.
 func Grants(ctx context.Context) *grant.Set {
 	return grant.FromContext(ctx)
+}
+
+// AllowAll reports whether the request is in local-dev allow-all mode — no
+// privilege store configured (AUTH_TOKEN_VALIDATOR_ENABLED=false), so every
+// privilege check passes and no grants were loaded.
+//
+// HasPrivilege and HasPrivilegeIn apply this themselves. It is exported for the
+// row-scoping code, which reads the grant set directly and would otherwise scope
+// a local developer to nothing: authenticated, waved through every route gate,
+// then handed an empty dashboard and a risk list filtered to almost nothing.
+//
+// Returns false when the Auth middleware was not applied at all, so a request
+// that never authenticated cannot reach allow-all by accident.
+func AllowAll(ctx context.Context) bool {
+	return middleware.UserInfoFromContext(ctx) != nil && privilege.FromContext(ctx) == nil
 }
 
 // HasPrivilegeIn returns true if the caller holds priv **in the given team's
