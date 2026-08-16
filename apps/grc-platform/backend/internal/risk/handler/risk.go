@@ -36,9 +36,6 @@ import (
 // Returns a preview of the next available sequence number for the risk code.
 // This does not reserve the number — the actual code is assigned atomically on POST.
 func (d *Deps) handleNextSequenceID(w http.ResponseWriter, r *http.Request) {
-	if !auth.RequirePrivilege(r.Context(), w, privilege.CreateRisk) {
-		return
-	}
 	q := r.URL.Query()
 
 	sourceRegisterIDStr := q.Get("source_register_id")
@@ -53,6 +50,14 @@ func (d *Deps) handleNextSequenceID(w http.ResponseWriter, r *http.Request) {
 	sourceRegisterID, err := strconv.Atoi(sourceRegisterIDStr)
 	if err != nil || sourceRegisterID <= 0 {
 		response.WriteError(w, http.StatusBadRequest, "source_register_id must be a positive integer")
+		return
+	}
+
+	// Scoped to the register being previewed, so this cannot be used to probe
+	// the sequence position of a register the caller may not create in. Like
+	// handleCreateRisk, the check has to follow parsing rather than lead the
+	// handler, because the register arrives as a parameter.
+	if !auth.RequirePrivilegeIn(r.Context(), w, privilege.CreateRisk, sourceRegisterID) {
 		return
 	}
 
@@ -80,10 +85,6 @@ func (d *Deps) handleCreateRisk(w http.ResponseWriter, r *http.Request) {
 		response.WriteError(w, http.StatusUnauthorized, response.ErrMsgUnauthorized)
 		return
 	}
-	if !auth.RequirePrivilege(r.Context(), w, privilege.CreateRisk) {
-		return
-	}
-
 	var req model.CreateRiskRequest
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
@@ -91,6 +92,14 @@ func (d *Deps) handleCreateRisk(w http.ResponseWriter, r *http.Request) {
 
 	if err := validateCreateRiskRequest(req); err != nil {
 		response.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// The scoped check runs AFTER decoding, unavoidably: the register being
+	// created in is a body field, so it is not known any earlier. This is the
+	// one handler whose authorisation cannot sit at the top with the others,
+	// which makes it the easiest place to leave an unscoped check by habit.
+	if !auth.RequirePrivilegeIn(r.Context(), w, privilege.CreateRisk, req.SourceRegisterID) {
 		return
 	}
 

@@ -31,7 +31,7 @@ import (
 // live in the entity, which owns the trailing-window definition and returns the
 // finished payload.
 type AnalyticsRepository interface {
-	Summary(ctx context.Context, registerID *int, teamIDs []int) (*model.AnalyticsSummary, error)
+	Summary(ctx context.Context, registerID *int, registerIDs []int) (*model.AnalyticsSummary, error)
 }
 
 type analyticsRepository struct{ c *entityclient.Client }
@@ -105,8 +105,8 @@ type entMonthRegisterCount struct {
 // IdentifiedByRegister, ClosedByRegister and RegisterShares are left nil rather
 // than empty when a register filter is applied: the MySQL service omitted them
 // entirely in that case, and the frontend distinguishes null from [].
-func (r *analyticsRepository) Summary(ctx context.Context, registerID *int, teamIDs []int) (*model.AnalyticsSummary, error) {
-	body := map[string]any{"registerId": registerID, "scopeTeamIds": teamIDs}
+func (r *analyticsRepository) Summary(ctx context.Context, registerID *int, registerIDs []int) (*model.AnalyticsSummary, error) {
+	body := map[string]any{"registerId": registerID, "scopeRegisterIds": registerIDs}
 	var e entAnalytics
 	if err := r.c.Post(ctx, "/risk/analytics/search", body, &e); err != nil {
 		return nil, fmt.Errorf("risk analytics: %w", err)

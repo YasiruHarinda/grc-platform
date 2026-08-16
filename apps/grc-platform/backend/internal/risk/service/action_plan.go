@@ -45,9 +45,11 @@ type ActionPlanService interface {
 	// no longer carries meaning and everything this creates is STANDARD.
 	Create(ctx context.Context, riskID int, req model.CreateActionPlanRequest, createdBy string) (*model.ActionPlan, error)
 	ListSteps(ctx context.Context, planID int) ([]*model.ActionPlanStep, error)
-	// UpdateStep and Complete are ownership-gated in addition to the
-	// CompleteActionSteps privilege the handler already checks: callerEmail
-	// must resolve to the plan's action_owner_id.
+	// UpdateStep and Complete are ownership-gated, and that ownership check is
+	// now the ENTIRE authorisation: callerEmail must resolve to the plan's
+	// action_owner_id. The RISK_COMPLETE_ACTION_STEPS privilege the handler
+	// used to check first was retired along with the action-owner role, because
+	// an Action Owner may be any employee and hold no role at all.
 	// Both take canOverride so a compliance admin can act in the action
 	// owner's place; the handler derives it from the caller's privileges.
 	UpdateStep(ctx context.Context, riskID, planID, stepID int, req model.UpdateActionPlanStepRequest, callerEmail string, canOverride bool) error

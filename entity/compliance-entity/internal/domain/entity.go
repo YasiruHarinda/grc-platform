@@ -547,11 +547,24 @@ type SearchRisksRequest struct {
 	// (STANDARD or MANAGEMENT) whose action_owner_id matches — how the Action
 	// Owner's risk list is scoped to only what they're assigned to.
 	ActionOwnerID *int `json:"actionOwnerId"`
-	// ScopeTeamIDs restricts to risks whose source register or assignment team
-	// is one of these — how a Risk Assigner/Risk Owner-only caller's list is
-	// scoped to their own risk teams. Empty means unrestricted; the GRC backend
-	// decides whether a caller needs this at all before populating it.
-	ScopeTeamIDs []int `json:"scopeTeamIds"`
+	// ScopeSourceRegisterIDs and ScopeAssignmentTeamIDs scope a caller to the
+	// risks they may see. They are ORed together, but each matches a DIFFERENT
+	// column, because different roles are about different dimensions of a risk:
+	//
+	//   ScopeSourceRegisterIDs → risk.source_register_id  (where it was raised;
+	//                            Risk Assigner, Compliance, Management)
+	//   ScopeAssignmentTeamIDs → risk.assignment_team_id  (where the work was
+	//                            routed; Risk Owner)
+	//
+	// They replace a single ScopeTeamIDs applied to both columns, which could
+	// not express "Risk Owner of HR sees work routed to HR, but not risks HR
+	// happens to have raised". A risk_team row can be both a register and an
+	// assignment team, so one list against both columns conflated the two.
+	//
+	// Both empty means unrestricted; the GRC backend decides whether a caller
+	// needs scoping at all.
+	ScopeSourceRegisterIDs []int `json:"scopeSourceRegisterIds"`
+	ScopeAssignmentTeamIDs []int `json:"scopeAssignmentTeamIds"`
 
 	// Submitted* bound created_at, Due* bound implementation_date. Dates are
 	// YYYY-MM-DD and inclusive at both ends.
@@ -581,7 +594,7 @@ type SearchRisksRequest struct {
 
 	// EscalationLeadEmail widens the result set rather than narrowing it: a
 	// risk with an open escalation naming this email as the assigner's or
-	// action owner's lead is included even when ScopeTeamIDs would exclude it.
+	// action owner's lead is included even when the scope lists would exclude it.
 	// Leads are frequently outside the risk's team and are not necessarily
 	// platform users at all, so without this they could never reach the risk
 	// they are being asked to comment on.

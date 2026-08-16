@@ -45,14 +45,11 @@ func (d *Deps) handleCreateActionPlan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageActionPlans) {
-		return
-	}
 	riskID, ok := parseRiskID(w, r)
 	if !ok {
 		return
 	}
-	if !d.requireRiskAssigner(w, r, riskID) {
+	if !d.requireRiskAssigner(w, r, riskID, privilege.ManageActionPlans) {
 		return
 	}
 	var req model.CreateActionPlanRequest
@@ -76,6 +73,9 @@ func (d *Deps) handleCreateActionPlan(w http.ResponseWriter, r *http.Request) {
 // an Action-Owner-only caller, who is further scoped to risks where they own
 // a plan (riskVisibleToCaller), matching handleListRisks' list scoping.
 func (d *Deps) handleListActionPlans(w http.ResponseWriter, r *http.Request) {
+	// Unscoped on purpose: this gates only whether the caller may read risks at
+	// all. WHICH risks they may read is decided by riskVisibleToCaller / the
+	// list scoping, not by this privilege.
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewRisks) {
 		return
 	}
@@ -106,6 +106,9 @@ func (d *Deps) handleListActionPlans(w http.ResponseWriter, r *http.Request) {
 // a risk could substitute a different plan id under the same risk to read
 // steps that aren't theirs.
 func (d *Deps) handleListActionPlanSteps(w http.ResponseWriter, r *http.Request) {
+	// Unscoped on purpose: this gates only whether the caller may read risks at
+	// all. WHICH risks they may read is decided by riskVisibleToCaller / the
+	// list scoping, not by this privilege.
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewRisks) {
 		return
 	}
@@ -118,7 +121,7 @@ func (d *Deps) handleListActionPlanSteps(w http.ResponseWriter, r *http.Request)
 		response.WriteError(w, http.StatusBadRequest, "planId must be a positive integer")
 		return
 	}
-	if isActionOwnerOnly(r.Context()) {
+	if holdsNoGrants(r.Context()) {
 		plan, err := d.ActionPlan.GetByID(r.Context(), riskID, planID)
 		if err != nil {
 			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
@@ -143,16 +146,18 @@ func (d *Deps) handleListActionPlanSteps(w http.ResponseWriter, r *http.Request)
 }
 
 // handleUpdateActionPlanStep serves
-// PATCH /api/v1/risks/{id}/action-plans/{planId}/steps/{stepId}. This is how
-// an Action Owner marks a step complete — applies uniformly to STANDARD and
-// Gated by CompleteActionSteps plus the service-layer ownership check (caller
-// must be the plan's action_owner_id).
+// PATCH /api/v1/risks/{id}/action-plans/{planId}/steps/{stepId}. This is how an
+// Action Owner marks a step complete.
+//
+// Authorised by the identity axis alone: the caller must be the plan's
+// action_owner_id, enforced service-side by requireOwner. There is deliberately
+// no privilege guard — RISK_COMPLETE_ACTION_STEPS was retired with the
+// action-owner role, because an Action Owner may be any employee and need hold
+// no role at all. Gating on a privilege nobody can hold would 403 the very
+// person the action exists for.
 func (d *Deps) handleUpdateActionPlanStep(w http.ResponseWriter, r *http.Request) {
 	by, ok := requireUserEmail(w, r)
 	if !ok {
-		return
-	}
-	if !auth.RequirePrivilege(r.Context(), w, privilege.CompleteActionSteps) {
 		return
 	}
 	riskID, ok := parseRiskID(w, r)
@@ -173,7 +178,13 @@ func (d *Deps) handleUpdateActionPlanStep(w http.ResponseWriter, r *http.Request
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
-	if err := d.ActionPlan.UpdateStep(r.Context(), riskID, planID, stepID, req, by, canOverrideAssignee(r.Context())); err != nil {
+	registerID, err := d.sourceRegisterOf(r.Context(), riskID)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	if err := d.ActionPlan.UpdateStep(r.Context(), riskID, planID, stepID, req, by,
+		canOverrideAssigneeIn(r.Context(), registerID)); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
@@ -188,9 +199,6 @@ func (d *Deps) handleCompleteActionPlan(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	if !auth.RequirePrivilege(r.Context(), w, privilege.CompleteActionSteps) {
-		return
-	}
 	riskID, ok := parseRiskID(w, r)
 	if !ok {
 		return
@@ -200,7 +208,12 @@ func (d *Deps) handleCompleteActionPlan(w http.ResponseWriter, r *http.Request) 
 		response.WriteError(w, http.StatusBadRequest, "planId must be a positive integer")
 		return
 	}
-	plan, err := d.ActionPlan.Complete(r.Context(), riskID, planID, by, canOverrideAssignee(r.Context()))
+	registerID, err := d.sourceRegisterOf(r.Context(), riskID)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	plan, err := d.ActionPlan.Complete(r.Context(), riskID, planID, by, canOverrideAssigneeIn(r.Context(), registerID))
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return

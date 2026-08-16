@@ -30,20 +30,20 @@ type riskAnalyticsRepo struct{ db *sql.DB }
 // analytics page. Every method takes an optional registerID (nil = all
 // registers) and excludes CANCELLED risks.
 type RiskAnalyticsRepository interface {
-	NewThisMonthCount(ctx context.Context, registerID *int, teamIDs []int, monthStart string) (int, error)
-	AvgDaysToClose(ctx context.Context, registerID *int, teamIDs []int) (*float64, error)
-	AvgEffectiveScore(ctx context.Context, registerID *int, teamIDs []int) (*float64, error)
-	IdentifiedTrend(ctx context.Context, registerID *int, teamIDs []int, since string) ([]domain.MonthScoreStat, error)
-	ClosedTrend(ctx context.Context, registerID *int, teamIDs []int, since string) ([]domain.MonthCount, error)
-	LevelDistribution(ctx context.Context, registerID *int, teamIDs []int, since string) ([]domain.MonthLevelCount, error)
+	NewThisMonthCount(ctx context.Context, registerID *int, registerIDs []int, monthStart string) (int, error)
+	AvgDaysToClose(ctx context.Context, registerID *int, registerIDs []int) (*float64, error)
+	AvgEffectiveScore(ctx context.Context, registerID *int, registerIDs []int) (*float64, error)
+	IdentifiedTrend(ctx context.Context, registerID *int, registerIDs []int, since string) ([]domain.MonthScoreStat, error)
+	ClosedTrend(ctx context.Context, registerID *int, registerIDs []int, since string) ([]domain.MonthCount, error)
+	LevelDistribution(ctx context.Context, registerID *int, registerIDs []int, since string) ([]domain.MonthLevelCount, error)
 	LevelReference(ctx context.Context) ([]domain.RiskLevelRef, error)
-	IdentifiedTrendByRegister(ctx context.Context, registerID *int, teamIDs []int, since string) ([]domain.MonthRegisterCount, error)
-	ClosedTrendByRegister(ctx context.Context, registerID *int, teamIDs []int, since string) ([]domain.MonthRegisterCount, error)
-	RegisterTotals(ctx context.Context, teamIDs []int) ([]domain.RegisterShare, error)
-	ComplianceDistribution(ctx context.Context, registerID *int, teamIDs []int) ([]domain.ComplianceShare, error)
-	TreatmentMix(ctx context.Context, registerID *int, teamIDs []int) ([]domain.TreatmentShare, error)
-	WorkflowFunnel(ctx context.Context, registerID *int, teamIDs []int) ([]domain.WorkflowStageCount, error)
-	AgingRisks(ctx context.Context, registerID *int, teamIDs []int, limit int) ([]domain.AgingRiskItem, error)
+	IdentifiedTrendByRegister(ctx context.Context, registerID *int, registerIDs []int, since string) ([]domain.MonthRegisterCount, error)
+	ClosedTrendByRegister(ctx context.Context, registerID *int, registerIDs []int, since string) ([]domain.MonthRegisterCount, error)
+	RegisterTotals(ctx context.Context, registerIDs []int) ([]domain.RegisterShare, error)
+	ComplianceDistribution(ctx context.Context, registerID *int, registerIDs []int) ([]domain.ComplianceShare, error)
+	TreatmentMix(ctx context.Context, registerID *int, registerIDs []int) ([]domain.TreatmentShare, error)
+	WorkflowFunnel(ctx context.Context, registerID *int, registerIDs []int) ([]domain.WorkflowStageCount, error)
+	AgingRisks(ctx context.Context, registerID *int, registerIDs []int, limit int) ([]domain.AgingRiskItem, error)
 }
 
 // NewRiskAnalyticsRepository constructs a RiskAnalyticsRepository.
@@ -51,9 +51,9 @@ func NewRiskAnalyticsRepository(db *sql.DB) RiskAnalyticsRepository {
 	return &riskAnalyticsRepo{db: db}
 }
 
-func (a *riskAnalyticsRepo) NewThisMonthCount(ctx context.Context, registerID *int, teamIDs []int, monthStart string) (int, error) {
+func (a *riskAnalyticsRepo) NewThisMonthCount(ctx context.Context, registerID *int, registerIDs []int, monthStart string) (int, error) {
 	clause, filterArgs := registerFilter(registerID)
-	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
+	scopeClause, scopeArgs := registerScopeFilter("r", registerIDs)
 	args := append([]any{monthStart}, filterArgs...)
 	args = append(args, scopeArgs...)
 
@@ -71,9 +71,9 @@ func (a *riskAnalyticsRepo) NewThisMonthCount(ctx context.Context, registerID *i
 	return count, nil
 }
 
-func (a *riskAnalyticsRepo) AvgDaysToClose(ctx context.Context, registerID *int, teamIDs []int) (*float64, error) {
+func (a *riskAnalyticsRepo) AvgDaysToClose(ctx context.Context, registerID *int, registerIDs []int) (*float64, error) {
 	clause, filterArgs := registerFilter(registerID)
-	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
+	scopeClause, scopeArgs := registerScopeFilter("r", registerIDs)
 	args := append([]any{statusClosed}, filterArgs...)
 	args = append(args, scopeArgs...)
 
@@ -94,9 +94,9 @@ func (a *riskAnalyticsRepo) AvgDaysToClose(ctx context.Context, registerID *int,
 	return &avg.Float64, nil
 }
 
-func (a *riskAnalyticsRepo) AvgEffectiveScore(ctx context.Context, registerID *int, teamIDs []int) (*float64, error) {
+func (a *riskAnalyticsRepo) AvgEffectiveScore(ctx context.Context, registerID *int, registerIDs []int) (*float64, error) {
 	clause, filterArgs := registerFilter(registerID)
-	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
+	scopeClause, scopeArgs := registerScopeFilter("r", registerIDs)
 	args := append([]any{statusClosed, statusCancelled}, filterArgs...)
 	args = append(args, scopeArgs...)
 
@@ -116,9 +116,9 @@ func (a *riskAnalyticsRepo) AvgEffectiveScore(ctx context.Context, registerID *i
 	return &avg.Float64, nil
 }
 
-func (a *riskAnalyticsRepo) IdentifiedTrend(ctx context.Context, registerID *int, teamIDs []int, since string) ([]domain.MonthScoreStat, error) {
+func (a *riskAnalyticsRepo) IdentifiedTrend(ctx context.Context, registerID *int, registerIDs []int, since string) ([]domain.MonthScoreStat, error) {
 	clause, filterArgs := registerFilter(registerID)
-	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
+	scopeClause, scopeArgs := registerScopeFilter("r", registerIDs)
 	args := append([]any{statusCancelled, since}, filterArgs...)
 	args = append(args, scopeArgs...)
 
@@ -147,9 +147,9 @@ func (a *riskAnalyticsRepo) IdentifiedTrend(ctx context.Context, registerID *int
 	return out, rows.Err()
 }
 
-func (a *riskAnalyticsRepo) ClosedTrend(ctx context.Context, registerID *int, teamIDs []int, since string) ([]domain.MonthCount, error) {
+func (a *riskAnalyticsRepo) ClosedTrend(ctx context.Context, registerID *int, registerIDs []int, since string) ([]domain.MonthCount, error) {
 	clause, filterArgs := registerFilter(registerID)
-	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
+	scopeClause, scopeArgs := registerScopeFilter("r", registerIDs)
 	args := append([]any{statusClosed, since}, filterArgs...)
 	args = append(args, scopeArgs...)
 
@@ -178,9 +178,9 @@ func (a *riskAnalyticsRepo) ClosedTrend(ctx context.Context, registerID *int, te
 	return out, rows.Err()
 }
 
-func (a *riskAnalyticsRepo) LevelDistribution(ctx context.Context, registerID *int, teamIDs []int, since string) ([]domain.MonthLevelCount, error) {
+func (a *riskAnalyticsRepo) LevelDistribution(ctx context.Context, registerID *int, registerIDs []int, since string) ([]domain.MonthLevelCount, error) {
 	clause, filterArgs := registerFilter(registerID)
-	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
+	scopeClause, scopeArgs := registerScopeFilter("r", registerIDs)
 	args := append([]any{statusCancelled, since}, filterArgs...)
 	args = append(args, scopeArgs...)
 
@@ -232,9 +232,9 @@ func (a *riskAnalyticsRepo) LevelReference(ctx context.Context) ([]domain.RiskLe
 	return out, rows.Err()
 }
 
-func (a *riskAnalyticsRepo) IdentifiedTrendByRegister(ctx context.Context, registerID *int, teamIDs []int, since string) ([]domain.MonthRegisterCount, error) {
+func (a *riskAnalyticsRepo) IdentifiedTrendByRegister(ctx context.Context, registerID *int, registerIDs []int, since string) ([]domain.MonthRegisterCount, error) {
 	clause, filterArgs := registerFilter(registerID)
-	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
+	scopeClause, scopeArgs := registerScopeFilter("r", registerIDs)
 	args := append([]any{statusCancelled, since}, filterArgs...)
 	args = append(args, scopeArgs...)
 
@@ -264,9 +264,9 @@ func (a *riskAnalyticsRepo) IdentifiedTrendByRegister(ctx context.Context, regis
 	return out, rows.Err()
 }
 
-func (a *riskAnalyticsRepo) ClosedTrendByRegister(ctx context.Context, registerID *int, teamIDs []int, since string) ([]domain.MonthRegisterCount, error) {
+func (a *riskAnalyticsRepo) ClosedTrendByRegister(ctx context.Context, registerID *int, registerIDs []int, since string) ([]domain.MonthRegisterCount, error) {
 	clause, filterArgs := registerFilter(registerID)
-	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
+	scopeClause, scopeArgs := registerScopeFilter("r", registerIDs)
 	args := append([]any{statusClosed, since}, filterArgs...)
 	args = append(args, scopeArgs...)
 
@@ -296,8 +296,8 @@ func (a *riskAnalyticsRepo) ClosedTrendByRegister(ctx context.Context, registerI
 	return out, rows.Err()
 }
 
-func (a *riskAnalyticsRepo) RegisterTotals(ctx context.Context, teamIDs []int) ([]domain.RegisterShare, error) {
-	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
+func (a *riskAnalyticsRepo) RegisterTotals(ctx context.Context, registerIDs []int) ([]domain.RegisterShare, error) {
+	scopeClause, scopeArgs := registerScopeFilter("r", registerIDs)
 	args := append([]any{statusCancelled}, scopeArgs...)
 
 	rows, err := a.db.QueryContext(ctx, `
@@ -325,9 +325,9 @@ func (a *riskAnalyticsRepo) RegisterTotals(ctx context.Context, teamIDs []int) (
 	return out, rows.Err()
 }
 
-func (a *riskAnalyticsRepo) ComplianceDistribution(ctx context.Context, registerID *int, teamIDs []int) ([]domain.ComplianceShare, error) {
+func (a *riskAnalyticsRepo) ComplianceDistribution(ctx context.Context, registerID *int, registerIDs []int) ([]domain.ComplianceShare, error) {
 	clause, filterArgs := registerFilter(registerID)
-	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
+	scopeClause, scopeArgs := registerScopeFilter("r", registerIDs)
 	args := append([]any{statusCancelled}, filterArgs...)
 	args = append(args, scopeArgs...)
 
@@ -357,9 +357,9 @@ func (a *riskAnalyticsRepo) ComplianceDistribution(ctx context.Context, register
 	return out, rows.Err()
 }
 
-func (a *riskAnalyticsRepo) TreatmentMix(ctx context.Context, registerID *int, teamIDs []int) ([]domain.TreatmentShare, error) {
+func (a *riskAnalyticsRepo) TreatmentMix(ctx context.Context, registerID *int, registerIDs []int) ([]domain.TreatmentShare, error) {
 	clause, filterArgs := registerFilter(registerID)
-	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
+	scopeClause, scopeArgs := registerScopeFilter("r", registerIDs)
 	args := append([]any{statusClosed, statusCancelled}, filterArgs...)
 	args = append(args, scopeArgs...)
 
@@ -387,9 +387,9 @@ func (a *riskAnalyticsRepo) TreatmentMix(ctx context.Context, registerID *int, t
 	return out, rows.Err()
 }
 
-func (a *riskAnalyticsRepo) WorkflowFunnel(ctx context.Context, registerID *int, teamIDs []int) ([]domain.WorkflowStageCount, error) {
+func (a *riskAnalyticsRepo) WorkflowFunnel(ctx context.Context, registerID *int, registerIDs []int) ([]domain.WorkflowStageCount, error) {
 	clause, filterArgs := registerFilter(registerID)
-	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
+	scopeClause, scopeArgs := registerScopeFilter("r", registerIDs)
 	args := append([]any{statusCancelled}, filterArgs...)
 	args = append(args, scopeArgs...)
 
@@ -416,9 +416,9 @@ func (a *riskAnalyticsRepo) WorkflowFunnel(ctx context.Context, registerID *int,
 	return out, rows.Err()
 }
 
-func (a *riskAnalyticsRepo) AgingRisks(ctx context.Context, registerID *int, teamIDs []int, limit int) ([]domain.AgingRiskItem, error) {
+func (a *riskAnalyticsRepo) AgingRisks(ctx context.Context, registerID *int, registerIDs []int, limit int) ([]domain.AgingRiskItem, error) {
 	clause, filterArgs := registerFilter(registerID)
-	scopeClause, scopeArgs := teamScopeFilter("r", teamIDs)
+	scopeClause, scopeArgs := registerScopeFilter("r", registerIDs)
 	args := append([]any{statusClosed, statusCancelled}, filterArgs...)
 	args = append(args, scopeArgs...)
 	args = append(args, limit)

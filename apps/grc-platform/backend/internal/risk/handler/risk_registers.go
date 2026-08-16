@@ -28,6 +28,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
@@ -82,90 +83,59 @@ func splitCSVInts(raw string) []int {
 	return out
 }
 
-// isActionOwnerOnly reports whether the caller holds CompleteActionSteps but
-// none of the broader viewer privileges — the privilege-driven equivalent of
-// "this is an Action Owner, not a Risk Assigner/Owner/Compliance/Management/
-// Admin user," without checking a role name (this module never does).
+// A caller's standing is now recorded, not inferred.
 //
-// broader is a hand-maintained allowlist, not derived from the full privilege
-// set — a future write/approve privilege that isn't added here would silently
-// mis-classify a broad holder as action-owner-only, over-scoping them (see
-// riskVisibleToCaller and its handleListRisks / by-id read callers). When you
-// add a new Risk-module write or approval privilege, add it to this list too.
-func isActionOwnerOnly(ctx context.Context) bool {
-	if !auth.HasPrivilege(ctx, privilege.CompleteActionSteps) {
-		return false
-	}
-	// Keep in sync with every write/approval privilege in
-	// internal/shared/privilege/privilege.go's Risk Hub block.
-	broader := []string{
-		privilege.CreateRisk,
-		privilege.UpdateRisk,
-		privilege.SubmitRisk,
-		privilege.CancelRisk,
-		privilege.OwnerApproveRisk,
-		privilege.ManagementApproveRisk,
-		privilege.ComplianceApproveRisk,
-		privilege.OwnerRejectRisk,
-		privilege.ManagementRejectRisk,
-		privilege.ComplianceRejectRisk,
-		privilege.CompleteRisk,
-		privilege.CloseRisk,
-		privilege.EscalateRisk,
-		privilege.AssessRisk,
-		privilege.ManageTeams,
-		privilege.ManageRiskScores,
-		privilege.ManageActionPlans,
-		privilege.ManageComplianceRefs,
-	}
-	for _, p := range broader {
-		if auth.HasPrivilege(ctx, p) {
-			return false
-		}
-	}
-	return true
+// Three hand-maintained privilege allowlists used to live here — seesEveryRisk,
+// isTeamScopedOnly and isActionOwnerOnly — each reverse-engineering "what is
+// this person" from the shape of their privilege set, because nothing recorded
+// it. Each carried a comment warning that it had to be kept in sync by hand,
+// and each failed in the dangerous direction when it wasn't: a new privilege
+// omitted from seesEveryRisk left its holder wrongly team-scoped, and one
+// omitted from isActionOwnerOnly's list over-scoped an action owner into seeing
+// a whole register.
+//
+// user_role_grant answers all three questions directly:
+//
+//	seesEveryRisk      → holds RISK_VIEW_RISKS at GLOBAL scope
+//	isTeamScopedOnly   → doesn't, but holds some grant
+//	isActionOwnerOnly  → holds no grants at all
+//
+// Nothing needs updating when a privilege is added: none of these consult a
+// list of privileges, and the one that names a privilege names the single one
+// that actually confers the thing being decided.
+
+// callerGrants returns the caller's resolved grant set. Never nil in
+// production; nil only in local dev, where every Set method reports "holds
+// nothing" and auth.HasPrivilege* short-circuit to allow-all instead.
+func callerGrants(ctx context.Context) *grant.Set {
+	return auth.Grants(ctx)
 }
 
-// seesEveryRisk is the hand-maintained allowlist of privileges that are only
-// ever granted to Compliance/Management/Admin (never to a plain Risk Assigner
-// or Risk Owner) — see shared_seed_data.sql's role_privilege grants. Holding
-// any one of these means the caller sees every risk, unscoped.
+// seesEveryRisk reports whether the caller views every register unfiltered.
 //
-// Like isActionOwnerOnly's broader list above, this must be kept in sync by
-// hand: a new Compliance/Management/Admin-only privilege that isn't added here
-// would wrongly leave its holder team-scoped instead of seeing everything.
-var seesEveryRisk = []string{
-	privilege.ViewAllRisks,
-	privilege.ComplianceApproveRisk,
-	privilege.ComplianceRejectRisk,
-	privilege.CloseRisk,
-	privilege.EscalateRisk,
-	privilege.ManageComplianceRefs,
-	privilege.ManagementApproveRisk,
-	privilege.ManagementRejectRisk,
-	privilege.ManageTeams,
-	privilege.ManageRiskScores,
+// Asks whether they hold RISK_VIEW_RISKS *at GLOBAL scope*, not merely whether
+// some global grant exists. A platform admin holding only MANAGE_USERS globally
+// must not be treated as unrestricted: paired with any narrow risk grant that
+// gets them past the route gate, that would hand them every risk in the
+// system.
+func seesEveryRisk(ctx context.Context) bool {
+	return callerGrants(ctx).HasGlobal(privilege.ViewRisks)
 }
 
-// isTeamScopedOnly reports whether the caller should be scoped to risks
-// belonging to their own risk teams — true for a Risk Assigner or Risk Owner
-// who holds none of the Compliance/Management/Admin-only privileges in
-// seesEveryRisk. Explicitly excludes Action-Owner-only callers (handled by
-// isActionOwnerOnly's own, narrower scoping instead) so the two never overlap:
-// without this check, someone holding only VIEW_RISKS + COMPLETE_ACTION_STEPS
-// would satisfy both, since neither privilege appears in seesEveryRisk.
-// Classifying by privilege (not role name) matches isActionOwnerOnly and the
-// rest of this module's convention.
+// isTeamScopedOnly reports whether the caller is limited to the teams they hold
+// a grant on — the usual case for a Risk Assigner or Risk Owner.
 func isTeamScopedOnly(ctx context.Context) bool {
-	if isActionOwnerOnly(ctx) {
-		return false
-	}
-	for _, p := range seesEveryRisk {
-		if auth.HasPrivilege(ctx, p) {
-			return false
-		}
-	}
-	return true
+	return !seesEveryRisk(ctx) && !callerGrants(ctx).IsEmpty()
+}
+
+// holdsNoGrants reports whether the caller holds no role anywhere.
+//
+// Not the same as unauthorised: they reach exactly the risks they are
+// personally named on. An Action Owner may be any employee — the picker
+// deliberately accepts people who have never held a platform role — so this is
+// an ordinary state, not a broken one.
+func holdsNoGrants(ctx context.Context) bool {
+	return callerGrants(ctx).IsEmpty()
 }
 
 // callerUserID resolves the authenticated caller to their internal user id,
@@ -191,17 +161,33 @@ func (d *Deps) callerUserID(ctx context.Context) (*int, error) {
 	return &caller.ID, nil
 }
 
-// canOverrideAssignee reports whether the caller may act in place of whoever a
-// risk names for a step — the compliance-admin escape hatch that keeps a risk
+// canOverrideAssigneeIn reports whether the caller may act in place of whoever
+// a risk names for a step — the compliance-admin escape hatch that keeps a risk
 // from deadlocking when its named owner/approver has left or is unavailable.
 //
+// registerID must be the risk's SOURCE register. This is the highest-consequence
+// check in the module: it bypasses every per-risk identity gate. On the unscoped
+// union it would let a compliance approver scoped to one register override
+// identity gates on every risk in every register — precisely the cross-scope
+// leak this migration exists to prevent.
+//
 // RISK_COMPLIANCE_APPROVE stands in for "is a compliance admin": among the
-// seeded roles it is granted only to grc-platform-risk-compliance-admin (plus
-// wso2-everyone, which holds everything). Testing the privilege rather than the
-// role name keeps this consistent with the rest of the module, which never
-// checks a role name — see seesEveryRisk above.
-func canOverrideAssignee(ctx context.Context) bool {
-	return auth.HasPrivilege(ctx, privilege.ComplianceApproveRisk)
+// seeded roles only grc-platform-risk-compliance-admin holds it. Testing the
+// privilege rather than the role name keeps this consistent with the rest of
+// the module, which never checks a role name.
+func canOverrideAssigneeIn(ctx context.Context, registerID int) bool {
+	return auth.HasPrivilegeIn(ctx, privilege.ComplianceApproveRisk, registerID)
+}
+
+// sourceRegisterOf returns the risk's source register — the scope every
+// authority check on that risk is relative to. Handlers that hold only a risk
+// id use it to ask a scoped question instead of an unscoped one.
+func (d *Deps) sourceRegisterOf(ctx context.Context, riskID int) (int, error) {
+	detail, err := d.Risk.GetByID(ctx, riskID)
+	if err != nil {
+		return 0, err
+	}
+	return detail.SourceRegisterID, nil
 }
 
 // requireRiskActor enforces a per-risk identity gate. Holding the right
@@ -209,11 +195,12 @@ func canOverrideAssignee(ctx context.Context) bool {
 // does not answer "are they the person *this* risk named for it". Both must
 // hold, so callers run this after their auth.RequirePrivilege check.
 //
-// Returns true when the caller is wantUserID or can override. Otherwise it
-// writes the response and returns false. actor names the role in the error
-// message, e.g. "Risk Owner" or "Risk Assigner".
-func (d *Deps) requireRiskActor(w http.ResponseWriter, r *http.Request, wantUserID int, actor string) bool {
-	if canOverrideAssignee(r.Context()) {
+// registerID is the risk's source register, used for the compliance-admin
+// override. Returns true when the caller is wantUserID or can override there.
+// Otherwise it writes the response and returns false. actor names the role in
+// the error message, e.g. "Risk Owner" or "Risk Assigner".
+func (d *Deps) requireRiskActor(w http.ResponseWriter, r *http.Request, wantUserID, registerID int, actor string) bool {
+	if canOverrideAssigneeIn(r.Context(), registerID) {
 		return true
 	}
 	callerID, err := d.callerUserID(r.Context())
@@ -235,75 +222,97 @@ func (d *Deps) requireRiskActor(w http.ResponseWriter, r *http.Request, wantUser
 // mark complete, resubmit, cancel), which unlike the approval handlers don't
 // otherwise need the risk detail. It loads the risk itself so each call site
 // stays a single line.
-func (d *Deps) requireRiskAssigner(w http.ResponseWriter, r *http.Request, riskID int) bool {
-	// Short-circuit before the lookup: a compliance admin passes regardless of
-	// who the assigner is, so there is nothing to fetch.
-	if canOverrideAssignee(r.Context()) {
-		return true
-	}
+// requireRiskAssigner enforces BOTH halves of an assigner-side action (edit,
+// mark complete, resubmit, cancel) against one loaded risk:
+//
+//  1. the caller holds priv **in that risk's source register**, and
+//  2. they are the risk's assigner (or can override there).
+//
+// The privilege check lives in here rather than at each call site on purpose.
+// Handlers used to run an unscoped auth.RequirePrivilege first, which answers
+// "could this user edit *some* risk" — true for anyone holding the privilege in
+// any register. Taking the privilege as a parameter makes the scoped check the
+// only way to call this, so a handler cannot accidentally keep the weaker one.
+//
+// The risk is always loaded now: both the scope and the override depend on the
+// source register, which cannot be known without it. The old short-circuit
+// saved a lookup by asking an unscoped question, and the unscoped question is
+// precisely the bug.
+func (d *Deps) requireRiskAssigner(w http.ResponseWriter, r *http.Request, riskID int, priv string) bool {
 	detail, err := d.Risk.GetByID(r.Context(), riskID)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return false
 	}
-	return d.requireRiskActor(w, r, detail.AssignerID, "Risk Assigner")
+	if !auth.RequirePrivilegeIn(r.Context(), w, priv, detail.SourceRegisterID) {
+		return false
+	}
+	return d.requireRiskActor(w, r, detail.AssignerID, detail.SourceRegisterID, "Risk Assigner")
 }
 
 // riskVisibleToCaller reports whether the caller may view riskID's data — the
 // by-id counterpart to handleListRisks' list scoping, closing the gap where
-// that scoping was otherwise cosmetic (a caller restricted in the list could
-// still read any risk directly by id). Any caller holding a privilege outside
-// both narrower tiers below always passes; their access is already governed
-// by the ViewRisks check callers perform before this.
+// that scoping would otherwise be cosmetic (a caller restricted in the list
+// could still read any risk directly by id).
+//
+// It implements the read half of the access rule (RISK_MODULE_DESIGN.md §3):
+//
+//	See a risk if you hold a GLOBAL grant, OR a grant on its source register
+//	or assignment team, OR you are personally named on it.
+//
+// Note that reading is deliberately broader than acting. A grant on the
+// assignment team is enough to see a risk routed to your team, but confers no
+// authority over it — that follows the source register alone. The two halves
+// are enforced in different places: this function for reading, and
+// RequirePrivilegeIn(..., SourceRegisterID) for writing.
 func (d *Deps) riskVisibleToCaller(ctx context.Context, riskID int) (bool, error) {
-	if isActionOwnerOnly(ctx) {
-		// Passes only if they're the action_owner_id of one of the risk's
-		// action plans.
-		callerID, err := d.callerUserID(ctx)
-		if err != nil || callerID == nil {
-			return false, err
-		}
-		plans, err := d.ActionPlan.List(ctx, riskID)
-		if err != nil {
-			return false, err
-		}
-		for _, p := range plans {
-			if p.ActionOwnerID != nil && *p.ActionOwnerID == *callerID {
-				return true, nil
-			}
-		}
-		return false, nil
+	if seesEveryRisk(ctx) {
+		return true, nil
 	}
-	if isTeamScopedOnly(ctx) {
-		// Passes only if the caller belongs to the risk's source register or
-		// assignment team.
-		userInfo := auth.FromContext(ctx)
-		if userInfo == nil {
-			return false, nil
-		}
-		email := userInfo.Email
-		if email == "" {
-			email = userInfo.Subject
-		}
-		caller, err := d.Users.GetByEmail(ctx, email)
-		if err != nil {
-			return false, err
-		}
-		if caller == nil || len(caller.RiskTeamIDs) == 0 {
-			return false, nil
-		}
-		risk, err := d.Risk.GetByID(ctx, riskID)
-		if err != nil {
-			return false, err
-		}
-		for _, teamID := range caller.RiskTeamIDs {
-			if teamID == risk.SourceRegisterID || teamID == risk.AssignmentTeamID {
-				return true, nil
-			}
-		}
-		return false, nil
+
+	risk, err := d.Risk.GetByID(ctx, riskID)
+	if err != nil {
+		return false, err
 	}
-	return true, nil
+
+	// Grant axis, one dimension each: a SOURCE_REGISTER-based grant matches
+	// where the risk was raised, an ASSIGNMENT_TEAM-based one matches where the
+	// work was routed. Matching both lists against both columns would let a
+	// Risk Owner of HR see risks HR merely raised.
+	set := callerGrants(ctx)
+	for _, id := range set.SourceScopeIDs() {
+		if id == risk.SourceRegisterID {
+			return true, nil
+		}
+	}
+	for _, id := range set.AssignmentScopeIDs() {
+		if id == risk.AssignmentTeamID {
+			return true, nil
+		}
+	}
+
+	// Identity axis: named on this risk, which needs no grant at all. This is
+	// what lets an Action Owner — who may be any employee, holding no role
+	// anywhere — reach the one risk they were handed.
+	callerID, err := d.callerUserID(ctx)
+	if err != nil || callerID == nil {
+		return false, err
+	}
+	if risk.OwnerID == *callerID ||
+		risk.AssignerID == *callerID ||
+		risk.ManagementApproverID == *callerID {
+		return true, nil
+	}
+	plans, err := d.ActionPlan.List(ctx, riskID)
+	if err != nil {
+		return false, err
+	}
+	for _, p := range plans {
+		if p.ActionOwnerID != nil && *p.ActionOwnerID == *callerID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // handleListRisks serves GET /api/v1/risks.
@@ -318,6 +327,9 @@ func (d *Deps) riskVisibleToCaller(ctx context.Context, riskID int) (bool, error
 //   - due_from/to:       implementation_date range (YYYY-MM-DD, inclusive)
 //   - due_overdue:       "true" to additionally restrict to implementation_date < today
 func (d *Deps) handleListRisks(w http.ResponseWriter, r *http.Request) {
+	// Unscoped on purpose: this gates only whether the caller may read risks at
+	// all. WHICH risks they may read is decided by riskVisibleToCaller / the
+	// list scoping, not by this privilege.
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewRisks) {
 		return
 	}
@@ -355,18 +367,21 @@ func (d *Deps) handleListRisks(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Action Owner list scoping: a caller who can only complete action steps
-	// (not create/approve/escalate risks) sees just the risks where they own
-	// a plan — implementing what the grc-platform-risk-action-owner role's
-	// own seed-data description promises. Broader-privilege holders (Risk
-	// Assigner, Risk Owner, Compliance, Management, Admin) see everything,
-	// same as before; this never narrows their view.
+	// Zero-grant scoping: a caller holding no role anywhere sees only the risks
+	// they are personally named on. An Action Owner may be any employee, with
+	// no grants at all, so this is an ordinary state rather than a broken one.
 	//
-	// Fails closed: leaving ActionOwnerID unset when the caller can't be
-	// resolved would hand them the entire register — the exact exposure this
-	// scoping exists to prevent — so an unresolvable caller gets an error or
-	// an empty page, never an unscoped one.
-	if isActionOwnerOnly(r.Context()) {
+	// NARROWER THAN THE BY-ID RULE, DELIBERATELY. riskVisibleToCaller admits
+	// anyone named on a risk in any capacity — owner, assigner, management
+	// approver, or action owner — but the list filter can only express
+	// action_owner_id today. The difference fails closed: such a caller may see
+	// fewer rows in the list than they can open directly, never more. Widening
+	// it needs a "named in any capacity" filter on the entity's risk search.
+	//
+	// Fails closed the other way too: leaving the filter unset when the caller
+	// cannot be resolved would hand them the entire register, so an
+	// unresolvable caller gets an empty page, never an unscoped one.
+	if holdsNoGrants(r.Context()) {
 		email, ok := requireUserEmail(w, r)
 		if !ok {
 			return
@@ -391,22 +406,19 @@ func (d *Deps) handleListRisks(w http.ResponseWriter, r *http.Request) {
 		filter.ActionOwnerID = &caller.ID
 	}
 
-	// Team scoping: a Risk Assigner/Risk Owner-only caller (no Compliance/
-	// Management/Admin privilege) sees only risks belonging to their own risk
-	// teams. Fails closed the same way the Action Owner branch above does — an
-	// unresolvable caller or one with zero team memberships gets an empty page,
-	// never an unscoped one.
+	// Team scoping: a caller with grants but no GLOBAL one sees only risks
+	// whose source register or assignment team they hold a grant on. Reading is
+	// broad on purpose — a grant on the assignment team shows you work routed
+	// to your team — while authority over those risks still follows the source
+	// register alone.
 	if isTeamScopedOnly(r.Context()) {
-		email, ok := requireUserEmail(w, r)
-		if !ok {
-			return
-		}
-		caller, err := d.Users.GetByEmail(r.Context(), email)
-		if err != nil {
-			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-			return
-		}
-		if caller == nil || len(caller.RiskTeamIDs) == 0 {
+		set := callerGrants(r.Context())
+		sourceIDs := set.SourceScopeIDs()
+		assignmentIDs := set.AssignmentScopeIDs()
+		if len(sourceIDs) == 0 && len(assignmentIDs) == 0 {
+			// Reachable: a caller may hold only grants whose role has no
+			// scope_basis. Two empty lists mean "unrestricted" downstream, so
+			// this must fail closed rather than hand them every risk.
 			response.WriteJSONValue(w, http.StatusOK, model.RiskListPage{
 				Items:  []*model.RiskListItem{},
 				Total:  0,
@@ -415,7 +427,8 @@ func (d *Deps) handleListRisks(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		filter.ScopeTeamIDs = caller.RiskTeamIDs
+		filter.ScopeSourceRegisterIDs = sourceIDs
+		filter.ScopeAssignmentTeamIDs = assignmentIDs
 	}
 
 	page, err := d.Risk.List(r.Context(), filter)
@@ -428,6 +441,9 @@ func (d *Deps) handleListRisks(w http.ResponseWriter, r *http.Request) {
 
 // handleGetRisk serves GET /api/v1/risks/{id}.
 func (d *Deps) handleGetRisk(w http.ResponseWriter, r *http.Request) {
+	// Unscoped on purpose: this gates only whether the caller may read risks at
+	// all. WHICH risks they may read is decided by riskVisibleToCaller / the
+	// list scoping, not by this privilege.
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewRisks) {
 		return
 	}
@@ -450,7 +466,22 @@ func (d *Deps) handleGetRisk(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	detail.EffectivePrivileges = effectivePrivilegesFor(r.Context(), detail.SourceRegisterID)
 	response.WriteJSONValue(w, http.StatusOK, detail)
+}
+
+// effectivePrivilegesFor resolves what the caller may do on a risk in the given
+// register, for the UI to render its action buttons from.
+//
+// In local dev (no privilege store configured) every check is allowed, so the
+// honest answer is "everything the module defines" rather than an empty list —
+// otherwise the UI would hide every action in the one mode where the server
+// permits them all, and local dev would look broken instead of permissive.
+func effectivePrivilegesFor(ctx context.Context, registerID int) []string {
+	if privilege.FromContext(ctx) == nil {
+		return privilege.AllRiskPrivileges()
+	}
+	return callerGrants(ctx).PrivilegesIn(registerID)
 }
 
 // handleUpdateRisk serves PUT /api/v1/risks/{id}.
@@ -461,14 +492,11 @@ func (d *Deps) handleUpdateRisk(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !auth.RequirePrivilege(r.Context(), w, privilege.UpdateRisk) {
-		return
-	}
 	id, ok := parseRiskID(w, r)
 	if !ok {
 		return
 	}
-	if !d.requireRiskAssigner(w, r, id) {
+	if !d.requireRiskAssigner(w, r, id, privilege.UpdateRisk) {
 		return
 	}
 
@@ -537,9 +565,6 @@ func (d *Deps) handleOwnerApproveRisk(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !auth.RequirePrivilege(r.Context(), w, privilege.OwnerApproveRisk) {
-		return
-	}
 	id, ok := parseRiskID(w, r)
 	if !ok {
 		return
@@ -549,7 +574,10 @@ func (d *Deps) handleOwnerApproveRisk(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
-	if !d.requireRiskActor(w, r, detail.OwnerID, "Risk Owner") {
+	if !auth.RequirePrivilegeIn(r.Context(), w, privilege.OwnerApproveRisk, detail.SourceRegisterID) {
+		return
+	}
+	if !d.requireRiskActor(w, r, detail.OwnerID, detail.SourceRegisterID, "Risk Owner") {
 		return
 	}
 	// Captured before the transition: OwnerApprove decides where the risk goes
@@ -601,9 +629,6 @@ func (d *Deps) handleManagementApproveRisk(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	if !auth.RequirePrivilege(r.Context(), w, privilege.ManagementApproveRisk) {
-		return
-	}
 	id, ok := parseRiskID(w, r)
 	if !ok {
 		return
@@ -613,7 +638,18 @@ func (d *Deps) handleManagementApproveRisk(w http.ResponseWriter, r *http.Reques
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
-	if err := d.Risk.ManagementApprove(r.Context(), id, by, callerID, canOverrideAssignee(r.Context())); err != nil {
+	// The risk is loaded for its source register, which both the scoped
+	// privilege check and the override are relative to.
+	detail, err := d.Risk.GetByID(r.Context(), id)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	if !auth.RequirePrivilegeIn(r.Context(), w, privilege.ManagementApproveRisk, detail.SourceRegisterID) {
+		return
+	}
+	if err := d.Risk.ManagementApprove(r.Context(), id, by, callerID,
+		canOverrideAssigneeIn(r.Context(), detail.SourceRegisterID)); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
@@ -631,11 +667,20 @@ func (d *Deps) handleApproveRisk(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !auth.RequirePrivilege(r.Context(), w, privilege.ComplianceApproveRisk) {
-		return
-	}
 	id, ok := parseRiskID(w, r)
 	if !ok {
+		return
+	}
+	// Compliance approval is deliberately not identity-gated (§3: it is a
+	// role-wide action), so the scoped privilege check is the ONLY thing
+	// standing between a compliance approver in one register and a risk in
+	// another. It cannot be left unscoped.
+	registerID, err := d.sourceRegisterOf(r.Context(), id)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	if !auth.RequirePrivilegeIn(r.Context(), w, privilege.ComplianceApproveRisk, registerID) {
 		return
 	}
 	if err := d.Risk.Approve(r.Context(), id, by); err != nil {
@@ -709,7 +754,7 @@ func (d *Deps) handleRejectRisk(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
-	if !auth.RequirePrivilege(r.Context(), w, rejectPrivilegeFor(detail.WorkflowStatus)) {
+	if !auth.RequirePrivilegeIn(r.Context(), w, rejectPrivilegeFor(detail.WorkflowStatus), detail.SourceRegisterID) {
 		return
 	}
 	// Rejecting is restricted to the same named individual who would have
@@ -719,11 +764,11 @@ func (d *Deps) handleRejectRisk(w http.ResponseWriter, r *http.Request) {
 	// privilege-only.
 	switch detail.WorkflowStatus {
 	case model.StatusPendingManagementApproval, model.StatusPendingManagementClosure:
-		if !d.requireRiskActor(w, r, detail.ManagementApproverID, "Management Approver") {
+		if !d.requireRiskActor(w, r, detail.ManagementApproverID, detail.SourceRegisterID, "Management Approver") {
 			return
 		}
 	case model.StatusPendingOwnerApproval, model.StatusPendingAmendment, model.StatusPendingOwnerCompletion:
-		if !d.requireRiskActor(w, r, detail.OwnerID, "Risk Owner") {
+		if !d.requireRiskActor(w, r, detail.OwnerID, detail.SourceRegisterID, "Risk Owner") {
 			return
 		}
 	}
@@ -754,14 +799,11 @@ func (d *Deps) handleCompleteRisk(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !auth.RequirePrivilege(r.Context(), w, privilege.CompleteRisk) {
-		return
-	}
 	id, ok := parseRiskID(w, r)
 	if !ok {
 		return
 	}
-	if !d.requireRiskAssigner(w, r, id) {
+	if !d.requireRiskAssigner(w, r, id, privilege.CompleteRisk) {
 		return
 	}
 	if err := d.Risk.Complete(r.Context(), id, by); err != nil {
@@ -789,14 +831,11 @@ func (d *Deps) handleResubmitRisk(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !auth.RequirePrivilege(r.Context(), w, privilege.SubmitRisk) {
-		return
-	}
 	id, ok := parseRiskID(w, r)
 	if !ok {
 		return
 	}
-	if !d.requireRiskAssigner(w, r, id) {
+	if !d.requireRiskAssigner(w, r, id, privilege.SubmitRisk) {
 		return
 	}
 	// Resubmit routes on the rejection stage, so who to notify depends on where
@@ -836,14 +875,11 @@ func (d *Deps) handleCancelRisk(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !auth.RequirePrivilege(r.Context(), w, privilege.CancelRisk) {
-		return
-	}
 	id, ok := parseRiskID(w, r)
 	if !ok {
 		return
 	}
-	if !d.requireRiskAssigner(w, r, id) {
+	if !d.requireRiskAssigner(w, r, id, privilege.CancelRisk) {
 		return
 	}
 	if err := d.Risk.Cancel(r.Context(), id, by); err != nil {
@@ -861,11 +897,17 @@ func (d *Deps) handleCloseRisk(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !auth.RequirePrivilege(r.Context(), w, privilege.CloseRisk) {
-		return
-	}
 	id, ok := parseRiskID(w, r)
 	if !ok {
+		return
+	}
+	// No identity gate on closure either — the scoped privilege is the gate.
+	registerID, err := d.sourceRegisterOf(r.Context(), id)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	if !auth.RequirePrivilegeIn(r.Context(), w, privilege.CloseRisk, registerID) {
 		return
 	}
 	if err := d.Risk.Close(r.Context(), id, by); err != nil {

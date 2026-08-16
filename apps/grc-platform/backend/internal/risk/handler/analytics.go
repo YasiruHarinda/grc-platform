@@ -43,23 +43,19 @@ func (d *Deps) handleAnalyticsSummary(w http.ResponseWriter, r *http.Request) {
 		registerID = &id
 	}
 
-	// Team scoping: a Risk Assigner/Risk Owner-only caller (no Compliance/
-	// Management/Admin privilege) sees only their own risk teams' data. Fails
-	// closed like handleListRisks' equivalent scoping — an unresolvable caller
-	// or one with zero team memberships gets a zeroed summary, never an
-	// unscoped one.
-	var teamIDs []int
-	if isTeamScopedOnly(r.Context()) {
-		email, ok := requireUserEmail(w, r)
-		if !ok {
-			return
-		}
-		caller, err := d.Users.GetByEmail(r.Context(), email)
-		if err != nil {
-			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-			return
-		}
-		if caller == nil || len(caller.RiskTeamIDs) == 0 {
+	// Team scoping: a caller without a GLOBAL grant sees only the registers and
+	// assignment teams they hold a grant on; one with no grants gets a zeroed
+	// summary. Fails closed like handleListRisks' equivalent scoping — an empty
+	// team list means "unrestricted" downstream, so it must never reach the query.
+	var registerIDs []int
+	if !seesEveryRisk(r.Context()) {
+		// Register-capable scopes only. These pages aggregate per register, so a
+		// grant on an ASSIGNMENT-only team (HR, Legal) contributes nothing —
+		// there is no register page for it to appear on. A grant on a BOTH team
+		// does contribute, which is why "Risk Owner @ Asgardeo" still gets an
+		// Asgardeo dashboard while "Risk Owner @ HR" gets none.
+		registerIDs = callerGrants(r.Context()).RegisterScopeIDs()
+		if len(registerIDs) == 0 {
 			response.WriteJSONValue(w, http.StatusOK, model.AnalyticsSummary{
 				Trend:                []model.TrendPoint{},
 				LevelDistribution:    []model.MonthLevelCount{},
@@ -73,10 +69,9 @@ func (d *Deps) handleAnalyticsSummary(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		teamIDs = caller.RiskTeamIDs
 	}
 
-	summary, err := d.Analytics.Summary(r.Context(), registerID, teamIDs)
+	summary, err := d.Analytics.Summary(r.Context(), registerID, registerIDs)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return

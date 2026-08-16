@@ -21,6 +21,7 @@ import (
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
 )
 
 // handleListTeams serves GET /api/v1/teams.
@@ -51,25 +52,33 @@ func (d *Deps) handleListTeams(w http.ResponseWriter, r *http.Request) {
 		teams = []*model.Team{}
 	}
 
-	if r.URL.Query().Get("mine") == "true" && isTeamScopedOnly(r.Context()) {
-		email, ok := requireUserEmail(w, r)
-		if !ok {
-			return
-		}
-		caller, err := d.Users.GetByEmail(r.Context(), email)
-		if err != nil {
-			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-			return
-		}
-		myTeamIDs := map[int]bool{}
-		if caller != nil {
-			for _, id := range caller.RiskTeamIDs {
-				myTeamIDs[id] = true
+	// ?mine=true narrows the list to registers the caller holds a grant on —
+	// register-capable scopes only, since every consumer of this is a register
+	// dropdown. A grant on an ASSIGNMENT-only team (HR, Legal) is not a register
+	// and never belongs here.
+	//
+	// A GLOBAL holder is deliberately unaffected: they may hold no team-scoped
+	// grant at all, and narrowing them to nothing would empty a dropdown for
+	// someone entitled to every entry in it.
+	//
+	// ?privilege=<NAME> narrows further to registers where the caller holds that
+	// privilege. Add Risk passes RISK_CREATE, because "registers I can see" and
+	// "registers I may raise a risk in" are different questions — a Risk Owner
+	// on a BOTH team can see its dashboard but cannot create there, and offering
+	// it in the create picker would produce a choice the server refuses.
+	if r.URL.Query().Get("mine") == "true" && !seesEveryRisk(r.Context()) {
+		set := callerGrants(r.Context())
+		wantPriv := r.URL.Query().Get("privilege")
+
+		mine := map[int]bool{}
+		for _, id := range set.RegisterScopeIDs() {
+			if wantPriv == "" || auth.HasPrivilegeIn(r.Context(), wantPriv, id) {
+				mine[id] = true
 			}
 		}
 		filtered := make([]*model.Team, 0, len(teams))
 		for _, t := range teams {
-			if myTeamIDs[t.ID] {
+			if mine[t.ID] {
 				filtered = append(filtered, t)
 			}
 		}
