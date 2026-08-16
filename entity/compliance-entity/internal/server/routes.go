@@ -62,6 +62,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	riskEvidenceRepo := repository.NewRiskEvidenceRepository(db)
 	riskAssessmentRepo := repository.NewRiskAssessmentRepository(db)
 	privilegeRepo := repository.NewPrivilegeRepository(db)
+	grantRepo := repository.NewGrantRepository(db)
 	riskDashboardRepo := repository.NewRiskDashboardRepository(db)
 	riskAnalyticsRepo := repository.NewRiskAnalyticsRepository(db)
 
@@ -98,6 +99,9 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	riskEvidenceSvc := service.NewRiskEvidenceService(riskEvidenceRepo)
 	riskAssessmentSvc := service.NewRiskAssessmentService(riskAssessmentRepo)
 	privilegeSvc := service.NewPrivilegeService(privilegeRepo)
+	// Deliberately NOT wrapped in a cache, unlike userSvc above: grants are on
+	// the revocation path and must be fresh on every request.
+	grantSvc := service.NewGrantService(grantRepo)
 	riskDashboardSvc := service.NewRiskDashboardService(riskDashboardRepo)
 	riskAnalyticsSvc := service.NewRiskAnalyticsService(riskAnalyticsRepo)
 
@@ -128,6 +132,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	riskEvidenceH := handler.NewRiskEvidenceHandler(riskEvidenceSvc)
 	riskAssessmentH := handler.NewRiskAssessmentHandler(riskAssessmentSvc)
 	privilegeH := handler.NewPrivilegeHandler(privilegeSvc)
+	grantH := handler.NewGrantHandler(grantSvc)
 	riskDashboardH := handler.NewRiskDashboardHandler(riskDashboardSvc)
 	riskAnalyticsH := handler.NewRiskAnalyticsHandler(riskAnalyticsSvc)
 
@@ -157,6 +162,24 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	mux.HandleFunc("GET /users/{id}", userH.GetUserByID)
 	mux.HandleFunc("POST /users", userH.CreateUser)
 	mux.HandleFunc("PATCH /users/{id}", userH.UpdateUser)
+
+	// Role grants — who holds which role, in which scope.
+	//
+	// Deliberately top-level rather than nested under /users/{id}/...: Go's mux
+	// cannot order "GET /users/{id}/grants" against the existing
+	// "GET /users/by-email/{email}", because "/users/by-email/grants" matches
+	// both and neither is more specific. That is a registration-time panic, not
+	// a 404, so it takes the whole service down. The literal second segment
+	// here ("by-email" vs "user") keeps every pattern unambiguous.
+	//
+	// The by-email read is the hot path: the GRC backend calls it on every
+	// authenticated request. Its responses are never cached, so revoking a
+	// grant takes effect on the caller's next request.
+	mux.HandleFunc("GET /grants/by-email/{email}", grantH.GrantsByEmail)
+	mux.HandleFunc("GET /grants/user/{id}", grantH.GrantsByUserID)
+	mux.HandleFunc("POST /grants/user/{id}", grantH.CreateGrant)
+	mux.HandleFunc("DELETE /grants/user/{id}/{grantId}", grantH.RevokeGrant)
+	mux.HandleFunc("GET /roles", grantH.ListRoles)
 
 	// Audit teams
 	mux.HandleFunc("POST /audit/teams/search", auditTeamH.SearchAuditTeams)
