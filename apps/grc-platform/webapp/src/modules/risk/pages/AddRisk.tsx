@@ -49,8 +49,9 @@ import {
   fetchRiskScores,
   fetchSourceRegisterTeams,
   fetchUsers,
+  uploadRiskEvidence,
 } from "../api/riskApi";
-import type { ComplianceReference, RiskCategory, RiskScore, RiskTeam, UserOption } from "../api/riskApi";
+import type { ComplianceReference, CreateRiskResponse, RiskCategory, RiskScore, RiskTeam, UserOption } from "../api/riskApi";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { RiskPrivilege } from "../privileges";
 
@@ -77,7 +78,7 @@ const STEP_2_FIELDS: (keyof AddRiskFormValues)[] = [
   "reassessmentDate",
 ];
 
-function SuccessState({ onReset }: { onReset: () => void }): JSX.Element {
+function SuccessState({ onReset, warning }: { onReset: () => void; warning?: string | null }): JSX.Element {
   return (
     <Stack alignItems="center" justifyContent="center" gap={2} sx={{ py: 8, textAlign: "center" }}>
       <Box sx={{ color: "success.main" }}>
@@ -90,6 +91,11 @@ function SuccessState({ onReset }: { onReset: () => void }): JSX.Element {
         The risk has been registered and is now pending compliance review.
         Your risk code will be confirmed in the Risk Registers.
       </Typography>
+      {warning && (
+        <Alert severity="warning" sx={{ textAlign: "left", maxWidth: 480 }}>
+          {warning}
+        </Alert>
+      )}
       <Stack direction="row" gap={2} sx={{ mt: 2 }}>
         <Button variant="outlined" onClick={onReset}>
           Add Another Risk
@@ -123,6 +129,12 @@ export default function AddRisk(): JSX.Element {
   const [riskOwnerCandidates, setRiskOwnerCandidates] = useState<UserOption[]>([]);
   const [fetchError, setFetchError]                   = useState<string | null>(null);
   const [submitError, setSubmitError]                 = useState<string | null>(null);
+  // Set only when the risk itself was created successfully but a staged
+  // evidence attachment failed to upload afterward — shown on the success
+  // screen (submitError's Alert doesn't render there), never treated as a
+  // failed submission since the risk already exists and retrying would
+  // create a duplicate.
+  const [attachmentWarning, setAttachmentWarning]     = useState<string | null>(null);
 
   const { getDecodedIdToken, isSignedIn } = useAsgardeo();
   const authFetch = useAuthApiClient();
@@ -259,6 +271,7 @@ export default function AddRisk(): JSX.Element {
     setRiskCodeConflict(null);
     setRiskSequenceId(null);
     setSubmitError(null);
+    setAttachmentWarning(null);
     methods.reset();
   };
 
@@ -298,9 +311,11 @@ export default function AddRisk(): JSX.Element {
     if (hasStep3Error) return;
 
     setSubmitError(null);
+    setAttachmentWarning(null);
+
+    let created: CreateRiskResponse;
     try {
-      await createRisk(authFetch, data);
-      setActiveStep(STEPS.length);
+      created = await createRisk(authFetch, data);
     } catch (err: unknown) {
       const apiErr = err as { status?: number; message?: string; data?: { next_sequence_id?: number } };
       if (apiErr.status === 409 && typeof data.sourceRegister === "number" && riskSequenceId !== null) {
@@ -315,7 +330,38 @@ export default function AddRisk(): JSX.Element {
       } else {
         setSubmitError(apiErr.message ?? "Failed to submit risk. Please try again.");
       }
+      return;
     }
+
+    // The risk already exists at this point — an upload failure below must
+    // never be reported as a failed submission (that would invite a retry,
+    // which would create a duplicate risk) and must never block reaching the
+    // success step.
+    // Risk-level evidence attachments ("Risk Evidence Attachment"): the risk
+    // doesn't exist until the call above returns an id, so these are staged
+    // in form state through the whole wizard and only uploaded now. Each
+    // upload is caught individually so one failure doesn't stop the rest of
+    // the batch from being attempted.
+    let anyAttachmentFailed = false;
+    for (const attachment of data.evidenceAttachments) {
+      if (!attachment.file) continue;
+      try {
+        await uploadRiskEvidence(authFetch, created.id, {
+          evidenceType: "ACTION_PLAN_ATTACHMENT",
+          file: attachment.file,
+          note: attachment.note || undefined,
+        });
+      } catch {
+        anyAttachmentFailed = true;
+      }
+    }
+    if (anyAttachmentFailed) {
+      setAttachmentWarning(
+        "The risk was created, but one or more attachments failed to upload. Add them from the risk details view.",
+      );
+    }
+
+    setActiveStep(STEPS.length);
   };
 
   const stepContent: JSX.Element[] = [
@@ -367,7 +413,7 @@ export default function AddRisk(): JSX.Element {
           <Divider sx={{ mb: 4 }} />
 
           {isComplete ? (
-            <SuccessState onReset={handleReset} />
+            <SuccessState onReset={handleReset} warning={attachmentWarning} />
           ) : (
             <Stack gap={4}>
               {fetchError && (

@@ -1186,15 +1186,18 @@ type CompleteRiskActionPlanRequest struct {
 type RiskEvidenceFile struct {
 	ID           int       `json:"id"`
 	RiskID       int       `json:"riskId"`
+	ActionPlanID *int      `json:"actionPlanId"` // set for FINAL_APPROVAL_ATTACHMENT; nil for ACTION_PLAN_ATTACHMENT
 	FileName     string    `json:"fileName"`
 	FilePath     string    `json:"filePath"`
 	Note         *string   `json:"note"`
 	EvidenceType string    `json:"evidenceType"` // ACTION_PLAN_ATTACHMENT | FINAL_APPROVAL_ATTACHMENT
+	CreatedBy    *string   `json:"createdBy"`
 	CreatedOn    time.Time `json:"createdOn"`
 }
 
 // CreateRiskEvidenceRequest is the payload for POST /risks/{riskId}/evidence.
 type CreateRiskEvidenceRequest struct {
+	ActionPlanID *int    `json:"actionPlanId"`
 	FileName     string  `json:"fileName"`
 	FilePath     string  `json:"filePath"`
 	Note         *string `json:"note"`

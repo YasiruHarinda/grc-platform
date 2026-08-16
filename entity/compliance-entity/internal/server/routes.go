@@ -93,10 +93,10 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	// cascade, which now only notifies — resolving the escalation and reverting
 	// the risk moved to the escalation comment flow in the GRC backend.
 	riskActionPlanSvc := service.NewRiskActionPlanService(
-		riskActionPlanRepo, riskActionStepRepo,
+		riskActionPlanRepo, riskActionStepRepo, riskEvidenceRepo,
 		riskEscalationSvc, riskSvc, userSvc,
 	)
-	riskEvidenceSvc := service.NewRiskEvidenceService(riskEvidenceRepo)
+	riskEvidenceSvc := service.NewRiskEvidenceService(riskEvidenceRepo, riskActionPlanRepo)
 	riskAssessmentSvc := service.NewRiskAssessmentService(riskAssessmentRepo)
 	privilegeSvc := service.NewPrivilegeService(privilegeRepo)
 	// Deliberately NOT wrapped in a cache, unlike userSvc above: grants are on
@@ -328,7 +328,8 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	// Risk evidence files (nested under risks)
 	mux.HandleFunc("POST /risks/{riskId}/evidence", riskEvidenceH.CreateRiskEvidence)
 	mux.HandleFunc("GET /risks/{riskId}/evidence", riskEvidenceH.ListRiskEvidence)
-	mux.HandleFunc("DELETE /risk-evidence/{fileId}", riskEvidenceH.DeleteRiskEvidence)
+	mux.HandleFunc("GET /risk-evidence/{fileId}", riskEvidenceH.GetRiskEvidence)
+	mux.HandleFunc("DELETE /risks/{riskId}/evidence/{fileId}", riskEvidenceH.DeleteRiskEvidence)
 
 	// Risk assessments (nested under risks)
 	mux.HandleFunc("POST /risks/{riskId}/assessments", riskAssessmentH.CreateRiskAssessment)

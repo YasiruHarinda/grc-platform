@@ -32,6 +32,13 @@ type RiskActionPlanRepository interface {
 	CreateRiskActionPlan(ctx context.Context, riskID int, req domain.CreateRiskActionPlanRequest) (*domain.RiskActionPlan, error)
 	GetRiskActionPlanByID(ctx context.Context, planID int) (*domain.RiskActionPlan, error)
 	UpdateRiskActionPlan(ctx context.Context, planID int, req domain.UpdateRiskActionPlanRequest) (*domain.RiskActionPlan, error)
+	// CompleteRiskActionPlan marks planID COMPLETED only if it isn't already
+	// and it has at least one FINAL_APPROVAL_ATTACHMENT evidence row — the
+	// "has evidence" check and the status write happen in one statement, so a
+	// concurrent evidence delete can't land in the gap between a separate
+	// check and a separate update. Returns false (no error) if the row wasn't
+	// updated; the caller re-reads the plan to build the right error.
+	CompleteRiskActionPlan(ctx context.Context, planID int, completedDate, updatedBy string) (bool, error)
 	ListRiskActionPlans(ctx context.Context, riskID int) (*domain.ListRiskActionPlansResponse, error)
 }
 
@@ -145,6 +152,28 @@ func (r *riskActionPlanRepo) UpdateRiskActionPlan(ctx context.Context, planID in
 		return nil, fmt.Errorf("risk_action_plan.Update(%d): %w", planID, err)
 	}
 	return r.GetRiskActionPlanByID(ctx, planID)
+}
+
+func (r *riskActionPlanRepo) CompleteRiskActionPlan(ctx context.Context, planID int, completedDate, updatedBy string) (bool, error) {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE risk_action_plan
+		 SET status = 'COMPLETED', completed_date = ?, updated_by = ?
+		 WHERE id = ?
+		   AND status != 'COMPLETED'
+		   AND EXISTS (
+		     SELECT 1 FROM risk_evidence
+		     WHERE risk_evidence.action_plan_id = risk_action_plan.id
+		       AND risk_evidence.evidence_type = 'FINAL_APPROVAL_ATTACHMENT'
+		   )`,
+		completedDate, updatedBy, planID)
+	if err != nil {
+		return false, fmt.Errorf("risk_action_plan.CompleteRiskActionPlan(%d): %w", planID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("risk_action_plan.CompleteRiskActionPlan(%d): rows affected: %w", planID, err)
+	}
+	return n > 0, nil
 }
 
 func (r *riskActionPlanRepo) ListRiskActionPlans(ctx context.Context, riskID int) (*domain.ListRiskActionPlansResponse, error) {

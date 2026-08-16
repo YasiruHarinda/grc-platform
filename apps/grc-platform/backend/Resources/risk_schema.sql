@@ -298,21 +298,32 @@ CREATE TABLE IF NOT EXISTS risk_action_step (
 -- Files uploaded as evidence for action plan progress or final Risk Owner
 -- approval. file_path is the Azure Blob Storage object key (not full URL);
 -- the full URL is constructed by the application at read time.
+--
+-- action_plan_id is NULL for ACTION_PLAN_ATTACHMENT rows uploaded at risk
+-- creation (the "Risk Evidence Attachment" section — evidence for the risk as
+-- a whole, not any one plan) and set for FINAL_APPROVAL_ATTACHMENT rows, which
+-- are always attached to the specific plan being completed ("Risk Action Plan
+-- Completion Attachment") — a risk can have more than one STANDARD action
+-- plan, so the plan link is what "Complete Action Plan" checks for evidence
+-- against, not just the risk.
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS risk_evidence (
-  id            INT          NOT NULL AUTO_INCREMENT,
-  risk_id       INT          NOT NULL,
-  file_name     VARCHAR(500) NOT NULL,
-  file_path     TEXT         NOT NULL COMMENT 'Azure Blob object key',
-  note          TEXT         NULL,
-  evidence_type ENUM('ACTION_PLAN_ATTACHMENT','FINAL_APPROVAL_ATTACHMENT') NOT NULL,
-  created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  created_by    VARCHAR(255) NULL,
-  updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  updated_by    VARCHAR(255) NULL,
+  id             INT          NOT NULL AUTO_INCREMENT,
+  risk_id        INT          NOT NULL,
+  action_plan_id INT          NULL,
+  file_name      VARCHAR(500) NOT NULL,
+  file_path      TEXT         NOT NULL COMMENT 'Azure Blob object key',
+  note           TEXT         NULL,
+  evidence_type  ENUM('ACTION_PLAN_ATTACHMENT','FINAL_APPROVAL_ATTACHMENT') NOT NULL,
+  created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_by     VARCHAR(255) NULL,
+  updated_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  updated_by     VARCHAR(255) NULL,
   PRIMARY KEY (id),
   KEY idx_risk_evidence_risk (risk_id),
-  CONSTRAINT fk_risk_evidence_risk FOREIGN KEY (risk_id) REFERENCES risk(id) ON DELETE CASCADE
+  KEY idx_risk_evidence_plan (action_plan_id),
+  CONSTRAINT fk_risk_evidence_risk FOREIGN KEY (risk_id) REFERENCES risk(id) ON DELETE CASCADE,
+  CONSTRAINT fk_risk_evidence_plan FOREIGN KEY (action_plan_id) REFERENCES risk_action_plan(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
