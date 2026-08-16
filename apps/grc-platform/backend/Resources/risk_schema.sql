@@ -422,12 +422,26 @@ CREATE TABLE IF NOT EXISTS risk_change_log (
 
 
 -- -----------------------------------------------------------------------------
--- user_risk_team  (junction table)
+-- user_risk_team  (junction table)  ** DEPRECATED — pending removal **
+--
+-- Superseded by user_role_grant (shared.sql), which records a user's role AND
+-- the scope it applies in as one row. This table records membership with no
+-- role, so it cannot express "Risk Owner in one register, Risk Assigner in
+-- another" — the requirement that prompted the migration.
+--
+-- STILL PRESENT ON PURPOSE: the grant backfill reads these rows to derive
+-- register-scoped grants (a role carrying an org-wide privilege becomes one
+-- GLOBAL grant; any other role becomes one RISK_TEAM grant per membership row
+-- here). Dropping it before that has run and been verified would destroy the
+-- only record of who belonged where.
+--
+-- Remove once the backfill is applied and grant-based scoping is live in every
+-- environment. See RISK_MODULE_DESIGN.md §3.
+--
 -- Many-to-many between `user` (shared.sql) and risk_team: a user may belong to
--- zero or more risk teams. Replaces the old single-valued user.risk_team_id
--- column. Both FKs CASCADE — a membership row has no meaning independent of
--- either side, unlike risk_team's other references (risk, risk_register_sequence)
--- which RESTRICT deletion.
+-- zero or more risk teams. Both FKs CASCADE — a membership row has no meaning
+-- independent of either side, unlike risk_team's other references (risk,
+-- risk_register_sequence) which RESTRICT deletion.
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS user_risk_team (
   user_id      INT          NOT NULL,
