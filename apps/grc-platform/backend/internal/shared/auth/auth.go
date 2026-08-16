@@ -14,9 +14,24 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package auth exposes privilege-checking helpers built on top of the JWT middleware.
-// Handlers check privileges (e.g. privilege.ApproveRisk), never role names.
-// Role→privilege mappings live in the database and are loaded at startup via privilege.New.
+// Package auth exposes privilege-checking helpers built on top of the JWT
+// middleware. Handlers check privileges (e.g. privilege.ComplianceApproveRisk),
+// never role names.
+//
+// There are two kinds of check, and choosing the wrong one is the mistake this
+// package is shaped to make visible:
+//
+//	RequirePrivilege(ctx, w, X)             — "may this user do X anywhere?"
+//	RequirePrivilegeIn(ctx, w, X, teamID)   — "may this user do X on THIS thing?"
+//
+// A user may hold different roles in different registers — Risk Owner in one,
+// Risk Assigner in another. The unscoped form unions those together, so on its
+// own it would let someone approve, as owner, a risk in a register where they
+// are only an assigner. It exists for endpoints with no object in hand, and to
+// keep the Audit Hub's existing call sites working until it migrates.
+//
+// Rule of thumb: if a handler has a risk id, it must use the scoped form. An
+// unscoped check in such a handler needs a comment saying why no scope applies.
 package auth
 
 import (
@@ -25,6 +40,7 @@ import (
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/middleware"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
@@ -63,6 +79,60 @@ func HasPrivilege(ctx context.Context, priv string) bool {
 //	}
 func RequirePrivilege(ctx context.Context, w http.ResponseWriter, priv string) bool {
 	if HasPrivilege(ctx, priv) {
+		return true
+	}
+
+	response.WriteError(
+		w,
+		http.StatusForbidden,
+		response.ErrMsgForbidden,
+	)
+
+	return false
+}
+
+// Grants returns the caller's resolved grant set, or nil when grant resolution
+// was not configured (local dev). Callers that need to distinguish "sees
+// everything" from "scoped to these teams" — list and dashboard scoping — read
+// it directly rather than going through a privilege check.
+func Grants(ctx context.Context) *grant.Set {
+	return grant.FromContext(ctx)
+}
+
+// HasPrivilegeIn returns true if the caller holds priv **in the given team's
+// scope** — through a GLOBAL grant, or a grant on that team specifically.
+//
+// teamID must be the team whose authority governs the action. For a risk that
+// is its SOURCE register, never its assignment team: assignment is an ordinary
+// field any Risk Assigner can set, so letting it confer authority would make
+// "route this risk to Legal" silently grant Legal's role-holders approval
+// rights over it.
+//
+// Local dev (no privilege store configured) allows everything, mirroring
+// HasPrivilege and the skipped signature verification in that mode.
+func HasPrivilegeIn(ctx context.Context, priv string, teamID int) bool {
+	if middleware.UserInfoFromContext(ctx) == nil {
+		return false
+	}
+	if privilege.FromContext(ctx) == nil {
+		// Local dev allow-all mode.
+		return true
+	}
+	return grant.FromContext(ctx).HasIn(priv, teamID)
+}
+
+// RequirePrivilegeIn writes a 403 JSON response and returns false when the
+// caller lacks priv in the given team's scope. Use it after the unscoped guard
+// wherever a handler knows which team governs the object:
+//
+//	if !auth.RequirePrivilege(r.Context(), w, privilege.OwnerApproveRisk) {
+//	    return
+//	}
+//	if !auth.RequirePrivilegeIn(r.Context(), w, privilege.OwnerApproveRisk, detail.SourceRegisterID) {
+//	    return
+//	}
+func RequirePrivilegeIn(ctx context.Context, w http.ResponseWriter, priv string, teamID int) bool {
+	if HasPrivilegeIn(ctx, priv, teamID) {
 		return true
 	}
 

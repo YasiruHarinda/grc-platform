@@ -33,6 +33,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
@@ -41,12 +42,30 @@ type contextKey string
 const userInfoKey contextKey = "user-info"
 
 // UserInfo holds the authenticated user's identity extracted from the Asgardeo JWT.
+//
+// Note there is no Groups field. Asgardeo authenticates users and nothing more:
+// roles are assigned and enforced by this platform, in its own database, and
+// are resolved per request from user_role_grant. A token's group claims — if it
+// carries any — are deliberately ignored.
 type UserInfo struct {
 	Subject string
 	Email   string
-	Groups  []string // Asgardeo role/group claims
-	Issuer  string   // the token's verified issuer (iss)
-	Scope   string   // the matched IdP's scope: config.ScopeFull | config.ScopeEvidenceApp
+	Issuer  string // the token's verified issuer (iss)
+	Scope   string // the matched IdP's scope: config.ScopeFull | config.ScopeEvidenceApp
+	// UserID is the caller's internal user.id, resolved alongside their grants.
+	// Zero when the caller has no platform user row yet.
+	UserID int
+	// Roles is the distinct role names the caller holds, from any scope. It
+	// replaces the former Groups field, which carried Asgardeo's group claim.
+	//
+	// Prefer a privilege check over matching on these names — the Risk Hub
+	// never reads them. They exist because the Audit Hub matches role names
+	// directly in two places (external-auditor comment filtering and dashboard
+	// scoping), and those now read DB-assigned roles instead of IdP groups.
+	//
+	// Scope is flattened away here. Anything that needs to know WHERE a role is
+	// held must use the grant Set, not this list.
+	Roles []string
 }
 
 // Config holds JWT validation settings loaded from environment variables.
@@ -55,31 +74,35 @@ type Config struct {
 	IdPs                  []config.IdPConfig
 	ClockSkew             time.Duration
 	TokenValidatorEnabled bool
-	// PrivilegeStore resolves role→privilege mappings after JWT validation.
-	// When nil, privilege checking is skipped and HasPrivilege always returns true.
-	// Set to nil for local dev (TokenValidatorEnabled=false); always set in production.
+	// PrivilegeStore maps role names to privileges. Cached and refreshed every
+	// 15 minutes, because that mapping changes only on a deploy.
+	// When nil, privilege checking is skipped and HasPrivilege always returns
+	// true — local dev only (TokenValidatorEnabled=false); always set in production.
 	PrivilegeStore *privilege.Store
+	// Grants loads the caller's role grants. Read fresh on EVERY request and
+	// never cached: revoking a grant must take effect on the user's next
+	// request, which a TTL cache could not promise.
+	Grants grant.Repository
 	// TestKeyFuncs maps issuer → jwt.Keyfunc, bypassing JWKS cache construction.
 	// Never set in production; used by unit tests to inject pre-built key functions.
 	TestKeyFuncs map[string]jwt.Keyfunc
 }
 
-// evidenceAppPrivilegeCeiling is the single source of truth for what an
-// evidence-app-scoped token (IdP-2) may ever do, no matter what groups it carries
-// or how AUTH_GROUP_ROLE_MAP_2 is (mis)configured. Resolved privileges are
-// intersected with this set for evidence-app tokens.
-var evidenceAppPrivilegeCeiling = map[string]bool{privilege.SubmitEvidence: true}
-
-// intersectCeiling drops any privilege not permitted by the ceiling.
-func intersectCeiling(privs, ceiling map[string]bool) map[string]bool {
-	out := make(map[string]bool, len(privs))
-	for p := range privs {
-		if ceiling[p] {
-			out[p] = true
-		}
-	}
-	return out
-}
+// evidenceAppPrivileges is the complete, fixed capability of an
+// evidence-app-scoped token (IdP-2, the Evidence Portal).
+//
+// External submitters are outside the grant model entirely — this platform's
+// database holds only its own users — so such a token is authorised by its
+// issuer rather than by any role lookup. That is not a weakening: the previous
+// design resolved groups → role → privileges and then intersected the result
+// down to exactly this set, so the whole chain only ever computed one bit.
+// Stating the capability directly removes the group mapping, and with it the
+// last reason to read a group claim from any token.
+//
+// The real boundary for these tokens is elsewhere and unchanged: IssuerScope
+// confines them to /api/v1/evidence-app/*, and the handlers there check that
+// the caller is the person a given evidence request was addressed to.
+var evidenceAppPrivileges = map[string]bool{privilege.SubmitEvidence: true}
 
 // idpRuntime pairs a configured IdP with its JWKS-backed key function.
 type idpRuntime struct {
@@ -87,9 +110,11 @@ type idpRuntime struct {
 	keyFunc jwt.Keyfunc
 }
 
+// jwtClaims is deliberately minimal. A "groups" claim is not read even if the
+// token carries one: role assignment moved into this platform's database, and
+// continuing to read groups would leave a second, invisible source of authority.
 type jwtClaims struct {
-	Email  string   `json:"email"`
-	Groups []string `json:"groups"`
+	Email string `json:"email"`
 	jwt.RegisteredClaims
 }
 
@@ -280,34 +305,53 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 				return
 			}
 
+			// Evidence-app tokens are authorised by their issuer, not by grants:
+			// external submitters have no user row here. Role resolution is
+			// skipped entirely for them.
+			if idp != nil && idp.Scope == config.ScopeEvidenceApp {
+				ctx := context.WithValue(r.Context(), userInfoKey, info)
+				ctx = privilege.WithContext(ctx, evidenceAppPrivileges)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
 			ctx := context.WithValue(r.Context(), userInfoKey, info)
-			if cfg.PrivilegeStore != nil {
-				privs := cfg.PrivilegeStore.Resolve(mapGroups(info.Groups, idp))
-				// Cap evidence-app-scoped tokens at the ceiling, independent of config.
-				if idp != nil && idp.Scope == config.ScopeEvidenceApp {
-					privs = intersectCeiling(privs, evidenceAppPrivilegeCeiling)
+			if cfg.PrivilegeStore != nil && cfg.Grants != nil {
+				// Fail closed on a grant-load failure. With no grants the
+				// caller's authorisation is unknown, and guessing in either
+				// direction is worse than a clear error: guessing "none" looks
+				// to the user like their access was revoked, and guessing
+				// "previous" would need a cache this deliberately does not have.
+				userID, grants, gErr := cfg.Grants.ForEmail(r.Context(), identityKey(info))
+				if gErr != nil {
+					slog.ErrorContext(r.Context(), "auth: failed to load grants", "err", gErr)
+					writeAuthError(w, "You are not authorized to perform this action. Please try again.")
+					return
 				}
-				ctx = privilege.WithContext(ctx, privs)
+				info.UserID = userID
+				set := grant.Resolve(grants, cfg.PrivilegeStore)
+				info.Roles = set.RoleNames()
+				ctx = context.WithValue(ctx, userInfoKey, info)
+				ctx = grant.WithContext(ctx, set)
+				// The union is also published under the privilege key so the
+				// Audit Hub's existing unscoped checks keep working unchanged
+				// while it migrates. Risk-side code should ask the grant Set,
+				// which can answer per-scope.
+				ctx = privilege.WithContext(ctx, set.PrivilegeMap())
 			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
 
-// mapGroups applies an IdP's group→role map (dropping unmapped groups) so an
-// external IdP's group names never leak directly into GRC role resolution. When
-// the IdP has no map (nil), or in local dev (idp nil), groups pass through as-is.
-func mapGroups(groups []string, idp *config.IdPConfig) []string {
-	if idp == nil || idp.GroupRoleMap == nil {
-		return groups
+// identityKey returns the value the grant lookup is keyed on. Email is the
+// user table's identity today; subject is the fallback for a token that
+// carries no email claim.
+func identityKey(info *UserInfo) string {
+	if info.Email != "" {
+		return info.Email
 	}
-	mapped := make([]string, 0, len(groups))
-	for _, g := range groups {
-		if role, ok := idp.GroupRoleMap[g]; ok {
-			mapped = append(mapped, role)
-		}
-	}
-	return mapped
+	return info.Subject
 }
 
 // UserInfoFromContext retrieves the authenticated user from the context.
@@ -354,7 +398,7 @@ func extractUserInfo(tokenStr string, cfg Config, idps map[string]idpRuntime) (*
 		if err != nil || sub == "" {
 			return nil, nil, fmt.Errorf("token missing sub claim")
 		}
-		return &UserInfo{Subject: sub, Email: c.Email, Groups: c.Groups, Issuer: c.Issuer}, nil, nil
+		return &UserInfo{Subject: sub, Email: c.Email, Issuer: c.Issuer}, nil, nil
 	}
 
 	// Read the issuer from the unverified token only to pick the IdP; nothing else
@@ -392,7 +436,6 @@ func extractUserInfo(tokenStr string, cfg Config, idps map[string]idpRuntime) (*
 	return &UserInfo{
 		Subject: sub,
 		Email:   c.Email,
-		Groups:  c.Groups,
 		Issuer:  rt.cfg.Issuer,
 		Scope:   rt.cfg.Scope,
 	}, &idpCfg, nil

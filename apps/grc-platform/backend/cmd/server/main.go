@@ -36,6 +36,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/file"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user/entity"
 	userhandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user/handler"
@@ -71,6 +72,7 @@ func main() {
 	// privilege.New bounds the initial load itself; ctx here governs only the
 	// lifetime of its background refresh.
 	var privStore *privilege.Store
+	var grantRepo grant.Repository
 	if cfg.Auth.TokenValidatorEnabled {
 		privStore, err = privilege.New(ctx, entityCli)
 		if err != nil {
@@ -78,6 +80,11 @@ func main() {
 			os.Exit(1)
 		}
 		slog.Info("privilege store loaded")
+
+		// Grants are read from the entity on every request and never cached:
+		// role→privilege changes only on a deploy (hence privStore's 15-minute
+		// refresh above), but a revoked grant must take effect immediately.
+		grantRepo = grant.NewRepository(entityCli)
 	}
 
 	hrClient := hrentity.NewClient(cfg.HREntity.GraphQLURL, cfg.HREntity.TokenURL, cfg.HREntity.ClientID, cfg.HREntity.ClientSecret)
@@ -119,6 +126,7 @@ func main() {
 						ClockSkew:             cfg.Auth.ClockSkew,
 						TokenValidatorEnabled: cfg.Auth.TokenValidatorEnabled,
 						PrivilegeStore:        privStore,
+						Grants:                grantRepo,
 					})(
 						middleware.IssuerScope(mux),
 					),

@@ -169,6 +169,26 @@ const (
 	ExportReport         = "EXPORT_REPORT"
 )
 
+// AllRiskPrivileges returns every active Risk Hub privilege.
+//
+// Used only for the local-dev allow-all mode, where no privilege store is
+// configured and every server-side check passes: the UI needs a list to render
+// from, and an empty one would hide every action in the mode that permits them
+// all. Never use it to answer an authorisation question.
+//
+// Retired privileges are excluded — they resolve for nobody server-side, so
+// including them would render buttons that always fail.
+func AllRiskPrivileges() []string {
+	return []string{
+		ViewRisks, ViewAllRisks, ViewRiskDashboard, ViewAnalytics,
+		CreateRisk, UpdateRisk, SubmitRisk, CancelRisk,
+		OwnerApproveRisk, ManagementApproveRisk, ComplianceApproveRisk,
+		OwnerRejectRisk, ManagementRejectRisk, ComplianceRejectRisk,
+		CompleteRisk, CloseRisk, EscalateRisk, AssessRisk,
+		ManageTeams, ManageRiskScores, ManageActionPlans, ManageComplianceRefs,
+	}
+}
+
 type contextKey struct{}
 
 // Store holds the role→privilege mapping and refreshes it periodically from the

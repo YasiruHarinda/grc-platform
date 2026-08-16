@@ -19,7 +19,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"strings"
 	"time"
 )
 
@@ -79,8 +78,7 @@ type IdPConfig struct {
 	Issuer       string
 	JWKSEndpoint string
 	Audience     string
-	Scope        string            // ScopeFull | ScopeEvidenceApp
-	GroupRoleMap map[string]string // external group -> GRC role name; nil = identity map
+	Scope        string // ScopeFull | ScopeEvidenceApp
 }
 
 type AuthConfig struct {
@@ -278,7 +276,14 @@ func Load() (Config, error) {
 // web app) is always required. IdP-2 (the Evidence Portal) is optional — it is
 // appended only when AUTH_ISSUER_2 is set, so single-IdP deployments are
 // unchanged. When AUTH_ISSUER_2 is set, all of its companion vars are required
-// (fail fast), and its group→role map is parsed from AUTH_GROUP_ROLE_MAP_2.
+// (fail fast).
+//
+// AUTH_GROUP_ROLE_MAP_2 is gone. It mapped the Evidence Portal's group claims
+// onto GRC role names, which were then resolved to privileges and intersected
+// down to exactly {SUBMIT_EVIDENCE} — so the whole chain only ever produced one
+// bit. An evidence-app token now carries that capability by virtue of its
+// issuer (see middleware.evidenceAppPrivileges), and no token's group claim is
+// read anywhere.
 func loadIdPs() ([]IdPConfig, error) {
 	idp1 := IdPConfig{Scope: ScopeFull}
 	var err error
@@ -307,36 +312,7 @@ func loadIdPs() ([]IdPConfig, error) {
 	if idp2.Audience, err = mustEnv("AUTH_AUDIENCE_2"); err != nil {
 		return nil, err
 	}
-	rawMap, err := mustEnv("AUTH_GROUP_ROLE_MAP_2")
-	if err != nil {
-		return nil, err
-	}
-	if idp2.GroupRoleMap, err = parseGroupRoleMap(rawMap); err != nil {
-		return nil, err
-	}
 	return append(idps, idp2), nil
-}
-
-// parseGroupRoleMap parses a comma-separated list of ext=grc pairs
-// (e.g. "grc_evidence_submitter=audit_internal_team,other=role") into a map.
-func parseGroupRoleMap(raw string) (map[string]string, error) {
-	m := make(map[string]string)
-	for _, pair := range strings.Split(raw, ",") {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-		ext, grc, ok := strings.Cut(pair, "=")
-		ext, grc = strings.TrimSpace(ext), strings.TrimSpace(grc)
-		if !ok || ext == "" || grc == "" {
-			return nil, fmt.Errorf("invalid AUTH_GROUP_ROLE_MAP_2 entry %q: want ext=grc", pair)
-		}
-		m[ext] = grc
-	}
-	if len(m) == 0 {
-		return nil, fmt.Errorf("AUTH_GROUP_ROLE_MAP_2 must contain at least one ext=grc pair")
-	}
-	return m, nil
 }
 
 func mustEnv(key string) (string, error) {
