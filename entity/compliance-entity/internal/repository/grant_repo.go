@@ -128,7 +128,10 @@ func (r *grantRepo) GrantsForUserEmail(ctx context.Context, email string) (int, 
 // status = 'INACTIVE' rather than deleting, so the row survives as a record
 // that the grant once existed, and re-granting must be able to reuse it.
 func (r *grantRepo) CreateGrant(ctx context.Context, userID int, req domain.CreateUserGrantRequest) (*domain.UserGrant, error) {
-	res, err := r.db.ExecContext(ctx, `
+	// The insert result is deliberately discarded: LastInsertId is 0 on the
+	// ON DUPLICATE KEY path when nothing changed, so the grant is read back by
+	// its natural key below rather than trusted from here.
+	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO user_role_grant (user_id, role_id, scope_type, scope_id, status, created_by)
 		VALUES (?, ?, ?, ?, 'ACTIVE', ?)
 		ON DUPLICATE KEY UPDATE
@@ -142,10 +145,6 @@ func (r *grantRepo) CreateGrant(ctx context.Context, userID int, req domain.Crea
 		return nil, fmt.Errorf("grant.CreateGrant: %w", err)
 	}
 
-	// LastInsertId is 0 on the ON DUPLICATE KEY path when nothing changed, so
-	// the grant is read back by its natural key rather than trusted from the
-	// insert result.
-	_ = res
 	rows, err := r.db.QueryContext(ctx,
 		grantSelect+" AND g.user_id = ? AND g.role_id = ? AND g.scope_type = ? AND g.scope_id = ?",
 		userID, req.RoleID, req.ScopeType, req.ScopeID)

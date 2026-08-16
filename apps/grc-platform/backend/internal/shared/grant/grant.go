@@ -316,23 +316,6 @@ func (s *Set) PrivilegesIn(teamID int) []string {
 	return out
 }
 
-// Privileges returns the union as a sorted slice, for GET /me/privileges.
-//
-// The union is the right answer for nav and route gating — "should this tab
-// exist at all" — and the wrong answer for any per-risk decision, which must
-// come from the privileges effective on that risk.
-func (s *Set) Privileges() []string {
-	if s == nil {
-		return []string{}
-	}
-	out := make([]string, 0, len(s.union))
-	for p := range s.union {
-		out = append(out, p)
-	}
-	sort.Strings(out)
-	return out
-}
-
 // Grants returns the caller's raw grants.
 func (s *Set) Grants() []Grant {
 	if s == nil {
