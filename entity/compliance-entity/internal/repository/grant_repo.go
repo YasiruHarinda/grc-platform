@@ -33,7 +33,7 @@ type GrantRepository interface {
 	GrantsForUserID(ctx context.Context, userID int) ([]domain.UserGrant, error)
 	GrantsForUserEmail(ctx context.Context, email string) (int, []domain.UserGrant, error)
 	CreateGrant(ctx context.Context, userID int, req domain.CreateUserGrantRequest) (*domain.UserGrant, error)
-	RevokeGrant(ctx context.Context, userID, grantID int) error
+	RevokeGrant(ctx context.Context, userID, grantID int, revokedBy string) error
 	GetRoleByID(ctx context.Context, roleID int) (*domain.Role, error)
 	ListRoles(ctx context.Context) ([]domain.Role, error)
 	TeamExists(ctx context.Context, scopeType string, scopeID int) (bool, error)
@@ -109,13 +109,24 @@ func (r *grantRepo) GrantsForUserID(ctx context.Context, userID int) ([]domain.U
 	return scanGrants(rows)
 }
 
-// GrantsForUserEmail resolves a user by email and returns their grants in one
-// round trip, returning the resolved user id alongside.
+// GrantsForUserEmail resolves a user by email and returns their grants,
+// returning the resolved user id alongside.
 //
-// This is the hot path: the GRC backend calls it on every authenticated request
-// to build the caller's scoped privilege set. Splitting it into "look up user,
-// then look up grants" would double the per-request cost of every API call in
-// the platform.
+// This is the hot path: the GRC backend calls it on every authenticated
+// request to build the caller's scoped privilege set, and consumes both halves
+// of the result (see middleware.UserInfo.UserID). Exposing it as one endpoint
+// rather than making callers chain GET /users/by-email + GET /grants/user/{id}
+// is what keeps that to a single HTTP round trip — the cost worth saving here,
+// since the network hop dominates.
+//
+// It does take two queries internally, deliberately. Folding them into one
+// join would mean either forking grantSelect — which both read paths share
+// precisely so they cannot drift apart — or LEFT JOINing from `user` and
+// scanning nullable grant columns, because a user with no grants produces no
+// grant rows and would otherwise be indistinguishable from one who does not
+// exist. That distinction is load-bearing (see below), and a second indexed
+// primary-key lookup on an already-open pooled connection is not what this
+// path spends its time on.
 //
 // A missing user is NotFound rather than an empty grant list, so the caller can
 // distinguish "this person has no roles" from "this person does not exist here"
@@ -184,12 +195,17 @@ func (r *grantRepo) CreateGrant(ctx context.Context, userID int, req domain.Crea
 // and when it was taken away, is exactly the history an authorisation change
 // needs to leave behind.
 //
+// revokedBy lands in updated_by, so the row records who took the grant away as
+// well as who gave it (created_by). Without it a revoked row still names only
+// the grantor, which reads as if they performed both halves — and removing
+// someone's access deserves the same audit trail as conferring it.
+//
 // Scoped by user_id as well as grant id so a mismatched pair cannot revoke
 // another user's grant by guessing an id.
-func (r *grantRepo) RevokeGrant(ctx context.Context, userID, grantID int) error {
+func (r *grantRepo) RevokeGrant(ctx context.Context, userID, grantID int, revokedBy string) error {
 	res, err := r.db.ExecContext(ctx,
-		"UPDATE user_role_grant SET status = 'INACTIVE' WHERE id = ? AND user_id = ?",
-		grantID, userID)
+		"UPDATE user_role_grant SET status = 'INACTIVE', updated_by = ? WHERE id = ? AND user_id = ?",
+		revokedBy, grantID, userID)
 	if err != nil {
 		return fmt.Errorf("grant.RevokeGrant: %w", err)
 	}

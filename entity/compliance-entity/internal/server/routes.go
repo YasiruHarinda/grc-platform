@@ -186,7 +186,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	// entirely. Exposing role-mutation endpoints with zero consumer would
 	// widen that trust boundary for no product benefit. Re-add
 	// "GET /grants/user/{id}", "POST /grants/user/{id}", and
-	// "DELETE /grants/user/{id}/{grantId}" (grantH.GrantsByUserID /
+	// "DELETE /grants/user/{id}/{grantId}?revokedBy=" (grantH.GrantsByUserID /
 	// grantH.CreateGrant / grantH.RevokeGrant) in the same PR that lands the
 	// MANAGE_USERS-gated admin grant editor that will actually call them.
 	mux.HandleFunc("GET /roles", grantH.ListRoles)

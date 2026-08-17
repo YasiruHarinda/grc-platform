@@ -457,12 +457,14 @@ func TestAuth_GrantsResolvePerScope(t *testing.T) {
 	if set.HasIn(privilege.CreateRisk, cleverCare) || set.HasIn(privilege.OwnerApproveRisk, cleverCare) {
 		t.Error("must hold nothing in a register with no grant")
 	}
-	// The union still answers "anywhere", for route gating and the Audit Hub.
-	if !set.Has(privilege.OwnerApproveRisk) || !set.Has(privilege.CreateRisk) {
+	// The union — published via PrivilegeMap, what route gating and the Audit
+	// Hub actually read — still answers "anywhere".
+	union := set.PrivilegeMap()
+	if !union[privilege.OwnerApproveRisk] || !union[privilege.CreateRisk] {
 		t.Error("union should contain both privileges")
 	}
-	if set.IsGlobal() {
-		t.Error("a team-scoped caller must not report as global")
+	if set.HasGlobal(privilege.OwnerApproveRisk) || set.HasGlobal(privilege.CreateRisk) {
+		t.Error("a team-scoped caller must not hold either privilege globally")
 	}
 }
 
@@ -488,16 +490,16 @@ func TestAuth_GlobalGrantCoversEveryScope(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+signedToken(issuer, "api", "uid-9", "a@example.com", nil))
 	h.ServeHTTP(httptest.NewRecorder(), req)
 
-	if !set.IsGlobal() {
-		t.Error("a GLOBAL grant holder must report as global")
+	if !set.HasGlobal(privilege.ComplianceApproveRisk) {
+		t.Error("a GLOBAL grant holder must hold the privilege globally")
 	}
 	for _, teamID := range []int{1, 2, 4242} {
 		if !set.HasIn(privilege.ComplianceApproveRisk, teamID) {
 			t.Errorf("GLOBAL grant should cover team %d, including registers created later", teamID)
 		}
 	}
-	if len(set.TeamIDs()) != 0 {
-		t.Errorf("a GLOBAL-only caller has no team list: got %v", set.TeamIDs())
+	if ids := set.RegisterScopeIDs(); len(ids) != 0 {
+		t.Errorf("a GLOBAL-only caller has no team-scoped footprint: got %v", ids)
 	}
 }
 
@@ -555,10 +557,10 @@ func TestAuth_NoGrants_HoldsNothing(t *testing.T) {
 	if !set.IsEmpty() {
 		t.Error("a caller with no grants must report empty")
 	}
-	if set.Has(privilege.OwnerApproveRisk) || set.HasIn(privilege.OwnerApproveRisk, 1) {
+	if set.PrivilegeMap()[privilege.OwnerApproveRisk] || set.HasIn(privilege.OwnerApproveRisk, 1) {
 		t.Error("a caller with no grants must hold nothing")
 	}
-	if set.IsGlobal() {
+	if set.HasGlobal(privilege.OwnerApproveRisk) {
 		t.Error("a caller with no grants is not global")
 	}
 }

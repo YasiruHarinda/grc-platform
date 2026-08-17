@@ -2257,6 +2257,10 @@ paths:
         it was taken away, is the history an authorisation change should leave
         behind. Scoped by user ID as well as grant ID, so a mismatched pair
         cannot revoke another user's grant.
+
+
+        revokedBy is required and recorded in updated_by, so the row names who
+        removed the grant as well as who conferred it (created_by).
       operationId: revokeGrant
       parameters:
       - name: id
@@ -2269,6 +2273,11 @@ paths:
         required: true
         schema:
           type: integer
+      - name: revokedBy
+        in: query
+        required: true
+        schema:
+          type: string
       responses:
         '204':
           description: Grant revoked

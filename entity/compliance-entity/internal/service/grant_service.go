@@ -41,7 +41,7 @@ type GrantService interface {
 	GrantsForUserID(ctx context.Context, userID int) (domain.UserGrantsResponse, error)
 	GrantsForUserEmail(ctx context.Context, email string) (domain.UserGrantsResponse, error)
 	CreateGrant(ctx context.Context, userID int, req domain.CreateUserGrantRequest) (domain.UserGrant, error)
-	RevokeGrant(ctx context.Context, userID, grantID int) error
+	RevokeGrant(ctx context.Context, userID, grantID int, revokedBy string) error
 	ListRoles(ctx context.Context) (domain.ListRolesResponse, error)
 	CandidatesForPrivilege(ctx context.Context, privilegeName string, teamIDs []int) (domain.GrantCandidatesResponse, error)
 }
@@ -191,14 +191,18 @@ func (s *grantService) validateScope(ctx context.Context, role *domain.Role, req
 	return nil
 }
 
-func (s *grantService) RevokeGrant(ctx context.Context, userID, grantID int) error {
+func (s *grantService) RevokeGrant(ctx context.Context, userID, grantID int, revokedBy string) error {
 	if userID <= 0 {
 		return &apierror.ValidationError{Msg: "user id must be a positive integer"}
 	}
 	if grantID <= 0 {
 		return &apierror.ValidationError{Msg: "grant id must be a positive integer"}
 	}
-	return s.repo.RevokeGrant(ctx, userID, grantID)
+	revokedBy = strings.TrimSpace(revokedBy)
+	if revokedBy == "" {
+		return &apierror.ValidationError{Msg: "revokedBy is required"}
+	}
+	return s.repo.RevokeGrant(ctx, userID, grantID, revokedBy)
 }
 
 func (s *grantService) ListRoles(ctx context.Context) (domain.ListRolesResponse, error) {

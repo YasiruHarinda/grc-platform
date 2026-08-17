@@ -199,9 +199,11 @@ func TestRolesDoNotMergeAcrossRegisters(t *testing.T) {
 	if set.HasIn(privilege.CreateRisk, asgardeo) {
 		t.Error("SECURITY: CreateRisk leaked into Asgardeo")
 	}
-	// The union still says yes to both — which is why it must never be the
-	// enforcement on a per-risk action.
-	if !set.Has(privilege.OwnerApproveRisk) || !set.Has(privilege.CreateRisk) {
+	// The union — published via PrivilegeMap for the privilege-context bridge —
+	// still says yes to both, which is why it must never be the enforcement on
+	// a per-risk action.
+	union := set.PrivilegeMap()
+	if !union[privilege.OwnerApproveRisk] || !union[privilege.CreateRisk] {
 		t.Error("the union should contain both privileges")
 	}
 }
