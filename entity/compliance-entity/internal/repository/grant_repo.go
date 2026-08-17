@@ -21,6 +21,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/apierror"
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/domain"
@@ -37,6 +38,7 @@ type GrantRepository interface {
 	ListRoles(ctx context.Context) ([]domain.Role, error)
 	TeamExists(ctx context.Context, scopeType string, scopeID int) (bool, error)
 	RoleCarriesPrivilege(ctx context.Context, roleID int, privilegeName string) (bool, error)
+	CandidatesForPrivilege(ctx context.Context, privilegeName string, teamIDs []int) ([]domain.GrantCandidate, error)
 }
 
 type grantRepo struct{ db *sql.DB }
@@ -265,6 +267,54 @@ func (r *grantRepo) TeamExists(ctx context.Context, scopeType string, scopeID in
 		return false, fmt.Errorf("grant.TeamExists: %w", err)
 	}
 	return true, nil
+}
+
+// CandidatesForPrivilege returns every active user who holds privilegeName —
+// GLOBAL, or scoped to one of teamIDs. Powers the Risk Hub's Owner /
+// Management-Approver pickers: a candidate is exactly someone who would pass
+// the register-scoped RequirePrivilegeIn check that role's approval action
+// runs, so a picked candidate can never 403 on their first approval the way an
+// Asgardeo-group-sourced candidate could.
+//
+// RISK_TEAM only — this has no audit-side caller today, so an AUDIT_TEAM
+// branch would be untested dead code. teamIDs may be empty (no register/team
+// chosen yet in the caller's form), in which case only GLOBAL holders match.
+func (r *grantRepo) CandidatesForPrivilege(ctx context.Context, privilegeName string, teamIDs []int) ([]domain.GrantCandidate, error) {
+	args := []any{privilegeName}
+	scopeCond := "g.scope_type = 'GLOBAL'"
+	if len(teamIDs) > 0 {
+		placeholders := make([]string, len(teamIDs))
+		for i, id := range teamIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		scopeCond += " OR (g.scope_type = 'RISK_TEAM' AND rt.status = 'ACTIVE' AND g.scope_id IN (" +
+			strings.Join(placeholders, ",") + "))"
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT DISTINCT u.id, u.email, u.display_name
+		FROM   user_role_grant g
+		JOIN   `+"`role`"+` r    ON r.id = g.role_id AND r.status = 'ACTIVE'
+		JOIN   role_privilege rp ON rp.role_id = r.id AND rp.is_active = TRUE
+		JOIN   privilege p       ON p.id = rp.privilege_id AND p.status = 'ACTIVE' AND p.privilege_name = ?
+		JOIN   `+"`user`"+` u    ON u.id = g.user_id AND u.status = 'ACTIVE'
+		LEFT JOIN risk_team rt   ON g.scope_type = 'RISK_TEAM' AND rt.id = g.scope_id
+		WHERE  g.status = 'ACTIVE' AND (`+scopeCond+`)
+		ORDER BY u.display_name`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("grant.CandidatesForPrivilege: %w", err)
+	}
+	defer rows.Close()
+
+	out := []domain.GrantCandidate{}
+	for rows.Next() {
+		var c domain.GrantCandidate
+		if err := rows.Scan(&c.ID, &c.Email, &c.DisplayName); err != nil {
+			return nil, fmt.Errorf("grant.CandidatesForPrivilege scan: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 // RoleCarriesPrivilege reports whether a role actively grants a named privilege.

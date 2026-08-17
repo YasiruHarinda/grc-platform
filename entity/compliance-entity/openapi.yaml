@@ -2278,6 +2278,43 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /grants/candidates:
+    get:
+      tags:
+      - Role Grants
+      summary: List users eligible for a role-gated picker field
+      description: >-
+        Returns every active user who holds `privilege` — GLOBAL, or scoped to
+        one of the given `teamId` values (RISK_TEAM scope). Powers the Risk
+        Hub's Risk Owner / Management Approver pickers: a candidate returned
+        here is guaranteed to pass the same scoped privilege check that
+        person's approval action runs, so picking them can never 403 on their
+        first approval.
+      operationId: getGrantCandidates
+      parameters:
+      - name: privilege
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: teamId
+        in: query
+        required: false
+        schema:
+          type: array
+          items:
+            type: integer
+      responses:
+        '200':
+          description: Eligible candidates
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantCandidatesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /risk/dashboard/search:
     post:
       tags:
@@ -5744,6 +5781,25 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Role'
+    GrantCandidate:
+      type: object
+      description: >-
+        One user eligible for a role-gated picker field. Carries only what a
+        picker needs to render an option — no team memberships, no timestamps.
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+        displayName:
+          type: string
+    GrantCandidatesResponse:
+      type: object
+      properties:
+        candidates:
+          type: array
+          items:
+            $ref: '#/components/schemas/GrantCandidate'
     UserGrant:
       type: object
       description: >-

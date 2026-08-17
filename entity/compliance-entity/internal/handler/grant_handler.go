@@ -117,6 +117,29 @@ func (h *GrantHandler) RevokeGrant(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// Candidates handles GET /grants/candidates?privilege=X&teamId=1&teamId=2 —
+// every active user holding privilege X, GLOBAL or scoped to one of the given
+// risk teams. Powers the Risk Hub's Risk Owner / Management Approver pickers.
+func (h *GrantHandler) Candidates(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	var teamIDs []int
+	for _, raw := range q["teamId"] {
+		id, err := strconv.Atoi(raw)
+		if err != nil || id <= 0 {
+			writeServiceError(w, r, &apierror.ValidationError{Msg: "teamId must be a positive integer"})
+			return
+		}
+		teamIDs = append(teamIDs, id)
+	}
+	resp, err := h.svc.CandidatesForPrivilege(r.Context(), q.Get("privilege"), teamIDs)
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
 // ListRoles handles GET /roles — the role catalogue, for a grant editor.
 // Each role carries its module, which determines the scopes it may be granted
 // against, so a UI can offer only the valid ones.

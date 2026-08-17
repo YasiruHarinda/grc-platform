@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/apierror"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
@@ -34,6 +35,19 @@ type Repository interface {
 	// so an authenticated caller who has never been provisioned is treated as
 	// holding nothing rather than failing the request outright.
 	ForEmail(ctx context.Context, email string) (int, []Grant, error)
+	// Candidates returns every user who holds privilegeName — GLOBAL, or
+	// scoped to one of teamIDs. Used to populate role-gated picker fields
+	// (Risk Owner, Management Approver) with people who will actually pass
+	// the same privilege check at approval time, rather than a list sourced
+	// from somewhere else entirely. teamIDs may be empty.
+	Candidates(ctx context.Context, privilegeName string, teamIDs []int) ([]Candidate, error)
+}
+
+// Candidate is one user eligible for a role-gated picker field.
+type Candidate struct {
+	ID          int    `json:"id"`
+	Email       string `json:"email"`
+	DisplayName string `json:"displayName"`
 }
 
 type entityRepository struct{ c *entityclient.Client }
@@ -73,6 +87,25 @@ func (r *entityRepository) ForEmail(ctx context.Context, email string) (int, []G
 		return 0, nil, fmt.Errorf("load grants: %w", err)
 	}
 	return resp.UserID, resp.Grants, nil
+}
+
+// Candidates fetches candidates from the entity.
+//
+// Deliberately uncached, same reasoning as ForEmail: a revoked grant must stop
+// offering that person as a picker option on the caller's very next form load.
+func (r *entityRepository) Candidates(ctx context.Context, privilegeName string, teamIDs []int) ([]Candidate, error) {
+	q := url.Values{}
+	q.Set("privilege", privilegeName)
+	for _, id := range teamIDs {
+		q.Add("teamId", strconv.Itoa(id))
+	}
+	var resp struct {
+		Candidates []Candidate `json:"candidates"`
+	}
+	if err := r.c.Get(ctx, "/grants/candidates?"+q.Encode(), &resp); err != nil {
+		return nil, fmt.Errorf("load candidates: %w", err)
+	}
+	return resp.Candidates, nil
 }
 
 // isNotFound reports whether err is the entity's 404, mirroring

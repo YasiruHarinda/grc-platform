@@ -34,7 +34,7 @@ import type { JSX, ReactNode } from "react";
 import EvidenceAttachments from "@components/evidence-attachments/EvidenceAttachments";
 import type { AddRiskFormValues } from "./types";
 import { TREATMENT_STRATEGIES } from "./constants";
-import { resolveUserByEmail, searchEmployees } from "../../api/riskApi";
+import { fetchManagementApprovers, fetchRiskOwnerCandidates, resolveUserByEmail, searchEmployees } from "../../api/riskApi";
 import type { EmployeeOption, RiskTeam, UserOption } from "../../api/riskApi";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 
@@ -80,16 +80,10 @@ function SectionHeader({ title }: { title: string }): JSX.Element {
 
 interface ActionPlanStepProps {
   assignmentTeams: RiskTeam[];
-  users: UserOption[];
-  riskOwnerCandidates: UserOption[];
-  managementApprovers: UserOption[];
 }
 
 export default function ActionPlanStep({
   assignmentTeams,
-  users,
-  riskOwnerCandidates,
-  managementApprovers,
 }: ActionPlanStepProps): JSX.Element {
   const { control, setValue, clearErrors } = useFormContext<AddRiskFormValues>();
   const authFetch = useAuthApiClient();
@@ -98,35 +92,50 @@ export default function ActionPlanStep({
 
   const evidenceAttachments = useWatch({ control, name: "evidenceAttachments" });
 
-  // Risk Owner is restricted to users already belonging (via risk_team_ids) to
-  // either the source register team (picked in Step 1) or this assignment
-  // team — unlike Action Owner, Risk Owner must stay a real, already-provisioned
-  // grc-platform account (see conversation: HR entity employees don't
-  // automatically get platform access, so they're not eligible here) — AND to
-  // holding the Risk Owner role in Asgardeo (riskOwnerCandidates, sourced live
-  // via SCIM group membership; see fetchRiskOwnerCandidates).
+  // Risk Owner and Management Approver are each restricted to users who
+  // already hold the grant their approval action requires (RISK_OWNER_APPROVE
+  // / RISK_MANAGEMENT_APPROVE), scoped to the source register (Step 1) and/or
+  // this assignment team — the same scope handleOwnerApproveRisk /
+  // handleManagementApproveRisk check server-side, so a candidate offered
+  // here can never 403 on their first approval. Fetched fresh whenever either
+  // team changes, rather than filtered from a static list, since eligibility
+  // is scope-dependent.
   const sourceRegister = useWatch({ control, name: "sourceRegister" });
   const assignmentTeam = useWatch({ control, name: "assignmentTeam" });
   const eligibleTeamIds = [sourceRegister, assignmentTeam].filter(
     (id): id is number => typeof id === "number",
   );
-  const riskOwnerCandidateIds = new Set(riskOwnerCandidates.map((u) => u.id));
-  const eligibleRiskOwners = users.filter(
-    (u) =>
-      u.risk_team_ids.some((teamId) => eligibleTeamIds.includes(teamId)) &&
-      riskOwnerCandidateIds.has(u.id),
-  );
+  const [riskOwnerCandidates, setRiskOwnerCandidates] = useState<UserOption[]>([]);
+  const [managementApprovers, setManagementApprovers] = useState<UserOption[]>([]);
+  useEffect(() => {
+    fetchRiskOwnerCandidates(authFetch, eligibleTeamIds)
+      .then(setRiskOwnerCandidates)
+      .catch(() => setRiskOwnerCandidates([]));
+    fetchManagementApprovers(authFetch, eligibleTeamIds)
+      .then(setManagementApprovers)
+      .catch(() => setManagementApprovers([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-fetch when the eligible team ids change
+  }, [eligibleTeamIds.join(","), authFetch]);
 
-  // Clear a previously-selected Risk Owner if changing the source register or
-  // assignment team makes them no longer eligible — avoids submitting a
-  // riskOwner value that's silently stale relative to the visible options.
+  // Clear a previously-selected Risk Owner / Management Approver if changing
+  // the source register or assignment team makes them no longer eligible —
+  // avoids submitting a value that's silently stale relative to the visible
+  // options.
   const riskOwner = useWatch({ control, name: "riskOwner" });
   useEffect(() => {
-    if (riskOwner !== "" && !eligibleRiskOwners.some((u) => u.id === riskOwner)) {
+    if (riskOwner !== "" && !riskOwnerCandidates.some((u) => u.id === riskOwner)) {
       setValue("riskOwner", "", { shouldDirty: false });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-check when the eligible team ids change
-  }, [eligibleTeamIds.join(",")]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-check when the candidate list changes
+  }, [riskOwnerCandidates]);
+
+  const managementApprover = useWatch({ control, name: "managementApprover" });
+  useEffect(() => {
+    if (managementApprover !== "" && !managementApprovers.some((u) => u.id === managementApprover)) {
+      setValue("managementApprover", "", { shouldDirty: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-check when the candidate list changes
+  }, [managementApprovers]);
 
   // Action Owner can be any employee, not just an existing grc-platform
   // user, so — like "Risk Identified By: Employee" — options are searched
@@ -231,7 +240,7 @@ export default function ActionPlanStep({
                   <ComplexSelect.MenuItem value="" disabled sx={{ display: "none" }}>
                     Select a risk owner
                   </ComplexSelect.MenuItem>
-                  {eligibleRiskOwners.map((u) => (
+                  {riskOwnerCandidates.map((u) => (
                     <ComplexSelect.MenuItem key={u.id} value={u.id}>
                       {u.display_name}
                     </ComplexSelect.MenuItem>
@@ -239,9 +248,9 @@ export default function ActionPlanStep({
                 </ComplexSelect>
                 {fieldState.error ? (
                   <FormHelperText error>{fieldState.error.message}</FormHelperText>
-                ) : eligibleTeamIds.length > 0 && eligibleRiskOwners.length === 0 ? (
+                ) : eligibleTeamIds.length > 0 && riskOwnerCandidates.length === 0 ? (
                   <FormHelperText error>
-                    No users are assigned to the selected team(s) yet. Contact an admin to assign team membership.
+                    No one holds the Risk Owner role for the selected team(s) yet. Contact an admin to grant it.
                   </FormHelperText>
                 ) : (
                   <FormHelperText>Person accountable for managing this risk.</FormHelperText>
@@ -278,6 +287,10 @@ export default function ActionPlanStep({
                 </ComplexSelect>
                 {fieldState.error ? (
                   <FormHelperText error>{fieldState.error.message}</FormHelperText>
+                ) : eligibleTeamIds.length > 0 && managementApprovers.length === 0 ? (
+                  <FormHelperText error>
+                    No one holds the Management role for the selected team(s) yet. Contact an admin to grant it.
+                  </FormHelperText>
                 ) : (
                   <FormHelperText>
                     Approves this risk if it's High level with Accept treatment, and is who an overdue risk escalates to.

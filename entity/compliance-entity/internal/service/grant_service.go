@@ -43,6 +43,7 @@ type GrantService interface {
 	CreateGrant(ctx context.Context, userID int, req domain.CreateUserGrantRequest) (domain.UserGrant, error)
 	RevokeGrant(ctx context.Context, userID, grantID int) error
 	ListRoles(ctx context.Context) (domain.ListRolesResponse, error)
+	CandidatesForPrivilege(ctx context.Context, privilegeName string, teamIDs []int) (domain.GrantCandidatesResponse, error)
 }
 
 type grantService struct {
@@ -209,6 +210,21 @@ func (s *grantService) ListRoles(ctx context.Context) (domain.ListRolesResponse,
 		roles = []domain.Role{}
 	}
 	return domain.ListRolesResponse{Roles: roles}, nil
+}
+
+func (s *grantService) CandidatesForPrivilege(ctx context.Context, privilegeName string, teamIDs []int) (domain.GrantCandidatesResponse, error) {
+	privilegeName = strings.TrimSpace(privilegeName)
+	if privilegeName == "" {
+		return domain.GrantCandidatesResponse{}, &apierror.ValidationError{Msg: "privilege is required"}
+	}
+	candidates, err := s.repo.CandidatesForPrivilege(ctx, privilegeName, teamIDs)
+	if err != nil {
+		return domain.GrantCandidatesResponse{}, err
+	}
+	if candidates == nil {
+		candidates = []domain.GrantCandidate{}
+	}
+	return domain.GrantCandidatesResponse{Candidates: candidates}, nil
 }
 
 func contains(haystack []string, needle string) bool {

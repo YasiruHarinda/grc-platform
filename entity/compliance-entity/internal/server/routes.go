@@ -179,6 +179,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	mux.HandleFunc("GET /grants/user/{id}", grantH.GrantsByUserID)
 	mux.HandleFunc("POST /grants/user/{id}", grantH.CreateGrant)
 	mux.HandleFunc("DELETE /grants/user/{id}/{grantId}", grantH.RevokeGrant)
+	mux.HandleFunc("GET /grants/candidates", grantH.Candidates)
 	mux.HandleFunc("GET /roles", grantH.ListRoles)
 
 	// Audit teams

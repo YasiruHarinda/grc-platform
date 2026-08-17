@@ -57,30 +57,38 @@ func (d *Deps) handleListTeams(w http.ResponseWriter, r *http.Request) {
 	// dropdown. A grant on an ASSIGNMENT-only team (HR, Legal) is not a register
 	// and never belongs here.
 	//
-	// A GLOBAL holder is deliberately unaffected: they may hold no team-scoped
-	// grant at all, and narrowing them to nothing would empty a dropdown for
-	// someone entitled to every entry in it.
+	// A GLOBAL ViewRisks holder is deliberately unaffected by ?mine=true: they
+	// may hold no team-scoped grant at all, and narrowing them to nothing would
+	// empty a dropdown for someone entitled to every entry in it.
 	//
 	// ?privilege=<NAME> narrows further to registers where the caller holds that
-	// privilege. Add Risk passes RISK_CREATE, because "registers I can see" and
-	// "registers I may raise a risk in" are different questions — a Risk Owner
-	// on a BOTH team can see its dashboard but cannot create there, and offering
-	// it in the create picker would produce a choice the server refuses.
-	if r.URL.Query().Get("mine") == "true" && !seesEveryRisk(r.Context()) {
+	// privilege — applied unconditionally, never short-circuited by
+	// seesEveryRisk. Add Risk passes RISK_CREATE, because "registers I can see"
+	// and "registers I may raise a risk in" are different questions answered by
+	// different privileges (ViewRisks vs. RISK_CREATE): a Management approver
+	// sees every risk globally but may hold RISK_CREATE on only one register
+	// (or none), and offering the rest in the create picker would produce
+	// choices the server refuses.
+	mineOnly := r.URL.Query().Get("mine") == "true"
+	wantPriv := r.URL.Query().Get("privilege")
+	if mineOnly || wantPriv != "" {
 		set := callerGrants(r.Context())
-		wantPriv := r.URL.Query().Get("privilege")
+		visibleEverywhere := seesEveryRisk(r.Context())
 
-		mine := map[int]bool{}
+		registerScoped := map[int]bool{}
 		for _, id := range set.RegisterScopeIDs() {
-			if wantPriv == "" || auth.HasPrivilegeIn(r.Context(), wantPriv, id) {
-				mine[id] = true
-			}
+			registerScoped[id] = true
 		}
+
 		filtered := make([]*model.Team, 0, len(teams))
 		for _, t := range teams {
-			if mine[t.ID] {
-				filtered = append(filtered, t)
+			if mineOnly && !visibleEverywhere && !registerScoped[t.ID] {
+				continue
 			}
+			if wantPriv != "" && !auth.HasPrivilegeIn(r.Context(), wantPriv, t.ID) {
+				continue
+			}
+			filtered = append(filtered, t)
 		}
 		teams = filtered
 	}

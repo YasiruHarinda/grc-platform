@@ -373,12 +373,21 @@ func (s *stubGrants) ForEmail(_ context.Context, _ string) (int, []grant.Grant, 
 	return s.userID, s.grants, s.err
 }
 
+func (s *stubGrants) Candidates(_ context.Context, _ string, _ []int) ([]grant.Candidate, error) {
+	return nil, nil
+}
+
 // failingGrants fails the test if it is ever consulted.
 type failingGrants struct{ t *testing.T }
 
 func (f *failingGrants) ForEmail(_ context.Context, email string) (int, []grant.Grant, error) {
 	f.t.Errorf("grants must not be loaded for this caller (email %q)", email)
 	return 0, nil, nil
+}
+
+func (f *failingGrants) Candidates(_ context.Context, _ string, _ []int) ([]grant.Candidate, error) {
+	f.t.Errorf("candidates must not be loaded for this caller")
+	return nil, nil
 }
 
 // grantCfg builds a full-scope config wired to the given grant repository.

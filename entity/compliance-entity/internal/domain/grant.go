@@ -122,3 +122,19 @@ type Role struct {
 type ListRolesResponse struct {
 	Roles []Role `json:"roles"`
 }
+
+// GrantCandidate is one user eligible to be picked for a role-gated field —
+// e.g. Risk Owner or Management Approver — because they hold the privilege
+// that field's approval action requires, in a scope that covers the field's
+// context. Deliberately carries only what a picker needs to render an option:
+// no team memberships, no timestamps.
+type GrantCandidate struct {
+	ID          int    `json:"id"`
+	Email       string `json:"email"`
+	DisplayName string `json:"displayName"`
+}
+
+// GrantCandidatesResponse is returned by GET /grants/candidates.
+type GrantCandidatesResponse struct {
+	Candidates []GrantCandidate `json:"candidates"`
+}

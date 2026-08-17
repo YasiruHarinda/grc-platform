@@ -42,10 +42,8 @@ import {
   createRisk,
   fetchAssignmentTeams,
   fetchComplianceReferences,
-  fetchManagementApprovers,
   fetchNextSequenceID,
   fetchRiskCategories,
-  fetchRiskOwnerCandidates,
   fetchRiskScores,
   fetchSourceRegisterTeams,
   fetchUsers,
@@ -125,8 +123,6 @@ export default function AddRisk(): JSX.Element {
   const [complianceRefs, setComplianceRefs]           = useState<ComplianceReference[]>([]);
   const [riskCategories, setRiskCategories]           = useState<RiskCategory[]>([]);
   const [users, setUsers]                             = useState<UserOption[]>([]);
-  const [managementApprovers, setManagementApprovers] = useState<UserOption[]>([]);
-  const [riskOwnerCandidates, setRiskOwnerCandidates] = useState<UserOption[]>([]);
   const [fetchError, setFetchError]                   = useState<string | null>(null);
   const [submitError, setSubmitError]                 = useState<string | null>(null);
   // Set only when the risk itself was created successfully but a staged
@@ -205,18 +201,14 @@ export default function AddRisk(): JSX.Element {
       fetchComplianceReferences(authFetch),
       fetchRiskCategories(authFetch),
       fetchUsers(authFetch),
-      fetchManagementApprovers(authFetch),
-      fetchRiskOwnerCandidates(authFetch),
     ])
-      .then(([srTeams, atTeams, scores, refs, categories, userList, mgmtApprovers, ownerCandidates]) => {
+      .then(([srTeams, atTeams, scores, refs, categories, userList]) => {
         setSourceRegisterTeams(srTeams);
         setAssignmentTeams(atTeams);
         setRiskScores(scores);
         setComplianceRefs(refs);
         setRiskCategories(categories);
         setUsers(userList);
-        setManagementApprovers(mgmtApprovers);
-        setRiskOwnerCandidates(ownerCandidates);
       })
       .catch(() => {
         setFetchError("Failed to load form data. Please refresh the page.");
@@ -375,9 +367,6 @@ export default function AddRisk(): JSX.Element {
     <RiskAssessmentStep riskScores={riskScores} />,
     <ActionPlanStep
       assignmentTeams={assignmentTeams}
-      users={users}
-      riskOwnerCandidates={riskOwnerCandidates}
-      managementApprovers={managementApprovers}
     />,
   ];
 

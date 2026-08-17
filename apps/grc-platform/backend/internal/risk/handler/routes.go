@@ -21,10 +21,9 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
 	riskservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/service"
-	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
 
@@ -47,12 +46,11 @@ type Deps struct {
 	// user.id — used by handleListRisks (Action Owner list scoping) and the
 	// action-plan handlers (ownership checks).
 	Users user.Repository
-	// SCIM answers "which users belong to Asgardeo group X" for role-filtered
-	// pickers (Management Approver, Risk Owner) — see internal/scim.
-	SCIM *scim.Client
-	// Groups holds the Asgardeo group names SCIM is queried against — see
-	// config.RiskGroupsConfig.
-	Groups config.RiskGroupsConfig
+	// Grants answers "which users hold privilege X, GLOBAL or scoped to
+	// register/team Y" — powers the Risk Owner / Management Approver pickers
+	// (see candidates.go). nil in local dev, when no privilege store is
+	// configured — handlers must go through auth.AllowAll before using it.
+	Grants grant.Repository
 	// Email sends the risk-owner notification fired synchronously right
 	// after a risk is created. A delivery failure is logged but never fails
 	// risk creation itself — see handleCreateRisk.

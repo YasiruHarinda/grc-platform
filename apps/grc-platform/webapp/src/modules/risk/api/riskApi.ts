@@ -559,16 +559,25 @@ export async function fetchRiskCategories(authFetch: AuthFetch): Promise<RiskCat
   return handleResponse<RiskCategory[]>(res);
 }
 
-// fetchManagementApprovers / fetchRiskOwnerCandidates return the subset of
-// platform users who also hold the matching Asgardeo group membership —
-// sourced live via the backend's SCIM integration, not a locally-stored role.
-export async function fetchManagementApprovers(authFetch: AuthFetch): Promise<UserOption[]> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/management-approvers`);
+// fetchManagementApprovers / fetchRiskOwnerCandidates return every user who
+// already holds the grant their approval action requires — GLOBAL, or scoped
+// to one of teamIds (pass the chosen source register and/or assignment team).
+// A candidate returned here is guaranteed not to 403 on their first approval.
+// teamIds omitted or empty returns GLOBAL holders only.
+function teamIdsQuery(teamIds?: number[]): string {
+  if (!teamIds || teamIds.length === 0) return "";
+  const params = new URLSearchParams();
+  teamIds.forEach((id) => params.append("teamId", String(id)));
+  return `?${params}`;
+}
+
+export async function fetchManagementApprovers(authFetch: AuthFetch, teamIds?: number[]): Promise<UserOption[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/management-approvers${teamIdsQuery(teamIds)}`);
   return handleResponse<UserOption[]>(res);
 }
 
-export async function fetchRiskOwnerCandidates(authFetch: AuthFetch): Promise<UserOption[]> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk-owner-candidates`);
+export async function fetchRiskOwnerCandidates(authFetch: AuthFetch, teamIds?: number[]): Promise<UserOption[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk-owner-candidates${teamIdsQuery(teamIds)}`);
   return handleResponse<UserOption[]>(res);
 }
 
