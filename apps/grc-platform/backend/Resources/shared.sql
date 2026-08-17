@@ -1,6 +1,9 @@
 -- =============================================================================
 -- GRC Platform — Shared Schema
 -- Run this FIRST, before audit_schema.sql and risk_schema.sql.
+--
+-- Full order:  shared.sql → risk_schema.sql / audit_schema.sql
+--              → shared_seed_data.sql   (required, not optional — see below)
 -- =============================================================================
 --
 -- Tables:
@@ -130,10 +133,15 @@ CREATE TABLE IF NOT EXISTS `role` (
 -- information_schema guard below is portable to any MySQL 8.
 --
 -- module gets a DEFAULT so existing rows backfill immediately rather than
--- failing the NOT NULL constraint; shared_seed_data.sql's role INSERT
--- (ON DUPLICATE KEY UPDATE module = VALUES(module)) corrects it to the real
--- value for every seeded role right after this runs. scope_basis is nullable
+-- failing the NOT NULL constraint; the role INSERT in this directory's
+-- shared_seed_data.sql (ON DUPLICATE KEY UPDATE module = VALUES(module))
+-- corrects it to the real value for every seeded role. scope_basis is nullable
 -- by design (NULL means GLOBAL-only) and needs no default for the same reason.
+--
+-- Run Resources/shared_seed_data.sql after this file, always. Neither column
+-- is written by any Go code — scope_basis in particular is only ever read, via
+-- COALESCE(scope_basis,''), so a role left NULL resolves to an empty basis and
+-- its holders see no risks at all. This schema is not usable on its own.
 SET @role_has_module = (
   SELECT COUNT(*) FROM information_schema.COLUMNS
   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'role' AND COLUMN_NAME = 'module'
@@ -252,7 +260,7 @@ CREATE TABLE IF NOT EXISTS role_privilege (
 -- (both soft-delete via status). A grant pointing at a missing team grants
 -- nothing, so the failure mode is closed, not open.
 --
--- ACCESS RULE (see RISK_MODULE_DESIGN.md §3 for the full statement)
+-- ACCESS RULE
 -- Read is broad, authority is narrow: a grant on a risk's ASSIGNMENT team
 -- confers visibility and picker-eligibility only, never write or approval
 -- rights. Those follow the SOURCE register. Otherwise assigning a risk to a

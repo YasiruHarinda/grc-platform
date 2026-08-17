@@ -525,8 +525,8 @@ function CompletionEvidenceSection({
 // action_owner_id, uniformly for both plan types. That ownership IS the
 // authorisation — there is no privilege to check, which is why this takes no
 // `can`: see canComplete below. plan_type is always STANDARD for new plans;
-// MANAGEMENT only appears on historical rows (retired — see
-// RISK_MODULE_DESIGN.md §5.3).
+// MANAGEMENT only appears on historical rows, from when an escalation was
+// answered with its own plan rather than with a comment.
 function ActionPlanCard({
   riskId,
   plan,

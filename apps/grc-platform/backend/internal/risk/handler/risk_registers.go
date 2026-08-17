@@ -261,7 +261,7 @@ func (d *Deps) requireRiskAssigner(w http.ResponseWriter, r *http.Request, riskI
 // that scoping would otherwise be cosmetic (a caller restricted in the list
 // could still read any risk directly by id).
 //
-// It implements the read half of the access rule (RISK_MODULE_DESIGN.md §3):
+// It implements the read half of the access rule:
 //
 //	See a risk if you hold a GLOBAL grant, OR a grant on its source register
 //	or assignment team, OR you are personally named on it.

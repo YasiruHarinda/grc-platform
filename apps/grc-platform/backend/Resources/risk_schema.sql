@@ -452,7 +452,7 @@ CREATE TABLE IF NOT EXISTS risk_change_log (
 -- destroy the only record of who belonged where.
 --
 -- Remove once the backfill is applied and grant-based scoping is live in every
--- environment. See RISK_MODULE_DESIGN.md §3.
+-- environment.
 --
 -- Many-to-many between `user` (shared.sql) and risk_team: a user may belong to
 -- zero or more risk teams. Both FKs CASCADE — a membership row has no meaning
