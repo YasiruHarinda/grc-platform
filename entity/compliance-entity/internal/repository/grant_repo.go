@@ -122,7 +122,7 @@ func (r *grantRepo) GrantsForUserID(ctx context.Context, userID int) ([]domain.U
 func (r *grantRepo) GrantsForUserEmail(ctx context.Context, email string) (int, []domain.UserGrant, error) {
 	var userID int
 	err := r.db.QueryRowContext(ctx,
-		"SELECT id FROM `user` WHERE email = ? AND status <> 'REMOVED'", email).Scan(&userID)
+		"SELECT id FROM `user` WHERE email = ? AND status = 'ACTIVE'", email).Scan(&userID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil, &apierror.NotFoundError{Msg: "user not found: " + email}
 	}
