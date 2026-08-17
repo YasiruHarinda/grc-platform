@@ -28,6 +28,11 @@ const (
 	ScopeOwned Scope = "owned"
 	// ScopeAssigned sees only controls the actor audits (auditor_id = actor).
 	ScopeAssigned Scope = "assigned"
+	// ScopeTeam sees controls in the team(s) the actor manages, plus (additive,
+	// never subtractive) anything they personally own or audit — see
+	// docs/new/Audit-Role-Grant-Migration-Design.md §5.4. The team list is
+	// server-derived (ScopeTeamIDs), never the client-supplied TeamIDs filter.
+	ScopeTeam Scope = "team"
 	// ScopeNone sees nothing.
 	ScopeNone Scope = "none"
 )
@@ -54,6 +59,12 @@ type AuditDashboardRequest struct {
 	// WorkQueueClass selects the action-items lifecycle bucket.
 	WorkQueueClass WorkQueueClass `json:"workQueueClass"`
 	UserEmail      string         `json:"userEmail"`
+	// ScopeTeamIDs is the team(s) the caller manages, server-derived by the GRC
+	// backend from the caller's grants — never from client input. Only read
+	// when Scope or WorkQueueScope is ScopeTeam. Deliberately distinct from any
+	// client-supplied team filter: reusing one would let a team lead widen
+	// their own visibility by naming another team.
+	ScopeTeamIDs []int `json:"scopeTeamIds"`
 }
 
 // AuditStats are the audit-count summary tiles.
@@ -136,6 +147,12 @@ type WorkQueueRequest struct {
 	TeamIDs   []int        `json:"teamIds"` // filter by audit_team.id; nil/empty = all teams
 	OwnerIDs  []int        `json:"ownerIds"` // filter by user.id (process owner); nil/empty = all owners
 	AuditIDs  []int        `json:"auditIds"` // filter by audit.id; nil/empty = all audits
+	// ScopeTeamIDs is the team(s) the caller manages, server-derived by the GRC
+	// backend from the caller's grants. NOT the same thing as TeamIDs above,
+	// which is a client-supplied display filter: reusing TeamIDs for scope
+	// would let a team lead widen their own visibility via ?teamIds=. Only
+	// read when WorkQueueScope is ScopeTeam.
+	ScopeTeamIDs []int `json:"scopeTeamIds"`
 	// ControlNumber is a case-insensitive substring match on audit_control.control_number; "" = no filter.
 	ControlNumber string `json:"controlNumber"`
 	// Statuses filters by audit_control.status; nil/empty = all statuses. The backend

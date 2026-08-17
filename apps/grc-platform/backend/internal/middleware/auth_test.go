@@ -166,8 +166,11 @@ func TestAuth_ValidDevToken_PopulatesContext(t *testing.T) {
 	if captured.Email != "dev@example.com" {
 		t.Errorf("Email: got %q, want %q", captured.Email, "dev@example.com")
 	}
-	if len(captured.Groups) != 1 || captured.Groups[0] != "risk-manager" {
-		t.Errorf("Groups: got %v, want [risk-manager]", captured.Groups)
+	// No PrivilegeStore/Grants configured on devCfg(), so no grant resolution
+	// runs and Roles stays unset — a JWT "groups" claim is never read; roles
+	// come only from user_role_grant via the grant repository.
+	if len(captured.Roles) != 0 {
+		t.Errorf("Roles: got %v, want none (no grant repository configured)", captured.Roles)
 	}
 }
 

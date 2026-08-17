@@ -107,16 +107,17 @@ func (r *auditRepo) List(ctx context.Context) ([]*model.Audit, error) {
 	}
 }
 
-func (r *auditRepo) ListScoped(ctx context.Context, scope model.Scope, userEmail string) ([]*model.Audit, error) {
+func (r *auditRepo) ListScoped(ctx context.Context, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.Audit, error) {
 	var all []*model.Audit
 	for offset := 0; ; offset += pageLimit {
 		var resp struct {
 			Audits []entAudit `json:"audits"`
 		}
 		body := map[string]any{
-			"scope":      scope,
-			"userEmail":  userEmail,
-			"pagination": map[string]int{"limit": pageLimit, "offset": offset},
+			"scope":        scope,
+			"userEmail":    userEmail,
+			"scopeTeamIds": scopeTeamIDs,
+			"pagination":   map[string]int{"limit": pageLimit, "offset": offset},
 		}
 		if err := r.c.Post(ctx, "/audits/search", body, &resp); err != nil {
 			return nil, err
@@ -133,15 +134,16 @@ func (r *auditRepo) ListScoped(ctx context.Context, scope model.Scope, userEmail
 // InScope reports whether id is visible to userEmail at scope, by reusing
 // /audits/search (the same scoped query ListScoped uses) filtered to just this
 // one audit id — avoids a bespoke endpoint for what is otherwise the same check.
-func (r *auditRepo) InScope(ctx context.Context, id int, scope model.Scope, userEmail string) (bool, error) {
+func (r *auditRepo) InScope(ctx context.Context, id int, scope model.Scope, userEmail string, scopeTeamIDs []int) (bool, error) {
 	var resp struct {
 		Audits []entAudit `json:"audits"`
 	}
 	body := map[string]any{
-		"auditIds":   []int{id},
-		"scope":      scope,
-		"userEmail":  userEmail,
-		"pagination": map[string]int{"limit": 1, "offset": 0},
+		"auditIds":     []int{id},
+		"scope":        scope,
+		"userEmail":    userEmail,
+		"scopeTeamIds": scopeTeamIDs,
+		"pagination":   map[string]int{"limit": 1, "offset": 0},
 	}
 	if err := r.c.Post(ctx, "/audits/search", body, &resp); err != nil {
 		return false, err

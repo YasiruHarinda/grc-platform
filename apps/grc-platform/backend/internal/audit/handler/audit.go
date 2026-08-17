@@ -38,12 +38,13 @@ func (h *auditHandler) listAudits(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	scope, _ := deriveScopes(ctx)
+	scopeTeamIDs := managedTeamIDs(auth.Grants(ctx))
 	user := auth.FromContext(ctx)
 	var email string
 	if user != nil {
 		email = user.Email
 	}
-	audits, err := h.svc.ListScoped(ctx, scope, email)
+	audits, err := h.svc.ListScoped(ctx, scope, email, scopeTeamIDs)
 	if err != nil {
 		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
 		return
@@ -74,7 +75,7 @@ func (h *auditHandler) getAudit(w http.ResponseWriter, r *http.Request) {
 		if user != nil {
 			email = user.Email
 		}
-		ok, err := h.svc.InScope(ctx, id, scope, email)
+		ok, err := h.svc.InScope(ctx, id, scope, email, managedTeamIDs(auth.Grants(ctx)))
 		if err != nil {
 			response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
 			return

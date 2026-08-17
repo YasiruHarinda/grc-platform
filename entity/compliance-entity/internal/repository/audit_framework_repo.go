@@ -54,7 +54,7 @@ func (r *auditFrameworkRepo) SearchAuditFrameworks(ctx context.Context, req doma
 		where += " AND status = ?"
 		args = append(args, req.StatusKey)
 	}
-	scopeClause, scopeArgs := frameworkScopeWhere(req.Scope, req.UserEmail)
+	scopeClause, scopeArgs := frameworkScopeWhere(req.Scope, req.UserEmail, req.ScopeTeamIDs)
 	where += scopeClause
 	args = append(args, scopeArgs...)
 
@@ -142,7 +142,7 @@ func (r *auditFrameworkRepo) UpdateAuditFramework(ctx context.Context, id int, r
 // their own (only their audits' controls do), so — one level deeper than
 // auditScopeWhere's "audit qualifies if any control does" — a framework
 // qualifies if any of its audits has any control in scope.
-func frameworkScopeWhere(scope domain.Scope, userEmail string) (string, []any) {
+func frameworkScopeWhere(scope domain.Scope, userEmail string, scopeTeamIDs []int) (string, []any) {
 	switch scope {
 	case "", domain.ScopeAll:
 		return "", nil
@@ -154,6 +154,11 @@ func frameworkScopeWhere(scope domain.Scope, userEmail string) (string, []any) {
 		return ` AND EXISTS (SELECT 1 FROM audit a JOIN audit_control c ON c.audit_id = a.id
 			WHERE a.framework_id = audit_framework.id AND c.auditor_id = (SELECT id FROM ` + "`user`" + ` WHERE email = ?))`,
 			[]any{userEmail}
+	case domain.ScopeTeam:
+		pred, args := teamScopePredicate("c", scopeTeamIDs, userEmail)
+		return ` AND EXISTS (SELECT 1 FROM audit a JOIN audit_control c ON c.audit_id = a.id
+			WHERE a.framework_id = audit_framework.id AND ` + pred + `)`,
+			args
 	default: // ScopeNone and any unrecognized value scope to nothing.
 		return " AND 1=0", nil
 	}

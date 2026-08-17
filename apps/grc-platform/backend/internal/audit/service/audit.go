@@ -33,9 +33,9 @@ import (
 // AuditService defines business operations for audit engagements.
 type AuditService interface {
 	List(ctx context.Context) ([]*model.Audit, error)
-	ListScoped(ctx context.Context, scope model.Scope, userEmail string) ([]*model.Audit, error)
+	ListScoped(ctx context.Context, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.Audit, error)
 	GetByID(ctx context.Context, id int) (*model.Audit, error)
-	InScope(ctx context.Context, id int, scope model.Scope, userEmail string) (bool, error)
+	InScope(ctx context.Context, id int, scope model.Scope, userEmail string, scopeTeamIDs []int) (bool, error)
 	Create(ctx context.Context, req model.CreateAuditRequest, createdBy string) (*model.Audit, error)
 	Update(ctx context.Context, id int, req model.UpdateAuditRequest, updatedBy string) error
 	Delete(ctx context.Context, id int, deletedBy string) error
@@ -78,12 +78,12 @@ func (s *auditService) List(ctx context.Context) ([]*model.Audit, error) {
 	return s.repo.List(ctx)
 }
 
-func (s *auditService) ListScoped(ctx context.Context, scope model.Scope, userEmail string) ([]*model.Audit, error) {
-	return s.repo.ListScoped(ctx, scope, userEmail)
+func (s *auditService) ListScoped(ctx context.Context, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.Audit, error) {
+	return s.repo.ListScoped(ctx, scope, userEmail, scopeTeamIDs)
 }
 
-func (s *auditService) InScope(ctx context.Context, id int, scope model.Scope, userEmail string) (bool, error) {
-	return s.repo.InScope(ctx, id, scope, userEmail)
+func (s *auditService) InScope(ctx context.Context, id int, scope model.Scope, userEmail string, scopeTeamIDs []int) (bool, error) {
+	return s.repo.InScope(ctx, id, scope, userEmail, scopeTeamIDs)
 }
 
 func (s *auditService) GetByID(ctx context.Context, id int) (*model.Audit, error) {

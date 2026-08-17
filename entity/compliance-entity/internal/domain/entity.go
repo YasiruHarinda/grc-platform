@@ -120,9 +120,12 @@ type SearchAuditFrameworksRequest struct {
 	// audit_dashboard_repo.go's scopeWhere): a framework has no team of its own,
 	// so it matches when it has at least one audit with at least one control in
 	// scope. Empty Scope (or ScopeAll) applies no filter.
-	Scope      Scope      `json:"scope"`
-	UserEmail  string     `json:"userEmail"`
-	Pagination Pagination `json:"pagination"`
+	Scope     Scope  `json:"scope"`
+	UserEmail string `json:"userEmail"`
+	// ScopeTeamIDs is the team(s) the caller manages, server-derived by the GRC
+	// backend from the caller's grants. Only read when Scope is ScopeTeam.
+	ScopeTeamIDs []int      `json:"scopeTeamIds"`
+	Pagination   Pagination `json:"pagination"`
 }
 
 // SearchAuditFrameworksResponse is returned by POST /audit/frameworks/search.
@@ -260,7 +263,10 @@ type SearchAuditsRequest struct {
 	// callers that don't scope (e.g. internal existence/uniqueness checks).
 	Scope     Scope  `json:"scope"`
 	UserEmail string `json:"userEmail"`
-	Pagination Pagination `json:"pagination"`
+	// ScopeTeamIDs is the team(s) the caller manages, server-derived by the GRC
+	// backend from the caller's grants. Only read when Scope is ScopeTeam.
+	ScopeTeamIDs []int      `json:"scopeTeamIds"`
+	Pagination   Pagination `json:"pagination"`
 }
 
 // SearchAuditsResponse is returned by POST /audits/search.
@@ -327,9 +333,13 @@ type SearchControlsRequest struct {
 	// Scope/UserEmail apply the same row-scoping rule as the dashboard (see
 	// dashboard.go's Scope type and audit_dashboard_repo.go's scopeWhere).
 	// Empty Scope (or ScopeAll) applies no filter.
-	Scope      Scope      `json:"scope"`
-	UserEmail  string     `json:"userEmail"`
-	Pagination Pagination `json:"pagination"`
+	Scope     Scope  `json:"scope"`
+	UserEmail string `json:"userEmail"`
+	// ScopeTeamIDs is the team(s) the caller manages, server-derived by the GRC
+	// backend from the caller's grants. Distinct from TeamIDs above, which is a
+	// client-supplied display filter — only read when Scope is ScopeTeam.
+	ScopeTeamIDs []int      `json:"scopeTeamIds"`
+	Pagination   Pagination `json:"pagination"`
 }
 
 // SearchControlsResponse is returned by POST /audits/{auditId}/controls/search.

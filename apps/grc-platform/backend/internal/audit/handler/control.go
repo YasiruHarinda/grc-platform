@@ -46,7 +46,7 @@ func (h *controlHandler) listControls(w http.ResponseWriter, r *http.Request) {
 	if user != nil {
 		email = user.Email
 	}
-	controls, err := h.svc.ListScoped(ctx, auditID, scope, email)
+	controls, err := h.svc.ListScoped(ctx, auditID, scope, email, managedTeamIDs(auth.Grants(ctx)))
 	if err != nil {
 		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
 		return
@@ -81,7 +81,7 @@ func (h *controlHandler) getControl(w http.ResponseWriter, r *http.Request) {
 		if user != nil {
 			email = user.Email
 		}
-		inScope, err := h.svc.InScope(ctx, auditID, controlID, scope, email)
+		inScope, err := h.svc.InScope(ctx, auditID, controlID, scope, email, managedTeamIDs(auth.Grants(ctx)))
 		if err != nil {
 			response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
 			return

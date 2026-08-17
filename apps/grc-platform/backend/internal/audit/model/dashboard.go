@@ -132,6 +132,11 @@ const (
 	ScopeOwned Scope = "owned"
 	// ScopeAssigned sees only controls the actor audits (auditor_id = actor).
 	ScopeAssigned Scope = "assigned"
+	// ScopeTeam sees controls in the team(s) the actor manages (holds
+	// AUDIT_VIEW_ALL_AUDITS at AUDIT_TEAM scope), plus — additively, never
+	// subtractively — anything they personally own or audit. See
+	// docs/new/Audit-Role-Grant-Migration-Design.md §5.
+	ScopeTeam Scope = "team"
 	// ScopeNone sees nothing.
 	ScopeNone Scope = "none"
 )
@@ -162,6 +167,14 @@ type DashboardFilter struct {
 	WorkQueueClass WorkQueueClass
 	// UserEmail is the authenticated user's email (used to look up team/owner/auditor ID).
 	UserEmail string
+	// ScopeTeamIDs is the team(s) the actor manages, server-derived from their
+	// grants by deriveScopes/managedTeamIDs — never from client input. Read by
+	// the entity only when ViewScope or WorkQueueScope is ScopeTeam.
+	//
+	// Deliberately separate from TeamIDs below, which is the client-supplied
+	// work-queue display filter: reusing it for scope would let a team lead
+	// widen their own visibility with ?teamIds=1&teamIds=2&teamIds=3.
+	ScopeTeamIDs []int
 	// TeamIDs optionally restricts work-queue results to specific audit_team IDs.
 	TeamIDs []int
 	// OwnerIDs optionally restricts work-queue results to specific process owner user IDs.

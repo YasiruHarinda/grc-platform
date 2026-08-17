@@ -33,12 +33,12 @@ type AuditRepository interface {
 	// audits have no team/owner/auditor of their own (only their controls do),
 	// so scope is evaluated per ADR-0002 at the control level and an audit
 	// qualifies if any of its controls do. Used by the Audits tab (listAudits).
-	ListScoped(ctx context.Context, scope model.Scope, userEmail string) ([]*model.Audit, error)
+	ListScoped(ctx context.Context, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.Audit, error)
 	GetByID(ctx context.Context, id int) (*model.Audit, error)
 	// InScope reports whether id is within scope for userEmail — used by
 	// getAudit to reject out-of-scope direct links (a control-guessing IDOR)
 	// without fetching every audit just to check membership.
-	InScope(ctx context.Context, id int, scope model.Scope, userEmail string) (bool, error)
+	InScope(ctx context.Context, id int, scope model.Scope, userEmail string, scopeTeamIDs []int) (bool, error)
 	Create(ctx context.Context, req model.CreateAuditRequest, createdBy string) (*model.Audit, error)
 	Update(ctx context.Context, id int, req model.UpdateAuditRequest, updatedBy string) error
 	Delete(ctx context.Context, id int, deletedBy string) error
@@ -56,7 +56,7 @@ type FrameworkRepository interface {
 	// has no team/owner/auditor of its own (only its audits' controls do), so
 	// scope is evaluated per ADR-0002 at the control level, one level deeper
 	// than ListScoped does for audits.
-	List(ctx context.Context, scope model.Scope, userEmail string) ([]*model.AuditFramework, error)
+	List(ctx context.Context, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.AuditFramework, error)
 	// GetByID is intentionally unscoped — used internally to validate a
 	// frameworkId reference (e.g. audit creation), which must succeed
 	// regardless of the caller's row scope.
@@ -80,12 +80,12 @@ type ControlRepository interface {
 	List(ctx context.Context, auditID int) ([]*model.AuditControl, error)
 	// ListScoped returns auditID's controls visible to userEmail at scope —
 	// used by the Audits tab (listControls); see ADR-0002.
-	ListScoped(ctx context.Context, auditID int, scope model.Scope, userEmail string) ([]*model.AuditControl, error)
+	ListScoped(ctx context.Context, auditID int, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.AuditControl, error)
 	GetByID(ctx context.Context, auditID, controlID int) (*model.AuditControl, error)
 	// InScope reports whether controlID is within scope for userEmail — used
 	// by getControl to reject out-of-scope direct links (an IDOR via guessed
 	// control ids) without listing every control in the audit to check.
-	InScope(ctx context.Context, auditID, controlID int, scope model.Scope, userEmail string) (bool, error)
+	InScope(ctx context.Context, auditID, controlID int, scope model.Scope, userEmail string, scopeTeamIDs []int) (bool, error)
 	Create(ctx context.Context, auditID int, req model.AddControlRequest, createdBy string) (*model.AuditControl, error)
 	BulkCreate(ctx context.Context, auditID int, reqs []model.AddControlRequest, createdBy string) ([]*model.AuditControl, error)
 	Update(ctx context.Context, auditID, controlID int, req model.UpdateControlRequest, updatedBy string) error

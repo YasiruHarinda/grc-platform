@@ -14,9 +14,21 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package auth exposes privilege-checking helpers built on top of the JWT middleware.
-// Handlers check privileges (e.g. privilege.ApproveRisk), never role names.
-// Role→privilege mappings live in the database and are loaded at startup via privilege.New.
+// Package auth exposes privilege-checking helpers built on top of the JWT
+// middleware. Handlers check privileges (e.g. privilege.ApproveRisk), never
+// role names.
+//
+// There are two kinds of check:
+//
+//	RequirePrivilege(ctx, w, X)             — "may this user do X anywhere?"
+//	RequirePrivilegeIn(ctx, w, X, teamID)   — "may this user do X on THIS thing?"
+//
+// A user may hold different roles in different scopes — a team lead in one
+// audit team, an ordinary submitter in another. The unscoped form unions those
+// together, so on its own it would let someone act, as lead, on a team where
+// they hold no such authority. It exists for endpoints with no object in hand,
+// and to keep the Audit Hub's 67 existing call sites working unchanged during
+// the grant migration (see docs/new/Audit-Role-Grant-Migration-Design.md §1).
 package auth
 
 import (
@@ -25,6 +37,7 @@ import (
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/middleware"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
@@ -53,6 +66,73 @@ func HasPrivilege(ctx context.Context, priv string) bool {
 		return true
 	}
 	return privs[priv]
+}
+
+// Grants returns the caller's resolved grant set, or nil when grant resolution
+// was not configured (local dev). Callers that need to distinguish "sees
+// everything" from "scoped to these teams" — list and dashboard scoping — read
+// it directly rather than going through a privilege check.
+//
+// Anything reading this must also handle AllowAll: the grant set is nil in
+// local dev, and treating that as "holds nothing" would scope a developer to
+// nothing in the one mode that is supposed to permit everything.
+func Grants(ctx context.Context) *grant.Set {
+	return grant.FromContext(ctx)
+}
+
+// AllowAll reports whether the request is in local-dev allow-all mode — no
+// privilege store configured (AUTH_TOKEN_VALIDATOR_ENABLED=false), so every
+// privilege check passes and no grants were loaded.
+//
+// HasPrivilege and HasPrivilegeIn apply this themselves. It is exported for
+// row-scoping code that reads the grant set directly and would otherwise scope
+// a local developer to nothing: authenticated, waved through every route gate,
+// then handed an empty dashboard filtered to almost nothing.
+//
+// Returns false when the Auth middleware was not applied at all, so a request
+// that never authenticated cannot reach allow-all by accident.
+func AllowAll(ctx context.Context) bool {
+	return middleware.UserInfoFromContext(ctx) != nil && privilege.FromContext(ctx) == nil
+}
+
+// HasPrivilegeIn returns true if the caller holds priv **in the given team's
+// scope** — through a GLOBAL grant, or a grant on that team specifically.
+//
+// Local dev (no privilege store configured) allows everything, mirroring
+// HasPrivilege and the skipped signature verification in that mode.
+func HasPrivilegeIn(ctx context.Context, priv string, teamID int) bool {
+	if middleware.UserInfoFromContext(ctx) == nil {
+		return false
+	}
+	if privilege.FromContext(ctx) == nil {
+		// Local dev allow-all mode.
+		return true
+	}
+	return grant.FromContext(ctx).HasIn(priv, teamID)
+}
+
+// RequirePrivilegeIn writes a 403 JSON response and returns false when the
+// caller lacks priv in the given team's scope. Use it after the unscoped guard
+// wherever a handler knows which team governs the object:
+//
+//	if !auth.RequirePrivilege(r.Context(), w, privilege.AuditViewAllAudits) {
+//	    return
+//	}
+//	if !auth.RequirePrivilegeIn(r.Context(), w, privilege.AuditViewAllAudits, teamID) {
+//	    return
+//	}
+func RequirePrivilegeIn(ctx context.Context, w http.ResponseWriter, priv string, teamID int) bool {
+	if HasPrivilegeIn(ctx, priv, teamID) {
+		return true
+	}
+
+	response.WriteError(
+		w,
+		http.StatusForbidden,
+		response.ErrMsgForbidden,
+	)
+
+	return false
 }
 
 // RequirePrivilege writes a 403 JSON response and returns false when the user

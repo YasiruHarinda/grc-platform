@@ -64,7 +64,7 @@ JOIN audit_product   p ON p.id = a.product_id`
 // control level (see audit_dashboard_repo.go's scopeWhere) — an audit is in
 // scope when it has at least one control in scope, checked via EXISTS against
 // audit_control c.
-func auditScopeWhere(scope domain.Scope, userEmail string) (string, []any) {
+func auditScopeWhere(scope domain.Scope, userEmail string, scopeTeamIDs []int) (string, []any) {
 	switch scope {
 	case "", domain.ScopeAll:
 		return "", nil
@@ -74,6 +74,9 @@ func auditScopeWhere(scope domain.Scope, userEmail string) (string, []any) {
 	case domain.ScopeAssigned:
 		return " AND EXISTS (SELECT 1 FROM audit_control c WHERE c.audit_id = a.id AND c.auditor_id = (SELECT id FROM `user` WHERE email = ?))",
 			[]any{userEmail}
+	case domain.ScopeTeam:
+		pred, args := teamScopePredicate("c", scopeTeamIDs, userEmail)
+		return " AND EXISTS (SELECT 1 FROM audit_control c WHERE c.audit_id = a.id AND " + pred + ")", args
 	default: // ScopeNone and any unrecognized value scope to nothing.
 		return " AND 1=0", nil
 	}
@@ -122,7 +125,7 @@ func (r *auditRepo) SearchAudits(ctx context.Context, req domain.SearchAuditsReq
 			args = append(args, id)
 		}
 	}
-	scopeClause, scopeArgs := auditScopeWhere(req.Scope, req.UserEmail)
+	scopeClause, scopeArgs := auditScopeWhere(req.Scope, req.UserEmail, req.ScopeTeamIDs)
 	where += scopeClause
 	args = append(args, scopeArgs...)
 

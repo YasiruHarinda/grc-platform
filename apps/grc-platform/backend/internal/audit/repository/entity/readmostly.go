@@ -55,17 +55,18 @@ func NewFrameworkRepository(c *entityclient.Client) repository.FrameworkReposito
 	return &frameworkRepo{c: c}
 }
 
-func (r *frameworkRepo) List(ctx context.Context, scope model.Scope, userEmail string) ([]*model.AuditFramework, error) {
+func (r *frameworkRepo) List(ctx context.Context, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.AuditFramework, error) {
 	var all []*model.AuditFramework
 	for offset := 0; ; offset += pageLimit {
 		var resp struct {
 			Frameworks []*model.AuditFramework `json:"frameworks"`
 		}
 		body := map[string]any{
-			"statusKey":  statusActive,
-			"scope":      scope,
-			"userEmail":  userEmail,
-			"pagination": map[string]int{"limit": pageLimit, "offset": offset},
+			"statusKey":    statusActive,
+			"scope":        scope,
+			"userEmail":    userEmail,
+			"scopeTeamIds": scopeTeamIDs,
+			"pagination":   map[string]int{"limit": pageLimit, "offset": offset},
 		}
 		if err := r.c.Post(ctx, "/audit/frameworks/search", body, &resp); err != nil {
 			return nil, err

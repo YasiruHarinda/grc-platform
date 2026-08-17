@@ -40,6 +40,7 @@ func (r *dashboardRepo) Get(ctx context.Context, f model.DashboardFilter) (*mode
 		"workQueueScope": string(f.WorkQueueScope),
 		"workQueueClass": string(f.WorkQueueClass),
 		"userEmail":      f.UserEmail,
+		"scopeTeamIds":   f.ScopeTeamIDs,
 	}
 	var data model.DashboardData
 	if err := r.c.Post(ctx, "/audit/dashboard/search", body, &data); err != nil {
@@ -56,6 +57,7 @@ func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, f model.DashboardF
 		"tab":            string(tab),
 		"page":           page,
 		"limit":          limit,
+		"scopeTeamIds":   f.ScopeTeamIDs,
 		"teamIds":        f.TeamIDs,
 		"ownerIds":       f.OwnerIDs,
 		"auditIds":       f.AuditIDs,

@@ -43,7 +43,7 @@ func NewDashboardRepository(db *sql.DB) DashboardRepository { return &dashboardR
 // team/owner/auditor identity from userEmail. Only sql.ErrNoRows / a NULL user is
 // mapped to " AND 1=0" (a legitimate no-data case); any other DB error propagates
 // so callers return 500 instead of a silent empty dashboard.
-func (r *dashboardRepo) scopeWhere(ctx context.Context, scope domain.Scope, userEmail string) (string, []any, error) {
+func (r *dashboardRepo) scopeWhere(ctx context.Context, scope domain.Scope, userEmail string, scopeTeamIDs []int) (string, []any, error) {
 	switch scope {
 	case domain.ScopeAll:
 		return "", nil, nil
@@ -65,9 +65,52 @@ func (r *dashboardRepo) scopeWhere(ctx context.Context, scope domain.Scope, user
 			return " AND 1=0", nil, nil
 		}
 		return " AND c.auditor_id = ?", []any{uid}, nil
+	case domain.ScopeTeam:
+		return r.teamScopeWhere(ctx, userEmail, scopeTeamIDs)
 	default: // ScopeNone and any unrecognized value scope to nothing.
 		return " AND 1=0", nil, nil
 	}
+}
+
+// teamScopeWhere is the additive ScopeTeam predicate: the caller's team's work
+// OR anything they personally own OR anything they audit — never a plain
+// "AND c.team_id IN (...)", which would take away a lead's identity-based
+// access to controls outside their own team. See
+// docs/new/Audit-Role-Grant-Migration-Design.md §5.4.
+//
+// scopeTeamIDs is empty only when the caller manages no team (should not
+// normally reach ScopeTeam at all — the backend only returns ScopeTeam when
+// managedTeamIDs is non-empty) or when userIDByEmail fails to resolve a row;
+// both are handled without ever emitting a bare "IN ()" or an empty (no-filter)
+// fragment.
+func (r *dashboardRepo) teamScopeWhere(ctx context.Context, userEmail string, scopeTeamIDs []int) (string, []any, error) {
+	uid, ok, err := r.userIDByEmail(ctx, userEmail)
+	if err != nil {
+		return "", nil, err
+	}
+
+	terms := make([]string, 0, 3)
+	args := make([]any, 0, len(scopeTeamIDs)+2)
+	if len(scopeTeamIDs) > 0 {
+		phs := strings.Repeat("?,", len(scopeTeamIDs))
+		terms = append(terms, "c.team_id IN ("+phs[:len(phs)-1]+")")
+		for _, id := range scopeTeamIDs {
+			args = append(args, id)
+		}
+	}
+	if ok {
+		terms = append(terms, "c.owner_id = ?", "c.auditor_id = ?")
+		args = append(args, uid, uid)
+	}
+	// A caller holding a grant always has a `user` row (user_role_grant.user_id
+	// is a foreign key), so !ok should not arise here in practice. If it does,
+	// fall back to the team disjunct alone rather than to 1=0 — losing the
+	// (unreachable) identity disjunct is not a reason to also drop the team's
+	// visibility. 1=0 only when neither is available.
+	if len(terms) == 0 {
+		return " AND 1=0", nil, nil
+	}
+	return " AND (" + strings.Join(terms, " OR ") + ")", args, nil
 }
 
 // userIDByEmail resolves a user's id from their email. ok=false when no such user
@@ -87,13 +130,13 @@ func (r *dashboardRepo) userIDByEmail(ctx context.Context, email string) (int64,
 func (r *dashboardRepo) Get(ctx context.Context, req domain.AuditDashboardRequest) (*domain.DashboardData, error) {
 	// Two scopes: the view scope drives stats/charts (baseWhere); the work-queue
 	// scope drives the action/due/pending/validation/overdue lists (queueWhere).
-	scope, args, err := r.scopeWhere(ctx, req.Scope, req.UserEmail)
+	scope, args, err := r.scopeWhere(ctx, req.Scope, req.UserEmail, req.ScopeTeamIDs)
 	if err != nil {
 		return nil, err
 	}
 	baseWhere := "WHERE a.status = 'ACTIVE'" + scope
 
-	queueScope, queueArgs, err := r.scopeWhere(ctx, req.WorkQueueScope, req.UserEmail)
+	queueScope, queueArgs, err := r.scopeWhere(ctx, req.WorkQueueScope, req.UserEmail, req.ScopeTeamIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -408,7 +451,7 @@ func buildLikeFilter(col, term string) (string, []any) {
 // GetWorkQueuePage returns a single paginated page of work-queue items.
 func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQueueRequest) (*domain.WorkQueuePage, error) {
 	// The work queue uses the work-queue scope (personal for submitters).
-	scope, args, err := r.scopeWhere(ctx, req.WorkQueueScope, req.UserEmail)
+	scope, args, err := r.scopeWhere(ctx, req.WorkQueueScope, req.UserEmail, req.ScopeTeamIDs)
 	if err != nil {
 		return nil, err
 	}

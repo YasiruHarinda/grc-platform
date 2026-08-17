@@ -42,7 +42,7 @@ func (h *frameworkHandler) listFrameworks(w http.ResponseWriter, r *http.Request
 	if user != nil {
 		email = user.Email
 	}
-	frameworks, err := h.svc.ListFrameworks(ctx, scope, email)
+	frameworks, err := h.svc.ListFrameworks(ctx, scope, email, managedTeamIDs(auth.Grants(ctx)))
 	if err != nil {
 		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
 		return

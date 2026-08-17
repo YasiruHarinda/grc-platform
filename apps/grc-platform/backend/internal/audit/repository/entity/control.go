@@ -55,7 +55,7 @@ func (r *controlRepo) List(ctx context.Context, auditID int) ([]*model.AuditCont
 	}
 }
 
-func (r *controlRepo) ListScoped(ctx context.Context, auditID int, scope model.Scope, userEmail string) ([]*model.AuditControl, error) {
+func (r *controlRepo) ListScoped(ctx context.Context, auditID int, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.AuditControl, error) {
 	var all []*model.AuditControl
 	path := fmt.Sprintf("/audits/%d/controls/search", auditID)
 	for offset := 0; ; offset += pageLimit {
@@ -63,9 +63,10 @@ func (r *controlRepo) ListScoped(ctx context.Context, auditID int, scope model.S
 			Controls []*model.AuditControl `json:"controls"`
 		}
 		body := map[string]any{
-			"scope":      scope,
-			"userEmail":  userEmail,
-			"pagination": map[string]int{"limit": pageLimit, "offset": offset},
+			"scope":        scope,
+			"userEmail":    userEmail,
+			"scopeTeamIds": scopeTeamIDs,
+			"pagination":   map[string]int{"limit": pageLimit, "offset": offset},
 		}
 		if err := r.c.Post(ctx, path, body, &resp); err != nil {
 			return nil, err
@@ -82,15 +83,16 @@ func (r *controlRepo) ListScoped(ctx context.Context, auditID int, scope model.S
 // reusing /audits/{auditId}/controls/search (the same scoped query ListScoped
 // uses) filtered to just this one control id — avoids a bespoke endpoint for
 // what is otherwise the same check.
-func (r *controlRepo) InScope(ctx context.Context, auditID, controlID int, scope model.Scope, userEmail string) (bool, error) {
+func (r *controlRepo) InScope(ctx context.Context, auditID, controlID int, scope model.Scope, userEmail string, scopeTeamIDs []int) (bool, error) {
 	var resp struct {
 		Controls []*model.AuditControl `json:"controls"`
 	}
 	body := map[string]any{
-		"controlIds": []int{controlID},
-		"scope":      scope,
-		"userEmail":  userEmail,
-		"pagination": map[string]int{"limit": 1, "offset": 0},
+		"controlIds":   []int{controlID},
+		"scope":        scope,
+		"userEmail":    userEmail,
+		"scopeTeamIds": scopeTeamIDs,
+		"pagination":   map[string]int{"limit": 1, "offset": 0},
 	}
 	if err := r.c.Post(ctx, fmt.Sprintf("/audits/%d/controls/search", auditID), body, &resp); err != nil {
 		return false, err

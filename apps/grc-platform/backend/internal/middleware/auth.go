@@ -33,6 +33,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
@@ -41,11 +42,28 @@ type contextKey string
 const userInfoKey contextKey = "user-info"
 
 // UserInfo holds the authenticated user's identity extracted from the Asgardeo JWT.
+//
+// Note there is no Groups field. Asgardeo authenticates users and nothing more:
+// roles are assigned and enforced by this platform, in its own database, and
+// are resolved per request from user_role_grant. A token's group claims — if it
+// carries any — are deliberately ignored.
 type UserInfo struct {
 	Subject string
 	Email   string
-	Groups  []string // Asgardeo role/group claims
-	Issuer  string   // the token's verified issuer (iss)
+	Issuer  string // the token's verified issuer (iss)
+	// UserID is the caller's internal user.id, resolved alongside their grants.
+	// Zero when the caller has no platform user row yet.
+	UserID int
+	// Roles is the distinct role names the caller holds, from any scope. It
+	// replaces the former Groups field, which carried Asgardeo's group claim.
+	//
+	// Prefer a privilege check over matching on these names. They exist because
+	// the Audit Hub matches role names directly in a couple of places, and
+	// those now read DB-assigned roles instead of IdP groups.
+	//
+	// Scope is flattened away here. Anything that needs to know WHERE a role is
+	// held must use the grant Set, not this list.
+	Roles []string
 }
 
 // Config holds JWT validation settings loaded from environment variables.
@@ -54,10 +72,15 @@ type Config struct {
 	IdPs                  []config.IdPConfig
 	ClockSkew             time.Duration
 	TokenValidatorEnabled bool
-	// PrivilegeStore resolves role→privilege mappings after JWT validation.
-	// When nil, privilege checking is skipped and HasPrivilege always returns true.
-	// Set to nil for local dev (TokenValidatorEnabled=false); always set in production.
+	// PrivilegeStore maps role names to privileges. Cached and refreshed every
+	// 15 minutes, because that mapping changes only on a deploy.
+	// When nil, privilege checking is skipped and HasPrivilege always returns
+	// true — local dev only (TokenValidatorEnabled=false); always set in production.
 	PrivilegeStore *privilege.Store
+	// Grants loads the caller's role grants. Read fresh on EVERY request and
+	// never cached: revoking a grant must take effect on the user's next
+	// request, which a TTL cache could not promise.
+	Grants grant.Repository
 	// TestKeyFuncs maps issuer → jwt.Keyfunc, bypassing JWKS cache construction.
 	// Never set in production; used by unit tests to inject pre-built key functions.
 	TestKeyFuncs map[string]jwt.Keyfunc
@@ -69,9 +92,11 @@ type idpRuntime struct {
 	keyFunc jwt.Keyfunc
 }
 
+// jwtClaims is deliberately minimal. A "groups" claim is not read even if the
+// token carries one: role assignment moved into this platform's database, and
+// continuing to read groups would leave a second, invisible source of authority.
 type jwtClaims struct {
-	Email  string   `json:"email"`
-	Groups []string `json:"groups"`
+	Email string `json:"email"`
 	jwt.RegisteredClaims
 }
 
@@ -83,6 +108,16 @@ func writeAuthError(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
 	_ = json.NewEncoder(w).Encode(authErrorBody{Message: message})
+}
+
+// writeGrantLoadError responds 503, not 401, when the entity is unreachable
+// mid-request. A 401 is indistinguishable from a bad token and sends the user
+// to re-login, which cannot help — the entity being down is an outage, not an
+// auth failure, and retrying the request is the correct client behaviour.
+func writeGrantLoadError(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_ = json.NewEncoder(w).Encode(authErrorBody{Message: "Unable to verify your access right now. Please try again shortly."})
 }
 
 // jwkEntry holds a single RSA public key extracted from a JWKS response.
@@ -263,13 +298,42 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 			}
 
 			ctx := context.WithValue(r.Context(), userInfoKey, info)
-			if cfg.PrivilegeStore != nil {
-				privs := cfg.PrivilegeStore.Resolve(info.Groups)
-				ctx = privilege.WithContext(ctx, privs)
+			if cfg.PrivilegeStore != nil && cfg.Grants != nil {
+				// Fail closed on a grant-load failure. With no grants the
+				// caller's authorisation is unknown, and guessing in either
+				// direction is worse than a clear error: guessing "none" looks
+				// to the user like their access was revoked, and guessing
+				// "previous" would need a cache this deliberately does not have.
+				userID, grants, gErr := cfg.Grants.ForEmail(r.Context(), identityKey(info))
+				if gErr != nil {
+					slog.ErrorContext(r.Context(), "auth: failed to load grants", "err", gErr)
+					writeGrantLoadError(w)
+					return
+				}
+				info.UserID = userID
+				set := grant.Resolve(grants, cfg.PrivilegeStore)
+				info.Roles = set.RoleNames()
+				ctx = context.WithValue(ctx, userInfoKey, info)
+				ctx = grant.WithContext(ctx, set)
+				// The union is also published under the privilege key so the
+				// Audit Hub's existing unscoped RequirePrivilege call sites keep
+				// working unchanged while it migrates. New code should ask the
+				// grant Set, which can answer per-scope.
+				ctx = privilege.WithContext(ctx, set.PrivilegeMap())
 			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// identityKey returns the value the grant lookup is keyed on. Email is the
+// user table's identity today; subject is the fallback for a token that
+// carries no email claim.
+func identityKey(info *UserInfo) string {
+	if info.Email != "" {
+		return info.Email
+	}
+	return info.Subject
 }
 
 // UserInfoFromContext retrieves the authenticated user from the context.
@@ -316,7 +380,7 @@ func extractUserInfo(tokenStr string, cfg Config, idps map[string]idpRuntime) (*
 		if err != nil || sub == "" {
 			return nil, fmt.Errorf("token missing sub claim")
 		}
-		return &UserInfo{Subject: sub, Email: c.Email, Groups: c.Groups, Issuer: c.Issuer}, nil
+		return &UserInfo{Subject: sub, Email: c.Email, Issuer: c.Issuer}, nil
 	}
 
 	// Read the issuer from the unverified token only to pick the IdP; nothing else
@@ -353,7 +417,6 @@ func extractUserInfo(tokenStr string, cfg Config, idps map[string]idpRuntime) (*
 	return &UserInfo{
 		Subject: sub,
 		Email:   c.Email,
-		Groups:  c.Groups,
 		Issuer:  rt.cfg.Issuer,
 	}, nil
 }

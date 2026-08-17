@@ -189,7 +189,7 @@ func buildControlFilters(seedWhere string, seedArgs []any, req domain.SearchCont
 			args = append(args, id)
 		}
 	}
-	scopeClause, scopeArgs := controlScopeWhere(req.Scope, req.UserEmail)
+	scopeClause, scopeArgs := controlScopeWhere(req.Scope, req.UserEmail, req.ScopeTeamIDs)
 	where += scopeClause
 	args = append(args, scopeArgs...)
 	return where, args
@@ -204,7 +204,7 @@ func buildControlFilters(seedWhere string, seedArgs []any, req domain.SearchCont
 // auditor/owner match by a correlated subquery on email instead of a
 // pre-resolved user id — so it stays a pure string/args builder, callable
 // from buildControlFilters without a context or *sql.DB.
-func controlScopeWhere(scope domain.Scope, userEmail string) (string, []any) {
+func controlScopeWhere(scope domain.Scope, userEmail string, scopeTeamIDs []int) (string, []any) {
 	switch scope {
 	case "", domain.ScopeAll:
 		return "", nil
@@ -212,9 +212,46 @@ func controlScopeWhere(scope domain.Scope, userEmail string) (string, []any) {
 		return " AND c.owner_id = (SELECT id FROM `user` WHERE email = ?)", []any{userEmail}
 	case domain.ScopeAssigned:
 		return " AND c.auditor_id = (SELECT id FROM `user` WHERE email = ?)", []any{userEmail}
+	case domain.ScopeTeam:
+		pred, args := teamScopePredicate("c", scopeTeamIDs, userEmail)
+		return " AND " + pred, args
 	default: // ScopeNone and any unrecognized value scope to nothing.
 		return " AND 1=0", nil
 	}
+}
+
+// teamScopePredicate builds the additive ScopeTeam predicate shared by every
+// scopeWhere variant in this package: the caller's team's work OR anything
+// they personally own OR anything they audit, keyed off
+// alias.team_id/owner_id/auditor_id. Identity is matched by correlated
+// subquery on email rather than a pre-resolved user id, matching every other
+// scope case in these functions — callers stay pure string/args builders with
+// no context or *sql.DB.
+//
+// Returns a bare parenthesized predicate with NO leading "AND" — callers
+// combine it into their own clause (a plain "AND", or wrapped in an EXISTS for
+// audits/frameworks, which have no team/owner/auditor of their own).
+//
+// Never a plain "alias.team_id IN (...)" on its own: that would take away a
+// team lead's identity-based access to a record outside their own team. Never
+// a bare "IN ()" when scopeTeamIDs is empty, and the caller must never receive
+// an empty (no-filter) string in its place — see
+// docs/new/Audit-Role-Grant-Migration-Design.md §5.4-§5.5.
+func teamScopePredicate(alias string, scopeTeamIDs []int, userEmail string) (string, []any) {
+	terms := make([]string, 0, 3)
+	args := make([]any, 0, len(scopeTeamIDs)+2)
+	if len(scopeTeamIDs) > 0 {
+		phs := strings.Repeat("?,", len(scopeTeamIDs))
+		terms = append(terms, alias+".team_id IN ("+phs[:len(phs)-1]+")")
+		for _, id := range scopeTeamIDs {
+			args = append(args, id)
+		}
+	}
+	terms = append(terms,
+		alias+".owner_id   = (SELECT id FROM `user` WHERE email = ?)",
+		alias+".auditor_id = (SELECT id FROM `user` WHERE email = ?)")
+	args = append(args, userEmail, userEmail)
+	return "(" + strings.Join(terms, " OR ") + ")", args
 }
 
 // runControlSearch executes the count + paginated data query and scans the results.
