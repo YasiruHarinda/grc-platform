@@ -3302,9 +3302,6 @@ components:
           items:
             type: integer
           description: Audit teams to assign this user to at creation. Omit or send an empty array for no team membership.
-        riskTeamId:
-          type: integer
-          nullable: true
         status:
           type: string
         createdBy:
@@ -3326,9 +3323,6 @@ components:
           items:
             type: integer
           description: Replaces the user's full set of audit team memberships. Omit this field to leave memberships unchanged; send an empty array to clear all of them.
-        riskTeamId:
-          type: integer
-          nullable: true
         status:
           type: string
           nullable: true

@@ -618,27 +618,29 @@ type SearchRisksResponse struct {
 // CreateUserRequest is the payload for POST /users.
 // AuditTeamIDs and RiskTeamIDs assign the user to zero or more teams in each
 // module as part of creation, atomically with the user row.
+// RiskTeamIDs is deliberately absent from both write requests below: the Risk
+// module's team membership is read-only now, superseded by user_role_grant
+// (see the user_risk_team comment in risk_schema.sql). AuditTeamIDs is
+// unaffected — the Audit module has no equivalent grant migration yet, so its
+// membership is still genuinely written here.
 type CreateUserRequest struct {
 	Email        string `json:"email"`
 	DisplayName  string `json:"displayName"`
 	UserType     string `json:"userType"` // INTERNAL | EXTERNAL; defaults to INTERNAL
 	AuditTeamIDs []int  `json:"auditTeamIds"`
-	RiskTeamIDs  []int  `json:"riskTeamIds"`
 	Status       string `json:"status"`
 	CreatedBy    string `json:"createdBy"`
 }
 
 // UpdateUserRequest is the payload for PATCH /users/{id}.
-// AuditTeamIDs / RiskTeamIDs nil means "leave that module's team membership
-// alone"; a non-nil slice (including an empty one) replaces the user's full set
-// of memberships for that module wholesale — the same nil-vs-empty convention
-// used by UpdateRiskRequest.ComplianceReferenceIDs. The two are independent: a
-// request may touch one, both, or neither.
+// AuditTeamIDs nil means "leave audit team membership alone"; a non-nil slice
+// (including an empty one) replaces the user's full set of audit team
+// memberships wholesale — the same nil-vs-empty convention used by
+// UpdateRiskRequest.ComplianceReferenceIDs.
 type UpdateUserRequest struct {
 	DisplayName  *string `json:"displayName"`
 	UserType     *string `json:"userType"` // INTERNAL | EXTERNAL
 	AuditTeamIDs []int   `json:"auditTeamIds"`
-	RiskTeamIDs  []int   `json:"riskTeamIds"`
 	Status       *string `json:"status"`
 	UpdatedBy    string  `json:"updatedBy"`
 }

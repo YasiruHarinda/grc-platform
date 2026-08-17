@@ -440,11 +440,16 @@ CREATE TABLE IF NOT EXISTS risk_change_log (
 -- role, so it cannot express "Risk Owner in one register, Risk Assigner in
 -- another" — the requirement that prompted the migration.
 --
--- STILL PRESENT ON PURPOSE: the grant backfill reads these rows to derive
--- register-scoped grants (a role carrying an org-wide privilege becomes one
--- GLOBAL grant; any other role becomes one RISK_TEAM grant per membership row
--- here). Dropping it before that has run and been verified would destroy the
--- only record of who belonged where.
+-- STILL PRESENT ON PURPOSE, READ-ONLY: the grant backfill reads these rows to
+-- derive register-scoped grants (a role carrying an org-wide privilege becomes
+-- one GLOBAL grant; any other role becomes one RISK_TEAM grant per membership
+-- row here), and GET /users still returns each user's membership for the same
+-- reason (e.g. EditRiskDialog's Risk Owner filter). Nothing writes to this
+-- table any more — user_repo.go's CreateUser/UpdateUser stopped inserting and
+-- deleting rows here once user_role_grant became the write path, so an admin
+-- editing risk team membership through this table would get a silent no-op.
+-- Dropping the table before the backfill has run and been verified would
+-- destroy the only record of who belonged where.
 --
 -- Remove once the backfill is applied and grant-based scoping is live in every
 -- environment. See RISK_MODULE_DESIGN.md §3.
