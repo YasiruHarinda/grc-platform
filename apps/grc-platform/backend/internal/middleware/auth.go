@@ -54,17 +54,6 @@ type UserInfo struct {
 	// UserID is the caller's internal user.id, resolved alongside their grants.
 	// Zero when the caller has no platform user row yet.
 	UserID int
-	// Roles is the distinct role names the caller holds, from any scope. It
-	// replaces the former Groups field, which carried Asgardeo's group claim.
-	//
-	// Prefer a privilege check over matching on these names — the Risk Hub
-	// never reads them. They exist because the Audit Hub's external-auditor
-	// comment filtering still matches role names directly, reading DB-assigned
-	// roles instead of IdP groups.
-	//
-	// Scope is flattened away here. Anything that needs to know WHERE a role is
-	// held must use the grant Set, not this list.
-	Roles []string
 }
 
 // Config holds JWT validation settings loaded from environment variables.
@@ -313,7 +302,6 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 				}
 				info.UserID = userID
 				set := grant.Resolve(grants, cfg.PrivilegeStore)
-				info.Roles = set.RoleNames()
 				ctx = context.WithValue(ctx, userInfoKey, info)
 				ctx = grant.WithContext(ctx, set)
 				// The union is also published under the privilege key so the

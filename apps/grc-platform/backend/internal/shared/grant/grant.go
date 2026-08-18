@@ -365,26 +365,6 @@ func (s *Set) Grants() []Grant {
 	return s.grants
 }
 
-// RoleNames returns the distinct role names the caller holds, in any scope,
-// sorted. Scope is deliberately flattened away: this answers "what is this
-// person" for consumers that match on role names, not "what may they do here".
-// Anything scope-sensitive must use HasIn.
-func (s *Set) RoleNames() []string {
-	if s == nil {
-		return nil
-	}
-	seen := make(map[string]bool, len(s.grants))
-	out := make([]string, 0, len(s.grants))
-	for _, g := range s.grants {
-		if !seen[g.RoleName] {
-			seen[g.RoleName] = true
-			out = append(out, g.RoleName)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
 // PrivilegeMap returns the union as a map, the shape the privilege package's
 // context helper expects.
 //

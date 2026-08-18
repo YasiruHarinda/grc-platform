@@ -174,14 +174,6 @@ func TestAuth_ValidDevToken_PopulatesContext(t *testing.T) {
 	if captured.Email != "dev@example.com" {
 		t.Errorf("Email: got %q, want %q", captured.Email, "dev@example.com")
 	}
-	// No PrivilegeStore/Grants configured on devCfg(), so no grant resolution
-	// runs and Roles stays unset. The token carries a "groups" claim, and it
-	// must be ignored either way: role assignment lives in this platform's
-	// database, not in the IdP. Honouring it would leave a second, invisible
-	// source of authority that no admin could revoke from User Management.
-	if len(captured.Roles) != 0 {
-		t.Errorf("Roles: got %v, want empty — a token's groups claim must never confer roles", captured.Roles)
-	}
 }
 
 // ── new security tests ─────────────────────────────────────────────────────────
