@@ -635,7 +635,7 @@ function SampleUploadCard({
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, lineHeight: 1.7 }}>
         {editMode
           ? "Add more sample files, remove ones no longer needed, or update the note below."
-          : "Upload the sample file(s) for the team to provide evidence against, and/or add a short note describing what to sample, at least one is required."}
+          : "Upload the sample file(s) for the team to provide evidence against, and/or add a short note describing what to sample. At least one is required."}
       </Typography>
 
       {editMode && existingFiles.length > 0 && (

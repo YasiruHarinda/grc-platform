@@ -164,6 +164,22 @@ WHERE  r.role_name = 'grc-platform-risk-compliance-team'
     'RISK_ESCALATE', 'RISK_MANAGE_COMPLIANCE_REFS'
   );
 
+-- grc-platform-management becomes module='SHARED' below, grantable GLOBAL only.
+-- Under its pre-rename identity it could be granted scoped to a team, so an
+-- installation carried forward from before this migration may hold non-GLOBAL
+-- grants on it. grant.Resolve (backend/internal/shared/grant/grant.go) trusts
+-- a grant's scope_type as-is and never checks the role's module, so such a row
+-- would apply this role's privileges — including Audit Hub org-wide read — to
+-- just that one team. Deactivate rather than promote to GLOBAL: standing up an
+-- org-wide grant is an admin decision, not a side effect of a rename.
+-- Idempotent — only rows still ACTIVE are touched.
+UPDATE user_role_grant g
+JOIN   `role` r ON r.id = g.role_id
+SET    g.status = 'INACTIVE'
+WHERE  r.role_name = 'grc-platform-management'
+  AND  g.scope_type <> 'GLOBAL'
+  AND  g.status = 'ACTIVE';
+
 -- ── role ──────────────────────────────────────────────────────────────────────
 -- scope_basis is the load-bearing column here — see the file header. It says
 -- which dimension of a risk a grant on this role scopes by: SOURCE_REGISTER
