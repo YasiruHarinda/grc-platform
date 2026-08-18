@@ -155,6 +155,21 @@ export default function AuditDetailPage(): JSX.Element {
     }
   }, [controls, searchParams, setSearchParams]);
 
+  // Keep the open drawer's control in sync with the controls list. selectedControl
+  // is otherwise a one-time snapshot from row-click time — a mutation inside the
+  // drawer (submitting a sample note, population attestation, etc.) invalidates
+  // the controls query and refetches it, but without this the drawer would keep
+  // showing the stale snapshot (ControlDrawer's own localStatus overlay patches
+  // `status` alone, not fields like sampleReference) until closed and reopened.
+  useEffect(() => {
+    if (!selectedControl) return;
+    const fresh = controls.find((c) => c.id === selectedControl.id);
+    if (fresh && fresh !== selectedControl) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSelectedControl(fresh);
+    }
+  }, [controls, selectedControl]);
+
   // Column visibility for the controls table — the picker lives in the filter bar.
   const [visibleColumnIds, setVisibleColumnIds] = useState<string[]>(() => {
     try {

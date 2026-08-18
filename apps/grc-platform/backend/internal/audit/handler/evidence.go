@@ -547,6 +547,43 @@ func (h *evidenceHandler) deleteEvidenceFile(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// teamEditableControlStatuses are the control statuses from which the team may
+// still delete an evidence file or round — exactly the statuses where the
+// frontend (DesignEvidenceSection/OEEvidenceSection) passes canDelete to
+// SubmittedEvidenceList. Once a control reaches EVIDENCE_UNDER_VALIDATION,
+// evidence is locked for the team; ManageControls may still act there (an
+// admin correction) — but not once the control is COMPLETE, which is a hard
+// lock for everyone (see requireControlNotComplete). Mirrors
+// teamEditablePopulationStatuses (population.go) — this endpoint previously
+// had no backend-side counterpart to that gate, relying solely on the
+// frontend not rendering the delete button past this point.
+var teamEditableControlStatuses = map[string]bool{
+	"EVIDENCE_PENDING":            true,
+	"EVIDENCE_NEED_CLARIFICATION": true,
+	"EVIDENCE_INTERNAL_REVIEW":    true,
+	"SUBMITTED_SAMPLE":            true,
+}
+
+// requireEditableEvidenceControl loads the control, rejects with 409 if it is
+// COMPLETE (nobody may edit evidence past that point, not even
+// ManageControls — see requireControlNotComplete), and otherwise requires the
+// status be team-editable unless the caller holds ManageControls. Returns nil
+// after writing the response on failure.
+func (h *evidenceHandler) requireEditableEvidenceControl(w http.ResponseWriter, r *http.Request, auditID, controlID int) *model.AuditControl {
+	control := h.requireControlNotComplete(w, r, auditID, controlID)
+	if control == nil {
+		return nil
+	}
+	if auth.HasPrivilege(r.Context(), privilege.ManageControls) {
+		return control
+	}
+	if !teamEditableControlStatuses[control.Status] {
+		response.WriteError(w, http.StatusConflict, "evidence can only be edited before validation, or after being sent back for changes")
+		return nil
+	}
+	return control
+}
+
 // deleteControlEvidenceFile handles
 // DELETE /api/v1/audits/{id}/controls/{controlId}/evidence/files/{fileId}.
 //
@@ -571,6 +608,9 @@ func (h *evidenceHandler) deleteControlEvidenceFile(w http.ResponseWriter, r *ht
 		return
 	}
 	if !h.requireAssignment(w, r, auditID, controlID) {
+		return
+	}
+	if h.requireEditableEvidenceControl(w, r, auditID, controlID) == nil {
 		return
 	}
 	if !h.deleteFile(w, r, fileID) {
@@ -610,6 +650,9 @@ func (h *evidenceHandler) deleteEvidenceRound(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if !h.requireAssignment(w, r, auditID, controlID) {
+		return
+	}
+	if h.requireEditableEvidenceControl(w, r, auditID, controlID) == nil {
 		return
 	}
 	actor := auth.FromContext(r.Context()).Email

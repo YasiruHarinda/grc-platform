@@ -238,6 +238,7 @@ CREATE TABLE IF NOT EXISTS audit_population (
                    ) NOT NULL DEFAULT 'PENDING',
   due_date         DATE         NULL,
   comments         TEXT         NULL,
+  attestation      TEXT         NULL COMMENT 'Written note standing in for population files',
   created_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by       VARCHAR(255) NULL,
   updated_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

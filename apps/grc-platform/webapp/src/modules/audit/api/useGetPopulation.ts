@@ -39,6 +39,9 @@ export interface PopulationRound {
   description: string | null;
   dueDate: string | null;
   comments: string | null;
+  // Written note standing in for population files (a fileless submit, or a
+  // note alongside them) — null for an ordinary round.
+  attestation: string | null;
   createdAt: string;
   updatedAt: string;
 }

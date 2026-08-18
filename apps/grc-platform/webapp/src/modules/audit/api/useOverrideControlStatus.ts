@@ -19,6 +19,8 @@ import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { controlsQueryKey } from "@modules/audit/api/useGetControls";
 import { auditQueryKey } from "@modules/audit/api/useGetAudit";
+import { evidenceQueryKey } from "@modules/audit/api/useGetEvidence";
+import { populationQueryKey } from "@modules/audit/api/useGetPopulation";
 import type { ControlStatus } from "@modules/audit/types/audit";
 
 interface OverrideStatusPayload {
@@ -47,9 +49,18 @@ export function useOverrideControlStatus() {
       if (!res.ok) throw new Error(`Failed to override control status (${res.status})`);
     },
 
-    onSuccess: (_data, { auditId }) => {
+    onSuccess: (_data, { auditId, controlId }) => {
       void queryClient.invalidateQueries({ queryKey: controlsQueryKey(auditId) });
       void queryClient.invalidateQueries({ queryKey: auditQueryKey(auditId) });
+      // The override cascades the control's dependent evidence/population round
+      // too (see OverrideControlStatus's demoteEvidenceRound/demotePopulationRound
+      // in the entity) — without invalidating these, SubmittedEvidenceList /
+      // SubmittedPopulationFiles keep showing their stale cached round list
+      // until some unrelated action (e.g. a new upload) happens to invalidate
+      // it, same bug useReviewEvidence/useValidateEvidence already avoid by
+      // invalidating evidenceQueryKey on their own reject path.
+      void queryClient.invalidateQueries({ queryKey: evidenceQueryKey(auditId, controlId) });
+      void queryClient.invalidateQueries({ queryKey: populationQueryKey(auditId, controlId) });
     },
   });
 }

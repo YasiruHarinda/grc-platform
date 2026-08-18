@@ -303,13 +303,19 @@ type AuditControl struct {
 	// AuditorEmail identifies the assigned auditor for the assigned-auditor gate
 	// (population validation, sample selection, evidence validation): the caller
 	// is authorized when their token email matches this value.
-	AuditorEmail  *string   `json:"auditorEmail"`
-	DueDate       *string   `json:"dueDate"` // YYYY-MM-DD
-	Status        string    `json:"status"`
-	ControlSource string    `json:"controlSource"` // MANUAL | COPIED | CSV
-	IsOverdue     bool      `json:"isOverdue"`
-	CreatedOn     time.Time `json:"createdOn"`
-	UpdatedOn     time.Time `json:"updatedOn"`
+	AuditorEmail *string `json:"auditorEmail"`
+	DueDate      *string `json:"dueDate"` // YYYY-MM-DD
+	Status       string  `json:"status"`
+	// SampleReference is the auditor's sample-selection note (set via
+	// UpdateControlRequest.SampleReference / UpdateStatusWithSample). Comments
+	// is the reviewer/auditor's most recent reject reason. Both are plain
+	// audit_control columns, not derived from population/evidence rows.
+	SampleReference *string   `json:"sampleReference"`
+	Comments        *string   `json:"comments"`
+	ControlSource   string    `json:"controlSource"` // MANUAL | COPIED | CSV
+	IsOverdue       bool      `json:"isOverdue"`
+	CreatedOn       time.Time `json:"createdOn"`
+	UpdatedOn       time.Time `json:"updatedOn"`
 	// StatusOverridden/OverriddenBy/OverriddenAt record that this control's
 	// status was last set by a backward override rather than the ordinary
 	// workflow — see ControlService.OverrideControlStatus.
@@ -926,17 +932,23 @@ type ListEvidenceResponse struct {
 
 // AuditPopulation is the population record for an OE-type control.
 type AuditPopulation struct {
-	ID              int       `json:"id"`
-	ControlID       int       `json:"controlId"`
-	OwnerID         *int      `json:"ownerId"`
-	TeamID          *int      `json:"teamId"`
-	ReferenceNumber *int      `json:"referenceNumber"`
-	Description     *string   `json:"description"`
-	Status          string    `json:"status"`
-	DueDate         *string   `json:"dueDate"`
-	Comments        *string   `json:"comments"`
-	CreatedOn       time.Time `json:"createdOn"`
-	UpdatedOn       time.Time `json:"updatedOn"`
+	ID              int     `json:"id"`
+	ControlID       int     `json:"controlId"`
+	OwnerID         *int    `json:"ownerId"`
+	TeamID          *int    `json:"teamId"`
+	ReferenceNumber *int    `json:"referenceNumber"`
+	Description     *string `json:"description"`
+	Status          string  `json:"status"`
+	DueDate         *string `json:"dueDate"`
+	Comments        *string `json:"comments"`
+	// Attestation is a written note standing in for population files (a round
+	// submitted with no files, or with a note alongside them). Nil otherwise.
+	// Unlike AuditEvidence.Attestation (set once at Create — evidence starts a
+	// fresh round per submission), population reuses one round for its whole
+	// lifecycle, so this is set via UpdatePopulationRequest instead.
+	Attestation *string   `json:"attestation"`
+	CreatedOn   time.Time `json:"createdOn"`
+	UpdatedOn   time.Time `json:"updatedOn"`
 }
 
 // CreatePopulationRequest is the payload for POST /audits/{auditId}/controls/{controlId}/populations.
@@ -958,6 +970,7 @@ type UpdatePopulationRequest struct {
 	ReferenceNumber *int    `json:"referenceNumber"`
 	Description     *string `json:"description"`
 	DueDate         *string `json:"dueDate"`
+	Attestation     *string `json:"attestation"`
 	UpdatedBy       string  `json:"updatedBy"`
 	ExpectedStatus  string  `json:"-"` // set server-side for atomic transition; never decoded from JSON
 }

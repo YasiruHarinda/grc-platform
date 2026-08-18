@@ -109,9 +109,17 @@ type SubmitEvidenceRequest struct {
 
 // PopulationSubmitRequest is the body for POST .../population/submit and
 // .../population/{controlId}/submit. Unlike evidence, population/sample keep
-// the folder-listing contract (their subfolders already fence their files),
-// so the client only echoes back the folder path handed out by the
-// upload-link endpoint.
+// the folder-listing contract (their subfolders already fence their files —
+// see design doc §3.3), so the client only echoes back the folder path handed
+// out by the upload-link endpoint.
+//
+// Attestation is a written note standing in for population files — required
+// when the folder has none (mirrors SampleSubmitRequest.Note: files, a note,
+// or both, at least one required). Unlike SubmitEvidenceRequest.Attestation,
+// there is no privilege gate — anyone who can submit population files can use
+// this too, matching sample selection's openness rather than evidence's
+// ManageControls-only fileless completion.
 type PopulationSubmitRequest struct {
-	FolderPath string `json:"folderPath"`
+	FolderPath  string `json:"folderPath"`
+	Attestation string `json:"attestation,omitempty"`
 }

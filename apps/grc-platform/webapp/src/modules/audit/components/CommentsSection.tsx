@@ -99,9 +99,12 @@ export default function CommentsSection({
               key={c.id}
               sx={(theme) => ({
                 borderLeft: "3px solid",
-                borderColor: c.isInternal
-                  ? theme.palette.warning.main
-                  : theme.palette.mode === "dark" ? "#1d4ed8" : "#93c5fd",
+                // "rgba(59,130,246,0.6)" rather than a theme.palette.mode check:
+                // this design system themes via CSS variables, so mode read
+                // inside a plain sx callback doesn't reflect the active color
+                // scheme (always resolves the light branch, even in dark mode —
+                // see ControlDrawer.tsx's SampleSelectionCard for the same fix).
+                borderColor: c.isInternal ? theme.palette.warning.main : "rgba(59,130,246,0.6)",
                 pl: 2, py: 0.75,
                 borderRadius: "0 4px 4px 0",
               })}

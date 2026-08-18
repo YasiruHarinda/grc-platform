@@ -153,6 +153,17 @@ type PopulationRepository interface {
 	AddFile(ctx context.Context, populationID int, fileKind, fileName, filePath string, fileType *string, fileSize *int64, createdBy string) error
 	// UpdateStatus advances the population round's status (e.g. → SUBMITTED).
 	UpdateStatus(ctx context.Context, populationID int, status, updatedBy string) error
+	// UpdateStatusWithAttestation is UpdateStatus plus a written note standing
+	// in for population files (a fileless submit, or a note alongside files) —
+	// used by SubmitPopulation instead of UpdateStatus when there's an
+	// attestation to record. attestation == "" behaves exactly like
+	// UpdateStatus (no attestation column write).
+	UpdateStatusWithAttestation(ctx context.Context, populationID int, status, attestation, updatedBy string) error
+	// ClearAttestation blanks a population round's note, independent of its
+	// status (unlike UpdateStatusWithAttestation, which only ever writes one
+	// alongside a status transition) — for removing a fileless (or
+	// note-alongside-files) submission's note after the fact.
+	ClearAttestation(ctx context.Context, populationID int, updatedBy string) error
 	// UpdateDetails edits a population round's requirement text, due date,
 	// comments, owner, and team — used when a manager edits an OE control's
 	// population details from the same form used to create them.

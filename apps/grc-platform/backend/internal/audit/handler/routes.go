@@ -142,6 +142,9 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/v1/audits/{id}/controls/{controlId}/population", eh.listPopulation)
 	// Remove a population/sample file (see deletePopulationFile for the per-kind gate).
 	mux.HandleFunc("DELETE /api/v1/audits/{id}/controls/{controlId}/population/files/{fileId}", eh.deletePopulationFile)
+	// Blank the team's population-submission note without touching files/status
+	// (see deletePopulationAttestation) — the round itself is never deleted.
+	mux.HandleFunc("DELETE /api/v1/audits/{id}/controls/{controlId}/population/attestation", eh.deletePopulationAttestation)
 	// Proxied file download by file ID (mirrors the evidence download route).
 	mux.HandleFunc("GET /api/v1/population/files/{fileId}/download", eh.downloadPopulationFile)
 

@@ -118,7 +118,7 @@ const controlSelectCols = `
   c.team_id,    t.name               AS team_name,
   c.auditor_id, u_aud.display_name   AS auditor_name, u_aud.email AS auditor_email,
   DATE_FORMAT(c.due_date, '%Y-%m-%d') AS due_date,
-  c.status, c.control_source,
+  c.status, c.sample_reference, c.comments, c.control_source,
   (c.due_date IS NOT NULL AND c.due_date < CURDATE() AND c.status != 'COMPLETE') AS is_overdue,
   c.created_at, c.updated_at,
   c.status_overridden, c.overridden_by, c.overridden_at,
@@ -768,6 +768,7 @@ func scanControl(s scanner) (*domain.AuditControl, error) {
 	var c domain.AuditControl
 	var ownerID, teamID, auditorID sql.NullInt64
 	var evidenceReq, ownerName, teamName, auditorName, auditorEmail, dueDate sql.NullString
+	var sampleReference, comments sql.NullString
 	var overriddenBy sql.NullString
 	var overriddenAt sql.NullTime
 	var popDescription, popComments, popDueDate, popOwnerName, popTeamName sql.NullString
@@ -779,7 +780,7 @@ func scanControl(s scanner) (*domain.AuditControl, error) {
 		&teamID, &teamName,
 		&auditorID, &auditorName, &auditorEmail,
 		&dueDate,
-		&c.Status, &c.ControlSource, &c.IsOverdue,
+		&c.Status, &sampleReference, &comments, &c.ControlSource, &c.IsOverdue,
 		&c.CreatedOn, &c.UpdatedOn,
 		&c.StatusOverridden, &overriddenBy, &overriddenAt,
 		&popDescription, &popComments, &popDueDate, &popOwnerName, &popTeamName,
@@ -809,6 +810,8 @@ func scanControl(s scanner) (*domain.AuditControl, error) {
 	c.AuditorName = nullStrPtr(auditorName)
 	c.AuditorEmail = nullStrPtr(auditorEmail)
 	c.DueDate = nullStrPtr(dueDate)
+	c.SampleReference = nullStrPtr(sampleReference)
+	c.Comments = nullStrPtr(comments)
 	c.PopulationDescription = nullStrPtr(popDescription)
 	c.PopulationComments = nullStrPtr(popComments)
 	c.PopulationDueDate = nullStrPtr(popDueDate)

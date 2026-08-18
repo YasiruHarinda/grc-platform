@@ -152,7 +152,7 @@ func (h *evidenceHandler) submitPopulation(w http.ResponseWriter, r *http.Reques
 	user := auth.FromContext(r.Context())
 	actor := user.Email
 
-	result, err := h.popSvc.SubmitPopulation(r.Context(), controlID, populationID, req.FolderPath, actor)
+	result, err := h.popSvc.SubmitPopulation(r.Context(), controlID, populationID, req.FolderPath, req.Attestation, actor)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
@@ -325,6 +325,31 @@ var teamEditablePopulationStatuses = map[string]bool{
 	"AUDITOR_REJECTED":    true,
 }
 
+// requireControlNotComplete loads the control and rejects the request with 409
+// if it is COMPLETE — a hard lock on population/evidence file and note
+// deletion for everyone, including ManageControls. An admin who needs to
+// touch a completed control's records must override its status backward
+// first (see useOverrideControlStatus on the frontend); that naturally
+// re-opens this gate on whatever earlier status the control lands on, since
+// only COMPLETE itself is checked here. Returns the fetched control, or nil
+// after writing the error response.
+func (h *evidenceHandler) requireControlNotComplete(w http.ResponseWriter, r *http.Request, auditID, controlID int) *model.AuditControl {
+	control, err := h.controlSvc.GetByID(r.Context(), auditID, controlID)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return nil
+	}
+	if control == nil {
+		response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
+		return nil
+	}
+	if control.Status == "COMPLETE" {
+		response.WriteError(w, http.StatusConflict, "records cannot be edited once the control is complete; override the status first")
+		return nil
+	}
+	return control
+}
+
 // deletePopulationFile handles
 // DELETE /api/v1/audits/{id}/controls/{controlId}/population/files/{fileId}.
 //
@@ -332,7 +357,8 @@ var teamEditablePopulationStatuses = map[string]bool{
 // yet submitted, or sent back for changes). SAMPLE-kind files are editable by the
 // control's assigned auditor while the round is in sampleEligibleStatuses (i.e.
 // through SUBMITTED_SAMPLE — it locks once evidence review starts); ManageControls
-// can always remove one for an admin correction.
+// can always remove one for an admin correction — except once the control is
+// COMPLETE (see requireControlNotComplete), which locks even that.
 func (h *evidenceHandler) deletePopulationFile(w http.ResponseWriter, r *http.Request) {
 	auditID, ok := parseIntParam(w, r, "id")
 	if !ok {
@@ -353,18 +379,14 @@ func (h *evidenceHandler) deletePopulationFile(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	control := h.requireControlNotComplete(w, r, auditID, controlID)
+	if control == nil {
+		return
+	}
+
 	isAdmin := auth.HasPrivilege(r.Context(), privilege.ManageControls)
 	if strings.EqualFold(file.FileKind, "SAMPLE") {
 		if !isAdmin {
-			control, err := h.controlSvc.GetByID(r.Context(), auditID, controlID)
-			if err != nil {
-				response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-				return
-			}
-			if control == nil {
-				response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
-				return
-			}
 			if !requireAssignedAuditor(w, r, control, privilege.SelectSample) {
 				return
 			}
@@ -403,6 +425,59 @@ func (h *evidenceHandler) deletePopulationFile(w http.ResponseWriter, r *http.Re
 	}
 
 	if err := h.popSvc.DeleteFile(r.Context(), fileID); err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// deletePopulationAttestation handles
+// DELETE /api/v1/audits/{id}/controls/{controlId}/population/attestation.
+//
+// Blanks the team's population-submission note (the "Completed without
+// files"/alongside-files attestation shown on the persistent Population
+// Submission card) without touching the round's files or status — the same
+// team-editable gate as deletePopulationFile's POPULATION-kind branch, since
+// this note is written by the same submitPopulation call. Unlike evidence's
+// fileless rounds (deleteEvidenceRound), a population round is never deleted
+// outright — a control has exactly one for its whole lifecycle — so there is
+// no whole-round-delete counterpart here, only this narrower field clear.
+func (h *evidenceHandler) deletePopulationAttestation(w http.ResponseWriter, r *http.Request) {
+	auditID, ok := parseIntParam(w, r, "id")
+	if !ok {
+		return
+	}
+	controlID, ok := parseIntParam(w, r, "controlId")
+	if !ok {
+		return
+	}
+
+	if h.requireControlNotComplete(w, r, auditID, controlID) == nil {
+		return
+	}
+
+	isAdmin := auth.HasPrivilege(r.Context(), privilege.ManageControls)
+	if !isAdmin {
+		if !auth.RequirePrivilege(r.Context(), w, privilege.SubmitEvidence) {
+			return
+		}
+		if !h.requireAssignment(w, r, auditID, controlID) {
+			return
+		}
+	}
+
+	round, err := h.popSvc.LatestRound(r.Context(), auditID, controlID)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	if !isAdmin && !teamEditablePopulationStatuses[round.Status] {
+		response.WriteError(w, http.StatusConflict, "the population note can only be edited before or after being sent back for changes")
+		return
+	}
+
+	actor := auth.FromContext(r.Context()).Email
+	if err := h.popSvc.ClearAttestation(r.Context(), round.ID, actor); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}

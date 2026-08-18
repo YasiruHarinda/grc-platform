@@ -91,9 +91,14 @@ export default function EvidenceUploadBox({
     : evidenceMode === "append" ? addEvidenceFiles
     : submitEvidence;
   const busy = submit.isPending;
-  // Fileless completion: only the initial evidence submission (not
-  // population, not "Add Files") and only for admins.
-  const allowAttestation = phase === "evidence" && evidenceMode === "new" && can(AuditPrivilege.ManageControls);
+  // Fileless completion, gated differently per phase: evidence restricts it to
+  // ManageControls admins (a control-level exception); population is open to
+  // whoever can submit population files at all, matching sample selection's
+  // own "files, a note, or both" rule one step later in the same OE flow (no
+  // extra privilege check there either). Neither applies to "Add Files".
+  const allowAttestation =
+    evidenceMode === "new" &&
+    (phase === "population" || (phase === "evidence" && can(AuditPrivilege.ManageControls)));
 
   function addFiles(list: FileList | null) {
     if (!list) return;
@@ -120,7 +125,11 @@ export default function EvidenceUploadBox({
   function handleSubmit() {
     const onDone = { onSuccess: () => { setFiles([]); setSizeError(null); setAttestation(""); onSubmitted(); } };
     if (allowAttestation && files.length === 0) {
-      submitEvidence.mutate({ auditId, controlId, files, attestation }, onDone);
+      if (phase === "population") {
+        submitPopulation.mutate({ auditId, controlId, files, attestation }, onDone);
+      } else {
+        submitEvidence.mutate({ auditId, controlId, files, attestation }, onDone);
+      }
       return;
     }
     submit.mutate({ auditId, controlId, files }, onDone);
@@ -200,7 +209,11 @@ export default function EvidenceUploadBox({
         <TextField
           multiline
           minRows={2}
-          placeholder="Written justification for completing this control with no files (required)"
+          placeholder={
+            phase === "population"
+              ? "Written note explaining why there are no population files (required)"
+              : "Written justification for completing this control with no files (required)"
+          }
           value={attestation}
           onChange={(e) => setAttestation(e.target.value)}
           disabled={busy}
@@ -210,9 +223,9 @@ export default function EvidenceUploadBox({
         />
       )}
 
-      {(submit.isError || (fileless && submitEvidence.isError)) && (
+      {(submit.isError || (fileless && phase === "evidence" && submitEvidence.isError)) && (
         <Alert severity="error" sx={{ mb: 1.5, fontSize: "0.8rem" }}>
-          {((fileless ? submitEvidence.error : submit.error) as Error).message}
+          {((fileless && phase === "evidence" ? submitEvidence.error : submit.error) as Error).message}
         </Alert>
       )}
 
