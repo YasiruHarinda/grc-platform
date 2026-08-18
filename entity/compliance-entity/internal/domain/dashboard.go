@@ -107,6 +107,8 @@ type WorkQueueTab string
 const (
 	WorkQueueTabActionItems WorkQueueTab = "action-items"
 	WorkQueueTabDueSoon     WorkQueueTab = "due-soon"
+	WorkQueueTabPending     WorkQueueTab = "pending"
+	WorkQueueTabValidation  WorkQueueTab = "validation"
 	WorkQueueTabOverdue     WorkQueueTab = "overdue"
 )
 
@@ -119,6 +121,14 @@ type WorkQueueRequest struct {
 	Limit     int          `json:"limit"`   // rows per page; capped at 100 server-side
 	TeamIDs   []int        `json:"teamIds"` // filter by audit_team.id; nil/empty = all teams
 	OwnerIDs  []int        `json:"ownerIds"` // filter by user.id (process owner); nil/empty = all owners
+	AuditIDs  []int        `json:"auditIds"` // filter by audit.id; nil/empty = all audits
+	// ControlNumber is a case-insensitive substring match on audit_control.control_number; "" = no filter.
+	ControlNumber string `json:"controlNumber"`
+	// Statuses filters by audit_control.status; nil/empty = all statuses. The backend
+	// resolves both the "status" and "action needed" UI filters into this single set.
+	Statuses []string `json:"statuses"`
+	// DueSortDesc sorts by due date descending (latest first) when true; ascending otherwise.
+	DueSortDesc bool `json:"dueSortDesc"`
 }
 
 // PrimaryRole re-uses the same priority logic as AuditDashboardRequest.
@@ -151,5 +161,7 @@ type DashboardData struct {
 	TeamStatusDistribution []TeamStatusCount      `json:"teamStatusDistribution"`
 	ActionItems            []DashboardControlItem `json:"actionItems"`
 	DueSoonItems           []DashboardControlItem `json:"dueSoonItems"`
+	PendingCount           int                     `json:"pendingCount"`
+	ValidationCount        int                     `json:"validationCount"`
 	OverdueControls        []DashboardControlItem `json:"overdueControls"`
 }

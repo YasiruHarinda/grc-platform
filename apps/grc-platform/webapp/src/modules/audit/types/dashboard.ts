@@ -89,5 +89,9 @@ export interface DashboardData {
   actionItems: ActionItem[];
   /** Action items due within 7 days — fetched independently so LIMIT on actionItems doesn't affect this. */
   dueSoonItems: ActionItem[];
+  /** Count of controls awaiting evidence/population submission or resubmission (any role). */
+  pendingCount: number;
+  /** Count of controls with evidence/population submitted and awaiting auditor validation/sampling. */
+  validationCount: number;
   overdueControls: OverdueControl[];
 }

@@ -49,8 +49,12 @@ func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, f model.DashboardF
 		"tab":       string(tab),
 		"page":      page,
 		"limit":     limit,
-		"teamIds":  f.TeamIDs,
-		"ownerIds": f.OwnerIDs,
+		"teamIds":       f.TeamIDs,
+		"ownerIds":      f.OwnerIDs,
+		"auditIds":      f.AuditIDs,
+		"controlNumber": f.ControlNumber,
+		"statuses":      f.Statuses,
+		"dueSortDesc":   f.DueSortDesc,
 	}
 	var p model.WorkQueuePage
 	if err := r.c.Post(ctx, "/audit/work-queue/search", body, &p); err != nil {

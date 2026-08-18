@@ -84,8 +84,7 @@ export default function AuditProgressList({ audits }: { audits: Audit[] }): JSX.
                   size="small"
                   sx={{
                     height: 20, fontSize: "0.65rem", fontWeight: 700, flexShrink: 0,
-                    color: DUE_OVERDUE, bgcolor: "rgba(229,57,53,0.12)",
-                    "[data-color-scheme='dark'] &": { bgcolor: "rgba(229,57,53,0.25)" },
+                    color: DUE_OVERDUE, bgcolor: "transparent", border: `1px solid ${DUE_OVERDUE}`,
                     "& .MuiChip-icon": { color: DUE_OVERDUE },
                   }}
                 />

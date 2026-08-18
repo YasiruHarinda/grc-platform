@@ -17,11 +17,13 @@
 import { Alert, Box, Paper, Skeleton, Typography } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
 import { useRef, useState } from "react";
+import { useSearchParams } from "react-router";
 import { useGetAudits } from "@modules/audit/api/useGetAudits";
 import { useGetDashboard } from "@modules/audit/api/useGetDashboard";
 import { useAuditPrivileges } from "@modules/audit/hooks/useAuditPrivileges";
 import { AuditPrivilege } from "@modules/audit/privileges";
 import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
+import TabBar, { type TabOption } from "@components/tab-bar/TabBar";
 import AuditProgressList from "@modules/audit/components/dashboard/AuditProgressList";
 import HeroBand from "@modules/audit/components/dashboard/HeroBand";
 import KpiCards from "@modules/audit/components/dashboard/KpiCards";
@@ -33,8 +35,12 @@ import WorkQueue, {
   QUEUE_TAB_AWAITING,
   QUEUE_TAB_OVERDUE,
 } from "@modules/audit/components/dashboard/WorkQueue";
+import FrameworkReadinessTab from "@modules/audit/components/dashboard/framework/FrameworkReadinessTab";
 import type { ControlPhase } from "@modules/audit/utils/controlStatus";
 import type { TeamCompletion } from "@modules/audit/types/dashboard";
+
+const TAB_OVERVIEW = "overview";
+const TAB_FRAMEWORKS = "frameworks";
 
 // ── Section card ──────────────────────────────────────────────────────────────
 
@@ -81,6 +87,22 @@ export default function AuditDashboard(): JSX.Element {
   const { data: auditsData } = useGetAudits();
   const claims = useIdTokenClaims();
 
+  // Tab state lives in the URL (?tab=frameworks) so a status email can link
+  // straight to the Frameworks view; Overview is the default landing tab.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get("tab") === TAB_FRAMEWORKS ? TAB_FRAMEWORKS : TAB_OVERVIEW;
+  const setActiveTab = (tabId: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (tabId === TAB_FRAMEWORKS) next.set("tab", TAB_FRAMEWORKS);
+    else next.delete("tab");
+    setSearchParams(next, { replace: true });
+  };
+
+  const tabs: TabOption[] = [
+    { id: TAB_OVERVIEW, label: "Overview" },
+    { id: TAB_FRAMEWORKS, label: "Frameworks" },
+  ];
+
   const queueRef = useRef<HTMLDivElement>(null);
   const [queueTab, setQueueTab] = useState(QUEUE_TAB_AWAITING);
   const [queueHighlight, setQueueHighlight] = useState(false);
@@ -116,6 +138,8 @@ export default function AuditDashboard(): JSX.Element {
   const awaitingCount = hasQueue ? (stats.totalActionItems ?? null) : null;
 
   const dueSoonCount = data.dueSoonItems?.length ?? 0;
+  const pendingCount = data.pendingCount ?? 0;
+  const validationCount = data.validationCount ?? 0;
 
   const userName =
     (claims?.given_name as string | undefined) ??
@@ -124,6 +148,13 @@ export default function AuditDashboard(): JSX.Element {
 
   return (
     <Box sx={{ p: 3, display: "flex", flexDirection: "column", gap: 3 }}>
+
+      <TabBar tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab} sx={{ mb: 0 }} />
+
+      {activeTab === TAB_FRAMEWORKS ? (
+        <FrameworkReadinessTab audits={auditsData?.items ?? []} />
+      ) : (
+        <>
 
       {/* ① Hero band — greeting, completion ring, attention chips */}
       <HeroBand
@@ -182,8 +213,11 @@ export default function AuditDashboard(): JSX.Element {
           <WorkQueue
             totalActionItems={stats.totalActionItems ?? 0}
             totalDueSoonItems={dueSoonCount}
+            totalPendingItems={pendingCount}
+            totalValidationItems={validationCount}
             totalOverdueControls={stats.overdueControls}
             canApprove={canApprove}
+            canSubmit={canSubmit}
             queueTitle={queueTitle}
             tab={queueTab}
             onTabChange={setQueueTab}
@@ -203,6 +237,9 @@ export default function AuditDashboard(): JSX.Element {
         teamStatusDistribution={data.teamStatusDistribution ?? []}
         onClose={() => setSelectedTeam(null)}
       />
+
+        </>
+      )}
 
     </Box>
   );

@@ -1845,7 +1845,7 @@ function Step3Review({
         </Typography>
         {drafts.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
-            No controls — you can add them later via the Control Settings panel.
+            No controls added. You can add them later via the Control Settings panel.
           </Typography>
         ) : (
           <TableContainer sx={{ maxHeight: 360 }}>

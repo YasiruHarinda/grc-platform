@@ -95,6 +95,8 @@ type DashboardData struct {
 	TeamStatusDistribution []TeamStatusCount `json:"teamStatusDistribution"`
 	ActionItems            []ActionItem      `json:"actionItems"`
 	DueSoonItems           []ActionItem      `json:"dueSoonItems"`
+	PendingCount           int               `json:"pendingCount"`
+	ValidationCount        int               `json:"validationCount"`
 	OverdueControls        []OverdueControl  `json:"overdueControls"`
 }
 
@@ -104,6 +106,8 @@ type WorkQueueTab string
 const (
 	WorkQueueTabActionItems WorkQueueTab = "action-items"
 	WorkQueueTabDueSoon     WorkQueueTab = "due-soon"
+	WorkQueueTabPending     WorkQueueTab = "pending"
+	WorkQueueTabValidation  WorkQueueTab = "validation"
 	WorkQueueTabOverdue     WorkQueueTab = "overdue"
 )
 
@@ -125,6 +129,16 @@ type DashboardFilter struct {
 	TeamIDs []int
 	// OwnerIDs optionally restricts work-queue results to specific process owner user IDs.
 	OwnerIDs []int
+	// AuditIDs optionally restricts work-queue results to specific audit IDs.
+	AuditIDs []int
+	// ControlNumber optionally restricts results to controls whose number contains
+	// this (case-insensitive) substring; "" = no filter.
+	ControlNumber string
+	// Statuses optionally restricts results to specific control statuses; nil/empty =
+	// all. The webapp folds both the status and action-needed column filters into this.
+	Statuses []string
+	// DueSortDesc sorts the page by due date descending (latest first) when true.
+	DueSortDesc bool
 }
 
 // Role constants — mirror the Asgardeo group names exactly.
