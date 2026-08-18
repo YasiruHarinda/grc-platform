@@ -2234,13 +2234,25 @@ def _build_llm():
         return ChatGoogleGenerativeAI(model=model or "gemini-2.0-flash", google_api_key=settings.GEMINI_API_KEY)
     elif provider == "azure":
         from browser_use import ChatAzureOpenAI
-        return ChatAzureOpenAI(
-            model=model or "gpt-4o-mini",
-            api_key=settings.AZURE_OPENAI_API_KEY,
-            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-            azure_deployment=settings.AZURE_OPENAI_DEPLOYMENT,
-            api_version=settings.AZURE_OPENAI_API_VERSION,
-        )
+
+        from wso2_runner.azure_credential import resolve_llm_auth
+
+        kwargs = {
+            "model": model or "gpt-4o-mini",
+            "azure_endpoint": settings.AZURE_OPENAI_ENDPOINT,
+            "azure_deployment": settings.AZURE_OPENAI_DEPLOYMENT,
+            "api_version": settings.AZURE_OPENAI_API_VERSION,
+        }
+        # entra mode (default): a token provider, no api_key. api_key mode:
+        # today's behaviour, unchanged. Never pass both, and never pass an
+        # empty api_key — the client only errors when none of api_key /
+        # azure_ad_token / azure_ad_token_provider is supplied.
+        token_provider = resolve_llm_auth()
+        if token_provider is not None:
+            kwargs["azure_ad_token_provider"] = token_provider
+        else:
+            kwargs["api_key"] = settings.AZURE_OPENAI_API_KEY
+        return ChatAzureOpenAI(**kwargs)
     else:
         from browser_use import ChatOllama
         return ChatOllama(model=model or "qwen2.5:7b", timeout=180)

@@ -13,6 +13,16 @@ None of these tests ever run the real polling loop, hit the network, or
 open a browser: `run_forever` is replaced with a recording async stub,
 `httpx.get` is stubbed for the `doctor` checks, and `configure`'s
 `CONFIG_DIR`/`CONFIG_FILE` are redirected into `tmp_path`.
+
+`start`'s Azure start-up gate (ticket #94) calls
+`wso2_runner.azure_credential.verify_access()` before it ever reaches
+`run_forever` — a real access check that signs in *and* calls the endpoint,
+not just a token fetch. `azure_credential` imports no `browser_use`, so it
+needs none of the sys.modules trickery above — `fake_run_forever` below stubs
+`verify_access()` to succeed by default so every pre-existing `start` test
+that merely sets `AGENT_PROVIDER = "azure"` still reaches `run_forever`
+exactly as it did before this gate existed. The dedicated Azure gate tests
+further down override that stub to exercise the failure paths.
 """
 import sys
 import types
@@ -24,6 +34,7 @@ from typer.testing import CliRunner
 import wso2_runner.cli as cli
 import wso2_runner.config as config_mod
 from wso2_runner import oauth
+from wso2_runner.azure_credential import ClientAuthenticationError, CredentialUnavailableError
 from wso2_runner.config import settings
 
 runner = CliRunner()
@@ -34,6 +45,8 @@ def fake_run_forever(monkeypatch):
     """Import wso2_runner.loop (faking out browser_use via a stub agent
     module) and replace its run_forever with a recorder that returns
     immediately, patched at the site `start` actually imports it from.
+    Also stubs the Azure start-up gate's access check to succeed, so tests
+    that don't care about Azure auth still reach run_forever.
 
     Returns a list that the recorder appends
     (cloud_url, user_email, poll_interval) tuples to.
@@ -53,17 +66,28 @@ def fake_run_forever(monkeypatch):
         calls.append((cloud_url, user_email, poll_interval))
 
     monkeypatch.setattr(loop, "run_forever", _fake_run_forever)
+
+    import wso2_runner.azure_credential as azure_credential
+
+    async def _fake_verify_access():
+        return None
+
+    monkeypatch.setattr(azure_credential, "verify_access", _fake_verify_access)
+
     return calls
 
 
 @pytest.fixture(autouse=True)
 def _restore_agent_provider():
     """`settings` is a process-wide singleton `cli.py` reaches into by
-    importing it fresh each call; tests that mutate AGENT_PROVIDER must not
-    leak that mutation into other tests in this file or other test files."""
-    original = settings.AGENT_PROVIDER
+    importing it fresh each call; tests that mutate AGENT_PROVIDER (or the
+    Azure auth mode) must not leak that mutation into other tests in this
+    file or other test files."""
+    original_provider = settings.AGENT_PROVIDER
+    original_auth_mode = settings.AZURE_OPENAI_AUTH_MODE
     yield
-    settings.AGENT_PROVIDER = original
+    settings.AGENT_PROVIDER = original_provider
+    settings.AZURE_OPENAI_AUTH_MODE = original_auth_mode
 
 
 # ── start: user-resolution precedence ───────────────────────────────────
@@ -153,6 +177,141 @@ def test_start_proceeds_to_run_forever_when_provider_configured(fake_run_forever
     assert fake_run_forever == [(None, "someone@wso2.com", None)]
 
 
+# ── start: Azure auth gate (entra mode, ticket #94) ─────────────────────
+
+
+def test_start_azure_entra_mode_checks_azure_auth_before_run_forever(fake_run_forever):
+    """Default mode is "entra" — the gate runs, succeeds (via the
+    fake_run_forever fixture's default stub), and start proceeds exactly as
+    it did before this gate existed."""
+    settings.AGENT_PROVIDER = "azure"
+    settings.AZURE_OPENAI_AUTH_MODE = "entra"
+
+    result = runner.invoke(cli.app, ["start", "someone@wso2.com"])
+
+    assert result.exit_code == 0
+    assert fake_run_forever == [(None, "someone@wso2.com", None)]
+
+
+def test_start_azure_api_key_mode_skips_the_azure_gate(fake_run_forever, monkeypatch):
+    """api_key mode must behave exactly as it did before this ticket — no
+    Azure token check at all, even if acquiring one would fail."""
+    import wso2_runner.azure_credential as azure_credential
+
+    async def _boom():
+        raise CredentialUnavailableError("must never be called in api_key mode")
+
+    monkeypatch.setattr(azure_credential, "verify_access", _boom)
+    settings.AGENT_PROVIDER = "azure"
+    settings.AZURE_OPENAI_AUTH_MODE = "api_key"
+
+    result = runner.invoke(cli.app, ["start", "someone@wso2.com"])
+
+    assert result.exit_code == 0
+    assert fake_run_forever == [(None, "someone@wso2.com", None)]
+
+
+def test_start_exits_nonzero_when_azure_cli_unavailable(fake_run_forever, monkeypatch):
+    """No Azure CLI installed / nobody signed in — the narrower
+    CredentialUnavailableError case. Must exit non-zero, name `az login`,
+    and never reach run_forever (no browser opens, no task is consumed)."""
+    import wso2_runner.azure_credential as azure_credential
+
+    async def _unavailable():
+        raise CredentialUnavailableError("az cli not found")
+
+    monkeypatch.setattr(azure_credential, "verify_access", _unavailable)
+    settings.AGENT_PROVIDER = "azure"
+    settings.AZURE_OPENAI_AUTH_MODE = "entra"
+
+    result = runner.invoke(cli.app, ["start", "someone@wso2.com"])
+
+    assert result.exit_code == 1
+    assert "az login" in result.output
+    assert fake_run_forever == []
+
+
+def test_start_exits_nonzero_when_azure_session_rejected(fake_run_forever, monkeypatch):
+    """Signed in, but authentication is rejected — e.g. wrong tenant, or
+    missing the Azure OpenAI role. Must exit non-zero, name `az login`, and
+    never reach run_forever."""
+    import wso2_runner.azure_credential as azure_credential
+
+    async def _rejected():
+        raise ClientAuthenticationError("token request rejected")
+
+    monkeypatch.setattr(azure_credential, "verify_access", _rejected)
+    settings.AGENT_PROVIDER = "azure"
+    settings.AZURE_OPENAI_AUTH_MODE = "entra"
+
+    result = runner.invoke(cli.app, ["start", "someone@wso2.com"])
+
+    assert result.exit_code == 1
+    assert "az login" in result.output
+    assert fake_run_forever == []
+
+
+def test_start_exits_nonzero_when_azure_role_is_missing(fake_run_forever, monkeypatch):
+    """Signed in correctly and still refused by the resource. This is the
+    case the old token-only gate let straight through: the runner started,
+    took a task, opened a browser, and failed on the first LLM call. It must
+    now stop here, and must not suggest `az login`."""
+    import wso2_runner.azure_credential as azure_credential
+    from wso2_runner.azure_credential import AzureAccessDeniedError
+
+    async def _denied():
+        raise AzureAccessDeniedError("endpoint refused the call with HTTP 403")
+
+    monkeypatch.setattr(azure_credential, "verify_access", _denied)
+    settings.AGENT_PROVIDER = "azure"
+    settings.AZURE_OPENAI_AUTH_MODE = "entra"
+
+    result = runner.invoke(cli.app, ["start", "someone@wso2.com"])
+
+    assert result.exit_code == 1
+    assert "not allowed to call Azure OpenAI" in result.output
+    assert "az login" not in result.output
+    assert fake_run_forever == []
+
+
+def test_start_proceeds_when_azure_access_cannot_be_verified(fake_run_forever, monkeypatch):
+    """An inconclusive probe -- no endpoint set, or the network is down --
+    must warn and let the runner start. A new check that stops a runner
+    which would have worked is worse than the gap it closes."""
+    import wso2_runner.azure_credential as azure_credential
+    from wso2_runner.azure_credential import AzureAccessUnverifiedError
+
+    async def _unverified():
+        raise AzureAccessUnverifiedError("could not reach the endpoint")
+
+    monkeypatch.setattr(azure_credential, "verify_access", _unverified)
+    settings.AGENT_PROVIDER = "azure"
+    settings.AZURE_OPENAI_AUTH_MODE = "entra"
+
+    result = runner.invoke(cli.app, ["start", "someone@wso2.com"])
+
+    assert result.exit_code == 0
+    assert "Could not confirm Azure OpenAI access" in result.output
+    assert fake_run_forever == [(None, "someone@wso2.com", None)]
+
+
+def test_start_non_azure_provider_never_reaches_the_azure_gate(fake_run_forever, monkeypatch):
+    """A provider other than "azure" must never attempt an Azure token
+    check, regardless of AZURE_OPENAI_AUTH_MODE."""
+    import wso2_runner.azure_credential as azure_credential
+
+    async def _boom():
+        raise CredentialUnavailableError("must never be called for a non-azure provider")
+
+    monkeypatch.setattr(azure_credential, "verify_access", _boom)
+    settings.AGENT_PROVIDER = "anthropic"
+
+    result = runner.invoke(cli.app, ["start", "someone@wso2.com"])
+
+    assert result.exit_code == 0
+    assert fake_run_forever == [(None, "someone@wso2.com", None)]
+
+
 def test_start_keyboard_interrupt_exits_zero_and_prints_stopped(monkeypatch):
     """A Ctrl-C during the loop is a clean shutdown, not a crash: `start`
     catches KeyboardInterrupt around asyncio.run and exits 0."""
@@ -199,23 +358,28 @@ def test_configure_writes_config_file_from_prompts(monkeypatch, tmp_path):
     assert "SCREENSHOT_MONITOR=1" in content
 
 
-def test_configure_azure_provider_writes_endpoint_and_deployment(monkeypatch, tmp_path):
+def test_configure_azure_provider_writes_endpoint_deployment_and_tenant(monkeypatch, tmp_path):
+    """Azure setup no longer hands out a shared API key — see ticket #95.
+    The wizard writes endpoint, deployment and tenant, and points the
+    engineer at `az login` instead of prompting for a secret."""
     cfg_dir = tmp_path / ".wso2-runner"
     cfg_file = cfg_dir / ".env"
     monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
     monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
 
     # provider=azure (default, just press enter), model=<default>,
-    # api key, endpoint, deployment=<default>, monitor=<default>
-    input_text = "\n\nsk-azure-key\nhttps://myorg.openai.azure.com\n\n1\n"
+    # endpoint, deployment=<default>, tenant ID, monitor=<default>
+    input_text = "\n\nhttps://myorg.openai.azure.com\n\nsome-tenant-id\n1\n"
 
     result = runner.invoke(cli.app, ["configure"], input=input_text)
 
     assert result.exit_code == 0
     content = cfg_file.read_text()
     assert "AGENT_PROVIDER=azure" in content
-    assert "AZURE_OPENAI_API_KEY=sk-azure-key" in content
     assert "AZURE_OPENAI_ENDPOINT=https://myorg.openai.azure.com" in content
+    assert "AZURE_TENANT_ID=some-tenant-id" in content
+    assert "AZURE_OPENAI_API_KEY" not in content
+    assert "az login" in result.output
 
 
 def test_configure_ollama_provider_needs_no_api_key(monkeypatch, tmp_path):
@@ -318,19 +482,207 @@ def test_doctor_reports_missing_gemini_key(monkeypatch):
     assert "GEMINI_API_KEY is not set" in result.output
 
 
-def test_doctor_reports_missing_azure_key(monkeypatch):
+def test_doctor_reports_missing_azure_key_in_api_key_mode(monkeypatch):
+    """api_key mode keeps today's behaviour — ticket #95 only replaces the
+    check in entra mode, the default."""
+
     def fake_get(url, *a, **k):
         return _FakeResponse({"status": "ok"})
 
     monkeypatch.setattr(httpx, "get", fake_get)
     monkeypatch.setattr(settings, "ASGARDEO_CLIENT_ID", "")
     monkeypatch.setattr(settings, "AGENT_PROVIDER", "azure")
+    monkeypatch.setattr(settings, "AZURE_OPENAI_AUTH_MODE", "api_key")
     monkeypatch.setattr(settings, "AZURE_OPENAI_API_KEY", "")
 
     result = runner.invoke(cli.app, ["doctor", "--server", "http://cloud.test"])
 
     assert result.exit_code == 0
     assert "AZURE_OPENAI_API_KEY is not set" in result.output
+
+
+def test_doctor_reports_azure_key_present_in_api_key_mode(monkeypatch):
+    """api_key mode with a non-empty key keeps the old, shallow "✓ Key
+    present" report — it never attempts a real token in this mode."""
+
+    def fake_get(url, *a, **k):
+        return _FakeResponse({"status": "ok"})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(settings, "ASGARDEO_CLIENT_ID", "")
+    monkeypatch.setattr(settings, "AGENT_PROVIDER", "azure")
+    monkeypatch.setattr(settings, "AZURE_OPENAI_AUTH_MODE", "api_key")
+    monkeypatch.setattr(settings, "AZURE_OPENAI_API_KEY", "sk-azure-key")
+
+    result = runner.invoke(cli.app, ["doctor", "--server", "http://cloud.test"])
+
+    assert result.exit_code == 0
+    assert "✓ Key present" in result.output
+
+
+# ── doctor: Azure entra-mode LLM check, ticket #95 ──────────────────────
+#
+# These fake verify_access() at the wso2_runner.azure_credential module
+# boundary — the same seam the `start` gate tests above use — so no test
+# here needs the Azure CLI, network access, or a real tenant.
+
+
+def test_doctor_azure_entra_cli_not_installed(monkeypatch):
+    """CredentialUnavailableError plus no `az` on PATH: the one case where
+    the extra shutil.which signal lets us name the problem precisely."""
+    import wso2_runner.azure_credential as azure_credential
+
+    async def _unavailable():
+        raise CredentialUnavailableError("az cli not found")
+
+    def fake_get(url, *a, **k):
+        return _FakeResponse({"status": "ok"})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(settings, "ASGARDEO_CLIENT_ID", "")
+    monkeypatch.setattr(settings, "AGENT_PROVIDER", "azure")
+    monkeypatch.setattr(settings, "AZURE_OPENAI_AUTH_MODE", "entra")
+    monkeypatch.setattr(azure_credential, "verify_access", _unavailable)
+    monkeypatch.setattr("shutil.which", lambda cmd: None)
+
+    result = runner.invoke(cli.app, ["doctor", "--server", "http://cloud.test"])
+
+    assert result.exit_code == 0
+    assert "Azure CLI is not installed" in result.output
+    assert "az login" in result.output
+
+
+def test_doctor_azure_entra_nobody_signed_in(monkeypatch):
+    """CredentialUnavailableError plus `az` present on PATH: installed, but
+    no cached CLI session — a different fix from "not installed"."""
+    import wso2_runner.azure_credential as azure_credential
+
+    async def _unavailable():
+        raise CredentialUnavailableError("no cached token")
+
+    def fake_get(url, *a, **k):
+        return _FakeResponse({"status": "ok"})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(settings, "ASGARDEO_CLIENT_ID", "")
+    monkeypatch.setattr(settings, "AGENT_PROVIDER", "azure")
+    monkeypatch.setattr(settings, "AZURE_OPENAI_AUTH_MODE", "entra")
+    monkeypatch.setattr(azure_credential, "verify_access", _unavailable)
+    monkeypatch.setattr("shutil.which", lambda cmd: "/usr/bin/az")
+
+    result = runner.invoke(cli.app, ["doctor", "--server", "http://cloud.test"])
+
+    assert result.exit_code == 0
+    assert "nobody is signed in" in result.output
+    assert "az login" in result.output
+
+
+def test_doctor_azure_entra_authentication_rejected(monkeypatch):
+    """ClientAuthenticationError now means one thing only: the wrong
+    tenant. The credential is pinned to AZURE_TENANT_ID, so a rejection at
+    token time is the CLI holding a session for some other tenant. Missing
+    the role assignment is a separate state -- it cannot raise here,
+    because Azure AD issues the token regardless and the resource is what
+    refuses. See test_doctor_azure_entra_missing_role_assignment."""
+    import wso2_runner.azure_credential as azure_credential
+
+    async def _rejected():
+        raise ClientAuthenticationError("token request rejected")
+
+    def fake_get(url, *a, **k):
+        return _FakeResponse({"status": "ok"})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(settings, "ASGARDEO_CLIENT_ID", "")
+    monkeypatch.setattr(settings, "AGENT_PROVIDER", "azure")
+    monkeypatch.setattr(settings, "AZURE_OPENAI_AUTH_MODE", "entra")
+    monkeypatch.setattr(azure_credential, "verify_access", _rejected)
+
+    result = runner.invoke(cli.app, ["doctor", "--server", "http://cloud.test"])
+
+    assert result.exit_code == 0
+    assert "wrong tenant" in result.output
+    assert "az account show" in result.output
+
+
+def test_doctor_azure_entra_working(monkeypatch):
+    """The success state: a real call to Azure OpenAI was authorised — no
+    more '✓ Key present' string presence in entra mode, and no longer
+    satisfied by merely acquiring a token."""
+    import wso2_runner.azure_credential as azure_credential
+
+    async def _ok():
+        return "fake-token"
+
+    def fake_get(url, *a, **k):
+        return _FakeResponse({"status": "ok"})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(settings, "ASGARDEO_CLIENT_ID", "")
+    monkeypatch.setattr(settings, "AGENT_PROVIDER", "azure")
+    monkeypatch.setattr(settings, "AZURE_OPENAI_AUTH_MODE", "entra")
+    monkeypatch.setattr(azure_credential, "verify_access", _ok)
+
+    result = runner.invoke(cli.app, ["doctor", "--server", "http://cloud.test"])
+
+    assert result.exit_code == 0
+    assert "✓ Azure OpenAI access works" in result.output
+    assert "Key present" not in result.output
+
+
+def test_doctor_azure_entra_missing_role_assignment(monkeypatch):
+    """The state a token check alone can never reach. Azure AD hands a
+    Cognitive Services token to any member of the tenant, so an engineer
+    without the role authenticates perfectly and is refused by the resource
+    instead. doctor must report that as its own problem, and must not tell
+    them to run `az login` -- nothing they can do at a terminal fixes it."""
+    import wso2_runner.azure_credential as azure_credential
+    from wso2_runner.azure_credential import AzureAccessDeniedError
+
+    async def _denied():
+        raise AzureAccessDeniedError("endpoint refused the call with HTTP 403")
+
+    def fake_get(url, *a, **k):
+        return _FakeResponse({"status": "ok"})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(settings, "ASGARDEO_CLIENT_ID", "")
+    monkeypatch.setattr(settings, "AGENT_PROVIDER", "azure")
+    monkeypatch.setattr(settings, "AZURE_OPENAI_AUTH_MODE", "entra")
+    monkeypatch.setattr(azure_credential, "verify_access", _denied)
+
+    result = runner.invoke(cli.app, ["doctor", "--server", "http://cloud.test"])
+
+    assert result.exit_code == 0
+    assert "not allowed to call Azure OpenAI" in result.output
+    assert "administrator" in result.output
+    assert "az login` will not fix this" in result.output
+
+
+def test_doctor_azure_entra_access_unverified(monkeypatch):
+    """No endpoint configured, or it could not be reached. Reported as an
+    open question rather than a refusal, so nobody is sent to an
+    administrator over a network problem."""
+    import wso2_runner.azure_credential as azure_credential
+    from wso2_runner.azure_credential import AzureAccessUnverifiedError
+
+    async def _unverified():
+        raise AzureAccessUnverifiedError("AZURE_OPENAI_ENDPOINT is not set")
+
+    def fake_get(url, *a, **k):
+        return _FakeResponse({"status": "ok"})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(settings, "ASGARDEO_CLIENT_ID", "")
+    monkeypatch.setattr(settings, "AGENT_PROVIDER", "azure")
+    monkeypatch.setattr(settings, "AZURE_OPENAI_AUTH_MODE", "entra")
+    monkeypatch.setattr(azure_credential, "verify_access", _unverified)
+
+    result = runner.invoke(cli.app, ["doctor", "--server", "http://cloud.test"])
+
+    assert result.exit_code == 0
+    assert "could not be confirmed" in result.output
+    assert "not allowed to call" not in result.output
 
 
 def test_doctor_ollama_not_running_is_reported_not_raised(monkeypatch):

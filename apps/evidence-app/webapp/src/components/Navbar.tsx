@@ -19,6 +19,7 @@ import { useAuthContext } from "@asgardeo/auth-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 import { useColorMode } from "../main";
+import { clearFileUrlCache } from "../utils/stableFileUrl";
 
 interface NavbarProps {
   onToggleSidebar: () => void;
@@ -51,6 +52,7 @@ export default function Navbar({ onToggleSidebar }: NavbarProps) {
     // so the next person to sign in on this machine never sees a flash of
     // the previous user's data before the first refetch replaces it.
     queryClient.clear();
+    clearFileUrlCache();
     // If signing out fails there is nothing to see: the redirect never
     // happens, the cleared queries refetch against the still-live session,
     // and the app looks exactly as it did. Someone on a shared machine would
@@ -59,7 +61,7 @@ export default function Navbar({ onToggleSidebar }: NavbarProps) {
     signOut().catch((err) => {
       console.error("Sign-out failed:", err);
       setSignOutError(
-        "Sign-out failed — you are still signed in. Close the browser before leaving this machine.",
+        "Sign-out failed. You are still signed in. Close the browser before leaving this machine.",
       );
     });
   };
