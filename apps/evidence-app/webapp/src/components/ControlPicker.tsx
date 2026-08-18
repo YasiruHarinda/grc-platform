@@ -300,7 +300,7 @@ export default function ControlPicker({
               helperText ??
               (!effectivelyDisabled &&
                 (isAdmin
-                  ? "Don't see your control? Just type it — you can create it on the fly."
+                  ? "Don't see your control? Just type it. You can create it on the fly."
                   : "Search by control reference or title."))
             }
           />

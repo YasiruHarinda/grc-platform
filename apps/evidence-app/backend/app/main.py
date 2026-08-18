@@ -33,6 +33,13 @@ app.add_middleware(
     allow_origins=cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
+    # CORS hides every response header from the page except a short safe-list,
+    # and Content-Disposition is not on it. The evidence zip download reads
+    # that header to name the file, so without this the browser cannot see it
+    # and the archive saves as "evidence-{id}.zip" instead of its real title.
+    # Only matters when the webapp is served from its own origin (an absolute
+    # BACKEND_BASE_URL, Choreo's React buildpack); harmless when proxied.
+    expose_headers=["Content-Disposition"],
 )
 
 

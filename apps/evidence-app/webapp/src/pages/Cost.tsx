@@ -188,7 +188,7 @@ function ModelBreakdown({ rows }: { rows: ByModel[] }) {
           <CircleStarIcon size={40} />
         </Box>
         <Typography color="text.secondary" variant="body2">
-          No usage logged yet — run the agent to start seeing data.
+          No usage logged yet. Run the agent to start seeing data.
         </Typography>
       </Stack>
     );
@@ -299,7 +299,7 @@ export default function Cost() {
         Cost & Usage
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Real-time LLM spend across every agent run. Captured at the API call level —
+        Real-time LLM spend across every agent run. Captured at the API call level:
         no Azure billing delay, no separate dashboard to log into.
       </Typography>
 
@@ -385,7 +385,7 @@ export default function Cost() {
                 Cost by Model
               </Typography>
               <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 2 }}>
-                Where the money goes — broken down by LLM model.
+                Where the money goes, broken down by LLM model.
               </Typography>
               <ModelBreakdown rows={byModel} />
             </Paper>
@@ -395,7 +395,7 @@ export default function Cost() {
                 Input vs Output
               </Typography>
               <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 2 }}>
-                Most cost is usually output tokens — they're priced higher.
+                Most cost is usually output tokens. They're priced higher.
               </Typography>
 
               {inOutRatio ? (
@@ -428,7 +428,7 @@ export default function Cost() {
                       <Typography variant="caption" fontWeight={700}>
                         {summary && summary.total_runs > 0
                           ? formatCost(summary.total_cost_usd / summary.total_runs)
-                          : "—"}
+                          : "N/A"}
                       </Typography>
                     </Stack>
                   </Box>

@@ -571,7 +571,7 @@ export default function AgentRunner() {
           }}
         />
         <Typography variant="caption" color="text.secondary">
-          {runnerOnline ? "Local runner is online" : "No runner connected — tasks will wait in queue"}
+          {runnerOnline ? "Local runner is online" : "No runner connected. Tasks will wait in queue"}
         </Typography>
       </Stack>
 
@@ -587,7 +587,7 @@ export default function AgentRunner() {
           </Stack>
           <Typography variant="body2" color="text.secondary">
             Pick the portal you want the agent to use. A browser window opens on your local runner's
-            machine — log in with your credentials and MFA <strong>yourself</strong>. The agent never
+            machine. Log in with your credentials and MFA <strong>yourself</strong>. The agent never
             sees or stores your password.
           </Typography>
 
@@ -719,14 +719,14 @@ export default function AgentRunner() {
             value={productId}
             onChange={(id) => { setProductId(id); setFrameworkId(""); setControlId(""); }}
             includeAll
-            allLabel="— Just run, don't save as evidence —"
+            allLabel="Just run, don't save as evidence"
           />
           {productId !== "" && (
             <FrameworkPicker
               productId={productId}
               value={frameworkId}
               onChange={(id) => { setFrameworkId(id); setControlId(""); }}
-              placeholderOption="— Select a framework —"
+              placeholderOption="Select a framework"
             />
           )}
           {frameworkId !== "" && (
@@ -755,9 +755,9 @@ export default function AgentRunner() {
               value={complexity}
               onChange={(e) => setComplexity(e.target.value as "quick" | "standard" | "thorough")}
             >
-              <MenuItem value="quick">Quick — 15 steps per task (simple navigation, single location)</MenuItem>
-              <MenuItem value="standard">Standard — 25 steps per task (default, multi-step within one region)</MenuItem>
-              <MenuItem value="thorough">Thorough — 40 steps per task (multi-region, deep search, complex)</MenuItem>
+              <MenuItem value="quick">Quick: 15 steps per task (simple navigation, single location)</MenuItem>
+              <MenuItem value="standard">Standard: 25 steps per task (default, multi-step within one region)</MenuItem>
+              <MenuItem value="thorough">Thorough: 40 steps per task (multi-region, deep search, complex)</MenuItem>
             </Select>
           </FormControl>
 
@@ -799,8 +799,8 @@ export default function AgentRunner() {
                           </Typography>
                           <Typography variant="caption" color="text.secondary">
                             {useVision
-                              ? "ON — Agent takes a screenshot after every action. Use for complex or image-heavy pages."
-                              : "OFF — Agent reads page structure directly. Faster, works for standard websites like AWS & Azure."}
+                              ? "ON: Agent takes a screenshot after every action. Use for complex or image-heavy pages."
+                              : "OFF: Agent reads page structure directly. Faster, works for standard websites like AWS & Azure."}
                           </Typography>
                         </Box>
                       }
@@ -881,7 +881,7 @@ export default function AgentRunner() {
 2. EACH-PAGE: Screenshot page {page} of the filtered results`}
             </Box>
             <Typography variant="body2" sx={{ mt: 1.5, mb: 0.5 }}>
-              <strong>Need a PDF instead of a screenshot?</strong> Use <code>PDF:</code> — e.g. for a long
+              <strong>Need a PDF instead of a screenshot?</strong> Use <code>PDF:</code>, e.g. for a long
               GitHub issue thread. The agent expands any "Load more" content first, then the whole page is
               exported as a PDF instead of scrolling screenshots.
             </Typography>
@@ -894,7 +894,7 @@ export default function AgentRunner() {
             label="Prompt"
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder={'Single task — e.g. "Go to Key Vault X and screenshot the access policy"\n\nOr a numbered list for multiple captures:\n1. Go to S3 cloud-care, screenshot objects\n2. Go to EC2 cloud-care, screenshot details'}
+            placeholder={'Single task, e.g. "Go to Key Vault X and screenshot the access policy"\n\nOr a numbered list for multiple captures:\n1. Go to S3 cloud-care, screenshot objects\n2. Go to EC2 cloud-care, screenshot details'}
             multiline
             rows={6}
             required
@@ -966,7 +966,7 @@ export default function AgentRunner() {
             <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ xs: "stretch", sm: "center" }} spacing={2}>
               <Box sx={{ flex: 1 }}>
                 <Typography variant="subtitle1" fontWeight={700}>
-                  {isDone ? "Task finished — queue another?" : "Start a new task?"}
+                  {isDone ? "Task finished. Queue another?" : "Start a new task?"}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
                   {isDone
@@ -1036,7 +1036,7 @@ function TaskStatusPanel({
     "default";
 
   const statusLabel =
-    task.status === "queued" ? "Queued — waiting for runner" :
+    task.status === "queued" ? "Queued, waiting for runner" :
     task.status === "running" ? `Running (runner: ${task.runner_id ?? "unknown"})` :
     task.status === "completed" ? "Completed" :
     task.status === "failed" ? "Failed" :
@@ -1073,7 +1073,7 @@ function TaskStatusPanel({
             }
           >
             {task.progress?.pause_message ||
-              "Paused — set up your filters in the browser, then click Resume."}
+              "Paused. Set up your filters in the browser, then click Resume."}
           </Alert>
         )}
 
@@ -1083,7 +1083,7 @@ function TaskStatusPanel({
             icon={<CircularProgress size={18} />}
           >
             {runnerOnline
-              ? "Runner is online — it will pick this up momentarily."
+              ? "Runner is online. It will pick this up momentarily."
               : "No runner connected. Start the local runner on your machine to process this task."}
           </Alert>
         )}
@@ -1250,7 +1250,7 @@ function RunTimeline({
                         rel="noopener noreferrer"
                         sx={{ textTransform: "none" }}
                       >
-                        View PDF — {shot.file_name.split("/").pop()}
+                        View PDF: {shot.file_name.split("/").pop()}
                       </Button>
                     ) : (
                       <Box
@@ -1326,10 +1326,10 @@ function HelpDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
               <Typography variant="subtitle1" fontWeight={700}>Open browser &amp; log in manually</Typography>
             </Stack>
             <Stack spacing={0.4} sx={{ pl: 4.5 }}>
-              <Typography variant="body2">• Pick a target portal — Azure, AWS, WSO2 Identity Server, or a custom URL</Typography>
-              <Typography variant="body2">• Click <strong>"Open Browser &amp; Login"</strong> — a real Chrome window opens on your runner's machine</Typography>
-              <Typography variant="body2">• Sign in yourself there — including MFA. The agent never sees your password</Typography>
-              <Typography variant="body2">• Click <strong>"I've logged in"</strong> when done — this unlocks Step 2 below</Typography>
+              <Typography variant="body2">• Pick a target portal: Azure, AWS, WSO2 Identity Server, or a custom URL</Typography>
+              <Typography variant="body2">• Click <strong>"Open Browser &amp; Login"</strong>. A real Chrome window opens on your runner's machine</Typography>
+              <Typography variant="body2">• Sign in yourself there, including MFA. The agent never sees your password</Typography>
+              <Typography variant="body2">• Click <strong>"I've logged in"</strong> when done. This unlocks Step 2 below</Typography>
               <Typography variant="body2">• Use <strong>"Browser not opening? Reset session"</strong> if the browser gets stuck</Typography>
             </Stack>
           </Box>
@@ -1342,9 +1342,9 @@ function HelpDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
             </Stack>
             <Stack spacing={0.4} sx={{ pl: 4.5 }}>
               <Typography variant="body2">• (Optional) Pick a Product → Framework → Control to auto-save evidence</Typography>
-              <Typography variant="body2">• Set <strong>Environment Hint</strong> — e.g. <em>"AWS region: Mumbai ap-south-1"</em> or <em>"Azure subscription: WSO2-Prod"</em></Typography>
+              <Typography variant="body2">• Set <strong>Environment Hint</strong>, e.g. <em>"AWS region: Mumbai ap-south-1"</em> or <em>"Azure subscription: WSO2-Prod"</em></Typography>
               <Typography variant="body2">• Choose <strong>Task complexity</strong>: Quick (15 steps) / Standard (25 steps) / Thorough (40 steps)</Typography>
-              <Typography variant="body2">• Type your prompt — one line for a single capture, or a numbered list for multiple screenshots in one run</Typography>
+              <Typography variant="body2">• Type your prompt: one line for a single capture, or a numbered list for multiple screenshots in one run</Typography>
               <Typography variant="body2">
                 • Don't know how many items there are? Prefix a line with <strong>EACH:</strong> to repeat it for
                 every item the agent discovers (e.g. <em>"EACH: Open Key Vault "{"{item}"}" and screenshot its Properties page"</em>),
@@ -1354,7 +1354,7 @@ function HelpDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
               </Typography>
               <Typography variant="body2">
                 • Need a PDF instead of screenshots (e.g. a long GitHub issue thread)? Prefix a line with{" "}
-                <strong>PDF:</strong> — the agent expands any "Load more"/"Show more comments" content first, then
+                <strong>PDF:</strong> the agent expands any "Load more"/"Show more comments" content first, then
                 exports the whole page as a PDF you can download from the timeline.
               </Typography>
             </Stack>
@@ -1367,16 +1367,16 @@ function HelpDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
             </Typography>
             <Stack spacing={0.5}>
               <Typography variant="body2">
-                <strong>Agent Vision (OFF by default)</strong> — when ON, the agent takes a screenshot after every action and uses it to decide the next step. Slower but better for image-heavy or unusual pages. Leave OFF for standard AWS / Azure portals.
+                <strong>Agent Vision (OFF by default)</strong>: when ON, the agent takes a screenshot after every action and uses it to decide the next step. Slower but better for image-heavy or unusual pages. Leave OFF for standard AWS / Azure portals.
               </Typography>
               <Typography variant="body2">
-                <strong>Agent Speed</strong> — controls how many browser actions the agent takes before checking with the AI:
+                <strong>Agent Speed</strong> controls how many browser actions the agent takes before checking with the AI:
               </Typography>
               <Stack spacing={0.25} sx={{ pl: 2 }}>
-                <Typography variant="body2">· <strong>Careful (1 action)</strong> — safest, best for new or tricky tasks</Typography>
-                <Typography variant="body2">· <strong>Balanced (3 actions)</strong> — good default for most tasks</Typography>
-                <Typography variant="body2">· <strong>Fast (5 actions)</strong> — quicker, for simple well-known pages</Typography>
-                <Typography variant="body2">· <strong>Maximum (10 actions)</strong> — fastest, use only for very simple navigation</Typography>
+                <Typography variant="body2">· <strong>Careful (1 action)</strong>: safest, best for new or tricky tasks</Typography>
+                <Typography variant="body2">· <strong>Balanced (3 actions)</strong>: good default for most tasks</Typography>
+                <Typography variant="body2">· <strong>Fast (5 actions)</strong>: quicker, for simple well-known pages</Typography>
+                <Typography variant="body2">· <strong>Maximum (10 actions)</strong>: fastest, use only for very simple navigation</Typography>
               </Stack>
             </Stack>
           </Box>
@@ -1390,7 +1390,7 @@ function HelpDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
             <Stack spacing={0.4} sx={{ pl: 4.5 }}>
               <Typography variant="body2">• Only enabled once you've confirmed login in Step 1</Typography>
               <Typography variant="body2">• Your local runner picks it up and reuses the browser session you just logged into</Typography>
-              <Typography variant="body2">• Progress streams live to this page in real-time — no page refresh needed</Typography>
+              <Typography variant="body2">• Progress streams live to this page in real-time, no page refresh needed</Typography>
             </Stack>
           </Box>
 
@@ -1420,10 +1420,10 @@ function HelpDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
             <Stack spacing={0.5}>
               <Typography variant="body2">★ Always set Environment Hint for cross-region or multi-subscription work</Typography>
               <Typography variant="body2">★ Use <strong>Thorough</strong> complexity when fuzzy-searching across services or regions</Typography>
-              <Typography variant="body2">★ Use <strong>Agent Vision ON</strong> only if the agent struggles with a visually complex page — it's slower</Typography>
+              <Typography variant="body2">★ Use <strong>Agent Vision ON</strong> only if the agent struggles with a visually complex page. It's slower</Typography>
               <Typography variant="body2">★ Start with <strong>Careful (1 action)</strong> speed for new tasks; switch to Balanced once it works reliably</Typography>
-              <Typography variant="body2">★ Use a numbered list in the prompt to capture multiple pages in a single run — each gets its own evidence record</Typography>
-              <Typography variant="body2">★ You log in yourself in Step 1 — the agent reuses that session and never sees your password</Typography>
+              <Typography variant="body2">★ Use a numbered list in the prompt to capture multiple pages in a single run. Each gets its own evidence record</Typography>
+              <Typography variant="body2">★ You log in yourself in Step 1. The agent reuses that session and never sees your password</Typography>
             </Stack>
           </Box>
 

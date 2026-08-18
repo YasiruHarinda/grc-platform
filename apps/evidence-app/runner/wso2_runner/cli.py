@@ -36,10 +36,15 @@ def configure():
     lines = [f"AGENT_PROVIDER={provider}", f"AGENT_MODEL={model}"]
 
     if provider == "azure":
-        lines.append("AZURE_OPENAI_API_KEY=" + typer.prompt("Azure OpenAI API key", hide_input=True))
+        # No API key prompt here, deliberately — the Runner authorises Azure
+        # OpenAI calls with the engineer's own Entra identity (az login),
+        # not a shared secret written to disk. See azure_credential.py.
         lines.append("AZURE_OPENAI_ENDPOINT=" + typer.prompt("Azure OpenAI endpoint (https://...)"))
         lines.append("AZURE_OPENAI_DEPLOYMENT=" + typer.prompt("Deployment name", default=model))
         lines.append("AZURE_OPENAI_API_VERSION=2024-10-21")
+        lines.append("AZURE_TENANT_ID=" + typer.prompt("Azure tenant ID"))
+        print("\n  Next: run `az login` to sign in with your own Azure identity.")
+        print("  The Runner uses that session to call Azure OpenAI — no key is stored.")
     elif provider == "anthropic":
         lines.append("ANTHROPIC_API_KEY=" + typer.prompt("Anthropic API key", hide_input=True))
     elif provider == "gemini":
@@ -89,7 +94,7 @@ def start(
     if user is None:
         user = os.environ.get("USER_EMAIL") or None
 
-    from wso2_runner.config import settings, CONFIG_FILE
+    from wso2_runner.config import AZURE_AUTH_API_KEY, settings, CONFIG_FILE
     if not settings.AGENT_PROVIDER:
         typer.echo(
             "\n[runner] No LLM config found. Run this first:\n\n"
@@ -97,6 +102,65 @@ def start(
             err=True,
         )
         raise typer.Exit(1)
+
+    # Prove Azure auth works *before* the poll loop starts — not on first
+    # use. The credential otherwise authenticates lazily on first LLM call,
+    # which happens after a browser window has already opened and a task
+    # has already been consumed. api_key mode needs no such check; it
+    # behaves exactly as it always has.
+    if settings.AGENT_PROVIDER == "azure" and settings.AZURE_OPENAI_AUTH_MODE != AZURE_AUTH_API_KEY:
+        from wso2_runner.azure_credential import (
+            AzureAccessDeniedError,
+            AzureAccessUnverifiedError,
+            ClientAuthenticationError,
+            CredentialUnavailableError,
+            verify_access,
+        )
+
+        try:
+            asyncio.run(verify_access())
+        # CredentialUnavailableError is a subclass of ClientAuthenticationError —
+        # it must be checked first or it's silently swallowed by the wider case.
+        except CredentialUnavailableError:
+            typer.echo(
+                "\n[runner] Azure sign-in not found — the Azure CLI isn't "
+                "installed, or nobody is signed in. Run this first:\n\n"
+                "    az login\n",
+                err=True,
+            )
+            raise typer.Exit(1)
+        except ClientAuthenticationError:
+            typer.echo(
+                "\n[runner] Azure sign-in was rejected — your session may "
+                "have expired, or you may be signed in to the wrong "
+                "tenant. Run this first:\n\n"
+                "    az login\n",
+                err=True,
+            )
+            raise typer.Exit(1)
+        except AzureAccessDeniedError:
+            # Signed in correctly and still refused. Nothing the engineer can
+            # do at a terminal fixes this, so `az login` is the wrong advice
+            # here -- it is the one failure that needs another person.
+            typer.echo(
+                "\n[runner] You are signed in, but your account is not "
+                "allowed to call Azure OpenAI. Ask an administrator to grant "
+                "you the Azure OpenAI role on the resource, then try "
+                "again.\n",
+                err=True,
+            )
+            raise typer.Exit(1)
+        except AzureAccessUnverifiedError as exc:
+            # Warn and carry on. See verify_access(): an inconclusive probe
+            # must never stop a runner that would have worked.
+            typer.echo(
+                f"\n[runner] Could not confirm Azure OpenAI access ({exc}). "
+                "Starting anyway -- if calls fail, run `wso2-runner doctor`.\n",
+                err=True,
+            )
+        except Exception as exc:
+            typer.echo(f"\n[runner] Azure authentication check failed: {exc}\n", err=True)
+            raise typer.Exit(1)
 
     from wso2_runner.loop import run_forever
 
@@ -116,7 +180,7 @@ def doctor(
     import httpx
 
     from wso2_runner import oauth
-    from wso2_runner.config import settings
+    from wso2_runner.config import AZURE_AUTH_API_KEY, settings
 
     url = server or settings.CLOUD_URL
 
@@ -172,8 +236,67 @@ def doctor(
         print("    ✗ ANTHROPIC_API_KEY is not set")
     elif settings.AGENT_PROVIDER == "gemini" and not settings.GEMINI_API_KEY:
         print("    ✗ GEMINI_API_KEY is not set")
-    elif settings.AGENT_PROVIDER == "azure" and not settings.AZURE_OPENAI_API_KEY:
+    elif settings.AGENT_PROVIDER == "azure" and settings.AZURE_OPENAI_AUTH_MODE == AZURE_AUTH_API_KEY and not settings.AZURE_OPENAI_API_KEY:
         print("    ✗ AZURE_OPENAI_API_KEY is not set")
+    elif settings.AGENT_PROVIDER == "azure" and settings.AZURE_OPENAI_AUTH_MODE != AZURE_AUTH_API_KEY:
+        # entra mode: a non-empty AZURE_OPENAI_API_KEY proves nothing — it
+        # could be revoked, and it isn't even used in this mode. Attempt a
+        # real token instead, the same way the start-up gate (ticket #94)
+        # does, but without forcing an interactive login (see [2] above —
+        # doctor only ever reads a session that already exists).
+        import shutil
+
+        from wso2_runner.azure_credential import (
+            AzureAccessDeniedError,
+            AzureAccessUnverifiedError,
+            ClientAuthenticationError,
+            CredentialUnavailableError,
+            verify_access,
+        )
+
+        # CredentialUnavailableError is a subclass of ClientAuthenticationError —
+        # it must be checked first or it's silently swallowed by the wider case.
+        try:
+            asyncio.run(verify_access())
+            print("    ✓ Azure OpenAI access works — signed in and authorised")
+        except CredentialUnavailableError:
+            # The credential could not even attempt authentication. The Azure
+            # CLI's presence on PATH is the one extra signal we genuinely
+            # have, so use it to tell "not installed" apart from "installed,
+            # nobody signed in" — the library's own exception doesn't
+            # distinguish these two, so we don't invent a way to.
+            if shutil.which("az") is None:
+                print("    ✗ Azure CLI is not installed — install it, then run: az login")
+            else:
+                print("    ✗ Azure CLI is installed but nobody is signed in — run: az login")
+        except ClientAuthenticationError:
+            # Authentication was attempted and rejected. Because the
+            # credential is pinned to AZURE_TENANT_ID, this is the wrong
+            # tenant: the CLI holds a session, but not one that can produce a
+            # token for the tenant configured here.
+            print(
+                "    ✗ Azure sign-in was rejected — you appear to be signed in "
+                "to the wrong tenant. Run `az account show` and compare its "
+                "tenantId to AZURE_TENANT_ID in your config; if they differ, "
+                "run `az login --tenant <AZURE_TENANT_ID>`."
+            )
+        except AzureAccessDeniedError:
+            # The state a token check alone can never see: authentication
+            # succeeded and the resource still refused the call. Azure AD
+            # issues a Cognitive Services token to any member of the tenant;
+            # the role is enforced by the resource, so only a real call
+            # reaches this.
+            print(
+                "    ✗ Azure sign-in works, but your account is not allowed to "
+                "call Azure OpenAI — you are missing the Azure OpenAI role on "
+                "the resource. `az login` will not fix this: ask an "
+                "administrator to grant you the role."
+            )
+        except AzureAccessUnverifiedError as exc:
+            print(f"    – Azure sign-in works, but access could not be confirmed: {exc}")
+            print("       Set AZURE_OPENAI_ENDPOINT, or check network access to it.")
+        except Exception as exc:
+            print(f"    ✗ Azure authentication check failed: {exc}")
     elif settings.AGENT_PROVIDER == "ollama":
         try:
             r = httpx.get("http://localhost:11434/api/tags", timeout=5)

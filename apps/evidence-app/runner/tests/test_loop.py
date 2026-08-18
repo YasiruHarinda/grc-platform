@@ -306,6 +306,66 @@ def test_execute_task_failure_is_caught_and_posted_as_failed_result(monkeypatch)
     assert "boom: something in the task went wrong" in result["error"]
 
 
+def test_credential_unavailable_error_fails_task_and_stops_the_runner(monkeypatch):
+    """Ticket #94: a live CredentialUnavailableError (Azure CLI not
+    installed, or nobody signed in) raised mid-task must not be swallowed as
+    an ordinary task failure carrying a raw exception string. The task is
+    failed with a plain-language message naming the `az login` fix, and the
+    runner stops polling and exits — rather than continuing to accept tasks
+    it cannot run — instead of retrying like the other exception branches."""
+    run_task = {"id": 30, "kind": "run", "prompt": "will hit a missing azure session"}
+    calls = {}
+    monkeypatch.setattr(loop, "CloudClient", _make_fake_client_class([run_task], calls))
+
+    async def failing_execute_task(task, on_subtask_done, on_pause):
+        raise loop.CredentialUnavailableError("az cli not found")
+
+    monkeypatch.setattr(loop, "execute_task", failing_execute_task)
+
+    with pytest.raises(SystemExit) as exc_info:
+        asyncio.run(loop.run_forever(cloud_url="https://cloud.example", poll_interval=0))
+
+    assert exc_info.value.code == 1
+
+    (task_id, result), = calls["post_result"]
+    assert task_id == 30
+    assert result["status"] == "failed"
+    assert "az login" in result["error"]
+    assert "az cli not found" not in result["error"]  # plain-language, not the raw exception
+
+    # Must not have polled for a second task after the credential failure.
+    assert len(calls["get_next_task"]) == 1
+
+
+def test_client_authentication_error_fails_task_and_stops_the_runner(monkeypatch):
+    """Same as above, for the wider ClientAuthenticationError case — signed
+    in, but rejected (wrong tenant, or missing the Azure OpenAI role).
+    CredentialUnavailableError is actually a *subclass* of
+    ClientAuthenticationError, so this also proves the narrower case above
+    isn't being caught here by accident."""
+    run_task = {"id": 31, "kind": "run", "prompt": "will hit a rejected azure session"}
+    calls = {}
+    monkeypatch.setattr(loop, "CloudClient", _make_fake_client_class([run_task], calls))
+
+    async def failing_execute_task(task, on_subtask_done, on_pause):
+        raise loop.ClientAuthenticationError("token request rejected")
+
+    monkeypatch.setattr(loop, "execute_task", failing_execute_task)
+
+    with pytest.raises(SystemExit) as exc_info:
+        asyncio.run(loop.run_forever(cloud_url="https://cloud.example", poll_interval=0))
+
+    assert exc_info.value.code == 1
+
+    (task_id, result), = calls["post_result"]
+    assert task_id == 31
+    assert result["status"] == "failed"
+    assert "az login" in result["error"]
+    assert "token request rejected" not in result["error"]
+
+    assert len(calls["get_next_task"]) == 1
+
+
 def test_heartbeat_reporting_cancelled_stops_the_running_task(monkeypatch):
     """If the backend's heartbeat response says the task was cancelled from
     the UI, the in-flight task is cancelled promptly (rather than left to
