@@ -60,6 +60,32 @@ USE grc_platform;
 UPDATE privilege SET status = 'INACTIVE' WHERE privilege_name = 'APPROVE_RISK';
 UPDATE privilege SET status = 'INACTIVE' WHERE privilege_name = 'REJECT_RISK';
 
+-- Audit Hub privileges from the old (pre-migration) workflow-stage model have
+-- no clean successor in the current design — that model gated each lifecycle
+-- transition individually; the current one gates on the coarser
+-- AUDIT_UPDATE_AUDIT/AUDIT_MANAGE_CONTROLS and derives row scope from grants
+-- instead. Retired rather than deleted so any already-seeded role_privilege
+-- row keeps a valid FK; privilege.Store filters status = 'ACTIVE', so they
+-- simply stop resolving.
+UPDATE privilege SET status = 'INACTIVE' WHERE privilege_name = 'MOVE_AUDIT_TO_FIELDWORK';
+UPDATE privilege SET status = 'INACTIVE' WHERE privilege_name = 'SUBMIT_AUDIT_FOR_REVIEW';
+UPDATE privilege SET status = 'INACTIVE' WHERE privilege_name = 'COMPLETE_AUDIT';
+UPDATE privilege SET status = 'INACTIVE' WHERE privilege_name = 'MANAGE_POPULATION';
+UPDATE privilege SET status = 'INACTIVE' WHERE privilege_name = 'MANAGE_ASSIGNMENTS';
+UPDATE privilege SET status = 'INACTIVE' WHERE privilege_name = 'VIEW_TRAIL';
+
+-- The rest of the old Audit Hub privileges map 1:1 onto the current AUDIT_
+-- prefixed set. Renamed in place (not dropped/reinserted) so existing
+-- role_privilege rows keep referencing the same privilege_id.
+UPDATE privilege SET privilege_name = 'AUDIT_VIEW_AUDITS'      WHERE privilege_name = 'VIEW_AUDITS';
+UPDATE privilege SET privilege_name = 'AUDIT_CREATE_AUDIT'     WHERE privilege_name = 'CREATE_AUDIT';
+UPDATE privilege SET privilege_name = 'AUDIT_UPDATE_AUDIT'     WHERE privilege_name = 'UPDATE_AUDIT';
+UPDATE privilege SET privilege_name = 'AUDIT_MANAGE_CONTROLS'  WHERE privilege_name = 'MANAGE_CONTROLS';
+UPDATE privilege SET privilege_name = 'AUDIT_SUBMIT_EVIDENCE'  WHERE privilege_name = 'SUBMIT_EVIDENCE';
+UPDATE privilege SET privilege_name = 'AUDIT_REVIEW_EVIDENCE'  WHERE privilege_name = 'REVIEW_EVIDENCE';
+UPDATE privilege SET privilege_name = 'AUDIT_ADD_COMMENT'      WHERE privilege_name = 'ADD_COMMENT';
+UPDATE privilege SET privilege_name = 'AUDIT_MANAGE_FRAMEWORKS' WHERE privilege_name = 'MANAGE_FRAMEWORKS';
+
 -- Risk Hub privileges renamed with a RISK_ prefix so they group apart from
 -- Audit Hub privileges. Renamed in place (not dropped/reinserted) so existing
 -- role_privilege rows keep referencing the same privilege_id.
@@ -107,6 +133,21 @@ UPDATE `role` SET role_name = 'grc-platform-management'            WHERE role_na
 -- directly.
 UPDATE `role` SET role_name = 'grc-platform-risk-compliance-team'  WHERE role_name = 'grc-platform-compliance-team';
 
+-- Retire the pre-migration "-stg" Audit Hub role rows. They matched an
+-- Asgardeo group string that nothing reads anymore (see middleware/auth.go's
+-- grant resolution); leaving them ACTIVE would let them keep showing up as
+-- grantable roles in GET /roles / a future grant admin UI. INACTIVE, not
+-- deleted: role.id is FK'd from any historical user_role_grant row, and
+-- role_privilege's FK is ON DELETE RESTRICT.
+UPDATE `role` SET status = 'INACTIVE'
+WHERE role_name COLLATE utf8mb4_bin IN (
+  'grc-platform-audit-compliance-admin-stg',
+  'grc-platform-audit-compliance-team-stg',
+  'grc-platform-audit-internal-team-stg',
+  'grc-platform-audit-external-auditor-stg',
+  'grc-platform-management-stg'
+);
+
 -- grc-platform-compliance-team no longer approves/rejects/closes/escalates
 -- Risk Hub risks or manages compliance references — that authority moved to
 -- grc-platform-risk-compliance-admin. Deactivate any already-seeded grants so
@@ -136,6 +177,19 @@ WHERE  r.role_name = 'grc-platform-risk-compliance-team'
 -- steps is authorised by being that plan's action_owner_id — the identity axis —
 -- not by holding a role. An Action Owner may be any employee, including one with
 -- no grants at all, which a role-based model could not express.
+--
+-- grc-platform-management is SHARED (settled here, see the role_privilege
+-- section below for the "before this migration" open question): one role,
+-- held by the same people in both hubs, granted GLOBAL only. The cost is
+-- explicit — SHARED cannot be granted AUDIT_TEAM or RISK_TEAM, so a
+-- team/register-scoped management "lead" is not expressible through this
+-- role. Nothing in either hub grants it team-scoped today, so this is not a
+-- regression against current behaviour, only against a capability the Audit
+-- Hub's design docs once described and never shipped.
+--
+-- The four grc-platform-audit-* roles below are module='AUDIT' and stay
+-- distinct per hub, same precedent as grc-platform-risk-compliance-team /
+-- grc-platform-audit-compliance-team.
 INSERT INTO `role` (role_name, description, module, scope_basis, status) VALUES
   ('grc-platform-risk-compliance-admin',
    'Risk Hub administrator. Full access to all risk privileges, including final compliance approval, rejection, and closure.',
@@ -150,11 +204,23 @@ INSERT INTO `role` (role_name, description, module, scope_basis, status) VALUES
    'Read-only oversight for the Risk Hub: views dashboards, analytics, and risk registers. Grant GLOBAL for org-wide oversight, or scope to specific registers. Audit Hub has its own counterpart, grc-platform-audit-compliance-team.',
    'RISK', 'SOURCE_REGISTER', 'ACTIVE'),
   ('grc-platform-management',
-   'Reviews and approves or rejects risks at the management approval stage.',
-   'RISK', 'SOURCE_REGISTER', 'ACTIVE'),
+   'Management approval/rejection in the Risk Hub, and org-wide read-only oversight in the Audit Hub. SHARED across both hubs, so it can only be granted GLOBAL.',
+   'SHARED', NULL, 'ACTIVE'),
   ('grc-platform-admin',
    'Platform administrator. Manages users and role grants. SHARED, so it can only be granted GLOBAL — see the bootstrap grant template at the end of this file.',
-   'SHARED', NULL, 'ACTIVE')
+   'SHARED', NULL, 'ACTIVE'),
+  ('grc-platform-audit-compliance-admin',
+   'Audit Compliance Admin - full control of the Audit Hub',
+   'AUDIT', NULL, 'ACTIVE'),
+  ('grc-platform-audit-compliance-team',
+   'Audit Compliance Team - submit (any) + internal review, org-wide read',
+   'AUDIT', NULL, 'ACTIVE'),
+  ('grc-platform-audit-internal-team',
+   'Audit Internal Team - submit evidence for own team only',
+   'AUDIT', NULL, 'ACTIVE'),
+  ('grc-platform-audit-external-auditor',
+   'Audit External Auditor - validate + select sample for assigned controls',
+   'AUDIT', NULL, 'ACTIVE')
 ON DUPLICATE KEY UPDATE
   description = VALUES(description),
   module      = VALUES(module),
@@ -203,21 +269,29 @@ INSERT INTO privilege (privilege_name, module, status) VALUES
   -- filters on status = 'ACTIVE', so they simply stop resolving.
   ('RISK_CREATE_MANAGEMENT_ACTION_PLAN', 'RISK', 'INACTIVE'),
   ('RISK_COMPLETE_ACTION_STEPS',   'RISK', 'ACTIVE'),
-  -- Audit Hub (14 privileges)
-  ('VIEW_AUDITS',             'AUDIT', 'ACTIVE'),
-  ('CREATE_AUDIT',            'AUDIT', 'ACTIVE'),
-  ('UPDATE_AUDIT',            'AUDIT', 'ACTIVE'),
-  ('MOVE_AUDIT_TO_FIELDWORK', 'AUDIT', 'ACTIVE'),
-  ('SUBMIT_AUDIT_FOR_REVIEW', 'AUDIT', 'ACTIVE'),
-  ('COMPLETE_AUDIT',          'AUDIT', 'ACTIVE'),
-  ('MANAGE_CONTROLS',         'AUDIT', 'ACTIVE'),
-  ('SUBMIT_EVIDENCE',         'AUDIT', 'ACTIVE'),
-  ('REVIEW_EVIDENCE',         'AUDIT', 'ACTIVE'),
-  ('MANAGE_POPULATION',       'AUDIT', 'ACTIVE'),
-  ('ADD_COMMENT',             'AUDIT', 'ACTIVE'),
-  ('MANAGE_ASSIGNMENTS',      'AUDIT', 'ACTIVE'),
-  ('VIEW_TRAIL',              'AUDIT', 'ACTIVE'),
-  ('MANAGE_FRAMEWORKS',       'AUDIT', 'ACTIVE'),
+  -- Audit Hub (12 privileges). Coarse booleans only — row scope (all / team /
+  -- owned / assigned) is DERIVED from these at request time, never expressed
+  -- here — see deriveScopes in internal/audit/handler/dashboard.go. In
+  -- particular AUDIT_VIEW_ALL_AUDITS is the org-wide-read signal: held GLOBAL
+  -- it means `all` scope; a holder of AUDIT_SUBMIT_EVIDENCE without it is
+  -- `owned`; a holder of AUDIT_VALIDATE_EVIDENCE without it is `assigned`.
+  ('AUDIT_VIEW_AUDITS',            'AUDIT', 'ACTIVE'),
+  ('AUDIT_VIEW_ALL_AUDITS',        'AUDIT', 'ACTIVE'),
+  ('AUDIT_CREATE_AUDIT',           'AUDIT', 'ACTIVE'),
+  ('AUDIT_UPDATE_AUDIT',           'AUDIT', 'ACTIVE'),
+  ('AUDIT_MANAGE_CONTROLS',        'AUDIT', 'ACTIVE'),
+  ('AUDIT_MANAGE_FRAMEWORKS',      'AUDIT', 'ACTIVE'),
+  ('AUDIT_SUBMIT_EVIDENCE',        'AUDIT', 'ACTIVE'),
+  ('AUDIT_REVIEW_EVIDENCE',        'AUDIT', 'ACTIVE'),
+  -- ValidateEvidence and SelectSample are auditor-only actions, layered on top
+  -- of the assigned-auditor scope check (requireAssignedAuditor) so the grant
+  -- is visible in the matrix and the frontend can render off can(...).
+  ('AUDIT_VALIDATE_EVIDENCE',      'AUDIT', 'ACTIVE'),
+  ('AUDIT_SELECT_SAMPLE',          'AUDIT', 'ACTIVE'),
+  ('AUDIT_ADD_COMMENT',            'AUDIT', 'ACTIVE'),
+  -- Gates internal-only control comments (hidden from external auditors) —
+  -- replaces the former hardcoded group-name check.
+  ('AUDIT_VIEW_INTERNAL_COMMENTS', 'AUDIT', 'ACTIVE'),
   -- Shared platform (1 privilege)
   -- Gates User Management: provisioning users and granting/revoking roles.
   -- SHARED, not AUDIT — it spans both hubs. Declared in Go long before it had a
@@ -295,27 +369,67 @@ JOIN   privilege p ON p.privilege_name IN (
 WHERE  r.role_name = 'grc-platform-risk-compliance-team'
 ON DUPLICATE KEY UPDATE is_active = TRUE;
 
--- grc-platform-management → Risk Hub: management approval/rejection, and
--- commenting on an escalated high risk. That comment carries no privilege of
--- its own: handleEscalationComment authorises on being the risk's named
--- management_approver_id, so it is granted nothing here.
---
--- ⚠ OPEN: this role is module = 'RISK', so it can only be granted GLOBAL or
--- scoped to a risk_team. It was previously described as shared with the Audit
--- Hub under one name, which the module column no longer permits — a role belongs
--- to one module so that "which scopes may this be granted against" has a single
--- answer. Either split it by hub (the precedent already set by
--- grc-platform-risk-compliance-team / grc-platform-audit-compliance-team), or
--- make it SHARED and accept GLOBAL-only granting. Settle this with the Audit
--- Hub developer before his migration; nothing here depends on the outcome.
+-- grc-platform-management → Risk Hub: management approval/rejection. Plus
+-- Audit Hub: org-wide read-only oversight (+ comment). Module is SHARED (see
+-- the role INSERT above), so every grant on it is GLOBAL — there is no
+-- AUDIT_TEAM- or RISK_TEAM-scoped "management lead" through this role.
+-- Commenting on an escalated high risk carries no privilege of its own:
+-- handleEscalationComment authorises on being the risk's named
+-- management_approver_id, so nothing is granted here for that.
 INSERT INTO role_privilege (role_id, privilege_id, is_active)
 SELECT r.id, p.id, TRUE
 FROM   `role` r
 JOIN   privilege p ON p.privilege_name IN (
   'RISK_VIEW_RISKS', 'RISK_VIEW_DASHBOARD', 'RISK_MANAGEMENT_APPROVE', 'RISK_MANAGEMENT_REJECT',
-  'RISK_VIEW_ANALYTICS'
+  'RISK_VIEW_ANALYTICS',
+  'AUDIT_VIEW_AUDITS', 'AUDIT_VIEW_ALL_AUDITS', 'AUDIT_ADD_COMMENT', 'AUDIT_VIEW_INTERNAL_COMMENTS'
 ) AND p.status = 'ACTIVE'
 WHERE  r.role_name = 'grc-platform-management'
+ON DUPLICATE KEY UPDATE is_active = TRUE;
+
+-- grc-platform-audit-compliance-admin — everything (12)
+INSERT INTO role_privilege (role_id, privilege_id, is_active)
+SELECT r.id, p.id, TRUE
+FROM   `role` r
+JOIN   privilege p ON p.privilege_name IN (
+  'AUDIT_VIEW_AUDITS', 'AUDIT_VIEW_ALL_AUDITS', 'AUDIT_CREATE_AUDIT', 'AUDIT_UPDATE_AUDIT',
+  'AUDIT_MANAGE_CONTROLS', 'AUDIT_MANAGE_FRAMEWORKS', 'AUDIT_SUBMIT_EVIDENCE', 'AUDIT_REVIEW_EVIDENCE',
+  'AUDIT_VALIDATE_EVIDENCE', 'AUDIT_SELECT_SAMPLE', 'AUDIT_ADD_COMMENT', 'AUDIT_VIEW_INTERNAL_COMMENTS'
+) AND p.status = 'ACTIVE'
+WHERE  r.role_name = 'grc-platform-audit-compliance-admin'
+ON DUPLICATE KEY UPDATE is_active = TRUE;
+
+-- grc-platform-audit-compliance-team — org-wide read, submit (any), internal review, comment (6)
+INSERT INTO role_privilege (role_id, privilege_id, is_active)
+SELECT r.id, p.id, TRUE
+FROM   `role` r
+JOIN   privilege p ON p.privilege_name IN (
+  'AUDIT_VIEW_AUDITS', 'AUDIT_VIEW_ALL_AUDITS', 'AUDIT_SUBMIT_EVIDENCE', 'AUDIT_REVIEW_EVIDENCE',
+  'AUDIT_ADD_COMMENT', 'AUDIT_VIEW_INTERNAL_COMMENTS'
+) AND p.status = 'ACTIVE'
+WHERE  r.role_name = 'grc-platform-audit-compliance-team'
+ON DUPLICATE KEY UPDATE is_active = TRUE;
+
+-- grc-platform-audit-internal-team — submit (owned controls only) + comment (4).
+-- No VIEW_ALL_AUDITS -> owned scope.
+INSERT INTO role_privilege (role_id, privilege_id, is_active)
+SELECT r.id, p.id, TRUE
+FROM   `role` r
+JOIN   privilege p ON p.privilege_name IN (
+  'AUDIT_VIEW_AUDITS', 'AUDIT_SUBMIT_EVIDENCE', 'AUDIT_ADD_COMMENT', 'AUDIT_VIEW_INTERNAL_COMMENTS'
+) AND p.status = 'ACTIVE'
+WHERE  r.role_name = 'grc-platform-audit-internal-team'
+ON DUPLICATE KEY UPDATE is_active = TRUE;
+
+-- grc-platform-audit-external-auditor — validate + select sample (assigned) + comment (4).
+-- No VIEW_INTERNAL_COMMENTS: internal comments are hidden from auditors.
+INSERT INTO role_privilege (role_id, privilege_id, is_active)
+SELECT r.id, p.id, TRUE
+FROM   `role` r
+JOIN   privilege p ON p.privilege_name IN (
+  'AUDIT_VIEW_AUDITS', 'AUDIT_VALIDATE_EVIDENCE', 'AUDIT_SELECT_SAMPLE', 'AUDIT_ADD_COMMENT'
+) AND p.status = 'ACTIVE'
+WHERE  r.role_name = 'grc-platform-audit-external-auditor'
 ON DUPLICATE KEY UPDATE is_active = TRUE;
 
 -- ── Retire roles and privileges replaced by user_role_grant ───────────────────

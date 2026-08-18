@@ -132,10 +132,7 @@ CREATE TABLE IF NOT EXISTS `user` (
 CREATE TABLE IF NOT EXISTS `role` (
   id           INT          NOT NULL AUTO_INCREMENT,
   role_name    VARCHAR(150) COLLATE utf8mb4_bin NOT NULL COMMENT 'Binary collation keeps role-name matching case-sensitive and consistent with Go map lookup',
-  role_name    VARCHAR(150) COLLATE utf8mb4_bin NOT NULL COMMENT 'Binary collation keeps role-name matching case-sensitive and consistent with Go map lookup',
   description  TEXT         NULL,
-  module       ENUM('RISK','AUDIT','SHARED') NOT NULL,
-  scope_basis  ENUM('SOURCE_REGISTER','ASSIGNMENT_TEAM') NULL COMMENT 'Which risk column a grant on this role scopes by; NULL for GLOBAL-only roles. See table comment',
   module       ENUM('RISK','AUDIT','SHARED') NOT NULL,
   scope_basis  ENUM('SOURCE_REGISTER','ASSIGNMENT_TEAM') NULL COMMENT 'Which risk column a grant on this role scopes by; NULL for GLOBAL-only roles. See table comment',
   status       ENUM('ACTIVE','INACTIVE') NOT NULL DEFAULT 'ACTIVE',
@@ -160,10 +157,10 @@ CREATE TABLE IF NOT EXISTS `role` (
 -- information_schema guard below is portable to any MySQL 8.
 --
 -- module gets a DEFAULT so existing rows backfill immediately rather than
--- failing the NOT NULL constraint; seed_rbac.sql's role INSERT (ON DUPLICATE
--- KEY UPDATE module = VALUES(module)) corrects it to the real value for every
--- seeded role right after this runs. scope_basis is nullable by design (NULL
--- means GLOBAL-only) and needs no default for the same reason.
+-- failing the NOT NULL constraint; shared_seed_data.sql's role INSERT (ON
+-- DUPLICATE KEY UPDATE module = VALUES(module)) corrects it to the real value
+-- for every seeded role right after this runs. scope_basis is nullable by
+-- design (NULL means GLOBAL-only) and needs no default for the same reason.
 SET @role_has_module = (
   SELECT COUNT(*) FROM information_schema.COLUMNS
   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'role' AND COLUMN_NAME = 'module'
