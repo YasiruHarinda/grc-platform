@@ -206,7 +206,7 @@ func buildControlFilters(seedWhere string, seedArgs []any, req domain.SearchCont
 // from buildControlFilters without a context or *sql.DB.
 func controlScopeWhere(scope domain.Scope, userEmail string, scopeTeamIDs []int) (string, []any) {
 	switch scope {
-	case "", domain.ScopeAll:
+	case domain.ScopeAll:
 		return "", nil
 	case domain.ScopeOwned:
 		return " AND c.owner_id = (SELECT id FROM `user` WHERE email = ?)", []any{userEmail}
