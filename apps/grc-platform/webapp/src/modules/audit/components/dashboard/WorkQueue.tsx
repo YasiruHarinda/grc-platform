@@ -580,11 +580,17 @@ export default function WorkQueue({
   // Privilege-driven tab visibility (ADR-0002): org-wide readers get everything;
   // narrow roles get the union of tabs their privileges unlock — a reviewer sees
   // Action Items, a submitter Pending Submission, an auditor Under Validation,
-  // and a caller holding more than one privilege sees all of them. Each Tab
-  // carries an explicit `value` so hidden tabs don't shift the selected index.
+  // and a caller holding more than one privilege sees all of them. Due Soon and
+  // Overdue are just date views over rows the backend has already scoped to the
+  // caller (queueWhere in audit_dashboard_repo.go), so they stay visible
+  // alongside whatever privilege-gated tab the role has — otherwise HeroBand's
+  // Overdue/Awaiting tiles (which jump to these tabs unconditionally) become
+  // dead ends for narrow roles. Each Tab carries an explicit `value` so hidden
+  // tabs don't shift the selected index.
   const visibleTabs = canViewAll
     ? allTabs
     : allTabs.filter((t) => {
+        if (t.value === QUEUE_TAB_DUE_SOON || t.value === QUEUE_TAB_OVERDUE) return true;
         if (t.value === QUEUE_TAB_AWAITING) return canApprove;
         if (t.value === QUEUE_TAB_PENDING) return canSubmit;
         if (t.value === QUEUE_TAB_VALIDATION) return canValidate;
