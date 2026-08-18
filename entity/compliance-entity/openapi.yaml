@@ -345,99 +345,6 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /grants/user/{id}:
-    get:
-      tags:
-      - Role Grants
-      summary: Get a user's role grants by user ID
-      operationId: getGrantsByUserId
-      parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: integer
-      responses:
-        '200':
-          description: The user's active grants
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserGrantsResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-    post:
-      tags:
-      - Role Grants
-      summary: Grant a role to a user in a scope
-      description: >-
-        Idempotent: granting a role the user already holds reactivates the
-        existing row and still returns 201, rather than conflicting on a request
-        whose intent is already satisfied.
-
-
-        Rejected with 400 when the scope type does not match the role's module,
-        when a non-GLOBAL scope names no active team, or when the role carries
-        MANAGE_USERS — grant management is only ever handed out GLOBAL.
-      operationId: createGrant
-      parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: integer
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateUserGrantRequest'
-      responses:
-        '201':
-          description: The stored grant
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserGrant'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-  /grants/user/{id}/{grantId}:
-    delete:
-      tags:
-      - Role Grants
-      summary: Revoke a role grant
-      description: >-
-        Deactivates the grant rather than deleting it: who held what, and when
-        it was taken away, is the history an authorisation change should leave
-        behind. Scoped by user ID as well as grant ID, so a mismatched pair
-        cannot revoke another user's grant.
-      operationId: revokeGrant
-      parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: integer
-      - name: grantId
-        in: path
-        required: true
-        schema:
-          type: integer
-      responses:
-        '204':
-          description: Grant revoked
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
   /audit/teams/search:
     post:
       tags:
@@ -3675,6 +3582,22 @@ components:
           type: string
         statusKey:
           type: string
+        scope:
+          type: string
+          enum: [all, owned, assigned, team, none]
+          description: >-
+            Row-scoping rule: a framework matches when it has at least one
+            audit with at least one control in scope. Empty (or "all") applies
+            no filter.
+        userEmail:
+          type: string
+        scopeTeamIds:
+          type: array
+          items:
+            type: integer
+          description: >-
+            Server-derived team(s) the caller manages, from the caller's
+            grants. Only read when scope is "team".
         pagination:
           $ref: '#/components/schemas/Pagination'
     SearchAuditFrameworksResponse:
@@ -3825,6 +3748,29 @@ components:
           type: array
           items:
             type: integer
+        auditIds:
+          type: array
+          items:
+            type: integer
+          description: >-
+            Restrict to specific audit ids — used by the GRC Backend's
+            single-item scope check.
+        scope:
+          type: string
+          enum: [all, owned, assigned, team, none]
+          description: >-
+            Row-scoping rule: an audit matches only if it has at least one
+            control within scope. Empty (or "all") applies no filter, for
+            backward compatibility with callers that don't scope.
+        userEmail:
+          type: string
+        scopeTeamIds:
+          type: array
+          items:
+            type: integer
+          description: >-
+            Server-derived team(s) the caller manages, from the caller's
+            grants. Only read when scope is "team".
         pagination:
           $ref: '#/components/schemas/Pagination'
     SearchAuditsResponse:
@@ -4000,6 +3946,29 @@ components:
           type: array
           items:
             type: integer
+        controlIds:
+          type: array
+          items:
+            type: integer
+          description: >-
+            Restrict to specific control ids — used by the GRC Backend's
+            single-item scope check.
+        scope:
+          type: string
+          enum: [all, owned, assigned, team, none]
+          description: >-
+            Row-scoping rule matching the dashboard's. Empty (or "all")
+            applies no filter.
+        userEmail:
+          type: string
+        scopeTeamIds:
+          type: array
+          items:
+            type: integer
+          description: >-
+            Server-derived team(s) the caller manages, from the caller's
+            grants. Distinct from teamIds above, which is a client-supplied
+            display filter — only read when scope is "team".
         pagination:
           $ref: '#/components/schemas/Pagination'
     SearchControlsResponse:
@@ -4233,6 +4202,15 @@ components:
         createdOn:
           type: string
           format: date-time
+        auditorEmail:
+          type: string
+          nullable: true
+          description: >-
+            Email of the auditor assigned to the file's owning control (null
+            if the control has no auditor, or the file has no evidenceId,
+            e.g. a population file). Only populated by GET
+            /evidence-files/{fileId}, for the GRC Backend's assigned-auditor
+            download gate.
     CreateEvidenceFileRequest:
       type: object
       properties:
@@ -5753,16 +5731,29 @@ components:
             $ref: '#/components/schemas/AssignedControlForEvidence'
     AuditDashboardRequest:
       type: object
-      required:
-      - roles
-      - userEmail
       properties:
-        roles:
-          type: array
-          items:
-            type: string
+        scope:
+          type: string
+          enum: [all, owned, assigned, team, none]
+          description: Scopes stats, charts and lists (the dashboard view).
+        workQueueScope:
+          type: string
+          enum: [all, owned, assigned, team, none]
+          description: Scopes the work-queue preview lists (action/due/pending/validation/overdue).
+        workQueueClass:
+          type: string
+          enum: [review, submission, validation, none]
+          description: Selects the action-items lifecycle bucket.
         userEmail:
           type: string
+        scopeTeamIds:
+          type: array
+          items:
+            type: integer
+          description: >-
+            Server-derived team(s) the caller manages, from the caller's
+            grants — never from client input. Only read when scope or
+            workQueueScope is "team".
     AuditStats:
       type: object
       properties:
@@ -5872,16 +5863,25 @@ components:
             $ref: '#/components/schemas/DashboardControlItem'
     WorkQueueRequest:
       type: object
-      required:
-      - roles
-      - userEmail
       properties:
-        roles:
-          type: array
-          items:
-            type: string
+        workQueueScope:
+          type: string
+          enum: [all, owned, assigned, team, none]
+          description: Scopes the work-queue rows (derived from privileges by the caller).
+        workQueueClass:
+          type: string
+          enum: [review, submission, validation, none]
+          description: Selects the action-items lifecycle bucket for the action-items tab.
         userEmail:
           type: string
+        scopeTeamIds:
+          type: array
+          items:
+            type: integer
+          description: >-
+            Server-derived team(s) the caller manages, from the caller's
+            grants. Distinct from teamIds below, which is a client-supplied
+            display filter — only read when workQueueScope is "team".
         tab:
           type: string
           enum:
@@ -6045,37 +6045,6 @@ components:
             items:
               type: string
           description: Maps a role name to the privilege names it grants.
-    Role:
-      type: object
-      properties:
-        id:
-          type: integer
-        roleName:
-          type: string
-        description:
-          type: string
-        module:
-          type: string
-          enum: [RISK, AUDIT, SHARED]
-          description: >-
-            Determines which scope types this role may be granted against. The
-            role decides the module; the scope decides the breadth.
-        scopeBasis:
-          type: string
-          enum: [SOURCE_REGISTER, ASSIGNMENT_TEAM]
-          description: >-
-            Which column of a risk a grant on this role scopes by. Omitted for
-            GLOBAL-only roles.
-        status:
-          type: string
-          enum: [ACTIVE, INACTIVE]
-    ListRolesResponse:
-      type: object
-      properties:
-        roles:
-          type: array
-          items:
-            $ref: '#/components/schemas/Role'
     GrantCandidate:
       type: object
       description: >-
@@ -6095,81 +6064,6 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/GrantCandidate'
-    UserGrant:
-      type: object
-      description: >-
-        One role held by one user in one scope. Carries the role name rather
-        than its privileges, since callers already hold the whole
-        role-to-privilege map from GET /role-privileges and resolve locally.
-      properties:
-        id:
-          type: integer
-        roleId:
-          type: integer
-        roleName:
-          type: string
-        module:
-          type: string
-          enum: [RISK, AUDIT, SHARED]
-        scopeType:
-          type: string
-          enum: [GLOBAL, RISK_TEAM, AUDIT_TEAM]
-          description: >-
-            GLOBAL is a wildcard covering every scope the role's module defines,
-            including teams created later. It is never expanded into one row per
-            team.
-        scopeId:
-          type: integer
-          description: 0 when scopeType is GLOBAL; otherwise a risk_team or audit_team id.
-        scopeBasis:
-          type: string
-          enum: [SOURCE_REGISTER, ASSIGNMENT_TEAM]
-          description: >-
-            The role's scope basis: SOURCE_REGISTER matches where a risk was
-            raised, ASSIGNMENT_TEAM matches where the work was routed. Omitted
-            for GLOBAL-only roles.
-        scopeTeamType:
-          type: string
-          enum: [SOURCE_REGISTER, ASSIGNMENT, BOTH, AUDIT_TEAM]
-          description: >-
-            The scoped team's own team_type. Omitted for GLOBAL grants.
-        scopeName:
-          type: string
-          description: The team's display name. Omitted for GLOBAL grants.
-        createdOn:
-          type: string
-          format: date-time
-        createdBy:
-          type: string
-    UserGrantsResponse:
-      type: object
-      properties:
-        userId:
-          type: integer
-        grants:
-          type: array
-          description: >-
-            Always present, possibly empty. Holding no grants is a legitimate
-            state — someone named as an Action Owner may hold no role at all and
-            reach only the risks they are personally named on.
-          items:
-            $ref: '#/components/schemas/UserGrant'
-    CreateUserGrantRequest:
-      type: object
-      required: [roleId, scopeType]
-      properties:
-        roleId:
-          type: integer
-        scopeType:
-          type: string
-          enum: [GLOBAL, RISK_TEAM, AUDIT_TEAM]
-        scopeId:
-          type: integer
-          description: >-
-            Omit or send 0 for GLOBAL. Required, and must name an active team,
-            for any other scope type.
-        createdBy:
-          type: string
     NextSequenceResponse:
       type: object
       properties:
