@@ -113,6 +113,46 @@ func isValidControlTransition(from, to string) bool {
 	return false
 }
 
+// controlStatusRank orders every control status for the backward status
+// override: a single ordered list rather than a second transition map, so
+// legality can never drift out of sync with itself. An override is legal iff
+// rank(target) < rank(current).
+var controlStatusRank = map[string]int{
+	"POPULATION_PENDING":            0,
+	"POPULATION_INTERNAL_REVIEW":    1,
+	"POPULATION_NEED_CLARIFICATION": 1,
+	"POPULATION_UNDER_VALIDATION":   2,
+	"POPULATION_COMPLETE":           3,
+	"AWAITING_SAMPLE":               4,
+	"SUBMITTED_SAMPLE":              5,
+	"EVIDENCE_PENDING":              6,
+	"EVIDENCE_NEED_CLARIFICATION":   6,
+	"EVIDENCE_INTERNAL_REVIEW":      7,
+	"EVIDENCE_UNDER_VALIDATION":     8,
+	"COMPLETE":                      9,
+}
+
+// designControlFloorRank is the lowest rank a DESIGN control may be overridden
+// to. DESIGN controls have no audit_population row, so rewinding one into the
+// population phase would deadlock it: FindActivePopulation would find nothing
+// and the team could never submit.
+const designControlFloorRank = 6
+
+// isValidOverrideTransition reports whether a backward status override from
+// -> to is legal for a control of the given requirement type: strictly
+// backward by rank, floored at designControlFloorRank for DESIGN controls.
+func isValidOverrideTransition(requirementType, from, to string) bool {
+	fromRank, fromOK := controlStatusRank[strings.ToUpper(from)]
+	toRank, toOK := controlStatusRank[strings.ToUpper(to)]
+	if !fromOK || !toOK {
+		return false
+	}
+	if strings.EqualFold(requirementType, "DESIGN") && toRank < designControlFloorRank {
+		return false
+	}
+	return toRank < fromRank
+}
+
 func (s *controlService) SearchControls(ctx context.Context, auditID int, req domain.SearchControlsRequest) (domain.SearchControlsResponse, error) {
 	if auditID <= 0 {
 		return domain.SearchControlsResponse{}, &apierror.ValidationError{Msg: "auditId must be a positive integer"}
@@ -457,6 +497,57 @@ func (s *controlService) UpdateControl(ctx context.Context, auditID, controlID i
 		req.ExpectedStatus = current.Status
 	}
 	c, err := s.repo.UpdateControl(ctx, auditID, controlID, req)
+	if err != nil {
+		return domain.AuditControl{}, err
+	}
+	return *c, nil
+}
+
+// OverrideControlStatus backward-overrides a control's status: legality is
+// rank-based (isValidOverrideTransition) rather than allowedControlTransitions,
+// so it can reach statuses ordinary UpdateControl never allows moving back to
+// (e.g. COMPLETE -> EVIDENCE_PENDING). The repo cascades dependent
+// audit_population/audit_evidence rows and stamps the override marker in the
+// same transaction as the status write.
+func (s *controlService) OverrideControlStatus(ctx context.Context, auditID, controlID int, req domain.OverrideControlStatusRequest) (domain.AuditControl, error) {
+	if auditID <= 0 {
+		return domain.AuditControl{}, &apierror.ValidationError{Msg: "auditId must be a positive integer"}
+	}
+	if controlID <= 0 {
+		return domain.AuditControl{}, &apierror.ValidationError{Msg: "controlId must be a positive integer"}
+	}
+	if req.UpdatedBy == "" {
+		return domain.AuditControl{}, &apierror.ValidationError{Msg: "updatedBy is required"}
+	}
+	target := strings.ToUpper(req.Status)
+	if !validControlStatuses[target] {
+		return domain.AuditControl{}, &apierror.ValidationError{Msg: "invalid status: " + req.Status}
+	}
+
+	current, err := s.repo.GetControlByID(ctx, auditID, controlID)
+	if err != nil {
+		return domain.AuditControl{}, err
+	}
+
+	audit, err := s.auditRepo.GetAuditByID(ctx, auditID)
+	if err != nil {
+		return domain.AuditControl{}, err
+	}
+	if audit.Status == "REMOVED" {
+		return domain.AuditControl{}, &apierror.ConflictError{Msg: "cannot override status: audit is removed"}
+	}
+
+	if !isValidOverrideTransition(current.RequirementType, current.Status, target) {
+		return domain.AuditControl{}, &apierror.ValidationError{
+			Msg: fmt.Sprintf("invalid status override: %s -> %s", current.Status, target),
+		}
+	}
+
+	req.Status = target
+	// Pass current status to the repo so the UPDATE enforces it atomically,
+	// preventing TOCTOU races between the read above and the write below.
+	req.ExpectedStatus = current.Status
+	c, err := s.repo.OverrideControlStatus(ctx, auditID, controlID, req)
 	if err != nil {
 		return domain.AuditControl{}, err
 	}

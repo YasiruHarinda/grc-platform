@@ -47,6 +47,11 @@ const VERDICT_STYLE: Record<string, { label: string; color: string; bg: string; 
 const ADVISORY_SUBMITTER = "AI-generated hint — does not affect review status.";
 const ADVISORY_REVIEWER = "Advisory only — your decision is authoritative.";
 
+// Hidden across every call site (evidence + population, submitter + reviewer)
+// until the validation agent is rebuilt. Flip back to true to restore — the
+// component and its call sites are otherwise untouched.
+const AI_VALIDATION_ENABLED = false;
+
 interface AIValidationCardProps {
   auditId: number;
   controlId: number;
@@ -79,9 +84,11 @@ const POPULATION_PLACEHOLDER_TEXT =
  * it never gates the workflow.
  */
 export default function AIValidationCard({ auditId, controlId, variant, phase = "evidence" }: AIValidationCardProps): JSX.Element | null {
-  const { data: submissions } = useGetEvidence(auditId, controlId, phase === "evidence");
+  const { data: submissions } = useGetEvidence(auditId, controlId, phase === "evidence" && AI_VALIDATION_ENABLED);
   const latestEvidenceId = phase === "evidence" ? (submissions?.[0]?.id ?? null) : null;
-  const { data: validations, isLoading } = useGetAIValidation(latestEvidenceId);
+  const { data: validations, isLoading } = useGetAIValidation(AI_VALIDATION_ENABLED ? latestEvidenceId : null);
+
+  if (!AI_VALIDATION_ENABLED) return null;
 
   const latest = phase === "evidence" ? validations?.[0] : undefined;
 

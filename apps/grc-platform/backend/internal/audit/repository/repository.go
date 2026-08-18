@@ -94,6 +94,10 @@ type ControlRepository interface {
 	// in one call — used when the auditor submits the sample, so the two can never
 	// be observed out of step with each other.
 	UpdateStatusWithSample(ctx context.Context, auditID, controlID int, status string, sampleReference string, updatedBy string) error
+	// OverrideStatus backward-overrides a control's status via the entity's
+	// rank-based status-override endpoint (see ControlService.OverrideStatus) —
+	// distinct from UpdateStatus, which drives the ordinary forward workflow.
+	OverrideStatus(ctx context.Context, auditID, controlID int, status string, updatedBy string) error
 	Delete(ctx context.Context, auditID, controlID int) error
 	// AssignedAuditID reports whether userEmail is the owner of controlID for
 	// an actionable status, and returns the control's audit id (for server-side
@@ -123,7 +127,9 @@ type DashboardRepository interface {
 // EvidenceRepository is the data-access contract for audit evidence submissions.
 type EvidenceRepository interface {
 	// Create inserts a new evidence row for the given control and returns its ID.
-	Create(ctx context.Context, auditID, controlID int, folderPath, createdBy string) (int, error)
+	// attestation is the written justification for a fileless round; "" for an
+	// ordinary round.
+	Create(ctx context.Context, auditID, controlID int, folderPath, attestation, createdBy string) (int, error)
 	// AddFile inserts a single audit_evidence_file row linked to evidenceID.
 	AddFile(ctx context.Context, evidenceID int, fileName, filePath string, fileType *string, fileSize *int64, createdBy string) error
 	// DeleteEvidence removes an evidence row by ID (used for best-effort rollback on partial failure).
@@ -167,6 +173,8 @@ type PopulationRepository interface {
 type CommentRepository interface {
 	Create(ctx context.Context, auditID, controlID int, content string, isInternal bool, parentCommentID *int, createdBy string) (*model.AuditComment, error)
 	ListByControl(ctx context.Context, auditID, controlID int) ([]*model.AuditComment, error)
+	// Delete removes a single comment by ID.
+	Delete(ctx context.Context, commentID int) error
 }
 type AssignmentRepository interface{}
 type NotificationRepository interface{}

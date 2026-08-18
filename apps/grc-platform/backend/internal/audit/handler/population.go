@@ -439,9 +439,6 @@ func (h *evidenceHandler) reviewPopulation(w http.ResponseWriter, r *http.Reques
 		approveControlStatus: "POPULATION_UNDER_VALIDATION",
 		rejectRoundStatus:    "COMPLIANCE_REJECTED",
 		rejectControlStatus:  "POPULATION_PENDING",
-		clearFilesOnReject: func(ctx context.Context, roundID int) error {
-			return h.popSvc.ClearFiles(ctx, roundID, "POPULATION")
-		},
 	})
 }
 
@@ -468,8 +465,5 @@ func (h *evidenceHandler) validatePopulation(w http.ResponseWriter, r *http.Requ
 		approveControlStatus: "POPULATION_COMPLETE",
 		rejectRoundStatus:    "AUDITOR_REJECTED",
 		rejectControlStatus:  "POPULATION_NEED_CLARIFICATION",
-		clearFilesOnReject: func(ctx context.Context, roundID int) error {
-			return h.popSvc.ClearFiles(ctx, roundID, "POPULATION")
-		},
 	})
 }

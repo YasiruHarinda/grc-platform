@@ -196,3 +196,10 @@ func (s *evidenceService) DeleteEvidenceFile(ctx context.Context, fileID int) er
 	}
 	return s.repo.DeleteEvidenceFile(ctx, fileID)
 }
+
+func (s *evidenceService) DeleteEvidence(ctx context.Context, evidenceID int) error {
+	if evidenceID <= 0 {
+		return &apierror.ValidationError{Msg: "evidenceId must be a positive integer"}
+	}
+	return s.repo.DeleteEvidence(ctx, evidenceID)
+}

@@ -240,6 +240,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	mux.HandleFunc("GET /audits/{auditId}/controls/{controlId}", controlH.GetControlByID)
 	mux.HandleFunc("POST /audits/{auditId}/controls", controlH.CreateControl)
 	mux.HandleFunc("PATCH /audits/{auditId}/controls/{controlId}", controlH.UpdateControl)
+	mux.HandleFunc("POST /audits/{auditId}/controls/{controlId}/status-override", controlH.OverrideControlStatus)
 	mux.HandleFunc("DELETE /audits/{auditId}/controls/{controlId}", controlH.DeleteControl)
 
 	// Evidence (nested creation/list under controls; flat access by evidence ID)
@@ -253,6 +254,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	// list-files pattern above.
 	mux.HandleFunc("GET /evidence-files/{fileId}", evidenceH.GetEvidenceFileByID)
 	mux.HandleFunc("DELETE /evidence-files/{fileId}", evidenceH.DeleteEvidenceFile)
+	mux.HandleFunc("DELETE /evidence/{evidenceId}", evidenceH.DeleteEvidence)
 
 	// Control comments (control-scoped — one thread per control, spanning
 	// population + evidence phases; flat delete by comment ID)
@@ -333,7 +335,6 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	// Risk change log (audit trail for risks; append-only)
 	mux.HandleFunc("POST /risks/{riskId}/changes", riskChangeLogH.CreateRiskChangeLog)
 	mux.HandleFunc("GET /risks/{riskId}/changes", riskChangeLogH.ListRiskChangeLog)
-
 
 	// Risk evidence files (nested under risks)
 	mux.HandleFunc("POST /risks/{riskId}/evidence", riskEvidenceH.CreateRiskEvidence)

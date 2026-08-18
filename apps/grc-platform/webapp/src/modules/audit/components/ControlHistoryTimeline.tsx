@@ -41,7 +41,7 @@ import type { ControlStatus } from "@modules/audit/types/audit";
 
 // ─── Event model ──────────────────────────────────────────────────────────────
 
-type EventTone = "created" | "uploaded" | "resubmitted" | "approved" | "rejected" | "comment" | "ai";
+type EventTone = "created" | "uploaded" | "resubmitted" | "approved" | "rejected" | "overridden" | "comment" | "ai";
 
 interface TimelineEvent {
   id: string;
@@ -63,6 +63,7 @@ const TONE: Record<EventTone, { color: string; icon: JSX.Element }> = {
   resubmitted: { color: "#F59E0B", icon: <RotateCcw size={15} /> },
   approved:    { color: "#10B981", icon: <CheckCircle2 size={15} /> },
   rejected:    { color: "#EF4444", icon: <XCircle size={15} /> },
+  overridden:  { color: "#F97316", icon: <RotateCcw size={15} /> },
   comment:     { color: "#0EA5E9", icon: <MessageSquare size={15} /> },
   ai:          { color: "#8B5CF6", icon: <Bot size={15} /> },
 };
@@ -149,6 +150,8 @@ function trailToEvent(e: TrailEntry, fileNamesByEvidenceId: Map<number, string[]
       return null;
     case "AI_VALIDATED":
       return { ...base, tone: "ai", title: "AI validation completed", body: readComment(d) };
+    case "OVERRIDDEN":
+      return { ...base, tone: "overridden", title: "Status manually overridden", from, to };
     default:
       // ESCALATED / EXPORTED etc. — show generically rather than dropping.
       return { ...base, tone: "created", title: e.action.toLowerCase().replace(/_/g, " ") };

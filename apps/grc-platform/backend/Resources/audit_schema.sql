@@ -190,6 +190,13 @@ CREATE TABLE IF NOT EXISTS audit_control (
   sample_reference     VARCHAR(255) NULL,
   comments             TEXT         NULL,
   control_source       ENUM('MANUAL','COPIED','CSV') NOT NULL DEFAULT 'MANUAL',
+
+  -- Status override marker: set whenever an admin backward-overrides this
+  -- control's status instead of it advancing through the normal workflow.
+  status_overridden    BOOLEAN      NOT NULL DEFAULT FALSE,
+  overridden_by        VARCHAR(255) NULL,
+  overridden_at        DATETIME     NULL,
+
   created_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by           VARCHAR(255) NULL,
   updated_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -263,6 +270,7 @@ CREATE TABLE IF NOT EXISTS audit_evidence (
                           ) NOT NULL DEFAULT 'SUBMITTED',
   reused_from_evidence_id INT          NULL,
   folder_path             VARCHAR(500) NULL,
+  attestation             TEXT         NULL COMMENT 'Written justification for a round with no files',
   created_at              DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by              VARCHAR(255) NULL,
   updated_at              DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -370,7 +378,7 @@ CREATE TABLE IF NOT EXISTS audit_trail (
   evidence_id INT          NULL,
   action      ENUM('CREATED','UPLOADED','RESUBMITTED','APPROVED','REJECTED',
                   'COMMENTED','ESCALATED','AI_VALIDATED','EXPORTED',
-                  'UPDATED','DELETED') NOT NULL,
+                  'UPDATED','DELETED','OVERRIDDEN') NOT NULL,
   details     JSON         NULL,
   created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by  VARCHAR(255) NULL,

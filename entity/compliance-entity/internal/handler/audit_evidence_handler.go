@@ -178,3 +178,19 @@ func (h *EvidenceHandler) DeleteEvidenceFile(w http.ResponseWriter, r *http.Requ
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// DeleteEvidence handles DELETE /evidence/{evidenceId}. Removes a whole round
+// (used for the fileless/attestation-only completion, which has no files to
+// delete individually) — its files and AI validation logs cascade via FK.
+func (h *EvidenceHandler) DeleteEvidence(w http.ResponseWriter, r *http.Request) {
+	evidenceID, err := strconv.Atoi(r.PathValue("evidenceId"))
+	if err != nil {
+		writeServiceError(w, r, &apierror.ValidationError{Msg: "evidenceId must be a positive integer"})
+		return
+	}
+	if err := h.svc.DeleteEvidence(r.Context(), evidenceID); err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

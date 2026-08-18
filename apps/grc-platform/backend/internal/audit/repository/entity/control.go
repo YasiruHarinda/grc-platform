@@ -232,6 +232,11 @@ func (r *controlRepo) UpdateStatusWithSample(ctx context.Context, auditID, contr
 	return r.c.Patch(ctx, fmt.Sprintf("/audits/%d/controls/%d", auditID, controlID), body, nil)
 }
 
+func (r *controlRepo) OverrideStatus(ctx context.Context, auditID, controlID int, status string, updatedBy string) error {
+	body := map[string]any{"status": status, "updatedBy": updatedBy}
+	return r.c.Post(ctx, fmt.Sprintf("/audits/%d/controls/%d/status-override", auditID, controlID), body, nil)
+}
+
 func (r *controlRepo) Delete(ctx context.Context, auditID, controlID int) error {
 	return r.c.Delete(ctx, fmt.Sprintf("/audits/%d/controls/%d", auditID, controlID))
 }

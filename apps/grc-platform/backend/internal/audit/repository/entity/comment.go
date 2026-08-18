@@ -75,6 +75,10 @@ func (r *commentRepo) Create(ctx context.Context, auditID, controlID int, conten
 	return ec.toModel(), nil
 }
 
+func (r *commentRepo) Delete(ctx context.Context, commentID int) error {
+	return r.c.Delete(ctx, fmt.Sprintf("/comments/%d", commentID))
+}
+
 func (r *commentRepo) ListByControl(ctx context.Context, auditID, controlID int) ([]*model.AuditComment, error) {
 	var resp struct {
 		Comments []entComment `json:"comments"`

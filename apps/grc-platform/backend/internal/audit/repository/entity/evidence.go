@@ -36,12 +36,13 @@ func NewEvidenceRepository(c *entityclient.Client) repository.EvidenceRepository
 // entEvidence mirrors the entity's AuditEvidence JSON (createdOn / *createdBy)
 // which differs from the backend model (createdAt / createdBy string).
 type entEvidence struct {
-	ID         int       `json:"id"`
-	ControlID  int       `json:"controlId"`
-	Status     string    `json:"status"`
-	FolderPath *string   `json:"folderPath"`
-	CreatedBy  *string   `json:"createdBy"`
-	CreatedOn  time.Time `json:"createdOn"`
+	ID          int       `json:"id"`
+	ControlID   int       `json:"controlId"`
+	Status      string    `json:"status"`
+	FolderPath  *string   `json:"folderPath"`
+	Attestation *string   `json:"attestation"`
+	CreatedBy   *string   `json:"createdBy"`
+	CreatedOn   time.Time `json:"createdOn"`
 }
 
 // entFile mirrors the entity's AuditEvidenceFile JSON.
@@ -78,8 +79,11 @@ func (f entFile) toModel() *model.AuditEvidenceFile {
 	return m
 }
 
-func (r *evidenceRepo) Create(ctx context.Context, auditID, controlID int, folderPath, createdBy string) (int, error) {
+func (r *evidenceRepo) Create(ctx context.Context, auditID, controlID int, folderPath, attestation, createdBy string) (int, error) {
 	body := map[string]any{"folderPath": folderPath, "createdBy": createdBy}
+	if attestation != "" {
+		body["attestation"] = attestation
+	}
 	var ev entEvidence
 	if err := r.c.Post(ctx, fmt.Sprintf("/audits/%d/controls/%d/evidence", auditID, controlID), body, &ev); err != nil {
 		return 0, err
@@ -116,6 +120,9 @@ func (r *evidenceRepo) ListByControl(ctx context.Context, auditID, controlID int
 		}
 		if ev.FolderPath != nil {
 			e.FolderPath = *ev.FolderPath
+		}
+		if ev.Attestation != nil {
+			e.Attestation = *ev.Attestation
 		}
 		if ev.CreatedBy != nil {
 			e.CreatedBy = *ev.CreatedBy

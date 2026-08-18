@@ -51,6 +51,16 @@ func fileNamesOf(files []*model.AuditEvidenceFile) []string {
 	return names
 }
 
+// trailFileNames is fileNamesOf, except a fileless round (attestation-only)
+// logs the attestation text instead of an empty file list — otherwise the
+// trail would record a submission with nothing attached to it.
+func trailFileNames(evidence *model.AuditEvidence) []string {
+	if len(evidence.Files) == 0 && evidence.Attestation != "" {
+		return []string{evidence.Attestation}
+	}
+	return fileNamesOf(evidence.Files)
+}
+
 // recordEvidenceTrail appends a best-effort attribution entry. Failures are logged
 // and swallowed — they never affect the submission the user just made. fileNames
 // is nil for calls that have nothing file-shaped to attach (population/sample).
@@ -291,8 +301,9 @@ func (h *evidenceHandler) submitEvidence(w http.ResponseWriter, r *http.Request)
 
 	user := auth.FromContext(r.Context())
 	actor := user.Email
+	isAdmin := auth.HasPrivilege(r.Context(), privilege.ManageControls)
 
-	evidence, err := h.svc.Submit(r.Context(), auditID, controlID, req.Files, actor)
+	evidence, err := h.svc.Submit(r.Context(), auditID, controlID, req.Files, req.Attestation, isAdmin, actor)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
@@ -305,13 +316,18 @@ func (h *evidenceHandler) submitEvidence(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Best-effort audit-trail attribution: this submission came through the web app.
-	recordEvidenceTrail(r.Context(), h.trailSvc, auditID, controlID, evidence.ID, actor, channelWebApp, user.Issuer, fileNamesOf(evidence.Files))
+	// Best-effort audit-trail attribution: this submission came through the web
+	// app. A fileless round has no file names to log, so log the attestation text
+	// instead.
+	recordEvidenceTrail(r.Context(), h.trailSvc, auditID, controlID, evidence.ID, actor, channelWebApp, user.Issuer, trailFileNames(evidence))
 
-	// Fire-and-forget AI validation. Detached from the request context (a client
-	// disconnect must not cancel it) and best-effort — a failure here never
-	// affects the submission the user just made.
-	h.triggerAIValidation(auditID, controlID, evidence.ID, actor)
+	// Fire-and-forget AI validation — skipped for a fileless round, which has
+	// nothing for the validator to analyze. Detached from the request context (a
+	// client disconnect must not cancel it) and best-effort — a failure here
+	// never affects the submission the user just made.
+	if len(evidence.Files) > 0 {
+		h.triggerAIValidation(auditID, controlID, evidence.ID, actor)
+	}
 
 	response.WriteJSONValue(w, http.StatusCreated, evidence)
 }
@@ -558,6 +574,48 @@ func (h *evidenceHandler) deleteControlEvidenceFile(w http.ResponseWriter, r *ht
 		return
 	}
 	if !h.deleteFile(w, r, fileID) {
+		return
+	}
+
+	status, err := h.reconcileAfterDelete(r.Context(), auditID, controlID)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	response.WriteJSONValue(w, http.StatusOK, map[string]any{"status": status})
+}
+
+// deleteEvidenceRound handles
+// DELETE /api/v1/audits/{id}/controls/{controlId}/evidence/{evidenceId}.
+//
+// Removes a whole fileless (attestation-only) round — the "Completed without
+// files" case has no individual file to fall back on deleteControlEvidenceFile
+// for. Reuses reconcileAfterDelete so a round deleted out from under an
+// EVIDENCE_INTERNAL_REVIEW control drops it back to EVIDENCE_PENDING the same
+// way emptying a file-based round does.
+func (h *evidenceHandler) deleteEvidenceRound(w http.ResponseWriter, r *http.Request) {
+	if !auth.RequirePrivilege(r.Context(), w, privilege.SubmitEvidence) {
+		return
+	}
+	auditID, ok := parseIntParam(w, r, "id")
+	if !ok {
+		return
+	}
+	controlID, ok := parseIntParam(w, r, "controlId")
+	if !ok {
+		return
+	}
+	evidenceID, ok := parseIntParam(w, r, "evidenceId")
+	if !ok {
+		return
+	}
+	if !h.requireAssignment(w, r, auditID, controlID) {
+		return
+	}
+	actor := auth.FromContext(r.Context()).Email
+	isAdmin := auth.HasPrivilege(r.Context(), privilege.ManageControls)
+	if err := h.svc.DeleteRound(r.Context(), auditID, controlID, evidenceID, actor, isAdmin); err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
 

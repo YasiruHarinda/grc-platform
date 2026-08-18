@@ -21,28 +21,30 @@ import { controlsQueryKey } from "@modules/audit/api/useGetControls";
 import { auditQueryKey } from "@modules/audit/api/useGetAudit";
 import type { ControlStatus } from "@modules/audit/types/audit";
 
-interface UpdateStatusPayload {
+interface OverrideStatusPayload {
   auditId: number;
   controlId: number;
   status: ControlStatus;
-  comment?: string;
 }
 
-export function useUpdateControlStatus() {
+// useOverrideControlStatus drives the admin backward status override
+// (ManageControls-gated) — distinct from the ordinary forward workflow's
+// status PATCH, and hitting its own endpoint (/status/override).
+export function useOverrideControlStatus() {
   const authFetch = useAuthApiClient();
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ auditId, controlId, status, comment }: UpdateStatusPayload) => {
+    mutationFn: async ({ auditId, controlId, status }: OverrideStatusPayload) => {
       const res = await authFetch(
-        `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}/status`,
+        `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}/status/override`,
         {
-          method: "PATCH",
+          method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status, comment: comment ?? null }),
+          body: JSON.stringify({ status }),
         },
       );
-      if (!res.ok) throw new Error(`Failed to update control status (${res.status})`);
+      if (!res.ok) throw new Error(`Failed to override control status (${res.status})`);
     },
 
     onSuccess: (_data, { auditId }) => {

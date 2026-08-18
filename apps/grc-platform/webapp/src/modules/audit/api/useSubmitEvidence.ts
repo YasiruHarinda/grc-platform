@@ -25,6 +25,10 @@ interface SubmitEvidencePayload {
   auditId: number;
   controlId: number;
   files: File[];
+  // Written justification for a zero-file round — only honored by the backend
+  // when the caller holds ManageControls. Everyone else submitting zero files
+  // still gets the ordinary "select at least one file" rejection.
+  attestation?: string;
 }
 
 async function errText(res: Response, action: string): Promise<string> {
@@ -51,8 +55,8 @@ export function useSubmitEvidence() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ auditId, controlId, files }: SubmitEvidencePayload): Promise<void> => {
-      if (files.length === 0) throw new Error("Select at least one file to submit.");
+    mutationFn: async ({ auditId, controlId, files, attestation }: SubmitEvidencePayload): Promise<void> => {
+      if (files.length === 0 && !attestation) throw new Error("Select at least one file to submit.");
       const base = `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}/evidence`;
 
       // 1. This control's evidence folder path (deterministic — no per-session id).
@@ -75,11 +79,12 @@ export function useSubmitEvidence() {
         uploaded.push({ blobName, fileName: file.name });
       }
 
-      // 3. Record exactly the files just uploaded.
+      // 3. Record exactly the files just uploaded (or the attestation, for a
+      //    fileless round).
       const submitRes = await authFetch(`${base}/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ files: uploaded }),
+        body: JSON.stringify({ files: uploaded, attestation: attestation ?? undefined }),
       });
       if (!submitRes.ok) throw new Error(await errText(submitRes, "submit evidence"));
     },
