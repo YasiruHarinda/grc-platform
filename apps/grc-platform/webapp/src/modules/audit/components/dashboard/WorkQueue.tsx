@@ -578,16 +578,18 @@ export default function WorkQueue({
   ];
 
   // Privilege-driven tab visibility (ADR-0002): org-wide readers get everything;
-  // a submitter sees only their Pending Submission queue; an auditor only Under
-  // Validation. Each Tab carries an explicit `value` so hidden tabs don't shift
-  // the selected index.
+  // narrow roles get the union of tabs their privileges unlock — a reviewer sees
+  // Action Items, a submitter Pending Submission, an auditor Under Validation,
+  // and a caller holding more than one privilege sees all of them. Each Tab
+  // carries an explicit `value` so hidden tabs don't shift the selected index.
   const visibleTabs = canViewAll
     ? allTabs
-    : canSubmit
-      ? allTabs.filter((t) => t.value === QUEUE_TAB_PENDING)
-      : canValidate
-        ? allTabs.filter((t) => t.value === QUEUE_TAB_VALIDATION)
-        : [];
+    : allTabs.filter((t) => {
+        if (t.value === QUEUE_TAB_AWAITING) return canApprove;
+        if (t.value === QUEUE_TAB_PENDING) return canSubmit;
+        if (t.value === QUEUE_TAB_VALIDATION) return canValidate;
+        return false;
+      });
 
   if (visibleTabs.length === 0) {
     return (
