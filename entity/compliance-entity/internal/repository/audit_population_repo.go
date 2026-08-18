@@ -204,12 +204,22 @@ func (r *populationRepo) GetPopulationFileByID(ctx context.Context, fileID int) 
 
 func (r *populationRepo) getPopulationFileByID(ctx context.Context, fileID int) (*domain.AuditEvidenceFile, error) {
 	var f domain.AuditEvidenceFile
-	var evidenceID, populationID, uploadedBy sql.NullInt64
+	var evidenceID, populationID, uploadedBy, controlTeamID sql.NullInt64
 	var fileKind, fileType sql.NullString
 	var fileSize sql.NullInt64
-	err := r.db.QueryRowContext(ctx,
-		"SELECT id, evidence_id, population_id, file_kind, uploaded_by, file_name, file_path, file_type, file_size, created_at FROM audit_evidence_file WHERE id = ?",
-		fileID).Scan(&f.ID, &evidenceID, &populationID, &fileKind, &uploadedBy, &f.FileName, &f.FilePath, &fileType, &fileSize, &f.CreatedOn)
+	// LEFT JOINed through to the owning control's team so the GRC Backend can
+	// gate downloads to a team-scoped grant instead of an unscoped privilege
+	// union, mirroring audit_evidence_repo.go's getEvidenceFileByID. Misses
+	// cleanly for a control with no team — control_team_id just comes back NULL.
+	err := r.db.QueryRowContext(ctx, `
+		SELECT f.id, f.evidence_id, f.population_id, f.file_kind, f.uploaded_by,
+		       f.file_name, f.file_path, f.file_type, f.file_size, f.created_at,
+		       c.team_id AS control_team_id
+		FROM audit_evidence_file f
+		LEFT JOIN audit_population p ON p.id = f.population_id
+		LEFT JOIN audit_control    c ON c.id = p.control_id
+		WHERE f.id = ?`,
+		fileID).Scan(&f.ID, &evidenceID, &populationID, &fileKind, &uploadedBy, &f.FileName, &f.FilePath, &fileType, &fileSize, &f.CreatedOn, &controlTeamID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, &apierror.NotFoundError{Msg: fmt.Sprintf("population file %d not found", fileID)}
 	}
@@ -236,6 +246,10 @@ func (r *populationRepo) getPopulationFileByID(ctx context.Context, fileID int) 
 	}
 	if fileSize.Valid {
 		f.FileSize = &fileSize.Int64
+	}
+	if controlTeamID.Valid {
+		v := int(controlTeamID.Int64)
+		f.TeamID = &v
 	}
 	return &f, nil
 }

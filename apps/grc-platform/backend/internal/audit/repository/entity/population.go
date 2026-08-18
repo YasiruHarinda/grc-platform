@@ -113,6 +113,7 @@ type entPopulationFile struct {
 	FileType     *string   `json:"fileType"`
 	FileSize     *int64    `json:"fileSize"`
 	CreatedOn    time.Time `json:"createdOn"`
+	TeamID       *int      `json:"teamId"`
 }
 
 func (f entPopulationFile) toModel() *model.PopulationFile {
@@ -123,6 +124,7 @@ func (f entPopulationFile) toModel() *model.PopulationFile {
 		FileType:  f.FileType,
 		FileSize:  f.FileSize,
 		CreatedAt: f.CreatedOn,
+		TeamID:    f.TeamID,
 	}
 	if f.PopulationID != nil {
 		m.PopulationID = *f.PopulationID

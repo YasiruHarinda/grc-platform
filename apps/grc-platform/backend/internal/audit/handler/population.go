@@ -266,12 +266,32 @@ func (h *evidenceHandler) listPopulation(w http.ResponseWriter, r *http.Request)
 // GET /api/v1/population/files/{fileId}/download.
 // It proxies the file bytes the same way downloadEvidenceFile does — the
 // backend reads the blob directly from Azure using its own storage credential.
+//
+// SubmitEvidence, ReviewEvidence, ManageControls, and ViewAllAudits gate
+// access, checked against the file's owning control's own team
+// (HasPrivilegeIn) since all four can be granted scoped to a single team
+// (module=AUDIT) — the unscoped RequireAnyPrivilege this replaced would let a
+// team-scoped grant download every other team's population files too.
 func (h *evidenceHandler) downloadPopulationFile(w http.ResponseWriter, r *http.Request) {
-	if !auth.RequireAnyPrivilege(r.Context(), w, privilege.SubmitEvidence, privilege.ReviewEvidence, privilege.ManageControls, privilege.ViewAllAudits) {
-		return
-	}
+	ctx := r.Context()
 	fileID, ok := parseIntParam(w, r, "fileId")
 	if !ok {
+		return
+	}
+	f, err := h.popSvc.GetFileByID(ctx, fileID)
+	if err != nil {
+		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
+		return
+	}
+	teamID := 0
+	if f.TeamID != nil {
+		teamID = *f.TeamID
+	}
+	if !auth.HasPrivilegeIn(ctx, privilege.SubmitEvidence, teamID) &&
+		!auth.HasPrivilegeIn(ctx, privilege.ReviewEvidence, teamID) &&
+		!auth.HasPrivilegeIn(ctx, privilege.ManageControls, teamID) &&
+		!auth.HasPrivilegeIn(ctx, privilege.ViewAllAudits, teamID) {
+		response.WriteError(w, http.StatusForbidden, response.ErrMsgForbidden)
 		return
 	}
 	data, fileName, contentType, err := h.popSvc.DownloadFile(r.Context(), fileID)

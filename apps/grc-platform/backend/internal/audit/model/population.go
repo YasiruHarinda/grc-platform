@@ -50,6 +50,11 @@ type PopulationFile struct {
 	// ReadURL is the backend proxy download URL (GET .../population/files/{id}/download).
 	// Computed at list time (not persisted); nil if the file has no DB id.
 	ReadURL *string `json:"readUrl"`
+	// TeamID is this file's owning control's team_id (nil if none). Only
+	// populated by PopulationService.GetFileByID's underlying repo call, for
+	// the team-scoped download gate — omitted from JSON since it's not
+	// population metadata callers need.
+	TeamID *int `json:"-"`
 }
 
 // PopulationView is the response for GET .../population: the control's current
