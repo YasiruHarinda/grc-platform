@@ -34,7 +34,11 @@ import type { RiskScore } from "../../api/riskApi";
 
 const { DatePicker, LocalizationProvider } = DatePickers;
 
-function FieldLabel({ children }: { children: ReactNode }): JSX.Element {
+// `required` renders the asterisk convention users expect on a form: the field
+// must be filled before the step will submit. It mirrors the `rules.required`
+// on the same Controller — keep the two in step, or the form will either
+// promise something it doesn't enforce or enforce something it didn't warn about.
+function FieldLabel({ children, required }: { children: ReactNode; required?: boolean }): JSX.Element {
   return (
     <Typography
       variant="body2"
@@ -43,6 +47,14 @@ function FieldLabel({ children }: { children: ReactNode }): JSX.Element {
       sx={{ display: "block", mb: 1 }}
     >
       {children}
+      {required && (
+        // Inherits the label's colour rather than fixing one: the form sits on a
+        // dark card in dark mode and a light one otherwise, so a hard-coded
+        // colour would be invisible in one of them.
+        <Box component="span" aria-hidden="true" sx={{ color: "inherit", ml: 0.4 }}>
+          *
+        </Box>
+      )}
     </Typography>
   );
 }
@@ -416,6 +428,7 @@ export default function RiskAssessmentStep({ riskScores }: RiskAssessmentStepPro
                 if (e.target.value) clearErrors("impactDescription");
               }}
               label="Impact Description"
+              required
               fullWidth
               multiline
               rows={3}
@@ -445,7 +458,7 @@ export default function RiskAssessmentStep({ riskScores }: RiskAssessmentStepPro
               rules={{ required: "Implementation date is required" }}
               render={({ field, fieldState }) => (
                 <Box>
-                  <FieldLabel>Implementation Date</FieldLabel>
+                  <FieldLabel required>Implementation Date</FieldLabel>
                   <DatePicker
                     value={field.value}
                     onChange={(newValue) => {
@@ -466,6 +479,11 @@ export default function RiskAssessmentStep({ riskScores }: RiskAssessmentStepPro
                       },
                       textField: {
                         fullWidth: true,
+                        // No label prop is set on this slot — FieldLabel above
+                        // renders it separately — so `required` here only sets
+                        // aria-required on the input; it cannot produce a
+                        // second, MUI-rendered asterisk to duplicate FieldLabel's.
+                        required: true,
                         error: !!fieldState.error,
                         helperText:
                           fieldState.error?.message ??
@@ -485,7 +503,7 @@ export default function RiskAssessmentStep({ riskScores }: RiskAssessmentStepPro
               rules={{ required: "Reassessment date is required" }}
               render={({ field, fieldState }) => (
                 <Box>
-                  <FieldLabel>Reassessment Date</FieldLabel>
+                  <FieldLabel required>Reassessment Date</FieldLabel>
                   <DatePicker
                     value={field.value}
                     onChange={(newValue) => {
@@ -506,6 +524,10 @@ export default function RiskAssessmentStep({ riskScores }: RiskAssessmentStepPro
                       },
                       textField: {
                         fullWidth: true,
+                        // Same rationale as Implementation Date above: no
+                        // label prop on this slot, so `required` only sets
+                        // aria-required — no duplicate visible asterisk.
+                        required: true,
                         error: !!fieldState.error,
                         helperText:
                           fieldState.error?.message ??

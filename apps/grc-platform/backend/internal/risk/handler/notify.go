@@ -274,9 +274,13 @@ func (d *Deps) describeActor(ctx context.Context, email string) string {
 // exercised and observable while testing. Turning it on later means resolving
 // the role to a recipient list here — no call-site changes.
 //
-// TODO: resolve the Compliance Admin role to recipients (Asgardeo group
-// membership via internal/scim, the same mechanism /management-approvers uses)
-// and send, once it is decided who should be on that list.
+// TODO: resolve the Compliance Admin role to recipients and send, once it is
+// decided who should be on that list. RISK_COMPLIANCE_ADMIN_GROUP
+// (config.RiskGroupsConfig) is provisioned for an Asgardeo-group-based
+// resolution, but /management-approvers and /risk-owner-candidates no longer
+// work that way — they now read user_role_grant (see candidates.go) — so
+// whichever mechanism is picked here should be decided fresh, not assumed to
+// match those.
 func notifyComplianceAdmins(ev emailer.RiskEvent, riskID int) {
 	slog.Info("compliance-admin notification suppressed (not yet wired)",
 		"event", ev, "riskId", riskID)

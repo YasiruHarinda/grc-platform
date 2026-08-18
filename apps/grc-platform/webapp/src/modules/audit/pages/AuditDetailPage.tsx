@@ -334,8 +334,8 @@ export default function AuditDetailPage(): JSX.Element {
                     onClick={() => setQuickFilter("overdue")}
                     sx={{
                       height: 22, fontSize: "0.7rem", fontWeight: 700,
-                      color: "#E53935", bgcolor: "transparent", border: "1px solid #E53935",
-                      "& .MuiChip-icon": { color: "#E53935" },
+                      color: "error.main", bgcolor: "transparent", border: "1px solid", borderColor: "error.main",
+                      "& .MuiChip-icon": { color: "error.main" },
                     }}
                   />
                 )}

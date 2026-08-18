@@ -93,10 +93,10 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	// cascade, which now only notifies — resolving the escalation and reverting
 	// the risk moved to the escalation comment flow in the GRC backend.
 	riskActionPlanSvc := service.NewRiskActionPlanService(
-		riskActionPlanRepo, riskActionStepRepo,
+		riskActionPlanRepo, riskActionStepRepo, riskEvidenceRepo,
 		riskEscalationSvc, riskSvc, userSvc,
 	)
-	riskEvidenceSvc := service.NewRiskEvidenceService(riskEvidenceRepo)
+	riskEvidenceSvc := service.NewRiskEvidenceService(riskEvidenceRepo, riskActionPlanRepo)
 	riskAssessmentSvc := service.NewRiskAssessmentService(riskAssessmentRepo)
 	privilegeSvc := service.NewPrivilegeService(privilegeRepo)
 	// Deliberately NOT wrapped in a cache, unlike userSvc above: grants are on
@@ -170,15 +170,25 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	// "GET /users/by-email/{email}", because "/users/by-email/grants" matches
 	// both and neither is more specific. That is a registration-time panic, not
 	// a 404, so it takes the whole service down. The literal second segment
-	// here ("by-email" vs "user") keeps every pattern unambiguous.
+	// here ("by-email" vs "user") keeps every pattern unambiguous — carry it
+	// forward whenever the routes below are re-added.
 	//
 	// The by-email read is the hot path: the GRC backend calls it on every
 	// authenticated request. Its responses are never cached, so revoking a
 	// grant takes effect on the caller's next request.
 	mux.HandleFunc("GET /grants/by-email/{email}", grantH.GrantsByEmail)
-	mux.HandleFunc("GET /grants/user/{id}", grantH.GrantsByUserID)
-	mux.HandleFunc("POST /grants/user/{id}", grantH.CreateGrant)
-	mux.HandleFunc("DELETE /grants/user/{id}/{grantId}", grantH.RevokeGrant)
+	mux.HandleFunc("GET /grants/candidates", grantH.Candidates)
+	// GrantsByUserID / CreateGrant / RevokeGrant are deliberately NOT wired up
+	// yet — held back rather than shipped with no caller. This service has no
+	// authorisation of its own (see internal/middleware — correlation ID,
+	// logging, recovery, timeout, and a header pass-through for attribution;
+	// nothing checks who's calling), so it trusts network/gateway placement
+	// entirely. Exposing role-mutation endpoints with zero consumer would
+	// widen that trust boundary for no product benefit. Re-add
+	// "GET /grants/user/{id}", "POST /grants/user/{id}", and
+	// "DELETE /grants/user/{id}/{grantId}?revokedBy=" (grantH.GrantsByUserID /
+	// grantH.CreateGrant / grantH.RevokeGrant) in the same PR that lands the
+	// MANAGE_USERS-gated admin grant editor that will actually call them.
 	mux.HandleFunc("GET /roles", grantH.ListRoles)
 
 	// Audit teams
@@ -328,7 +338,8 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	// Risk evidence files (nested under risks)
 	mux.HandleFunc("POST /risks/{riskId}/evidence", riskEvidenceH.CreateRiskEvidence)
 	mux.HandleFunc("GET /risks/{riskId}/evidence", riskEvidenceH.ListRiskEvidence)
-	mux.HandleFunc("DELETE /risk-evidence/{fileId}", riskEvidenceH.DeleteRiskEvidence)
+	mux.HandleFunc("GET /risk-evidence/{fileId}", riskEvidenceH.GetRiskEvidence)
+	mux.HandleFunc("DELETE /risks/{riskId}/evidence/{fileId}", riskEvidenceH.DeleteRiskEvidence)
 
 	// Risk assessments (nested under risks)
 	mux.HandleFunc("POST /risks/{riskId}/assessments", riskAssessmentH.CreateRiskAssessment)

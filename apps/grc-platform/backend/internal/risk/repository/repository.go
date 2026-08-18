@@ -91,8 +91,13 @@ type ActionPlanRepository interface {
 // RiskEvidenceRepository is the data-access contract for risk evidence files.
 type RiskEvidenceRepository interface {
 	List(ctx context.Context, riskID int) ([]*model.RiskEvidence, error)
-	Create(ctx context.Context, riskID int, fileName, filePath, note, evidenceType, createdBy string) (*model.RiskEvidence, error)
-	Delete(ctx context.Context, riskID, evidenceID int, byUserID string) error
+	// GetByID is used to check the caller owns the file before Delete — the
+	// same creator-or-admin rule the Audit Hub's evidence delete uses.
+	GetByID(ctx context.Context, evidenceID int) (*model.RiskEvidence, error)
+	Create(ctx context.Context, riskID int, actionPlanID *int, fileName, filePath, note, evidenceType, createdBy string) (*model.RiskEvidence, error)
+	// Delete removes evidenceID, scoped to riskID (a mismatch 404s the same as
+	// a missing file — no way to probe for another risk's file IDs).
+	Delete(ctx context.Context, riskID, evidenceID int) error
 }
 
 // EscalationRepository is the data-access contract for risk escalations.

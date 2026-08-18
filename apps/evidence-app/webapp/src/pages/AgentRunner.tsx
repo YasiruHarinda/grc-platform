@@ -27,6 +27,7 @@ import FormControlLabel from "@mui/material/FormControlLabel";
 import Collapse from "@mui/material/Collapse";
 import { BoltIcon, ArrowRightIcon, CircleCheckFilledIcon, LightbulbOnIcon, XMarkIcon } from "@oxygen-ui/react-icons";
 import { agentApi, getAuthToken } from "../api/client";
+import { BACKEND_BASE_URL } from "../config/apiConfig";
 import ControlPicker from "../components/ControlPicker";
 import ProductPicker from "../components/ProductPicker";
 import FrameworkPicker from "../components/FrameworkPicker";
@@ -344,7 +345,9 @@ export default function AgentRunner() {
         let streamEnded = false;
         try {
           const token = await getAuthToken();
-          const resp = await fetch(`/api/agent/tasks/${taskId}/stream`, {
+          // Bypasses axios (no interceptors for SSE), so it needs the same
+          // dual-mode base client.ts uses — see issue #90.
+          const resp = await fetch(`${BACKEND_BASE_URL}/api/agent/tasks/${taskId}/stream`, {
             headers: {
               ...(token ? { Authorization: `Bearer ${token}` } : {}),
             },

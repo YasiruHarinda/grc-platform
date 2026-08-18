@@ -24,88 +24,187 @@ import (
 	"testing"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/middleware"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
 
-// contextFor builds a context carrying a resolved privilege set the way the
-// Auth middleware would, for the given role. Exercises the exact path
-// isActionOwnerOnly reads (middleware.UserInfoFromContext + privilege.FromContext)
-// without needing a live server or a signed JWT — AUTH_TOKEN_VALIDATOR_ENABLED=false
-// skips loading a real privilege.Store entirely (see cmd/server/main.go),
-// making this the only way to test privilege-gated behaviour without a real IdP.
-func contextFor(t *testing.T, role string) context.Context {
+// contextForGrants builds a context the way the Auth middleware would: a
+// resolved grant Set plus the union published under the privilege key.
+//
+// global and byTeam are privilege sets, already resolved — the role→privilege
+// indirection is exercised elsewhere and only obscures what these tests are
+// about, which is WHERE a privilege applies rather than which role carries it.
+func contextForGrants(t *testing.T, global map[string]bool, byTeam map[int]map[string]bool) context.Context {
 	t.Helper()
-	store := privilege.NewForTest(map[string]map[string]bool{
-		"grc-platform-risk-action-owner": {
-			privilege.ViewRisks:           true,
-			privilege.CompleteActionSteps: true,
-		},
-		"grc-platform-management": {
-			privilege.ViewRisks:             true,
-			privilege.ManagementApproveRisk: true,
-		},
-		"grc-platform-risk-compliance-admin": {
-			privilege.ViewRisks:  true,
-			privilege.CreateRisk: true,
-			// ComplianceApproveRisk is what canOverrideAssignee tests for, and
-			// the real seed grants it to this role alone — see
-			// shared_seed_data.sql's role_privilege block.
-			privilege.ComplianceApproveRisk: true,
-			privilege.CompleteActionSteps:   true,
-		},
-		"grc-platform-risk-assigner": {
-			privilege.ViewRisks:  true,
-			privilege.CreateRisk: true,
-		},
-		"grc-platform-risk-owner": {
-			privilege.ViewRisks:        true,
-			privilege.OwnerApproveRisk: true,
-		},
-		"grc-platform-risk-compliance-team": {
-			privilege.ViewRisks:    true,
-			privilege.ViewAllRisks: true,
-		},
-	})
+	grantCount := 0
+	if len(global) > 0 {
+		grantCount++
+	}
+	grantCount += len(byTeam)
+
+	set := grant.NewForTest(global, byTeam, grantCount)
 	ctx := middleware.WithUserInfo(context.Background(), &middleware.UserInfo{Email: "test@wso2.com"})
-	return privilege.WithContext(ctx, store.Resolve([]string{role}))
+	ctx = grant.WithContext(ctx, set)
+	return privilege.WithContext(ctx, set.PrivilegeMap())
 }
 
-func TestIsActionOwnerOnly(t *testing.T) {
+// Register ids used throughout.
+const (
+	asgardeo = 1
+	choreo   = 2
+)
+
+// ownerIn / complianceIn build the grant shapes these tests need, scoped to
+// one register.
+func ownerIn(team int) map[int]map[string]bool {
+	return map[int]map[string]bool{team: {privilege.ViewRisks: true, privilege.OwnerApproveRisk: true}}
+}
+func complianceIn(team int) map[int]map[string]bool {
+	return map[int]map[string]bool{team: {privilege.ViewRisks: true, privilege.ComplianceApproveRisk: true}}
+}
+
+// TestCallerClassification covers the three questions that used to be answered
+// by hand-maintained privilege allowlists (seesEveryRisk, isTeamScopedOnly,
+// isActionOwnerOnly). They are now read straight off the grants, so no test
+// needs updating when a privilege is added — which was the failure mode of the
+// versions these replace.
+func TestCallerClassification(t *testing.T) {
 	cases := []struct {
-		role string
-		want bool
+		name                            string
+		global                          map[string]bool
+		byTeam                          map[int]map[string]bool
+		wantEvery, wantScoped, wantNone bool
 	}{
-		{"grc-platform-risk-action-owner", true},
-		{"grc-platform-management", false},
-		{"grc-platform-risk-compliance-admin", false}, // holds CompleteActionSteps AND CreateRisk
+		{
+			// A real risk role always carries ViewRisks; that is the privilege
+			// "sees every risk" is actually about.
+			name:      "GLOBAL grant sees every risk",
+			global:    map[string]bool{privilege.ViewRisks: true, privilege.ComplianceApproveRisk: true},
+			wantEvery: true,
+		},
+		{
+			// REGRESSION: a platform admin holds MANAGE_USERS globally and
+			// nothing else. Treating "holds some GLOBAL grant" as unrestricted
+			// handed them every risk in the system as soon as any second, narrow
+			// grant carried them past the route gate.
+			name:       "GLOBAL grant of a non-risk role does NOT see every risk",
+			global:     map[string]bool{privilege.ManageUsers: true},
+			byTeam:     ownerIn(asgardeo),
+			wantScoped: true,
+		},
+		{
+			name:       "team-scoped grant is scoped",
+			byTeam:     ownerIn(asgardeo),
+			wantScoped: true,
+		},
+		{
+			name:       "grants in two registers is still scoped",
+			byTeam:     map[int]map[string]bool{asgardeo: {privilege.OwnerApproveRisk: true}, choreo: {privilege.CreateRisk: true}},
+			wantScoped: true,
+		},
+		{
+			// An Action Owner may be any employee, holding no role at all.
+			name:     "no grants at all",
+			wantNone: true,
+		},
+		{
+			// A GLOBAL grant wins: they see everything, so they are neither
+			// team-scoped nor grant-less, however many team grants they also hold.
+			name:      "GLOBAL plus team grants is not team-scoped",
+			global:    map[string]bool{privilege.ViewRisks: true, privilege.ComplianceApproveRisk: true},
+			byTeam:    ownerIn(asgardeo),
+			wantEvery: true,
+		},
 	}
 	for _, c := range cases {
-		got := isActionOwnerOnly(contextFor(t, c.role))
-		if got != c.want {
-			t.Errorf("isActionOwnerOnly(%s) = %v, want %v", c.role, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			ctx := contextForGrants(t, c.global, c.byTeam)
+			if got := seesEveryRisk(ctx); got != c.wantEvery {
+				t.Errorf("seesEveryRisk = %v, want %v", got, c.wantEvery)
+			}
+			if got := isTeamScopedOnly(ctx); got != c.wantScoped {
+				t.Errorf("isTeamScopedOnly = %v, want %v", got, c.wantScoped)
+			}
+			if got := holdsNoGrants(ctx); got != c.wantNone {
+				t.Errorf("holdsNoGrants = %v, want %v", got, c.wantNone)
+			}
+			// The three are mutually exclusive and exhaustive, which the
+			// allowlist versions could not guarantee — they could both be true
+			// for a caller holding an unlisted privilege combination.
+			n := 0
+			for _, b := range []bool{c.wantEvery, c.wantScoped, c.wantNone} {
+				if b {
+					n++
+				}
+			}
+			if n != 1 {
+				t.Fatalf("test case is malformed: exactly one classification must hold")
+			}
+		})
 	}
 }
 
-func TestIsTeamScopedOnly(t *testing.T) {
-	cases := []struct {
-		role string
-		want bool
-	}{
-		{"grc-platform-risk-assigner", true},
-		{"grc-platform-risk-owner", true},
-		{"grc-platform-risk-compliance-team", false}, // holds ViewAllRisks, in seesEveryRisk
-		{"grc-platform-management", false},      // holds ManagementApproveRisk, in seesEveryRisk
-		// Action-Owner-only must never also be classified as team-scoped —
-		// isTeamScopedOnly explicitly excludes it so the two never overlap.
-		{"grc-platform-risk-action-owner", false},
+// TestCanOverrideAssigneeIsScoped is the security case that motivated the whole
+// migration. The override bypasses every per-risk identity gate, so a compliance
+// approver scoped to one register must not be able to use it in another.
+//
+// On the unscoped union this test cannot fail, which is exactly why it exists.
+func TestCanOverrideAssigneeIsScoped(t *testing.T) {
+	ctx := contextForGrants(t, nil, complianceIn(asgardeo))
+
+	if !canOverrideAssigneeIn(ctx, asgardeo) {
+		t.Error("compliance approver should be able to override in their own register")
 	}
-	for _, c := range cases {
-		got := isTeamScopedOnly(contextFor(t, c.role))
-		if got != c.want {
-			t.Errorf("isTeamScopedOnly(%s) = %v, want %v", c.role, got, c.want)
+	if canOverrideAssigneeIn(ctx, choreo) {
+		t.Error("SECURITY: overrode in a register where they hold no grant")
+	}
+
+	// A GLOBAL compliance admin overrides anywhere, including registers created
+	// after the grant was made.
+	global := contextForGrants(t, map[string]bool{privilege.ComplianceApproveRisk: true}, nil)
+	for _, team := range []int{asgardeo, choreo, 9999} {
+		if !canOverrideAssigneeIn(global, team) {
+			t.Errorf("GLOBAL compliance admin should override in register %d", team)
 		}
+	}
+
+	// Holding a different privilege is never enough.
+	owner := contextForGrants(t, nil, ownerIn(asgardeo))
+	if canOverrideAssigneeIn(owner, asgardeo) {
+		t.Error("a risk owner must not be able to override the identity gate")
+	}
+}
+
+// TestRolesDoNotMergeAcrossRegisters is the requirement in one test: one user,
+// Risk Owner in Asgardeo and Risk Assigner in Choreo, must hold each power only
+// where it was granted.
+func TestRolesDoNotMergeAcrossRegisters(t *testing.T) {
+	ctx := contextForGrants(t, nil, map[int]map[string]bool{
+		asgardeo: {privilege.OwnerApproveRisk: true},
+		choreo:   {privilege.CreateRisk: true},
+	})
+	set := auth.Grants(ctx)
+
+	if !set.HasIn(privilege.OwnerApproveRisk, asgardeo) {
+		t.Error("should hold OwnerApprove in Asgardeo")
+	}
+	if set.HasIn(privilege.OwnerApproveRisk, choreo) {
+		t.Error("SECURITY: OwnerApprove leaked into Choreo")
+	}
+	if !set.HasIn(privilege.CreateRisk, choreo) {
+		t.Error("should hold CreateRisk in Choreo")
+	}
+	if set.HasIn(privilege.CreateRisk, asgardeo) {
+		t.Error("SECURITY: CreateRisk leaked into Asgardeo")
+	}
+	// The union — published via PrivilegeMap for the privilege-context bridge —
+	// still says yes to both, which is why it must never be the enforcement on
+	// a per-risk action.
+	union := set.PrivilegeMap()
+	if !union[privilege.OwnerApproveRisk] || !union[privilege.CreateRisk] {
+		t.Error("the union should contain both privileges")
 	}
 }
 
@@ -133,45 +232,31 @@ func (f fakeUserRepo) Upsert(context.Context, string, string, string) (*user.Use
 }
 func (f fakeUserRepo) List(context.Context) ([]*user.User, error) { return nil, nil }
 
-func TestCanOverrideAssignee(t *testing.T) {
-	cases := []struct {
-		role string
-		want bool
-	}{
-		// Only the compliance admin may act in another user's place.
-		{"grc-platform-risk-compliance-admin", true},
-		{"grc-platform-risk-owner", false},
-		{"grc-platform-risk-assigner", false},
-		{"grc-platform-management", false},
-		{"grc-platform-risk-action-owner", false},
-		// Read-only: sees every risk, but that must not imply acting on one.
-		{"grc-platform-risk-compliance-team", false},
-	}
-	for _, c := range cases {
-		if got := canOverrideAssignee(contextFor(t, c.role)); got != c.want {
-			t.Errorf("canOverrideAssignee(%s) = %v, want %v", c.role, got, c.want)
-		}
-	}
-}
+// The role-name-keyed TestCanOverrideAssignee that lived here is superseded by
+// TestCanOverrideAssigneeIsScoped above, which asks the question that now
+// matters: not "which role may override" but "override WHERE".
 
 func TestRequireRiskActor(t *testing.T) {
-	const callerEmail = "test@wso2.com" // the email contextFor puts on the request
+	const callerEmail = "test@wso2.com" // the email contextForGrants puts on the request
 	cases := []struct {
 		name       string
-		role       string
+		byTeam     map[int]map[string]bool
 		callerID   int // id the caller's email resolves to; 0 = no platform user row
 		wantUserID int // the id named on the risk
 		wantOK     bool
 		wantStatus int
 	}{
-		{"named actor passes", "grc-platform-risk-owner", 7, 7, true, http.StatusOK},
-		{"different user is refused", "grc-platform-risk-owner", 7, 9, false, http.StatusForbidden},
+		{"named actor passes", ownerIn(asgardeo), 7, 7, true, http.StatusOK},
+		{"different user is refused", ownerIn(asgardeo), 7, 9, false, http.StatusForbidden},
 		// The override is the whole point of the compliance-admin escape hatch:
 		// a risk whose named owner has left must not deadlock.
-		{"compliance admin overrides a mismatch", "grc-platform-risk-compliance-admin", 7, 9, true, http.StatusOK},
+		{"compliance admin overrides a mismatch", complianceIn(asgardeo), 7, 9, true, http.StatusOK},
+		// ...but only in the register they hold it in. A compliance approver
+		// scoped to Choreo gets no override on an Asgardeo risk.
+		{"compliance admin cannot override in another register", complianceIn(choreo), 7, 9, false, http.StatusForbidden},
 		// No platform user row can never match, so it must refuse rather than
 		// fall through — nil is not "any user".
-		{"caller with no user row is refused", "grc-platform-risk-owner", 0, 9, false, http.StatusForbidden},
+		{"caller with no user row is refused", ownerIn(asgardeo), 0, 9, false, http.StatusForbidden},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -181,10 +266,11 @@ func TestRequireRiskActor(t *testing.T) {
 			}
 			d := &Deps{Users: repo}
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/risks/1/owner-approve", nil).
-				WithContext(contextFor(t, c.role))
+				WithContext(contextForGrants(t, nil, c.byTeam))
 			rec := httptest.NewRecorder()
 
-			got := d.requireRiskActor(rec, req, c.wantUserID, "Risk Owner")
+			// The risk under test is sourced in Asgardeo.
+			got := d.requireRiskActor(rec, req, c.wantUserID, asgardeo, "Risk Owner")
 			if got != c.wantOK {
 				t.Errorf("requireRiskActor = %v, want %v", got, c.wantOK)
 			}
@@ -246,3 +332,28 @@ func TestDescribeActor(t *testing.T) {
 }
 
 var errStub = errors.New("entity unavailable")
+
+// TestLocalDevAllowAllClassification guards the local-dev mode
+// (AUTH_TOKEN_VALIDATOR_ENABLED=false), where no privilege store is configured
+// and every privilege check is meant to pass.
+//
+// The classification helpers read the grant set directly rather than going
+// through auth.HasPrivilege, so they must honour that mode themselves —
+// otherwise a local developer is authenticated, allowed past every route gate,
+// and then scoped to nothing: an empty dashboard and a risk list filtered to
+// rows they happen to be the action owner of.
+func TestLocalDevAllowAllClassification(t *testing.T) {
+	// Exactly what the middleware leaves behind in that mode: a user, but no
+	// privilege map and no grant set.
+	ctx := middleware.WithUserInfo(context.Background(), &middleware.UserInfo{Email: "dev@wso2.com"})
+
+	if !seesEveryRisk(ctx) {
+		t.Error("local dev must see every risk — the mode allows every privilege check")
+	}
+	if isTeamScopedOnly(ctx) {
+		t.Error("local dev must not be team-scoped")
+	}
+	if holdsNoGrants(ctx) {
+		t.Error("local dev must not be treated as a caller with no grants")
+	}
+}

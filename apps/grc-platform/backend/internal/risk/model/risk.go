@@ -154,7 +154,7 @@ type ListRisksFilter struct {
 	// forever — crowding out genuinely new overdue risks behind it.
 	ExcludeOpenEscalation bool
 	// EscalationLeadEmail widens rather than narrows: a risk whose open
-	// escalation names this email as a lead is included even when ScopeTeamIDs
+	// escalation names this email as a lead is included even when the scope lists
 	// would exclude it. Set automatically from the caller — never
 	// client-supplied, or anyone could read any escalated risk.
 	EscalationLeadEmail string
@@ -162,13 +162,20 @@ type ListRisksFilter struct {
 	// Set automatically by the handler for callers who only hold
 	// COMPLETE_ACTION_STEPS_RISK (Action Owners) — never client-supplied.
 	ActionOwnerID *int
-	// ScopeTeamIDs restricts to risks whose source register or assignment team
-	// is one of these. Set automatically by the handler for callers who hold
-	// Risk Hub privileges but none of the "sees everything" ones (Risk
-	// Assigner/Risk Owner-only) — never client-supplied.
-	ScopeTeamIDs []int
-	Limit        int // rows per page; handler enforces a sensible default and max
-	Offset       int // zero-based row offset
+	// ScopeSourceRegisterIDs and ScopeAssignmentTeamIDs scope the caller to the
+	// risks they may see. ORed together, but each matches a DIFFERENT column,
+	// because different roles are about different dimensions of a risk:
+	//
+	//	ScopeSourceRegisterIDs → source_register_id (where it was raised)
+	//	ScopeAssignmentTeamIDs → assignment_team_id (where work was routed)
+	//
+	// Both empty means unrestricted, so a caller who needs scoping must never
+	// end up with two empty lists — see handleListRisks, which returns an empty
+	// page rather than risk that.
+	ScopeSourceRegisterIDs []int
+	ScopeAssignmentTeamIDs []int
+	Limit                  int // rows per page; handler enforces a sensible default and max
+	Offset                 int // zero-based row offset
 }
 
 // RiskListPage is the paginated response for GET /api/v1/risks.
@@ -257,6 +264,25 @@ type RiskDetail struct {
 	RiskCategories       []RiskCategory        `json:"risk_categories"`
 	ActionPlan           *ActionPlanDetail     `json:"action_plan"`
 	Assessments          []RiskAssessment      `json:"assessments"`
+
+	// EffectivePrivileges is what the caller may do ON THIS RISK — their
+	// privileges resolved in its source register, which is the scope every
+	// authority check on a risk is relative to.
+	//
+	// It exists so the UI can render action buttons truthfully. GET
+	// /me/privileges returns the UNION across all of a caller's grants, which
+	// is the right answer for nav ("should this tab exist") and the wrong one
+	// here: a user who is Risk Owner in one register and a read-only member of
+	// another would be shown an Approve button on every risk in both, and get a
+	// 403 on half of them.
+	//
+	// Deliberately computed server-side rather than letting the client work it
+	// out from a grant list. The access rule has exactly one implementation,
+	// and it is not in the browser.
+	//
+	// Never populated on list responses — only on a single risk — because it is
+	// meaningless without a specific register in hand.
+	EffectivePrivileges []string `json:"effective_privileges"`
 }
 
 // ActionPlanDetail is ActionPlan with its steps embedded, used inside RiskDetail.

@@ -21,6 +21,7 @@ import (
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
 )
 
 // handleListTeams serves GET /api/v1/teams.
@@ -51,27 +52,43 @@ func (d *Deps) handleListTeams(w http.ResponseWriter, r *http.Request) {
 		teams = []*model.Team{}
 	}
 
-	if r.URL.Query().Get("mine") == "true" && isTeamScopedOnly(r.Context()) {
-		email, ok := requireUserEmail(w, r)
-		if !ok {
-			return
+	// ?mine=true narrows the list to registers the caller holds a grant on —
+	// register-capable scopes only, since every consumer of this is a register
+	// dropdown. A grant on an ASSIGNMENT-only team (HR, Legal) is not a register
+	// and never belongs here.
+	//
+	// A GLOBAL ViewRisks holder is deliberately unaffected by ?mine=true: they
+	// may hold no team-scoped grant at all, and narrowing them to nothing would
+	// empty a dropdown for someone entitled to every entry in it.
+	//
+	// ?privilege=<NAME> narrows further to registers where the caller holds that
+	// privilege — applied unconditionally, never short-circuited by
+	// seesEveryRisk. Add Risk passes RISK_CREATE, because "registers I can see"
+	// and "registers I may raise a risk in" are different questions answered by
+	// different privileges (ViewRisks vs. RISK_CREATE): a Management approver
+	// sees every risk globally but may hold RISK_CREATE on only one register
+	// (or none), and offering the rest in the create picker would produce
+	// choices the server refuses.
+	mineOnly := r.URL.Query().Get("mine") == "true"
+	wantPriv := r.URL.Query().Get("privilege")
+	if mineOnly || wantPriv != "" {
+		set := callerGrants(r.Context())
+		visibleEverywhere := seesEveryRisk(r.Context())
+
+		registerScoped := map[int]bool{}
+		for _, id := range set.RegisterScopeIDs() {
+			registerScoped[id] = true
 		}
-		caller, err := d.Users.GetByEmail(r.Context(), email)
-		if err != nil {
-			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-			return
-		}
-		myTeamIDs := map[int]bool{}
-		if caller != nil {
-			for _, id := range caller.RiskTeamIDs {
-				myTeamIDs[id] = true
-			}
-		}
+
 		filtered := make([]*model.Team, 0, len(teams))
 		for _, t := range teams {
-			if myTeamIDs[t.ID] {
-				filtered = append(filtered, t)
+			if mineOnly && !visibleEverywhere && !registerScoped[t.ID] {
+				continue
 			}
+			if wantPriv != "" && !auth.HasPrivilegeIn(r.Context(), wantPriv, t.ID) {
+				continue
+			}
+			filtered = append(filtered, t)
 		}
 		teams = filtered
 	}

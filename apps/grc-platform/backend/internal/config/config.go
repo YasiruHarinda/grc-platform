@@ -28,7 +28,6 @@ type Config struct {
 	Auth                    AuthConfig
 	ComplianceEntityBaseURL string
 	HREntity                HREntityConfig
-	SCIM                    SCIMConfig
 	RiskGroups              RiskGroupsConfig
 	CORSAllowedOrigin       string
 	AIValidation            AIValidationConfig
@@ -93,35 +92,14 @@ type HREntityConfig struct {
 	ClientSecret string
 }
 
-// SCIMConfig holds the connection details for the internal SCIM Operations
-// Service (digiops-infra/operations/scim-operations-service), used to answer
-// "which users belong to Asgardeo group X" for role-filtered dropdowns
-// (Management Approver, Risk Owner) — this platform has no DB-side
-// user↔role table of its own. Required (mustEnv) like HREntityConfig.
-type SCIMConfig struct {
-	BaseURL      string
-	TokenURL     string
-	ClientID     string
-	ClientSecret string
-	// Scopes is a space-separated OAuth2 scope list requested on every token
-	// exchange (e.g. "org_internal:users:read org_internal:groups:read").
-	// Asgardeo grants only the subset the application is actually authorized
-	// for — an app not authorized for a scope silently gets it omitted from
-	// the issued token rather than an error at token-request time.
-	Scopes string
-}
-
-// RiskGroupsConfig holds the Asgardeo group names the Risk Hub filters user
-// pickers against via the SCIM Operations Service (see internal/scim and
-// riskhandler.Deps.Groups). Each defaults to the org's existing group name so
-// deployments that don't set the env var are unaffected; Choreo environments
-// can override without a code change — a process restart to re-read the env
-// var is still required, since these are loaded once at startup.
+// RiskGroupsConfig holds Asgardeo group names still awaiting a Risk Hub
+// consumer. The Management Approver and Risk Owner pickers used to be here
+// too, but those now read user_role_grant directly (see
+// riskhandler.Deps.Grants) — an Asgardeo group and a platform grant are two
+// independently-maintained sources, and nothing kept them in sync, so a
+// candidate sourced from the group could lack the grant their approval action
+// actually checks and 403 on first use.
 type RiskGroupsConfig struct {
-	// Management gates GET /management-approvers (Management Approver picker).
-	Management string
-	// RiskOwner gates GET /risk-owner-candidates (Risk Owner picker).
-	RiskOwner string
 	// ComplianceAdmin is provisioned for the future Compliance Admin email
 	// notification (see notifyComplianceAdmins in risk/handler/notify.go,
 	// currently a deliberate no-op) — nothing reads this yet.
@@ -172,27 +150,6 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
-	scimBaseURL, err := mustEnv("SCIM_BASE_URL")
-	if err != nil {
-		return Config{}, err
-	}
-	scimTokenURL, err := mustEnv("SCIM_TOKEN_URL")
-	if err != nil {
-		return Config{}, err
-	}
-	scimClientID, err := mustEnv("SCIM_CLIENT_ID")
-	if err != nil {
-		return Config{}, err
-	}
-	scimClientSecret, err := mustEnv("SCIM_CLIENT_SECRET")
-	if err != nil {
-		return Config{}, err
-	}
-	scimScopes, err := mustEnv("SCIM_SCOPES")
-	if err != nil {
-		return Config{}, err
-	}
-
 	emailServiceURL, err := mustEnv("EMAIL_SERVICE_URL")
 	if err != nil {
 		return Config{}, err
@@ -228,16 +185,7 @@ func Load() (Config, error) {
 			ClientID:     hrEntityClientID,
 			ClientSecret: hrEntityClientSecret,
 		},
-		SCIM: SCIMConfig{
-			BaseURL:      scimBaseURL,
-			TokenURL:     scimTokenURL,
-			ClientID:     scimClientID,
-			ClientSecret: scimClientSecret,
-			Scopes:       scimScopes,
-		},
 		RiskGroups: RiskGroupsConfig{
-			Management:      envOrDefault("RISK_MANAGEMENT_GROUP", "grc-platform-management"),
-			RiskOwner:       envOrDefault("RISK_OWNER_GROUP", "grc-platform-risk-owner"),
 			ComplianceAdmin: envOrDefault("RISK_COMPLIANCE_ADMIN_GROUP", "grc-platform-risk-compliance-admin"),
 		},
 		// Derived from FRONTEND_BASE_URL rather than its own env var: both are

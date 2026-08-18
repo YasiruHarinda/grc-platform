@@ -293,21 +293,32 @@ function TabPanel({ tab, canApprove, canSubmit, emptyText }: TabPanelProps): JSX
   // don't offer options that will only ever return zero rows.
   const tabStatuses = useMemo(() => statusesForTab(tab, canApprove, canSubmit), [tab, canApprove, canSubmit]);
 
-  // Map the selected action labels back to their statuses and merge with the raw
-  // status filter — both column filters constrain the same status column (union).
+  // Map the selected action labels back to their statuses. Status and Action
+  // needed are two facets of the same status column (actionLabel is a pure
+  // function of status), so when both filters have selections the row must
+  // satisfy both — intersect, not union — or a Status pick would surface rows
+  // whose action doesn't match, and vice versa.
   const actionGroups = useMemo(() => buildActionGroups(canApprove, tabStatuses), [canApprove, tabStatuses]);
   const effectiveStatuses = useMemo(() => {
-    const set = new Set<string>(statusFilter);
+    const actionStatuses = new Set<string>();
     for (const label of actionFilter) {
-      actionGroups.find((g) => g.label === label)?.statuses.forEach((s) => set.add(s));
+      actionGroups.find((g) => g.label === label)?.statuses.forEach((s) => actionStatuses.add(s));
     }
-    return [...set];
+    if (statusFilter.length === 0) return [...actionStatuses];
+    if (actionFilter.length === 0) return [...new Set(statusFilter)];
+    return statusFilter.filter((s) => actionStatuses.has(s));
   }, [statusFilter, actionFilter, actionGroups]);
+
+  // Status and Action needed are intersected above, so when both have selections
+  // but share no status, the "correct" result is zero rows — not the backend's
+  // "no status filter" reading of an empty statuses array. Skip the request.
+  const hasContradictoryFilters =
+    statusFilter.length > 0 && actionFilter.length > 0 && effectiveStatuses.length === 0;
 
   const { data, isLoading, isError } = useGetWorkQueue(tab, page + 1, {
     teamIds: teamFilter, ownerIds: ownerFilter, auditIds: auditFilter,
     statuses: effectiveStatuses, controlNumber, dueSort,
-  });
+  }, !hasContradictoryFilters);
   const { data: teamsData } = useGetTeams();
   const { data: usersData } = useGetUsers();
   const { data: auditsData } = useGetAudits();
@@ -322,12 +333,12 @@ function TabPanel({ tab, canApprove, canSubmit, emptyText }: TabPanelProps): JSX
     .map((t) => ({ id: t.id, label: t.name }))
     .sort((a, b) => a.label.localeCompare(b.label));
 
-  // Process-owner filter options: union of the users list and the owners actually
+  // Process-owner filter options: union of internal users and the owners actually
   // present in the loaded queue rows. Deriving from the rows means the filter still
-  // works even when /audit/users is empty or a user isn't flagged INTERNAL.
+  // works even when /audit/users is empty or a row's owner isn't flagged INTERNAL.
   const owners: FilterOption<number>[] = useMemo(() => {
     const byId = new Map<number, string>();
-    (usersData ?? []).forEach((u) => byId.set(u.id, u.displayName));
+    (usersData ?? []).filter((u) => u.userType === "INTERNAL").forEach((u) => byId.set(u.id, u.displayName));
     items.forEach((it) => {
       if (it.ownerId != null && !byId.has(it.ownerId)) {
         byId.set(it.ownerId, it.processOwner || `#${it.ownerId}`);
@@ -392,7 +403,7 @@ function TabPanel({ tab, canApprove, canSubmit, emptyText }: TabPanelProps): JSX
           {controlNumber.trim() && (
             <Chip label={`Control: ${controlNumber.trim()}`} size="small" onDelete={() => { setControlInput(""); setControlNumber(""); setPage(0); }} />
           )}
-          <Button size="small" onClick={() => { setTeamFilter([]); setOwnerFilter([]); setAuditFilter([]); setStatusFilter([]); setActionFilter([]); setControlInput(""); setControlNumber(""); setPage(0); }}
+          <Button size="small" onClick={() => { setTeamFilter([]); setOwnerFilter([]); setAuditFilter([]); setStatusFilter([]); setActionFilter([]); setControlInput(""); setControlNumber(""); setDueSort("asc"); setPage(0); }}
             sx={{ textTransform: "none", fontSize: "0.75rem", py: 0.25 }}>
             Clear all
           </Button>

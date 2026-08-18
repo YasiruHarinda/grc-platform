@@ -40,10 +40,22 @@ export const getCurrentQuarter = (): Quarter => {
   return "Q4";
 };
 
-// Year range: 3 years back to 2 years ahead
+// Year range: 10 years back, up to and including the current year. Never a
+// future year.
+//
+// This is the year the risk was IDENTIFIED — it becomes part of the risk code
+// (YEAR-TEAM-QUARTER-NNNN) — so a future year cannot be true: nothing has been
+// identified in a year that has not happened yet.
+//
+// The range reaches well back because a risk is registered for the year it was
+// identified, not the year someone got around to typing it in. An audit or a
+// review routinely surfaces something that has been true for years, and it
+// belongs in the register under the year it dates from.
+const YEARS_BACK = 10;
+
 export const YEAR_OPTIONS: number[] = Array.from(
-  { length: 6 },
-  (_, i) => getCurrentYear() - 3 + i,
+  { length: YEARS_BACK + 1 },
+  (_, i) => getCurrentYear() - i,
 );
 
 // Produces the canonical risk code string shown in the UI and stored in the DB.

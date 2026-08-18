@@ -126,8 +126,8 @@ function FrameworkCard({ framework, activeAudits, hasAudits, onClick }: Framewor
                   size="small"
                   sx={{
                     fontWeight: 700,
-                    color: "#EF4444", bgcolor: "transparent", border: "1px solid #EF4444",
-                    "& .MuiChip-icon": { color: "#EF4444" },
+                    color: "error.main", bgcolor: "transparent", border: "1px solid", borderColor: "error.main",
+                    "& .MuiChip-icon": { color: "error.main" },
                   }}
                 />
               )}

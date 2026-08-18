@@ -166,8 +166,9 @@ type RiskActionPlanService interface {
 // RiskEvidenceService defines operations on risk_evidence_file.
 type RiskEvidenceService interface {
 	CreateRiskEvidence(ctx context.Context, riskID int, req domain.CreateRiskEvidenceRequest) (domain.RiskEvidenceFile, error)
+	GetRiskEvidenceByID(ctx context.Context, fileID int) (domain.RiskEvidenceFile, error)
 	ListRiskEvidence(ctx context.Context, riskID int) (domain.ListRiskEvidenceResponse, error)
-	DeleteRiskEvidence(ctx context.Context, fileID int) error
+	DeleteRiskEvidence(ctx context.Context, riskID, fileID int) error
 }
 
 // RiskAssessmentService defines operations on risk_assessment.

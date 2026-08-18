@@ -254,6 +254,18 @@ export interface RiskDetail {
   risk_categories: RiskCategory[];
   action_plan: ActionPlanDetail | null;
   assessments: RiskAssessmentRecord[];
+  // What the caller may do ON THIS RISK: their privileges resolved in its
+  // source register, which is the scope every authority check on a risk uses.
+  //
+  // Render this risk's action buttons from here, never from the session-wide
+  // set in useRiskPrivileges — that one is the union across every register the
+  // caller has any grant in. Someone who is Risk Owner in one register and a
+  // read-only member of another holds RISK_OWNER_APPROVE in the union, so
+  // gating on it would show an Approve button on risks they cannot approve.
+  //
+  // Only present on a single-risk fetch; list responses omit it, because it is
+  // meaningless without one register in hand.
+  effective_privileges: string[];
 }
 
 export interface ListRisksParams {
@@ -495,13 +507,29 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-// mine=true restricts the result to the caller's own risk teams — used by the
-// Dashboard/Analytics/Registers-list register filters so they never offer a
-// register the caller can't see any data for. AddRisk's create-flow register
-// picker omits it, since raising a risk under a register you don't belong to
-// is a legitimate action this scoping was never meant to restrict.
-export async function fetchSourceRegisterTeams(authFetch: AuthFetch, mine?: boolean): Promise<RiskTeam[]> {
-  const query = mine ? "&mine=true" : "";
+// mine=true restricts the result to registers the caller holds a grant on.
+//
+// Used by the Dashboard/Analytics/Registers-list filters so they never offer a
+// register with no data behind it, and by AddRisk so the register picker only
+// offers registers the caller may actually raise a risk in — the server checks
+// RISK_CREATE *in the chosen register*, so an unfiltered list would offer
+// choices that fail on submit.
+//
+// (AddRisk used to omit this deliberately, back when a privilege was org-wide
+// and raising a risk under any register was legitimate. Scoped grants ended
+// that: the picker must now match what the server will accept.)
+//
+// A GLOBAL grant holder is unaffected — they get every register either way.
+export async function fetchSourceRegisterTeams(
+  authFetch: AuthFetch,
+  mine?: boolean,
+  // Narrows further to registers where the caller holds this privilege. Add
+  // Risk passes RISK_CREATE: "registers I can see" and "registers I may raise a
+  // risk in" are different questions, and offering the former in a create
+  // picker produces choices the server refuses.
+  privilege?: string,
+): Promise<RiskTeam[]> {
+  const query = mine ? `&mine=true${privilege ? `&privilege=${encodeURIComponent(privilege)}` : ""}` : "";
   const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/teams?type=SOURCE_REGISTER${query}`);
   return handleResponse<RiskTeam[]>(res);
 }
@@ -531,16 +559,25 @@ export async function fetchRiskCategories(authFetch: AuthFetch): Promise<RiskCat
   return handleResponse<RiskCategory[]>(res);
 }
 
-// fetchManagementApprovers / fetchRiskOwnerCandidates return the subset of
-// platform users who also hold the matching Asgardeo group membership —
-// sourced live via the backend's SCIM integration, not a locally-stored role.
-export async function fetchManagementApprovers(authFetch: AuthFetch): Promise<UserOption[]> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/management-approvers`);
+// fetchManagementApprovers / fetchRiskOwnerCandidates return every user who
+// already holds the grant their approval action requires — GLOBAL, or scoped
+// to one of teamIds (pass the chosen source register and/or assignment team).
+// A candidate returned here is guaranteed not to 403 on their first approval.
+// teamIds omitted or empty returns GLOBAL holders only.
+function teamIdsQuery(teamIds?: number[]): string {
+  if (!teamIds || teamIds.length === 0) return "";
+  const params = new URLSearchParams();
+  teamIds.forEach((id) => params.append("teamId", String(id)));
+  return `?${params}`;
+}
+
+export async function fetchManagementApprovers(authFetch: AuthFetch, teamIds?: number[]): Promise<UserOption[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/management-approvers${teamIdsQuery(teamIds)}`);
   return handleResponse<UserOption[]>(res);
 }
 
-export async function fetchRiskOwnerCandidates(authFetch: AuthFetch): Promise<UserOption[]> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk-owner-candidates`);
+export async function fetchRiskOwnerCandidates(authFetch: AuthFetch, teamIds?: number[]): Promise<UserOption[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk-owner-candidates${teamIdsQuery(teamIds)}`);
   return handleResponse<UserOption[]>(res);
 }
 
@@ -638,6 +675,62 @@ export async function createRisk(
     body: JSON.stringify(buildCreateRiskPayload(data)),
   });
   return handleResponse<CreateRiskResponse>(res);
+}
+
+// ── Risk evidence ───────────────────────────────────────────────────────────
+
+export type RiskEvidenceType = "ACTION_PLAN_ATTACHMENT" | "FINAL_APPROVAL_ATTACHMENT";
+
+export interface RiskEvidence {
+  id: number;
+  risk_id: number;
+  action_plan_id?: number;
+  file_name: string;
+  file_path: string;
+  note: string;
+  evidence_type: RiskEvidenceType;
+  created_by: string;
+  created_at: string;
+  download_url?: string;
+}
+
+/**
+ * Uploads one evidence file for a risk. Bytes travel browser -> backend ->
+ * Compliance Entity -> Azure; no SAS is ever handed to the client.
+ *
+ * `evidenceType` is ACTION_PLAN_ATTACHMENT ("Risk Evidence Attachment",
+ * risk-level, no actionPlanId) or FINAL_APPROVAL_ATTACHMENT ("Risk Action
+ * Plan Completion Attachment", actionPlanId required — the plan being
+ * completed).
+ */
+export async function uploadRiskEvidence(
+  authFetch: AuthFetch,
+  riskId: number,
+  params: { evidenceType: RiskEvidenceType; file: File; actionPlanId?: number; note?: string },
+): Promise<RiskEvidence> {
+  const form = new FormData();
+  form.append("evidenceType", params.evidenceType);
+  form.append("file", params.file, params.file.name);
+  if (params.actionPlanId !== undefined) form.append("actionPlanId", String(params.actionPlanId));
+  if (params.note) form.append("note", params.note);
+
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/evidence`, {
+    method: "POST",
+    body: form,
+  });
+  return handleResponse<RiskEvidence>(res);
+}
+
+export async function fetchRiskEvidence(authFetch: AuthFetch, riskId: number): Promise<RiskEvidence[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/evidence`);
+  return handleResponse<RiskEvidence[]>(res);
+}
+
+export async function deleteRiskEvidence(authFetch: AuthFetch, riskId: number, fileId: number): Promise<void> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/${riskId}/evidence/${fileId}`, {
+    method: "DELETE",
+  });
+  return handleResponse<void>(res);
 }
 
 export async function fetchRisks(

@@ -57,9 +57,10 @@ type UserInfo struct {
 	// Roles is the distinct role names the caller holds, from any scope. It
 	// replaces the former Groups field, which carried Asgardeo's group claim.
 	//
-	// Prefer a privilege check over matching on these names. They exist because
-	// the Audit Hub matches role names directly in a couple of places, and
-	// those now read DB-assigned roles instead of IdP groups.
+	// Prefer a privilege check over matching on these names — the Risk Hub
+	// never reads them. They exist because the Audit Hub's external-auditor
+	// comment filtering still matches role names directly, reading DB-assigned
+	// roles instead of IdP groups.
 	//
 	// Scope is flattened away here. Anything that needs to know WHERE a role is
 	// held must use the grant Set, not this list.
@@ -316,9 +317,9 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 				ctx = context.WithValue(ctx, userInfoKey, info)
 				ctx = grant.WithContext(ctx, set)
 				// The union is also published under the privilege key so the
-				// Audit Hub's existing unscoped RequirePrivilege call sites keep
-				// working unchanged while it migrates. New code should ask the
-				// grant Set, which can answer per-scope.
+				// Audit Hub's existing unscoped checks keep working unchanged
+				// while it migrates. Risk-side code should ask the grant Set,
+				// which can answer per-scope.
 				ctx = privilege.WithContext(ctx, set.PrivilegeMap())
 			}
 			next.ServeHTTP(w, r.WithContext(ctx))

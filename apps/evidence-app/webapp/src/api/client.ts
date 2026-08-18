@@ -1,12 +1,17 @@
 import axios from "axios";
+import { BACKEND_BASE_URL } from "../config/apiConfig";
 
 // Evidence file URLs come from the backend as short-lived Azure signed
 // links (absolute URLs pointing directly at blob storage) and are used
 // as-is in <img> src with no Authorization header, so this is an identity pass-through.
 export const getFileUrl = (fileUrl: string): string => fileUrl;
 
+// Dual-mode: an empty/absent BACKEND_BASE_URL collapses this to exactly
+// "/api" — the relative form a reverse proxy (index.js, or the Vite dev
+// server) forwards. A set value produces an absolute URL for hosting with
+// no such proxy in front (e.g. Choreo's React buildpack). See issue #90.
 export const api = axios.create({
-  baseURL: "/api",
+  baseURL: `${BACKEND_BASE_URL}/api`,
 });
 
 // ---- Auth bridge -------------------------------------------------------

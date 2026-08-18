@@ -15,20 +15,27 @@
 // under the License.
 
 // Package auth exposes privilege-checking helpers built on top of the JWT
-// middleware. Handlers check privileges (e.g. privilege.ApproveRisk), never
-// role names.
+// middleware. Handlers check privileges (e.g. privilege.ComplianceApproveRisk),
+// never role names.
 //
-// There are two kinds of check:
+// There are two kinds of check, and choosing the wrong one is the mistake this
+// package is shaped to make visible:
 //
 //	RequirePrivilege(ctx, w, X)             — "may this user do X anywhere?"
 //	RequirePrivilegeIn(ctx, w, X, teamID)   — "may this user do X on THIS thing?"
 //
-// A user may hold different roles in different scopes — a team lead in one
-// audit team, an ordinary submitter in another. The unscoped form unions those
-// together, so on its own it would let someone act, as lead, on a team where
-// they hold no such authority. It exists for endpoints with no object in hand,
-// and to keep the Audit Hub's 67 existing call sites working unchanged during
-// the grant migration (see docs/new/Audit-Role-Grant-Migration-Design.md §1).
+// A user may hold different roles in different scopes — Risk Owner in one
+// register but only Risk Assigner in another; a team lead in one audit team
+// but an ordinary submitter in another. The unscoped form unions those
+// together, so on its own it would let someone act, as owner or lead, on a
+// register or team where they hold no such authority. It exists for endpoints
+// with no object in hand, and to keep existing call sites working unchanged
+// during the grant migration (see docs/new/Audit-Role-Grant-Migration-Design.md
+// §1).
+//
+// Rule of thumb: if a handler has a risk or team id, it must use the scoped
+// form. An unscoped check in such a handler needs a comment saying why no
+// scope applies.
 package auth
 
 import (
@@ -84,10 +91,10 @@ func Grants(ctx context.Context) *grant.Set {
 // privilege store configured (AUTH_TOKEN_VALIDATOR_ENABLED=false), so every
 // privilege check passes and no grants were loaded.
 //
-// HasPrivilege and HasPrivilegeIn apply this themselves. It is exported for
-// row-scoping code that reads the grant set directly and would otherwise scope
+// HasPrivilege and HasPrivilegeIn apply this themselves. It is exported for the
+// row-scoping code, which reads the grant set directly and would otherwise scope
 // a local developer to nothing: authenticated, waved through every route gate,
-// then handed an empty dashboard filtered to almost nothing.
+// then handed an empty dashboard and a risk list filtered to almost nothing.
 //
 // Returns false when the Auth middleware was not applied at all, so a request
 // that never authenticated cannot reach allow-all by accident.
@@ -97,6 +104,12 @@ func AllowAll(ctx context.Context) bool {
 
 // HasPrivilegeIn returns true if the caller holds priv **in the given team's
 // scope** — through a GLOBAL grant, or a grant on that team specifically.
+//
+// teamID must be the team whose authority governs the action. For a risk that
+// is its SOURCE register, never its assignment team: assignment is an ordinary
+// field any Risk Assigner can set, so letting it confer authority would make
+// "route this risk to Legal" silently grant Legal's role-holders approval
+// rights over it.
 //
 // Local dev (no privilege store configured) allows everything, mirroring
 // HasPrivilege and the skipped signature verification in that mode.
@@ -115,10 +128,10 @@ func HasPrivilegeIn(ctx context.Context, priv string, teamID int) bool {
 // caller lacks priv in the given team's scope. Use it after the unscoped guard
 // wherever a handler knows which team governs the object:
 //
-//	if !auth.RequirePrivilege(r.Context(), w, privilege.AuditViewAllAudits) {
+//	if !auth.RequirePrivilege(r.Context(), w, privilege.OwnerApproveRisk) {
 //	    return
 //	}
-//	if !auth.RequirePrivilegeIn(r.Context(), w, privilege.AuditViewAllAudits, teamID) {
+//	if !auth.RequirePrivilegeIn(r.Context(), w, privilege.OwnerApproveRisk, detail.SourceRegisterID) {
 //	    return
 //	}
 func RequirePrivilegeIn(ctx context.Context, w http.ResponseWriter, priv string, teamID int) bool {
@@ -138,7 +151,7 @@ func RequirePrivilegeIn(ctx context.Context, w http.ResponseWriter, priv string,
 // RequirePrivilege writes a 403 JSON response and returns false when the user
 // lacks the given privilege. Use it as an early-return guard in handlers:
 //
-//	if !auth.RequirePrivilege(r.Context(), w, privilege.ApproveRisk) {
+//	if !auth.RequirePrivilege(r.Context(), w, privilege.ComplianceApproveRisk) {
 //	    return
 //	}
 func RequirePrivilege(ctx context.Context, w http.ResponseWriter, priv string) bool {

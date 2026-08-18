@@ -1,9 +1,26 @@
 -- =============================================================================
 -- GRC Platform — Shared Schema
 -- Run this FIRST, before audit_schema.sql and risk_schema.sql.
+--
+-- Full order:  shared.sql → risk_schema.sql / audit_schema.sql
+--              → shared_seed_data.sql   (required, not optional — see below)
 -- =============================================================================
 --
 -- Tables:
+--   user            — platform identity, shared by both modules
+--   role            — platform-owned role names (no longer mirrors an IdP)
+--   privilege       — fine-grained privileges used for frontend view rendering
+--   role_privilege  — maps roles to privileges (many-to-many)
+--   user_role_grant — WHO holds WHAT role, WHERE. The single record of a user's
+--                     standing, replacing both per-module team-membership tables
+--                     and the Asgardeo group claim. See the table comment below.
+--
+-- NOTE: role assignment is owned by this platform, not by the IdP. Asgardeo
+--       authenticates users and nothing more — no group or role claim is read
+--       from its tokens. Team membership is likewise not a column on `user`:
+--       it is carried by user_role_grant.scope_id, so a user's role and the
+--       scope it applies in are recorded together rather than in two tables
+--       that have to agree with each other.
 --   user            — platform identity, shared by both modules
 --   role            — platform-owned role names (no longer mirrors an IdP)
 --   privilege       — fine-grained privileges used for frontend view rendering
@@ -40,6 +57,14 @@ SET FOREIGN_KEY_CHECKS = 0;
 
 -- -----------------------------------------------------------------------------
 -- user
+-- Platform users, authenticated via Asgardeo SSO.
+-- Neither roles nor team membership are columns here — both are rows in
+-- user_role_grant below.
+--
+-- A user row may exist with NO grants at all. That is a legitimate, expected
+-- state, not an incomplete one: an Action Owner may be any employee, resolved
+-- and upserted on the fly when named on an action plan. Such a user reaches
+-- exactly the risks they are personally named on, and nothing else.
 -- Platform users, authenticated via Asgardeo SSO.
 -- Neither roles nor team membership are columns here — both are rows in
 -- user_role_grant below.
@@ -107,7 +132,10 @@ CREATE TABLE IF NOT EXISTS `user` (
 CREATE TABLE IF NOT EXISTS `role` (
   id           INT          NOT NULL AUTO_INCREMENT,
   role_name    VARCHAR(150) COLLATE utf8mb4_bin NOT NULL COMMENT 'Binary collation keeps role-name matching case-sensitive and consistent with Go map lookup',
+  role_name    VARCHAR(150) COLLATE utf8mb4_bin NOT NULL COMMENT 'Binary collation keeps role-name matching case-sensitive and consistent with Go map lookup',
   description  TEXT         NULL,
+  module       ENUM('RISK','AUDIT','SHARED') NOT NULL,
+  scope_basis  ENUM('SOURCE_REGISTER','ASSIGNMENT_TEAM') NULL COMMENT 'Which risk column a grant on this role scopes by; NULL for GLOBAL-only roles. See table comment',
   module       ENUM('RISK','AUDIT','SHARED') NOT NULL,
   scope_basis  ENUM('SOURCE_REGISTER','ASSIGNMENT_TEAM') NULL COMMENT 'Which risk column a grant on this role scopes by; NULL for GLOBAL-only roles. See table comment',
   status       ENUM('ACTIVE','INACTIVE') NOT NULL DEFAULT 'ACTIVE',

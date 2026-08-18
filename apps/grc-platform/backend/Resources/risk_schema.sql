@@ -298,21 +298,32 @@ CREATE TABLE IF NOT EXISTS risk_action_step (
 -- Files uploaded as evidence for action plan progress or final Risk Owner
 -- approval. file_path is the Azure Blob Storage object key (not full URL);
 -- the full URL is constructed by the application at read time.
+--
+-- action_plan_id is NULL for ACTION_PLAN_ATTACHMENT rows uploaded at risk
+-- creation (the "Risk Evidence Attachment" section — evidence for the risk as
+-- a whole, not any one plan) and set for FINAL_APPROVAL_ATTACHMENT rows, which
+-- are always attached to the specific plan being completed ("Risk Action Plan
+-- Completion Attachment") — a risk can have more than one STANDARD action
+-- plan, so the plan link is what "Complete Action Plan" checks for evidence
+-- against, not just the risk.
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS risk_evidence (
-  id            INT          NOT NULL AUTO_INCREMENT,
-  risk_id       INT          NOT NULL,
-  file_name     VARCHAR(500) NOT NULL,
-  file_path     TEXT         NOT NULL COMMENT 'Azure Blob object key',
-  note          TEXT         NULL,
-  evidence_type ENUM('ACTION_PLAN_ATTACHMENT','FINAL_APPROVAL_ATTACHMENT') NOT NULL,
-  created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  created_by    VARCHAR(255) NULL,
-  updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  updated_by    VARCHAR(255) NULL,
+  id             INT          NOT NULL AUTO_INCREMENT,
+  risk_id        INT          NOT NULL,
+  action_plan_id INT          NULL,
+  file_name      VARCHAR(500) NOT NULL,
+  file_path      TEXT         NOT NULL COMMENT 'Azure Blob object key',
+  note           TEXT         NULL,
+  evidence_type  ENUM('ACTION_PLAN_ATTACHMENT','FINAL_APPROVAL_ATTACHMENT') NOT NULL,
+  created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_by     VARCHAR(255) NULL,
+  updated_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  updated_by     VARCHAR(255) NULL,
   PRIMARY KEY (id),
   KEY idx_risk_evidence_risk (risk_id),
-  CONSTRAINT fk_risk_evidence_risk FOREIGN KEY (risk_id) REFERENCES risk(id) ON DELETE CASCADE
+  KEY idx_risk_evidence_plan (action_plan_id),
+  CONSTRAINT fk_risk_evidence_risk FOREIGN KEY (risk_id) REFERENCES risk(id) ON DELETE CASCADE,
+  CONSTRAINT fk_risk_evidence_plan FOREIGN KEY (action_plan_id) REFERENCES risk_action_plan(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
@@ -422,12 +433,31 @@ CREATE TABLE IF NOT EXISTS risk_change_log (
 
 
 -- -----------------------------------------------------------------------------
--- user_risk_team  (junction table)
+-- user_risk_team  (junction table)  ** DEPRECATED — pending removal **
+--
+-- Superseded by user_role_grant (shared.sql), which records a user's role AND
+-- the scope it applies in as one row. This table records membership with no
+-- role, so it cannot express "Risk Owner in one register, Risk Assigner in
+-- another" — the requirement that prompted the migration.
+--
+-- STILL PRESENT ON PURPOSE, READ-ONLY: the grant backfill reads these rows to
+-- derive register-scoped grants (a role carrying an org-wide privilege becomes
+-- one GLOBAL grant; any other role becomes one RISK_TEAM grant per membership
+-- row here), and GET /users still returns each user's membership for the same
+-- reason (e.g. EditRiskDialog's Risk Owner filter). Nothing writes to this
+-- table any more — user_repo.go's CreateUser/UpdateUser stopped inserting and
+-- deleting rows here once user_role_grant became the write path, so an admin
+-- editing risk team membership through this table would get a silent no-op.
+-- Dropping the table before the backfill has run and been verified would
+-- destroy the only record of who belonged where.
+--
+-- Remove once the backfill is applied and grant-based scoping is live in every
+-- environment.
+--
 -- Many-to-many between `user` (shared.sql) and risk_team: a user may belong to
--- zero or more risk teams. Replaces the old single-valued user.risk_team_id
--- column. Both FKs CASCADE — a membership row has no meaning independent of
--- either side, unlike risk_team's other references (risk, risk_register_sequence)
--- which RESTRICT deletion.
+-- zero or more risk teams. Both FKs CASCADE — a membership row has no meaning
+-- independent of either side, unlike risk_team's other references (risk,
+-- risk_register_sequence) which RESTRICT deletion.
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS user_risk_team (
   user_id      INT          NOT NULL,

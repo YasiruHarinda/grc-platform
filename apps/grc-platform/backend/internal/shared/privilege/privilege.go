@@ -178,6 +178,36 @@ const (
 	ViewInternalComments = "AUDIT_VIEW_INTERNAL_COMMENTS"
 )
 
+// Shared privilege names — not RISK_ or AUDIT_ prefixed because they gate
+// platform-level capability, not a hub. Seeded with module = 'SHARED' in
+// shared_seed_data.sql, so they may only be granted GLOBAL, never team-scoped
+// (see shared.sql's role.module table comment).
+const (
+	// ManageUsers gates the (not yet wired up) admin grant editor — see
+	// entity/compliance-entity/internal/server/routes.go's grant routes comment.
+	ManageUsers = "MANAGE_USERS"
+)
+
+// AllRiskPrivileges returns every active Risk Hub privilege.
+//
+// Used only for the local-dev allow-all mode, where no privilege store is
+// configured and every server-side check passes: the UI needs a list to render
+// from, and an empty one would hide every action in the mode that permits them
+// all. Never use it to answer an authorisation question.
+//
+// Retired privileges are excluded — they resolve for nobody server-side, so
+// including them would render buttons that always fail.
+func AllRiskPrivileges() []string {
+	return []string{
+		ViewRisks, ViewAllRisks, ViewRiskDashboard, ViewAnalytics,
+		CreateRisk, UpdateRisk, SubmitRisk, CancelRisk,
+		OwnerApproveRisk, ManagementApproveRisk, ComplianceApproveRisk,
+		OwnerRejectRisk, ManagementRejectRisk, ComplianceRejectRisk,
+		CompleteRisk, CloseRisk, EscalateRisk, AssessRisk,
+		ManageTeams, ManageRiskScores, ManageActionPlans, ManageComplianceRefs,
+	}
+}
+
 type contextKey struct{}
 
 // Store holds the role→privilege mapping and refreshes it periodically from the

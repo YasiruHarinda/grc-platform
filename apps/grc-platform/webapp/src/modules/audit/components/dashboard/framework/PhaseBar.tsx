@@ -17,7 +17,7 @@
 import { Box } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
 import type { PhaseCounts } from "@modules/audit/types/framework";
-import { DUE_SOON } from "@modules/audit/components/dashboard/dueDate";
+import { PHASE_COLORS, PHASE_LABELS, PHASE_ORDER, type ControlPhase } from "@modules/audit/utils/controlStatus";
 
 interface PhaseBarProps {
   counts: PhaseCounts;
@@ -27,24 +27,42 @@ interface PhaseBarProps {
   height?: number;
 }
 
-// Shared by the rail card and the team breakdown (§3.1/§3.3). No PHASE_COLORS
-// (§8.1): complete takes the progress colour, needs-clarification takes the
-// due-soon accent, and in-progress / not-started share a neutral grey — width
-// alone tells the four segments apart, no legend needed.
+const PHASE_COUNT_KEY: Record<ControlPhase, keyof PhaseCounts> = {
+  NOT_STARTED: "notStarted",
+  IN_PROGRESS: "inProgress",
+  BLOCKED: "needsClarification",
+  COMPLETE: "complete",
+};
+
+// Shared by the rail card and the team breakdown (§3.1/§3.3). Segment order
+// and color follow the same PHASE_ORDER/PHASE_COLORS contract PhaseDonut uses,
+// so a phase reads as the same color everywhere on the dashboard. completeColor
+// is the one deliberate override: callers pass primary.main while an audit is
+// still in progress and success.main once it's fully complete — a dynamic
+// progress signal that a static PHASE_COLORS.COMPLETE can't express.
 export default function PhaseBar({ counts, completeColor, height = 8 }: PhaseBarProps): JSX.Element {
-  const { complete, inProgress, needsClarification, notStarted } = counts;
-  const total = complete + inProgress + needsClarification + notStarted;
+  const total = counts.complete + counts.inProgress + counts.needsClarification + counts.notStarted;
   const pct = (n: number) => (total > 0 ? (n / total) * 100 : 0);
 
-  const segments: { key: string; width: number; color: string; darkColor?: string }[] = [
-    { key: "complete", width: pct(complete), color: completeColor },
-    { key: "inProgress", width: pct(inProgress), color: "rgba(0,0,0,0.24)", darkColor: "rgba(255,255,255,0.32)" },
-    { key: "needsClarification", width: pct(needsClarification), color: DUE_SOON },
-    { key: "notStarted", width: pct(notStarted), color: "#E0E0E0" },
-  ];
+  const segments = PHASE_ORDER.map((phase) => {
+    const count = counts[PHASE_COUNT_KEY[phase]];
+    return {
+      key: phase,
+      label: PHASE_LABELS[phase],
+      count,
+      width: pct(count),
+      color: phase === "COMPLETE" ? completeColor : PHASE_COLORS[phase],
+    };
+  });
+  // Width/color alone don't identify a segment to a screen reader — role="img"
+  // collapses the bar to one accessible element with this summary as its name;
+  // each segment's native title gives the same name/count on hover.
+  const summary = segments.map((s) => `${s.count} ${s.label}`).join(", ");
 
   return (
     <Box
+      role="img"
+      aria-label={`Phase breakdown: ${summary}`}
       sx={{
         display: "flex",
         width: "100%",
@@ -58,10 +76,10 @@ export default function PhaseBar({ counts, completeColor, height = 8 }: PhaseBar
       {segments.map((s) => s.width > 0 && (
         <Box
           key={s.key}
+          title={`${s.label}: ${s.count}`}
           sx={{
             width: `${s.width}%`,
             bgcolor: s.color,
-            ...(s.darkColor && { "[data-color-scheme='dark'] &": { bgcolor: s.darkColor } }),
           }}
         />
       ))}

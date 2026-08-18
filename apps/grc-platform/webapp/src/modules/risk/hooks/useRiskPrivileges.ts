@@ -32,6 +32,20 @@ export interface RiskPrivilegeState {
 // once per session. All hook instances (SideBar, PrivilegeGuard, page components)
 // share the same promise — no duplicate requests.
 // In mock-auth mode all privileges are granted immediately without an API call.
+//
+// ⚠ THIS IS THE UNION ACROSS EVERY REGISTER THE CALLER HAS A GRANT IN.
+//
+// Use it for NAV AND ROUTE GATING ONLY — "should this tab exist at all". It is
+// the wrong answer for any decision about a specific risk: a user who is Risk
+// Owner in one register and read-only in another holds RISK_OWNER_APPROVE here,
+// so gating an Approve button on it would show that button on risks the server
+// then refuses with a 403.
+//
+// For per-risk decisions use the risk's own `effective_privileges`, which the
+// server resolves in that risk's source register — see RiskDetailDrawer.
+//
+// Roles now live in this platform's database (user_role_grant), not in
+// Asgardeo; this endpoint's response shape is unchanged by that move.
 export function useRiskPrivileges(): RiskPrivilegeState {
   const authFetch = useAuthApiClient();
   const [privileges, setPrivileges] = useState<Set<string> | null>(new Set());

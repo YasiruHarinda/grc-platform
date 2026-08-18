@@ -104,6 +104,10 @@ def _whoami(client, token: str):
     return client.get("/api/me", headers={"Authorization": f"Bearer {token}"})
 
 
+def _whoami_via_assertion(client, token: str):
+    return client.get("/api/me", headers={"X-Jwt-Assertion": token})
+
+
 # --- Acceptance -------------------------------------------------------
 
 
@@ -273,3 +277,73 @@ def test_audience_as_single_element_array_is_accepted(client):
     resp = _whoami(client, token)
     assert resp.status_code == 200
     assert resp.json()["role"] == "admin"
+
+
+# --- X-Jwt-Assertion fallback (spec #89) --------------------------------
+#
+# Choreo's API gateway forwards the caller's token in `X-Jwt-Assertion`,
+# not necessarily in `Authorization`. These cases pin the fallback added in
+# `_request_token`: it must accept a token from the new header, still run
+# it through the full JWKS/issuer/audience check, and never let the new
+# header outrank the app's own `Authorization` contract.
+
+
+def test_valid_token_via_x_jwt_assertion_alone_is_accepted(client):
+    """A token carried only in `X-Jwt-Assertion` -- no `Authorization` at
+    all -- must resolve to the same identity as the same token sent the
+    usual way. This is the Choreo gateway path this fallback exists for."""
+    token = _make_token(
+        roles=[settings.ASGARDEO_ENGINEER_ROLE],
+        aud=settings.ASGARDEO_WEBAPP_CLIENT_ID,
+    )
+    via_authorization = _whoami(client, token)
+    via_assertion = _whoami_via_assertion(client, token)
+    assert via_assertion.status_code == 200
+    assert via_assertion.json() == via_authorization.json()
+
+
+def test_x_jwt_assertion_token_gets_the_full_verification_check(client):
+    """The new header is a different place to read the token from, not a
+    different amount of trust. A token that would be rejected via
+    `Authorization` -- wrong signing key, wrong issuer, or an audience
+    outside the allow-list -- must be rejected via `X-Jwt-Assertion` too.
+    This is the test that proves the header confers no trust: setting it by
+    hand, which anything inside the Choreo organisation can do because this
+    endpoint is Organization-visible, buys nothing without Asgardeo's
+    signing key."""
+    wrong_key_token = _make_token(key=_WRONG_KEY)
+    assert _whoami_via_assertion(client, wrong_key_token).status_code == 401
+
+    wrong_issuer_token = _make_token(
+        issuer="https://api.asgardeo.io/t/some-other-org/oauth2/token"
+    )
+    assert _whoami_via_assertion(client, wrong_issuer_token).status_code == 401
+
+    outside_allow_list_token = _make_token(aud="some-unrelated-application-client-id")
+    assert _whoami_via_assertion(client, outside_allow_list_token).status_code == 401
+
+
+def test_authorization_wins_when_both_headers_are_present(client):
+    """Pins design decision 1: `Authorization` is tried first, always --
+    the opposite order to grc-platform's `requestToken`, and deliberately
+    so (spec #89). A valid token in `Authorization` must succeed even when
+    `X-Jwt-Assertion` carries garbage alongside it. This is the regression
+    guard against someone "aligning" the order with grc-platform later."""
+    token = _make_token(
+        roles=[settings.ASGARDEO_ENGINEER_ROLE],
+        aud=settings.ASGARDEO_WEBAPP_CLIENT_ID,
+    )
+    resp = client.get(
+        "/api/me",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Jwt-Assertion": "not-a-real-token",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["role"] == "engineer"
+
+
+def test_neither_header_present_is_still_401(client):
+    resp = client.get("/api/me")
+    assert resp.status_code == 401

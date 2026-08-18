@@ -193,6 +193,20 @@ describe("computeFrameworkRollups", () => {
     expect(rollup.blockers).toEqual([]);
     expect(rollup.teams).toEqual([]);
   });
+
+  it("keeps a framework's hasDetail false while any of its audits are still awaiting their control fetch", () => {
+    const audits = [
+      makeAudit({ id: 1, controlCounts: { total: 20, approved: 8, overdue: 0 } }),
+      makeAudit({ id: 2, controlCounts: { total: 10, approved: 5, overdue: 0 } }),
+    ];
+    // Only audit 1's controls have arrived; audit 2's query is still pending.
+    const controls = [makeControl({ id: 1, auditId: 1, status: "COMPLETE" })];
+    const [rollup] = computeFrameworkRollups(audits, { 1: controls }, TODAY);
+    expect(rollup.hasDetail).toBe(false);
+    // The still-pending audit's blockers/teams must not be silently dropped
+    // from the framework total by treating the framework as fully detailed.
+    expect(rollup.audits.find((a) => a.id === 2)?.hasDetail).toBe(false);
+  });
 });
 
 // ── computeFrameworkRollups: detail (controls provided) ──────────────────────
@@ -239,6 +253,29 @@ describe("computeFrameworkRollups with controls", () => {
     const [rollup] = computeFrameworkRollups([audit], { 1: controls }, TODAY);
     expect(rollup.blockers).toHaveLength(1);
     expect(rollup.blockers[0].reason).toBe("overdue");
+  });
+
+  it("counts a blocked-and-due-soon control toward dueSoonCount even though its blocker row displays as needsClarification", () => {
+    const audit = makeAudit({ id: 1 });
+    const controls = [
+      makeControl({
+        id: 1,
+        auditId: 1,
+        status: "EVIDENCE_NEED_CLARIFICATION",
+        dueDate: "2026-06-18", // 3 days from TODAY — inside the due-soon window
+        isOverdue: false,
+        teamName: "SRE",
+      }),
+    ];
+    const [rollup] = computeFrameworkRollups([audit], { 1: controls }, TODAY);
+    // List display still prioritizes needsClarification for the single row.
+    expect(rollup.blockers.map((b) => b.reason)).toEqual(["needsClarification"]);
+    // But the aggregate due-soon totals must not drop the control just
+    // because its blocker row was classified as needsClarification —
+    // audit-level and team-level figures must agree with each other.
+    expect(rollup.audits[0].dueSoonCount).toBe(1);
+    expect(rollup.dueSoonCount).toBe(1);
+    expect(rollup.teams[0].dueSoonCount).toBe(1);
   });
 
   it("builds per-team rows with the assignee holding the most overdue work", () => {

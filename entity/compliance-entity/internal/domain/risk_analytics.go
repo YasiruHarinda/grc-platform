@@ -24,11 +24,14 @@ package domain
 // RegisterID nil means every register.
 type RiskAnalyticsRequest struct {
 	RegisterID *int `json:"registerId"`
-	// ScopeTeamIDs restricts the whole payload to risks whose source register
-	// or assignment team is one of these — how a Risk Assigner/Risk Owner-only
-	// caller's analytics are scoped to their own risk teams. Empty means
-	// unrestricted; the GRC backend decides whether a caller needs this.
-	ScopeTeamIDs []int `json:"scopeTeamIds"`
+	// ScopeRegisterIDs restricts the whole payload to risks whose SOURCE
+	// REGISTER is one of these. Source register only — never assignment team —
+	// because this page is rendered per register: a risk raised in Choreo and
+	// routed to Asgardeo belongs to Choreo's numbers, not Asgardeo's, however
+	// visible it is to Asgardeo's people in the registers list.
+	//
+	// Empty means unrestricted; the GRC backend decides who needs scoping.
+	ScopeRegisterIDs []int `json:"scopeRegisterIds"`
 }
 
 // RiskAnalyticsSummary is the assembled analytics page.
