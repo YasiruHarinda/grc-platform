@@ -29,8 +29,16 @@ import (
 
 const pageLimit = 100 // entity maxLimit; List methods page through all results.
 
+// pageBody is used only by the unscoped List() methods (auditRepo, controlRepo)
+// that back internal existence/uniqueness checks (checkNameAvailable,
+// sanitizedControlNumbers) and must see every row regardless of caller
+// identity. The entity service no longer treats an omitted "scope" as
+// unrestricted — it denies by default — so ScopeAll must be sent explicitly.
 func pageBody(offset int) map[string]any {
-	return map[string]any{"pagination": map[string]int{"limit": pageLimit, "offset": offset}}
+	return map[string]any{
+		"scope":      model.ScopeAll,
+		"pagination": map[string]int{"limit": pageLimit, "offset": offset},
+	}
 }
 
 // statusActive is the only status these list endpoints should show — mirrors

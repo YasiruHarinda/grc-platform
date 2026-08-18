@@ -174,12 +174,20 @@ func (h *evidenceHandler) submitPopulation(w http.ResponseWriter, r *http.Reques
 // ADR-0002), the control's assigned auditor (by email), or ManageControls.
 // Unlike the write routes there is no team-assignment (IDOR) check here — this
 // mirrors listEvidence/downloadEvidenceFile, which are privilege-gated only.
+// Each privilege is checked against control's own team (HasPrivilegeIn), since
+// all four can be granted scoped to a single team (module=AUDIT) — the
+// unscoped HasPrivilege would let a team-scoped grant view every other team's
+// population too.
 func canViewPopulation(r *http.Request, control *model.AuditControl) bool {
 	ctx := r.Context()
-	if auth.HasPrivilege(ctx, privilege.ManageControls) ||
-		auth.HasPrivilege(ctx, privilege.SubmitEvidence) ||
-		auth.HasPrivilege(ctx, privilege.ReviewEvidence) ||
-		auth.HasPrivilege(ctx, privilege.ViewAllAudits) {
+	teamID := 0
+	if control.TeamID != nil {
+		teamID = *control.TeamID
+	}
+	if auth.HasPrivilegeIn(ctx, privilege.ManageControls, teamID) ||
+		auth.HasPrivilegeIn(ctx, privilege.SubmitEvidence, teamID) ||
+		auth.HasPrivilegeIn(ctx, privilege.ReviewEvidence, teamID) ||
+		auth.HasPrivilegeIn(ctx, privilege.ViewAllAudits, teamID) {
 		return true
 	}
 	actor := auth.FromContext(ctx)

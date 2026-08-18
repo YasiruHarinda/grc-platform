@@ -64,9 +64,14 @@ JOIN audit_product   p ON p.id = a.product_id`
 // control level (see audit_dashboard_repo.go's scopeWhere) — an audit is in
 // scope when it has at least one control in scope, checked via EXISTS against
 // audit_control c.
+//
+// An unset (zero-value "") scope is NOT treated as ScopeAll: it falls through
+// to the default deny-all case below, matching scopeWhere's behaviour. A
+// caller that genuinely wants every row (an internal existence/uniqueness
+// check, never an external request) must pass domain.ScopeAll explicitly.
 func auditScopeWhere(scope domain.Scope, userEmail string, scopeTeamIDs []int) (string, []any) {
 	switch scope {
-	case "", domain.ScopeAll:
+	case domain.ScopeAll:
 		return "", nil
 	case domain.ScopeOwned:
 		return " AND EXISTS (SELECT 1 FROM audit_control c WHERE c.audit_id = a.id AND c.owner_id = (SELECT id FROM `user` WHERE email = ?))",

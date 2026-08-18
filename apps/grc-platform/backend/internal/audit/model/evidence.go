@@ -36,6 +36,11 @@ type AuditEvidenceFile struct {
 	// underlying repo call, for the assigned-auditor download gate — omitted
 	// from JSON since it's not evidence metadata callers need.
 	AuditorEmail *string `json:"-"`
+	// TeamID is this file's owning control's team_id (nil if none). Only
+	// populated by the same repo call as AuditorEmail, for the team-scoped
+	// download gate — omitted from JSON since it's not evidence metadata
+	// callers need.
+	TeamID *int `json:"-"`
 }
 
 // AuditEvidence represents one submission round for a control.

@@ -847,6 +847,12 @@ type AuditEvidenceFile struct {
 	// e.g. a population file). Only populated by GetEvidenceFileByID, for the
 	// GRC Backend's assigned-auditor download gate — never persisted here.
 	AuditorEmail *string `json:"auditorEmail"`
+	// TeamID is the file's owning control's team_id (nil if the control has no
+	// team or the file has no evidence_id). Only populated by
+	// GetEvidenceFileByID, so the GRC Backend can authorize downloads against a
+	// team-scoped grant instead of an unscoped privilege union — never persisted
+	// here.
+	TeamID *int `json:"teamId"`
 }
 
 // CreateEvidenceFileRequest is the payload for POST /evidence/{evidenceId}/files.

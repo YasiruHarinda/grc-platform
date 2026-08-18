@@ -55,6 +55,7 @@ type entFile struct {
 	CreatedBy    *string   `json:"createdBy"`
 	CreatedOn    time.Time `json:"createdOn"`
 	AuditorEmail *string   `json:"auditorEmail"`
+	TeamID       *int      `json:"teamId"`
 }
 
 func (f entFile) toModel() *model.AuditEvidenceFile {
@@ -66,6 +67,7 @@ func (f entFile) toModel() *model.AuditEvidenceFile {
 		FileSize:     f.FileSize,
 		CreatedAt:    f.CreatedOn,
 		AuditorEmail: f.AuditorEmail,
+		TeamID:       f.TeamID,
 	}
 	if f.EvidenceID != nil {
 		m.EvidenceID = *f.EvidenceID

@@ -2249,6 +2249,14 @@ paths:
       tags:
       - Role Grants
       summary: Get a user's role grants by user ID
+      description: >-
+        Not yet wired up: the handler exists but internal/server/routes.go
+        deliberately does not register it until the MANAGE_USERS-gated admin
+        grant editor is built to call it (see the routes.go comment above the
+        Role Grants block). Calling this path today 404s. Documented here for
+        the client the admin editor will generate against, not as a currently
+        reachable endpoint.
+      x-internal: true
       operationId: getGrantsByUserId
       parameters:
       - name: id
@@ -2280,6 +2288,12 @@ paths:
         Rejected with 400 when the scope type does not match the role's module,
         when a non-GLOBAL scope names no active team, or when the role carries
         MANAGE_USERS — grant management is only ever handed out GLOBAL.
+
+
+        Not yet wired up: internal/server/routes.go deliberately does not
+        register this handler until the MANAGE_USERS-gated admin grant editor
+        is built to call it. Calling this path today 404s.
+      x-internal: true
       operationId: createGrant
       parameters:
       - name: id
@@ -2320,6 +2334,12 @@ paths:
 
         revokedBy is required and recorded in updated_by, so the row names who
         removed the grant as well as who conferred it (created_by).
+
+
+        Not yet wired up: internal/server/routes.go deliberately does not
+        register this handler until the MANAGE_USERS-gated admin grant editor
+        is built to call it. Calling this path today 404s.
+      x-internal: true
       operationId: revokeGrant
       parameters:
       - name: id
@@ -4211,6 +4231,15 @@ components:
             e.g. a population file). Only populated by GET
             /evidence-files/{fileId}, for the GRC Backend's assigned-auditor
             download gate.
+        teamId:
+          type: integer
+          nullable: true
+          description: >-
+            The file's owning control's team_id (null if the control has no
+            team, or the file has no evidenceId). Only populated by GET
+            /evidence-files/{fileId}, so the GRC Backend can authorize
+            downloads against a team-scoped grant instead of an unscoped
+            privilege union.
     CreateEvidenceFileRequest:
       type: object
       properties:

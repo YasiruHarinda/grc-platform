@@ -203,23 +203,24 @@ func (r *evidenceRepo) GetEvidenceFileByID(ctx context.Context, fileID int) (*do
 
 func (r *evidenceRepo) getEvidenceFileByID(ctx context.Context, fileID int) (*domain.AuditEvidenceFile, error) {
 	var f domain.AuditEvidenceFile
-	var evidenceID, populationID, uploadedBy sql.NullInt64
+	var evidenceID, populationID, uploadedBy, controlTeamID sql.NullInt64
 	var fileKind, fileType, auditorEmail sql.NullString
 	var fileSize sql.NullInt64
-	// LEFT JOINed through to the owning control's auditor so the GRC Backend can
-	// gate downloads to the assigned auditor without a second round trip. Both
-	// joins miss cleanly for population files (evidence_id NULL) or controls with
-	// no auditor assigned — auditorEmail just comes back NULL.
+	// LEFT JOINed through to the owning control's auditor and team so the GRC
+	// Backend can gate downloads to the assigned auditor, or to a team-scoped
+	// grant, without a second round trip. All joins miss cleanly for population
+	// files (evidence_id NULL) or controls with no auditor/team assigned —
+	// auditor_email/control_team_id just come back NULL.
 	err := r.db.QueryRowContext(ctx, `
 		SELECT f.id, f.evidence_id, f.population_id, f.file_kind, f.uploaded_by,
 		       f.file_name, f.file_path, f.file_type, f.file_size, f.created_at,
-		       u_aud.email AS auditor_email
+		       u_aud.email AS auditor_email, c.team_id AS control_team_id
 		FROM audit_evidence_file f
 		LEFT JOIN audit_evidence e ON e.id = f.evidence_id
 		LEFT JOIN audit_control  c ON c.id = e.control_id
 		LEFT JOIN `+"`user`"+` u_aud ON u_aud.id = c.auditor_id
 		WHERE f.id = ?`,
-		fileID).Scan(&f.ID, &evidenceID, &populationID, &fileKind, &uploadedBy, &f.FileName, &f.FilePath, &fileType, &fileSize, &f.CreatedOn, &auditorEmail)
+		fileID).Scan(&f.ID, &evidenceID, &populationID, &fileKind, &uploadedBy, &f.FileName, &f.FilePath, &fileType, &fileSize, &f.CreatedOn, &auditorEmail, &controlTeamID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, &apierror.NotFoundError{Msg: fmt.Sprintf("evidence file %d not found", fileID)}
 	}
@@ -249,6 +250,10 @@ func (r *evidenceRepo) getEvidenceFileByID(ctx context.Context, fileID int) (*do
 	}
 	if auditorEmail.Valid {
 		f.AuditorEmail = &auditorEmail.String
+	}
+	if controlTeamID.Valid {
+		v := int(controlTeamID.Int64)
+		f.TeamID = &v
 	}
 	return &f, nil
 }

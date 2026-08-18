@@ -142,9 +142,14 @@ func (r *auditFrameworkRepo) UpdateAuditFramework(ctx context.Context, id int, r
 // their own (only their audits' controls do), so — one level deeper than
 // auditScopeWhere's "audit qualifies if any control does" — a framework
 // qualifies if any of its audits has any control in scope.
+//
+// An unset (zero-value "") scope is NOT treated as ScopeAll: it falls through
+// to the default deny-all case below, matching scopeWhere's behaviour. A
+// caller that genuinely wants every row (an internal existence/uniqueness
+// check, never an external request) must pass domain.ScopeAll explicitly.
 func frameworkScopeWhere(scope domain.Scope, userEmail string, scopeTeamIDs []int) (string, []any) {
 	switch scope {
-	case "", domain.ScopeAll:
+	case domain.ScopeAll:
 		return "", nil
 	case domain.ScopeOwned:
 		return ` AND EXISTS (SELECT 1 FROM audit a JOIN audit_control c ON c.audit_id = a.id

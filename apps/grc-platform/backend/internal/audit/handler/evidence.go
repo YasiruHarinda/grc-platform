@@ -119,10 +119,26 @@ type evidenceHandler struct {
 // Users who hold ManageControls (compliance admin) or ViewAllAudits (org-wide
 // read, e.g. compliance team — see ADR-0002) bypass the owner-assignment check —
 // they already have full or org-wide read/write over audit data, so the IDOR
-// restriction is redundant and would block legitimate submissions.
+// restriction is redundant and would block legitimate submissions. Both
+// privileges can be granted scoped to a single team, though (module=AUDIT), so
+// the bypass is checked with HasPrivilegeIn against controlID's own team —
+// never the unscoped HasPrivilege, which would let a team-scoped grant bypass
+// the check for every other team's controls too.
 func (h *evidenceHandler) requireAssignment(w http.ResponseWriter, r *http.Request, auditID, controlID int) bool {
 	if auth.HasPrivilege(r.Context(), privilege.ManageControls) || auth.HasPrivilege(r.Context(), privilege.ViewAllAudits) {
-		return true
+		control, err := h.controlSvc.GetByID(r.Context(), auditID, controlID)
+		if err != nil {
+			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+			return false
+		}
+		teamID := 0
+		if control.TeamID != nil {
+			teamID = *control.TeamID
+		}
+		if auth.HasPrivilegeIn(r.Context(), privilege.ManageControls, teamID) ||
+			auth.HasPrivilegeIn(r.Context(), privilege.ViewAllAudits, teamID) {
+			return true
+		}
 	}
 	actor := auth.FromContext(r.Context())
 	derived, found, err := h.controlSvc.AssignedAuditID(r.Context(), actor.Email, controlID)
@@ -603,22 +619,30 @@ func (h *evidenceHandler) reconcileAfterDelete(ctx context.Context, auditID, con
 // requireEvidenceFileAccess authorizes downloadEvidenceFile with the same rule
 // as canViewEvidence, but resolved from a file id instead of a control — the
 // download route (GET /api/v1/evidence/files/{fileId}/download) carries no
-// auditId/controlId to look a control up by. ManageControls, SubmitEvidence,
-// ReviewEvidence, and ViewAllAudits bypass unconditionally; anyone else (e.g. an
-// external auditor holding only ValidateEvidence) must be the email-matched
-// auditor of the file's owning control, via FileAuditorEmail.
+// auditId/controlId to look a control up by, so FileAuditorEmail returns the
+// owning control's team alongside the auditor email in one round trip.
+// ManageControls, SubmitEvidence, ReviewEvidence, and ViewAllAudits bypass —
+// checked against that team (HasPrivilegeIn), since all four can be granted
+// scoped to a single team (module=AUDIT) and the unscoped HasPrivilege would
+// let such a grant download every other team's files too. Anyone else (e.g.
+// an external auditor holding only ValidateEvidence) must be the
+// email-matched auditor of the file's owning control.
 func (h *evidenceHandler) requireEvidenceFileAccess(w http.ResponseWriter, r *http.Request, fileID int) bool {
 	ctx := r.Context()
-	if auth.HasPrivilege(ctx, privilege.ManageControls) ||
-		auth.HasPrivilege(ctx, privilege.SubmitEvidence) ||
-		auth.HasPrivilege(ctx, privilege.ReviewEvidence) ||
-		auth.HasPrivilege(ctx, privilege.ViewAllAudits) {
-		return true
-	}
-	auditorEmail, err := h.svc.FileAuditorEmail(ctx, fileID)
+	auditorEmail, fileTeamID, err := h.svc.FileAuditorEmail(ctx, fileID)
 	if err != nil {
 		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
 		return false
+	}
+	teamID := 0
+	if fileTeamID != nil {
+		teamID = *fileTeamID
+	}
+	if auth.HasPrivilegeIn(ctx, privilege.ManageControls, teamID) ||
+		auth.HasPrivilegeIn(ctx, privilege.SubmitEvidence, teamID) ||
+		auth.HasPrivilegeIn(ctx, privilege.ReviewEvidence, teamID) ||
+		auth.HasPrivilegeIn(ctx, privilege.ViewAllAudits, teamID) {
+		return true
 	}
 	actor := auth.FromContext(ctx)
 	if auditorEmail == nil || !strings.EqualFold(*auditorEmail, actor.Email) {
@@ -657,14 +681,21 @@ func (h *evidenceHandler) downloadEvidenceFile(w http.ResponseWriter, r *http.Re
 
 // canViewEvidence allows: the team (SubmitEvidence), an internal reviewer
 // (ReviewEvidence), an org-wide reader (ViewAllAudits), ManageControls, or the
-// control's assigned auditor (by email, e.g. ValidateEvidence holders). No
-// team-assignment (IDOR) check — mirrors canViewPopulation.
+// control's assigned auditor (by email, e.g. ValidateEvidence holders). Each
+// privilege is checked against control's own team (HasPrivilegeIn), since all
+// four can be granted scoped to a single team (module=AUDIT) — the unscoped
+// HasPrivilege would let a team-scoped grant view every other team's evidence
+// too.
 func canViewEvidence(r *http.Request, control *model.AuditControl) bool {
 	ctx := r.Context()
-	if auth.HasPrivilege(ctx, privilege.ManageControls) ||
-		auth.HasPrivilege(ctx, privilege.SubmitEvidence) ||
-		auth.HasPrivilege(ctx, privilege.ReviewEvidence) ||
-		auth.HasPrivilege(ctx, privilege.ViewAllAudits) {
+	teamID := 0
+	if control.TeamID != nil {
+		teamID = *control.TeamID
+	}
+	if auth.HasPrivilegeIn(ctx, privilege.ManageControls, teamID) ||
+		auth.HasPrivilegeIn(ctx, privilege.SubmitEvidence, teamID) ||
+		auth.HasPrivilegeIn(ctx, privilege.ReviewEvidence, teamID) ||
+		auth.HasPrivilegeIn(ctx, privilege.ViewAllAudits, teamID) {
 		return true
 	}
 	actor := auth.FromContext(ctx)
