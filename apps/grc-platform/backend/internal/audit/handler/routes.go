@@ -56,7 +56,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	th := &teamHandler{svc: deps.Team}
 	dh := &dashboardHandler{svc: deps.Dashboard}
 	eh := &evidenceHandler{svc: deps.Evidence, controlSvc: deps.Control, popSvc: deps.Population, trailSvc: deps.Trail, aiClient: deps.AIAgent}
-	cmh := &commentHandler{svc: deps.Comment, controlSvc: deps.Control}
+	cmh := &commentHandler{svc: deps.Comment}
 	avh := &aiValidationHandler{svc: deps.AIValidation}
 
 	// Current user (shared by both hubs — resolved privilege set unions RISK_*
