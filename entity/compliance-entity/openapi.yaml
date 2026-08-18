@@ -1195,30 +1195,6 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /controls/assigned-for-evidence:
-    get:
-      tags:
-      - Audit Controls
-      summary: List controls assigned to the authenticated user's team for evidence submission
-      operationId: listAssignedForEvidence
-      parameters:
-      - name: email
-        in: query
-        required: true
-        schema:
-          type: string
-        description: Authenticated user's email (used to scope to their team)
-      responses:
-        '200':
-          description: Controls the user must submit evidence for
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ListAssignedControlsResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
   /audit-controls/{controlId}/evidence-assignment:
     get:
       tags:
@@ -5717,47 +5693,6 @@ components:
           - PRODUCT_SPECIFIC
         updatedBy:
           type: string
-    AssignedControlForEvidence:
-      type: object
-      properties:
-        auditId:
-          type: integer
-        auditName:
-          type: string
-        product:
-          type: string
-        framework:
-          type: string
-        periodStart:
-          type: string
-        periodEnd:
-          type: string
-        controlId:
-          type: integer
-        controlNumber:
-          type: string
-        description:
-          type: string
-        evidenceRequirement:
-          type: string
-          nullable: true
-        requirementType:
-          type: string
-          enum:
-          - DESIGN
-          - OE
-        status:
-          type: string
-        dueDate:
-          type: string
-          nullable: true
-    ListAssignedControlsResponse:
-      type: object
-      properties:
-        controls:
-          type: array
-          items:
-            $ref: '#/components/schemas/AssignedControlForEvidence'
     AuditDashboardRequest:
       type: object
       properties:
