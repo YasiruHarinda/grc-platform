@@ -61,6 +61,9 @@ func (d *Deps) recordEvent(ctx context.Context, riskID int, by, action string, d
 // risk-detail endpoint is: history is a view of actions already visible on the
 // risk, so it needs no narrower rule of its own.
 func (d *Deps) handleListRiskHistory(w http.ResponseWriter, r *http.Request) {
+	// Unscoped on purpose: this gates only whether the caller may read risks at
+	// all. WHICH risks they may read is decided by riskVisibleToCaller / the
+	// list scoping, not by this privilege.
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewRisks) {
 		return
 	}

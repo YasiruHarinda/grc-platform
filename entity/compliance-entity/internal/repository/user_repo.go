@@ -175,7 +175,8 @@ func (r *userRepo) CreateUser(ctx context.Context, req domain.CreateUserRequest)
 
 	// RowsAffected is 1 for a fresh insert under ON DUPLICATE KEY UPDATE, and
 	// 0 or 2 when the duplicate-key branch fired instead — only a fresh insert
-	// gets its requested team memberships written, for either module.
+	// gets its requested audit team memberships written. Risk team membership
+	// is never written here — see the CreateUserRequest comment.
 	if n, _ := res.RowsAffected(); n == 1 {
 		for _, teamID := range req.AuditTeamIDs {
 			if _, err = tx.ExecContext(ctx,
@@ -185,16 +186,6 @@ func (r *userRepo) CreateUser(ctx context.Context, req domain.CreateUserRequest)
 					return nil, &apierror.ValidationError{Msg: fmt.Sprintf("audit team %d not found", teamID)}
 				}
 				return nil, fmt.Errorf("user.Create audit team %d: %w", teamID, err)
-			}
-		}
-		for _, teamID := range req.RiskTeamIDs {
-			if _, err = tx.ExecContext(ctx,
-				"INSERT INTO user_risk_team (user_id, risk_team_id, created_by) VALUES (?, ?, ?)",
-				id, teamID, req.CreatedBy); err != nil {
-				if isFKViolation(err) {
-					return nil, &apierror.ValidationError{Msg: fmt.Sprintf("risk team %d not found", teamID)}
-				}
-				return nil, fmt.Errorf("user.Create risk team %d: %w", teamID, err)
 			}
 		}
 	}
@@ -236,13 +227,13 @@ func (r *userRepo) UpdateUser(ctx context.Context, id int, req domain.UpdateUser
 		return nil, fmt.Errorf("user.Update(%d): %w", id, err)
 	}
 
-	// A nil slice means "not touching them"; a non-nil slice (even empty) is the
-	// complete desired set for that module, so replace wholesale — same
-	// convention as UpdateRiskRequest.ComplianceReferenceIDs. The two modules'
-	// memberships are independent, so a request may replace either, both, or
-	// neither. Both run inside the same transaction as the `user` UPDATE above,
-	// so a failure partway through can't leave membership in a state the caller
-	// never asked for.
+	// A nil slice means "not touching it"; a non-nil slice (even empty) is the
+	// complete desired set, so replace wholesale — same convention as
+	// UpdateRiskRequest.ComplianceReferenceIDs. Runs inside the same
+	// transaction as the `user` UPDATE above, so a failure partway through
+	// can't leave membership in a state the caller never asked for. Risk team
+	// membership is never written here — see the UpdateUserRequest comment;
+	// user_risk_team is read-only now, superseded by user_role_grant.
 	if req.AuditTeamIDs != nil {
 		if _, err = tx.ExecContext(ctx,
 			"DELETE FROM user_audit_team WHERE user_id = ?", id); err != nil {
@@ -256,23 +247,6 @@ func (r *userRepo) UpdateUser(ctx context.Context, id int, req domain.UpdateUser
 					return nil, &apierror.ValidationError{Msg: fmt.Sprintf("audit team %d not found", teamID)}
 				}
 				return nil, fmt.Errorf("user.Update(%d) audit team %d: %w", id, teamID, err)
-			}
-		}
-	}
-
-	if req.RiskTeamIDs != nil {
-		if _, err = tx.ExecContext(ctx,
-			"DELETE FROM user_risk_team WHERE user_id = ?", id); err != nil {
-			return nil, fmt.Errorf("user.Update(%d) clear risk teams: %w", id, err)
-		}
-		for _, teamID := range req.RiskTeamIDs {
-			if _, err = tx.ExecContext(ctx,
-				"INSERT INTO user_risk_team (user_id, risk_team_id, created_by) VALUES (?, ?, ?)",
-				id, teamID, req.UpdatedBy); err != nil {
-				if isFKViolation(err) {
-					return nil, &apierror.ValidationError{Msg: fmt.Sprintf("risk team %d not found", teamID)}
-				}
-				return nil, fmt.Errorf("user.Update(%d) risk team %d: %w", id, teamID, err)
 			}
 		}
 	}

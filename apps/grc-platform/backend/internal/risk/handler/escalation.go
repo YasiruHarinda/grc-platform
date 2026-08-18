@@ -43,11 +43,16 @@ func (d *Deps) handleEscalateRisk(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !auth.RequirePrivilege(r.Context(), w, privilege.EscalateRisk) {
-		return
-	}
 	riskID, ok := parseRiskID(w, r)
 	if !ok {
+		return
+	}
+	registerID, err := d.sourceRegisterOf(r.Context(), riskID)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	if !auth.RequirePrivilegeIn(r.Context(), w, privilege.EscalateRisk, registerID) {
 		return
 	}
 	escalation, err := d.Escalation.Escalate(r.Context(), riskID, by)
@@ -68,6 +73,9 @@ func (d *Deps) handleEscalateRisk(w http.ResponseWriter, r *http.Request) {
 // Action-Owner-only caller, who is further scoped to risks where they own a
 // plan (riskVisibleToCaller), matching handleListRisks' list scoping.
 func (d *Deps) handleListEscalations(w http.ResponseWriter, r *http.Request) {
+	// Unscoped on purpose: this gates only whether the caller may read risks at
+	// all. WHICH risks they may read is decided by riskVisibleToCaller / the
+	// list scoping, not by this privilege.
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewRisks) {
 		return
 	}
@@ -128,7 +136,13 @@ func (d *Deps) handleEscalationComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	escalation, err := d.Escalation.Comment(r.Context(), riskID, escalationID, req.Comment, by, canOverrideAssignee(r.Context()))
+	registerID, err := d.sourceRegisterOf(r.Context(), riskID)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	escalation, err := d.Escalation.Comment(r.Context(), riskID, escalationID, req.Comment, by,
+		canOverrideAssigneeIn(r.Context(), registerID))
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return

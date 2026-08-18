@@ -22,10 +22,10 @@ import (
 	riskhandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/handler"
 	riskentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/repository/entity"
 	riskservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/service"
-	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/file"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user/entity"
 )
 
@@ -37,8 +37,9 @@ import (
 // uploads, and hrClient talks to the HR entity's GraphQL service for employee
 // lookups — neither is backed by the GRC platform's own database either.
 // emailCfg wires the risk-owner notification email sent on risk creation.
-// groupsCfg carries the Asgardeo group names SCIM-backed user pickers filter
-// against — see config.RiskGroupsConfig.
+// grantRepo powers the Risk Owner / Management Approver pickers (see
+// riskhandler.Deps.Grants) — nil in local dev, when no privilege store is
+// configured.
 //
 // Dashboard and analytics take their payload already assembled: the entity runs
 // the aggregate queries and the pivots, so these services pass it through,
@@ -47,9 +48,8 @@ func buildRiskDeps(
 	ec *entityclient.Client,
 	fileSvc *file.Service,
 	hrClient *hrentity.Client,
-	scimClient *scim.Client,
+	grantRepo grant.Repository,
 	emailCfg config.EmailConfig,
-	groupsCfg config.RiskGroupsConfig,
 ) riskhandler.Deps {
 	userRepo := userentity.NewRepository(ec)
 	actionPlanRepo := riskentity.NewActionPlanRepository(ec)
@@ -69,8 +69,7 @@ func buildRiskDeps(
 		Dashboard:       riskservice.NewAssembledDashboardService(riskentity.NewDashboardRepository(ec)),
 		Employee:        riskservice.NewEmployeeSearchService(hrClient),
 		Users:           userRepo,
-		SCIM:            scimClient,
-		Groups:          groupsCfg,
+		Grants:          grantRepo,
 		Email:           emailer.New(emailCfg.ServiceURL, emailCfg.FromAddress, emailCfg.TokenURL, emailCfg.ClientID, emailCfg.ClientSecret),
 		FrontendBaseURL: emailCfg.FrontendBaseURL,
 	}

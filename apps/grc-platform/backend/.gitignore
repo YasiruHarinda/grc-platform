@@ -1,5 +1,6 @@
 # Binaries
 *.exe
+/backfill-grants
 
 # Environment
 .env

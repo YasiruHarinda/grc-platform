@@ -45,12 +45,12 @@ const maxRiskEvidenceUploadBytes = 25 << 20 // 25 MiB
 //
 // evidenceType gates who may call this:
 //   - ACTION_PLAN_ATTACHMENT ("Risk Evidence Attachment"): the Add Risk
-//     form, right after the risk itself is created — requires CreateRisk.
+//     form, right after the risk itself is created — requires CreateRisk
+//     scoped to the risk's source register, and being the risk's assigner
+//     (or the compliance-admin override), via requireRiskAssigner.
 //   - FINAL_APPROVAL_ATTACHMENT ("Risk Action Plan Completion Attachment"):
-//     the action owner, before "Complete Action Plan" — requires
-//     CompleteActionSteps and being the plan's own action_owner_id (or the
-//     compliance-admin override), the same identity gate
-//     handleCompleteActionPlan uses.
+//     the action owner, before "Complete Action Plan" — identity-only, no
+//     privilege check, the same gate handleCompleteActionPlan uses.
 func (d *Deps) handleUploadRiskEvidence(w http.ResponseWriter, r *http.Request) {
 	by, ok := requireUserEmail(w, r)
 	if !ok {
@@ -80,20 +80,14 @@ func (d *Deps) handleUploadRiskEvidence(w http.ResponseWriter, r *http.Request) 
 
 	switch evidenceType {
 	case riskservice.EvidenceTypeActionPlanAttachment:
-		if !auth.RequirePrivilege(r.Context(), w, privilege.CreateRisk) {
-			return
-		}
 		// Matches handleCreateActionPlan's gate — this upload only ever
 		// happens right after the risk itself is created, via the Add Risk
 		// form, so the only legitimate caller is the risk's own assigner (or
 		// the compliance-admin override), not merely anyone who can view it.
-		if !d.requireRiskAssigner(w, r, riskID) {
+		if !d.requireRiskAssigner(w, r, riskID, privilege.CreateRisk) {
 			return
 		}
 	case riskservice.EvidenceTypeFinalApprovalAttachment:
-		if !auth.RequirePrivilege(r.Context(), w, privilege.CompleteActionSteps) {
-			return
-		}
 		if actionPlanID == nil {
 			response.WriteError(w, http.StatusBadRequest, "actionPlanId is required for FINAL_APPROVAL_ATTACHMENT")
 			return
@@ -101,12 +95,20 @@ func (d *Deps) handleUploadRiskEvidence(w http.ResponseWriter, r *http.Request) 
 		// Identity gate: only the plan's own action owner (or the
 		// compliance-admin override) may attach its completion evidence —
 		// GetByID(riskID, planID) also 404s if the plan isn't this risk's.
+		// Deliberately no privilege check: RISK_COMPLETE_ACTION_STEPS was
+		// retired with the action-owner role (see handleUpdateActionPlanStep),
+		// because an Action Owner may be any employee and hold no role at all.
 		plan, err := d.ActionPlan.GetByID(r.Context(), riskID, *actionPlanID)
 		if err != nil {
 			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 			return
 		}
-		if !canOverrideAssignee(r.Context()) {
+		registerID, err := d.sourceRegisterOf(r.Context(), riskID)
+		if err != nil {
+			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+			return
+		}
+		if !canOverrideAssigneeIn(r.Context(), registerID) {
 			callerID, err := d.callerUserID(r.Context())
 			if err != nil {
 				response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
@@ -187,7 +189,12 @@ func (d *Deps) handleDeleteRiskEvidence(w http.ResponseWriter, r *http.Request) 
 		response.WriteError(w, http.StatusBadRequest, "fileId must be a positive integer")
 		return
 	}
-	if err := d.Evidence.Delete(r.Context(), riskID, fileID, actor, canOverrideAssignee(r.Context())); err != nil {
+	registerID, err := d.sourceRegisterOf(r.Context(), riskID)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	if err := d.Evidence.Delete(r.Context(), riskID, fileID, actor, canOverrideAssigneeIn(r.Context(), registerID)); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}

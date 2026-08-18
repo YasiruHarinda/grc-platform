@@ -40,7 +40,7 @@ func (h *dashboardHandler) getDashboard(w http.ResponseWriter, r *http.Request) 
 
 	f := model.DashboardFilter{}
 	if user != nil {
-		f.Roles = user.Groups
+		f.Roles = user.Roles
 		f.UserEmail = user.Email
 	}
 
@@ -61,7 +61,7 @@ func (h *dashboardHandler) getWorkQueue(w http.ResponseWriter, r *http.Request) 
 
 	f := model.DashboardFilter{}
 	if user != nil {
-		f.Roles = user.Groups
+		f.Roles = user.Roles
 		f.UserEmail = user.Email
 	}
 

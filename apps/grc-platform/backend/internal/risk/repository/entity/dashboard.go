@@ -32,7 +32,7 @@ import (
 // the finished payload, so only this one call remains — mirroring the audit
 // module, whose dashboard service is likewise a passthrough.
 type DashboardRepository interface {
-	Summary(ctx context.Context, registerID *int, teamIDs []int) (*model.DashboardSummary, error)
+	Summary(ctx context.Context, registerID *int, registerIDs []int) (*model.DashboardSummary, error)
 }
 
 type dashboardRepository struct{ c *entityclient.Client }
@@ -131,8 +131,8 @@ func (c entHeatmapCell) toModel() model.HeatmapCell {
 // Summary fetches the assembled dashboard. Slices are initialised even when
 // empty so the JSON the backend serves carries [] rather than null, matching
 // what the MySQL-backed service produced.
-func (r *dashboardRepository) Summary(ctx context.Context, registerID *int, teamIDs []int) (*model.DashboardSummary, error) {
-	body := map[string]any{"registerId": registerID, "scopeTeamIds": teamIDs}
+func (r *dashboardRepository) Summary(ctx context.Context, registerID *int, registerIDs []int) (*model.DashboardSummary, error) {
+	body := map[string]any{"registerId": registerID, "scopeRegisterIds": registerIDs}
 	var e entDashboard
 	if err := r.c.Post(ctx, "/risk/dashboard/search", body, &e); err != nil {
 		return nil, fmt.Errorf("risk dashboard: %w", err)

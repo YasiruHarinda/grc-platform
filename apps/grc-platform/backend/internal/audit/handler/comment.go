@@ -37,8 +37,11 @@ var externalAuditorGroups = map[string]bool{
 	"grc-platform-external-auditor": true,
 }
 
-func isExternalAuditor(groups []string) bool {
-	for _, g := range groups {
+// isExternalAuditor matches the caller's role names. These are now roles
+// assigned in this platform's database (user_role_grant), not Asgardeo group
+// claims — the names are unchanged, so the membership test is unaffected.
+func isExternalAuditor(roles []string) bool {
+	for _, g := range roles {
 		if externalAuditorGroups[strings.TrimSpace(g)] {
 			return true
 		}
@@ -60,7 +63,7 @@ func (h *commentHandler) listComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// External auditors do not receive internal comments.
-	includeInternal := !isExternalAuditor(auth.FromContext(r.Context()).Groups)
+	includeInternal := !isExternalAuditor(auth.FromContext(r.Context()).Roles)
 	comments, err := h.svc.List(r.Context(), auditID, controlID, includeInternal)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)

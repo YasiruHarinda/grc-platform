@@ -29,6 +29,7 @@ tags:
 - name: Risk Scores
 - name: Risk Compliance References
 - name: Privileges
+- name: Role Grants
 - name: Risk Dashboard
 - name: Risk Analytics
 - name: Risks
@@ -2125,6 +2126,204 @@ paths:
                 $ref: '#/components/schemas/RolePrivilegeMapResponse'
         '500': &id001
           $ref: '#/components/responses/InternalServerError'
+  /roles:
+    get:
+      tags:
+      - Role Grants
+      summary: List active roles
+      description: >-
+        The role catalogue, for populating a grant editor. Each role carries its
+        module, which determines the scope types it may be granted against:
+        RISK accepts GLOBAL or RISK_TEAM, AUDIT accepts GLOBAL or AUDIT_TEAM,
+        and SHARED accepts GLOBAL only.
+      operationId: listRoles
+      responses:
+        '200':
+          description: Active roles
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListRolesResponse'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /grants/by-email/{email}:
+    get:
+      tags:
+      - Role Grants
+      summary: Get a user's role grants by email
+      description: >-
+        Resolves a user by email and returns their active grants in one round
+        trip. This is the hot path — the GRC backend calls it on every
+        authenticated request to build the caller's scoped privilege set.
+
+
+        Responses are never cached (Cache-Control: no-store) and must not be
+        cached by callers either. Revoking a grant has to take effect on the
+        caller's next request, which is why this data does not ride along on the
+        user payload, which is cached for five minutes.
+
+
+        A user who does not exist returns 404 rather than an empty grant list,
+        so callers can distinguish "holds no roles" from "not provisioned here".
+      operationId: getGrantsByEmail
+      parameters:
+      - name: email
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: The user's active grants
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserGrantsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /grants/user/{id}:
+    get:
+      tags:
+      - Role Grants
+      summary: Get a user's role grants by user ID
+      operationId: getGrantsByUserId
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: The user's active grants
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserGrantsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+      - Role Grants
+      summary: Grant a role to a user in a scope
+      description: >-
+        Idempotent: granting a role the user already holds reactivates the
+        existing row and still returns 201, rather than conflicting on a request
+        whose intent is already satisfied.
+
+
+        Rejected with 400 when the scope type does not match the role's module,
+        when a non-GLOBAL scope names no active team, or when the role carries
+        MANAGE_USERS — grant management is only ever handed out GLOBAL.
+      operationId: createGrant
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserGrantRequest'
+      responses:
+        '201':
+          description: The stored grant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserGrant'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /grants/user/{id}/{grantId}:
+    delete:
+      tags:
+      - Role Grants
+      summary: Revoke a role grant
+      description: >-
+        Deactivates the grant rather than deleting it: who held what, and when
+        it was taken away, is the history an authorisation change should leave
+        behind. Scoped by user ID as well as grant ID, so a mismatched pair
+        cannot revoke another user's grant.
+
+
+        revokedBy is required and recorded in updated_by, so the row names who
+        removed the grant as well as who conferred it (created_by).
+      operationId: revokeGrant
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      - name: grantId
+        in: path
+        required: true
+        schema:
+          type: integer
+      - name: revokedBy
+        in: query
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: Grant revoked
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /grants/candidates:
+    get:
+      tags:
+      - Role Grants
+      summary: List users eligible for a role-gated picker field
+      description: >-
+        Returns every active user who holds `privilege` — GLOBAL, or scoped to
+        one of the given `teamId` values (RISK_TEAM scope). Powers the Risk
+        Hub's Risk Owner / Management Approver pickers: a candidate returned
+        here is guaranteed to pass the same scoped privilege check that
+        person's approval action runs, so picking them can never 403 on their
+        first approval.
+      operationId: getGrantCandidates
+      parameters:
+      - name: privilege
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: teamId
+        in: query
+        required: false
+        schema:
+          type: array
+          items:
+            type: integer
+      responses:
+        '200':
+          description: Eligible candidates
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantCandidatesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /risk/dashboard/search:
     post:
       tags:
@@ -3112,9 +3311,6 @@ components:
           items:
             type: integer
           description: Audit teams to assign this user to at creation. Omit or send an empty array for no team membership.
-        riskTeamId:
-          type: integer
-          nullable: true
         status:
           type: string
         createdBy:
@@ -3136,9 +3332,6 @@ components:
           items:
             type: integer
           description: Replaces the user's full set of audit team memberships. Omit this field to leave memberships unchanged; send an empty array to clear all of them.
-        riskTeamId:
-          type: integer
-          nullable: true
         status:
           type: string
           nullable: true
@@ -4457,6 +4650,21 @@ components:
     SearchRisksRequest:
       type: object
       properties:
+        scopeSourceRegisterIds:
+          type: array
+          items:
+            type: integer
+          description: >-
+            Risks RAISED in these registers. ORed with scopeAssignmentTeamIds.
+        scopeAssignmentTeamIds:
+          type: array
+          items:
+            type: integer
+          description: >-
+            Risks ROUTED to these teams. Separate from scopeSourceRegisterIds
+            because different roles scope by different dimensions of a risk — a
+            Risk Owner of HR sees work routed to HR, not risks HR raised. Both
+            empty means unrestricted.
         searchQuery:
           type: string
         workflowStatusKeys:
@@ -5578,6 +5786,131 @@ components:
             items:
               type: string
           description: Maps a role name to the privilege names it grants.
+    Role:
+      type: object
+      properties:
+        id:
+          type: integer
+        roleName:
+          type: string
+        description:
+          type: string
+        module:
+          type: string
+          enum: [RISK, AUDIT, SHARED]
+          description: >-
+            Determines which scope types this role may be granted against. The
+            role decides the module; the scope decides the breadth.
+        scopeBasis:
+          type: string
+          enum: [SOURCE_REGISTER, ASSIGNMENT_TEAM]
+          description: >-
+            Which column of a risk a grant on this role scopes by. Omitted for
+            GLOBAL-only roles.
+        status:
+          type: string
+          enum: [ACTIVE, INACTIVE]
+    ListRolesResponse:
+      type: object
+      properties:
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/Role'
+    GrantCandidate:
+      type: object
+      description: >-
+        One user eligible for a role-gated picker field. Carries only what a
+        picker needs to render an option — no team memberships, no timestamps.
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+        displayName:
+          type: string
+    GrantCandidatesResponse:
+      type: object
+      properties:
+        candidates:
+          type: array
+          items:
+            $ref: '#/components/schemas/GrantCandidate'
+    UserGrant:
+      type: object
+      description: >-
+        One role held by one user in one scope. Carries the role name rather
+        than its privileges, since callers already hold the whole
+        role-to-privilege map from GET /role-privileges and resolve locally.
+      properties:
+        id:
+          type: integer
+        roleId:
+          type: integer
+        roleName:
+          type: string
+        module:
+          type: string
+          enum: [RISK, AUDIT, SHARED]
+        scopeType:
+          type: string
+          enum: [GLOBAL, RISK_TEAM, AUDIT_TEAM]
+          description: >-
+            GLOBAL is a wildcard covering every scope the role's module defines,
+            including teams created later. It is never expanded into one row per
+            team.
+        scopeId:
+          type: integer
+          description: 0 when scopeType is GLOBAL; otherwise a risk_team or audit_team id.
+        scopeBasis:
+          type: string
+          enum: [SOURCE_REGISTER, ASSIGNMENT_TEAM]
+          description: >-
+            The role's scope basis: SOURCE_REGISTER matches where a risk was
+            raised, ASSIGNMENT_TEAM matches where the work was routed. Omitted
+            for GLOBAL-only roles.
+        scopeTeamType:
+          type: string
+          enum: [SOURCE_REGISTER, ASSIGNMENT, BOTH, AUDIT_TEAM]
+          description: >-
+            The scoped team's own team_type. Omitted for GLOBAL grants.
+        scopeName:
+          type: string
+          description: The team's display name. Omitted for GLOBAL grants.
+        createdOn:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+    UserGrantsResponse:
+      type: object
+      properties:
+        userId:
+          type: integer
+        grants:
+          type: array
+          description: >-
+            Always present, possibly empty. Holding no grants is a legitimate
+            state — someone named as an Action Owner may hold no role at all and
+            reach only the risks they are personally named on.
+          items:
+            $ref: '#/components/schemas/UserGrant'
+    CreateUserGrantRequest:
+      type: object
+      required: [roleId, scopeType]
+      properties:
+        roleId:
+          type: integer
+        scopeType:
+          type: string
+          enum: [GLOBAL, RISK_TEAM, AUDIT_TEAM]
+        scopeId:
+          type: integer
+          description: >-
+            Omit or send 0 for GLOBAL. Required, and must name an active team,
+            for any other scope type.
+        createdBy:
+          type: string
     NextSequenceResponse:
       type: object
       properties:
@@ -5761,6 +6094,16 @@ components:
         registerId:
           type: integer
           nullable: true
+        scopeRegisterIds:
+          type: array
+          items:
+            type: integer
+          description: >-
+            Restricts the payload to risks whose SOURCE REGISTER is one of
+            these. Source register only, never assignment team: this page is
+            rendered per register, so a risk raised in one register and routed
+            to another belongs to the register it was raised in. Empty means
+            unrestricted.
     RiskStatusSummary:
       type: object
       properties:
@@ -5921,6 +6264,12 @@ components:
     RiskAnalyticsRequest:
       type: object
       properties:
+        scopeRegisterIds:
+          type: array
+          items:
+            type: integer
+          description: >-
+            As RiskDashboardRequest.scopeRegisterIds — source register only.
         registerId:
           type: integer
           nullable: true

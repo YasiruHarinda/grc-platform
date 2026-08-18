@@ -34,11 +34,19 @@ func (d *Deps) handleAssessRisk(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !auth.RequirePrivilege(r.Context(), w, privilege.AssessRisk) {
-		return
-	}
 	id, ok := parseRiskID(w, r)
 	if !ok {
+		return
+	}
+	// Reassessment has no per-risk identity gate (§3), so this scoped check is
+	// the whole authorisation. It is also the one write action authorised by
+	// the grant axis alone — worth remembering when adding another.
+	registerID, err := d.sourceRegisterOf(r.Context(), id)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	if !auth.RequirePrivilegeIn(r.Context(), w, privilege.AssessRisk, registerID) {
 		return
 	}
 
