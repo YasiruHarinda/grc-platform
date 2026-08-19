@@ -227,20 +227,20 @@ var auditBodyTemplate = template.Must(template.New("auditEvent").Parse(`<html>
 {{if .Info.Actor}}<tr><td style="padding:0 24px 8px 24px; font-size:13px;"><span style="color:#57606a;">{{.ActorLabel}}</span> {{.Info.Actor}}</td></tr>{{end}}
 
 {{if .Info.Items}}<tr><td style="padding:8px 24px 4px 24px;">
-<table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:13px; border-collapse:collapse;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed; font-size:13px; border-collapse:collapse;">
 <tr style="color:#57606a; text-align:left;">
-<td style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Requirement Type</td>
-<td style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Control No</td>
-<td style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Description</td>
-<td style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Due Date</td>
-<td style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Status</td>
+<td width="14%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Requirement Type</td>
+<td width="13%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Control No</td>
+<td width="38%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Description</td>
+<td width="18%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Due Date</td>
+<td width="17%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Status</td>
 </tr>
 {{range .Info.Items}}<tr>
-<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0;">{{.RequirementType}}</td>
-<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; font-weight:bold;">{{.ControlNumber}}</td>
-<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0;">{{.Description}}</td>
-<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0;">{{.DueDate}}</td>
-<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0;">{{.Tier}}</td>
+<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; word-break:break-word;">{{.RequirementType}}</td>
+<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; font-weight:bold; word-break:break-word;">{{.ControlNumber}}</td>
+<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; word-break:break-word; overflow-wrap:break-word;">{{.Description}}</td>
+<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; white-space:nowrap;">{{.DueDate}}</td>
+<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; white-space:nowrap;">{{.Tier}}</td>
 </tr>{{end}}
 </table>
 </td></tr>{{end}}

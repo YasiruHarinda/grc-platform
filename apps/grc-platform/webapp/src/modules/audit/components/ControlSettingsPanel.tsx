@@ -542,8 +542,11 @@ export default function ControlSettingsPanel({
       evidenceRequirement: form.evidenceRequirement.trim() || null,
       dueDate: form.dueDate || null,
       ownerId: form.owner?.id ?? null,
+      clearOwner: form.owner === null,
       teamId: form.team?.id ?? null,
+      clearTeam: form.team === null,
       auditorId: form.auditor?.id ?? null,
+      clearAuditor: form.auditor === null,
       population,
     };
     updateMutation.mutate(

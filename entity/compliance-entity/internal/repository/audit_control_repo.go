@@ -481,15 +481,24 @@ func (r *controlRepo) UpdateControl(ctx context.Context, auditID, controlID int,
 		sets = append(sets, "evidence_requirement = ?")
 		args = append(args, *req.EvidenceRequirement)
 	}
-	if req.OwnerID != nil {
+	if req.ClearOwner {
+		sets = append(sets, "owner_id = ?")
+		args = append(args, nil)
+	} else if req.OwnerID != nil {
 		sets = append(sets, "owner_id = ?")
 		args = append(args, *req.OwnerID)
 	}
-	if req.TeamID != nil {
+	if req.ClearTeam {
+		sets = append(sets, "team_id = ?")
+		args = append(args, nil)
+	} else if req.TeamID != nil {
 		sets = append(sets, "team_id = ?")
 		args = append(args, *req.TeamID)
 	}
-	if req.AuditorID != nil {
+	if req.ClearAuditor {
+		sets = append(sets, "auditor_id = ?")
+		args = append(args, nil)
+	} else if req.AuditorID != nil {
 		sets = append(sets, "auditor_id = ?")
 		args = append(args, *req.AuditorID)
 	}

@@ -137,6 +137,15 @@ type UpdateControlRequest struct {
 	TeamID              *int    `json:"teamId"`
 	AuditorID           *int    `json:"auditorId"`
 	DueDate             *string `json:"dueDate"`
+	// ClearOwner/ClearTeam/ClearAuditor request unassigning that field back to
+	// empty. They exist because OwnerID/TeamID/AuditorID's own nil already
+	// means "field omitted, do not change" — JSON can't tell that apart from
+	// an explicit null, so there would otherwise be no way to ever unassign
+	// one of these once set. Ignored when the matching *ID field is non-nil
+	// (assigning and clearing the same field in one request is nonsensical).
+	ClearOwner   bool `json:"clearOwner"`
+	ClearTeam    bool `json:"clearTeam"`
+	ClearAuditor bool `json:"clearAuditor"`
 	// Population is set only for OE controls being edited from the same form
 	// used to create them; nil means "leave population details unchanged".
 	Population *PopulationDetails `json:"population"`

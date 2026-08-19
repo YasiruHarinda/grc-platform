@@ -809,12 +809,21 @@ type UpdateControlRequest struct {
 	OwnerID             *int    `json:"ownerId"`
 	TeamID              *int    `json:"teamId"`
 	AuditorID           *int    `json:"auditorId"`
-	DueDate             *string `json:"dueDate"`
-	Status              *string `json:"status"`
-	Comments            *string `json:"comments"`
-	SampleReference     *string `json:"sampleReference"`
-	UpdatedBy           string  `json:"updatedBy"`
-	ExpectedStatus      string  `json:"-"` // set server-side for atomic transition; never decoded from JSON
+	// ClearOwner/ClearTeam/ClearAuditor request setting that column back to
+	// NULL. They exist because OwnerID/TeamID/AuditorID's own nil already
+	// means "field omitted, leave column unchanged" — a JSON `null` decodes
+	// to the same nil pointer, so without these there would be no way for a
+	// caller to ever unassign one of these once set. Ignored when the
+	// matching *ID field is non-nil.
+	ClearOwner      bool    `json:"clearOwner"`
+	ClearTeam       bool    `json:"clearTeam"`
+	ClearAuditor    bool    `json:"clearAuditor"`
+	DueDate         *string `json:"dueDate"`
+	Status          *string `json:"status"`
+	Comments        *string `json:"comments"`
+	SampleReference *string `json:"sampleReference"`
+	UpdatedBy       string  `json:"updatedBy"`
+	ExpectedStatus  string  `json:"-"` // set server-side for atomic transition; never decoded from JSON
 }
 
 // OverrideControlStatusRequest is the payload for

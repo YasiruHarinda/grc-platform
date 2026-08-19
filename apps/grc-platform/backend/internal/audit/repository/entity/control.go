@@ -207,13 +207,26 @@ func (r *controlRepo) Update(ctx context.Context, auditID, controlID int, req mo
 	if req.EvidenceRequirement != nil {
 		body["evidenceRequirement"] = req.EvidenceRequirement
 	}
-	if req.OwnerID != nil {
+	if req.ClearOwner {
+		// The entity's own UpdateControlRequest has the identical nil-means-
+		// unchanged ambiguity on ownerId, so clearing it must be signaled the
+		// same way we signal it here: an explicit clearOwner flag, not just a
+		// null value.
+		body["ownerId"] = nil
+		body["clearOwner"] = true
+	} else if req.OwnerID != nil {
 		body["ownerId"] = req.OwnerID
 	}
-	if req.TeamID != nil {
+	if req.ClearTeam {
+		body["teamId"] = nil
+		body["clearTeam"] = true
+	} else if req.TeamID != nil {
 		body["teamId"] = req.TeamID
 	}
-	if req.AuditorID != nil {
+	if req.ClearAuditor {
+		body["auditorId"] = nil
+		body["clearAuditor"] = true
+	} else if req.AuditorID != nil {
 		body["auditorId"] = req.AuditorID
 	}
 	if req.DueDate != nil {

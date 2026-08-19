@@ -457,17 +457,40 @@ func (d *Deps) notifyControlComplete(ctx context.Context, control *model.AuditCo
 
 // notifyCommentAdded emails the control's owner(s), every admin, and — when
 // the comment is not internal — the assigned auditor about a new comment. An
-// internal comment never reaches the auditor: they lack
-// AUDIT_VIEW_INTERNAL_COMMENTS, the same gate the read path enforces. The
-// comment's own author never gets a copy of their own comment.
+// internal comment never reaches the auditor, nor an owner who lacks
+// AUDIT_VIEW_INTERNAL_COMMENTS: the same gate the read path (comment.go's
+// List) enforces. Without this, an owner assigned to a control who happens to
+// hold no audit role would get the internal comment's text emailed to them
+// even though the app itself never shows it to them. Admins are exempt from
+// the owner check — every role resolveAdminIDs resolves also holds
+// AUDIT_VIEW_INTERNAL_COMMENTS (see shared_seed_data.sql). The comment's own
+// author never gets a copy of their own comment.
 func (d *Deps) notifyCommentAdded(ctx context.Context, control *model.AuditControl, comment *model.AuditComment, actor string) {
+	// internalViewers is nil for a non-internal comment (no restriction
+	// needed). For an internal comment it is the set of user IDs allowed to
+	// see it; a lookup failure fails closed to an empty set rather than
+	// risking a leak.
+	var internalViewers map[int]bool
+	if comment.IsInternal && d.Grants != nil {
+		internalViewers = map[int]bool{}
+		if candidates, err := d.Grants.Candidates(ctx, privilege.ViewInternalComments, nil); err == nil {
+			for _, c := range candidates {
+				internalViewers[c.ID] = true
+			}
+		} else {
+			slog.Warn("audit notification: failed to resolve internal-comment viewers", "err", err)
+		}
+	}
+
 	recipients := map[int]bool{}
-	if control.OwnerID != nil {
-		recipients[*control.OwnerID] = true
+	addOwner := func(id *int) {
+		if id == nil || (internalViewers != nil && !internalViewers[*id]) {
+			return
+		}
+		recipients[*id] = true
 	}
-	if control.PopulationOwnerID != nil {
-		recipients[*control.PopulationOwnerID] = true
-	}
+	addOwner(control.OwnerID)
+	addOwner(control.PopulationOwnerID)
 	if !comment.IsInternal && control.AuditorID != nil {
 		recipients[*control.AuditorID] = true
 	}
