@@ -263,6 +263,7 @@ type RiskDetail struct {
 	OwnerUUID              string `json:"-"`
 	AssignerUUID           string `json:"-"`
 	ManagementApproverUUID string `json:"-"`
+	ComplianceApproverUUID string `json:"-"`
 
 	// Gross score (from risk_score join) — the original rating assigned at
 	// creation, immutable once a risk owner has approved the risk. Used by

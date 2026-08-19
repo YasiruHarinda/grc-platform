@@ -47,11 +47,11 @@ type entRisk struct {
 	AssignmentTeamID       int       `json:"assignmentTeamId"`
 	AssignmentTeamName     string    `json:"assignmentTeamName"`
 	AssignerID             int       `json:"assignerId"`
-	AssignerName           string    `json:"assignerName"`
+	AssignerUUID           string    `json:"assignerUuid"`
 	OwnerID                int       `json:"ownerId"`
-	OwnerName              string    `json:"ownerName"`
+	OwnerUUID              string    `json:"ownerUuid"`
 	ManagementApproverID   int       `json:"managementApproverId"`
-	ManagementApproverName string    `json:"managementApproverName"`
+	ManagementApproverUUID string    `json:"managementApproverUuid"`
 	WorkflowStatus         string    `json:"workflowStatus"`
 	TreatmentStrategy      *string   `json:"treatmentStrategy"`
 	GrossScoreID           *int      `json:"grossScoreId"`
@@ -160,8 +160,8 @@ func (r *riskRepository) List(ctx context.Context, filter model.ListRisksFilter)
 			// The list shows the effective level, not the gross one.
 			RiskLevel:      deref(e.EffectiveRiskLevel),
 			RiskLevelColor: deref(e.EffectiveColorCode),
-			OwnerName:      e.OwnerName,
-			AssignerName:   e.AssignerName,
+			OwnerUUID:      e.OwnerUUID,
+			AssignerUUID:   e.AssignerUUID,
 			WorkflowStatus: e.WorkflowStatus,
 			RiskType:       e.RiskType,
 			// Dates render as RFC3339 to match what database/sql produced from
@@ -191,7 +191,7 @@ func dateOnlyPtrToRFC3339(s *string) *string {
 func (r *riskRepository) GetByID(ctx context.Context, id int) (*model.RiskDetail, error) {
 	var e struct {
 		entRisk
-		ComplianceApproverName *string   `json:"complianceApproverName"`
+		ComplianceApproverUUID string    `json:"complianceApproverUuid"`
 		GrossScore             *entScore `json:"grossScore"`
 		EffectiveScore         *entScore `json:"effectiveScore"`
 		ComplianceReferences   []struct {
@@ -258,10 +258,10 @@ func (r *riskRepository) GetByID(ctx context.Context, id int) (*model.RiskDetail
 		UpdatedAt:              e.UpdatedOn.UTC().Format(time.RFC3339Nano),
 		SourceRegisterName:     e.SourceRegisterName,
 		AssignmentTeamName:     e.AssignmentTeamName,
-		OwnerName:              e.OwnerName,
-		AssignerName:           e.AssignerName,
-		ManagementApproverName: e.ManagementApproverName,
-		ComplianceApproverName: e.ComplianceApproverName,
+		OwnerUUID:              e.OwnerUUID,
+		AssignerUUID:           e.AssignerUUID,
+		ManagementApproverUUID: e.ManagementApproverUUID,
+		ComplianceApproverUUID: e.ComplianceApproverUUID,
 		GrossScore:             e.GrossScore.toModel(),
 		EffectiveScore:         e.EffectiveScore.toModel(),
 		ComplianceReferences:   []model.ComplianceReference{},

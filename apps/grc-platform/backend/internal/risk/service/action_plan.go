@@ -46,14 +46,14 @@ type ActionPlanService interface {
 	Create(ctx context.Context, riskID int, req model.CreateActionPlanRequest, createdBy string) (*model.ActionPlan, error)
 	ListSteps(ctx context.Context, planID int) ([]*model.ActionPlanStep, error)
 	// UpdateStep and Complete are ownership-gated, and that ownership check is
-	// now the ENTIRE authorisation: callerEmail must resolve to the plan's
+	// now the ENTIRE authorisation: callerUUID must resolve to the plan's
 	// action_owner_id. The RISK_COMPLETE_ACTION_STEPS privilege the handler
 	// used to check first was retired along with the action-owner role, because
 	// an Action Owner may be any employee and hold no role at all.
 	// Both take canOverride so a compliance admin can act in the action
 	// owner's place; the handler derives it from the caller's privileges.
-	UpdateStep(ctx context.Context, riskID, planID, stepID int, req model.UpdateActionPlanStepRequest, callerEmail string, canOverride bool) error
-	Complete(ctx context.Context, riskID, planID int, callerEmail string, canOverride bool) (*model.ActionPlan, error)
+	UpdateStep(ctx context.Context, riskID, planID, stepID int, req model.UpdateActionPlanStepRequest, callerUUID string, canOverride bool) error
+	Complete(ctx context.Context, riskID, planID int, callerUUID string, canOverride bool) (*model.ActionPlan, error)
 }
 
 type actionPlanService struct {
@@ -62,7 +62,7 @@ type actionPlanService struct {
 }
 
 // NewActionPlanService constructs an ActionPlanService. userRepo resolves the
-// caller's email (from the JWT) to their user.id for the ownership check on
+// caller's uuid (from the JWT) to their user.id for the ownership check on
 // UpdateStep/Complete.
 func NewActionPlanService(repo repository.ActionPlanRepository, userRepo user.Repository) ActionPlanService {
 	return &actionPlanService{repo: repo, userRepo: userRepo}
@@ -123,14 +123,14 @@ func (s *actionPlanService) ListSteps(ctx context.Context, planID int) ([]*model
 	return s.repo.ListSteps(ctx, planID)
 }
 
-// requireOwner reports whether callerEmail resolves to plan's action_owner_id.
+// requireOwner reports whether callerUUID resolves to plan's action_owner_id.
 // canOverride short-circuits it for compliance admins, matching the identity
 // gates on the approval transitions.
-func (s *actionPlanService) requireOwner(ctx context.Context, plan *model.ActionPlan, callerEmail string, canOverride bool) error {
+func (s *actionPlanService) requireOwner(ctx context.Context, plan *model.ActionPlan, callerUUID string, canOverride bool) error {
 	if canOverride {
 		return nil
 	}
-	caller, err := s.userRepo.GetByEmail(ctx, callerEmail)
+	caller, err := s.userRepo.GetByUUID(ctx, callerUUID)
 	if err != nil {
 		return err
 	}
@@ -140,33 +140,33 @@ func (s *actionPlanService) requireOwner(ctx context.Context, plan *model.Action
 	return nil
 }
 
-func (s *actionPlanService) UpdateStep(ctx context.Context, riskID, planID, stepID int, req model.UpdateActionPlanStepRequest, callerEmail string, canOverride bool) error {
+func (s *actionPlanService) UpdateStep(ctx context.Context, riskID, planID, stepID int, req model.UpdateActionPlanStepRequest, callerUUID string, canOverride bool) error {
 	if stepID <= 0 {
 		return badRequest("stepId must be a positive integer")
 	}
-	if callerEmail == "" {
-		return badRequest("caller email is required")
+	if callerUUID == "" {
+		return badRequest("caller uuid is required")
 	}
 	plan, err := s.getForRisk(ctx, riskID, planID)
 	if err != nil {
 		return err
 	}
-	if err := s.requireOwner(ctx, plan, callerEmail, canOverride); err != nil {
+	if err := s.requireOwner(ctx, plan, callerUUID, canOverride); err != nil {
 		return err
 	}
-	return s.repo.UpdateStep(ctx, planID, stepID, req, callerEmail)
+	return s.repo.UpdateStep(ctx, planID, stepID, req, callerUUID)
 }
 
-func (s *actionPlanService) Complete(ctx context.Context, riskID, planID int, callerEmail string, canOverride bool) (*model.ActionPlan, error) {
-	if callerEmail == "" {
-		return nil, badRequest("caller email is required")
+func (s *actionPlanService) Complete(ctx context.Context, riskID, planID int, callerUUID string, canOverride bool) (*model.ActionPlan, error) {
+	if callerUUID == "" {
+		return nil, badRequest("caller uuid is required")
 	}
 	plan, err := s.getForRisk(ctx, riskID, planID)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.requireOwner(ctx, plan, callerEmail, canOverride); err != nil {
+	if err := s.requireOwner(ctx, plan, callerUUID, canOverride); err != nil {
 		return nil, err
 	}
-	return s.repo.Complete(ctx, planID, callerEmail)
+	return s.repo.Complete(ctx, planID, callerUUID)
 }

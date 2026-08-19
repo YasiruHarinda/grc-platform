@@ -188,10 +188,18 @@ func (r *userRepo) CreateUser(ctx context.Context, req domain.CreateUserRequest)
 
 	// Upsert on uq_user_email: callers provisioning a user from an external
 	// directory (e.g. an HR employee picked as a risk's Action Owner) can't know
-	// whether the email is already known, so a duplicate refreshes the display
-	// name instead of failing. Only display_name/updated_by/uuid are refreshed —
+	// whether the email is already known, so a duplicate refreshes the row
+	// instead of failing. Only updated_by/uuid are refreshed on a duplicate —
 	// team assignments and status stay under explicit UpdateUser control, so
 	// audit team rows below are only written when this was a genuine insert.
+	//
+	// display_name is NOT refreshed on a duplicate, deliberately: nothing
+	// upstream stores a name anymore (callers send "" — see
+	// user/handler/resolve.go), and VALUES(display_name) here would silently
+	// blank out an existing row's stored name on every re-provision of the
+	// same person. It is still written on a genuine INSERT, only to satisfy
+	// the column's NOT NULL constraint — empty string, never read back by
+	// anything, until the column itself is dropped.
 	//
 	// id = LAST_INSERT_ID(id) is required: without it LastInsertId() returns 0
 	// when the duplicate-key branch fires, and the GetUserByID below would miss.
@@ -205,7 +213,7 @@ func (r *userRepo) CreateUser(ctx context.Context, req domain.CreateUserRequest)
 	res, err := tx.ExecContext(ctx,
 		"INSERT INTO `user` (uuid, email, display_name, user_type, status, created_by, updated_by) "+
 			"VALUES (?, ?, ?, ?, ?, ?, ?) "+
-			"ON DUPLICATE KEY UPDATE display_name = VALUES(display_name), "+
+			"ON DUPLICATE KEY UPDATE "+
 			"updated_by = VALUES(updated_by), uuid = COALESCE(VALUES(uuid), uuid), id = LAST_INSERT_ID(id)",
 		nullableUUID(req.UUID), req.Email, req.DisplayName, userType, status, req.CreatedBy, req.CreatedBy)
 	if err != nil {

@@ -39,20 +39,14 @@ type resolveUserRequest struct {
 // needs to assign any employee — not just an existing grc-platform
 // user — to an FK field (e.g. a risk's Action Owner).
 //
-// The display name is always looked up from hr_entity here, never taken from
-// the request body. Upsert's write is `ON DUPLICATE KEY UPDATE display_name
-// = VALUES(display_name)` — it overwrites the row unconditionally when the
-// email already exists — so a client-supplied name would let any caller
-// holding CreateRisk/UpdateRisk rename an arbitrary existing platform user
-// (their real email is often guessable) rather than only provisioning new
-// ones. Rejecting an email hr_entity doesn't recognise closes the same gap
-// for newly-created rows.
-//
-// hr_entity is consulted even though its display name is on its way out of the
-// database, because the two directories answer different questions. hr_entity
+// hr_entity is consulted for the WSO2-employee check, not for a name to
+// store: the platform stores no display name anymore (see Upsert's call
+// below), so there is nothing left for a client-supplied name to corrupt.
+// hr_entity and the identity directory answer different questions — hr_entity
 // says "is this a current WSO2 employee", which is the check that gate exists
 // for; Asgardeo says "does this person have an account", which can outlive
-// their employment. Only the first is a reason to refuse an assignment.
+// their employment. Only the first is a reason to refuse on its own; see the
+// uuid resolution below for what makes the second one a reason too.
 //
 // This writes, so it is gated. The privileges are the risk module's because
 // that is the only flow that calls it: an employee is resolved to a user id
@@ -84,35 +78,46 @@ func handleResolveUser(repo userentity.Repository, hrClient *hrentity.Client, sc
 			response.WriteError(w, http.StatusUnprocessableEntity, "email does not match an active WSO2 employee")
 			return
 		}
-		displayName := strings.TrimSpace(strings.TrimSpace(emp.FirstName) + " " + strings.TrimSpace(emp.LastName))
-		if displayName == "" {
+		// hr_entity's name is used only as this response's last-resort display
+		// value (see below) — never stored — so a directory blip doesn't leave
+		// the caller unable to see who they just picked.
+		hrName := strings.TrimSpace(strings.TrimSpace(emp.FirstName) + " " + strings.TrimSpace(emp.LastName))
+		if hrName == "" {
 			response.WriteError(w, http.StatusUnprocessableEntity, "email does not match an active WSO2 employee")
 			return
 		}
 
 		// Resolve the employee's Asgardeo id, so the row is provisioned with the
-		// identity they will actually authenticate as.
+		// identity they will actually authenticate as — and, now that nothing
+		// stores a name, so the identity directory can name them anywhere they
+		// get displayed afterward (dropdowns, notifications). An employee who
+		// cannot be named cannot usefully be assigned, so this is a hard gate,
+		// narrower than it sounds:
 		//
-		// A failure here does not fail the request. The directory is a separate
-		// service behind a gateway, the scope this call needs is narrower than
-		// the one the platform already holds, and neither is a reason to block
-		// someone from being named an Action Owner. Provisioning proceeds
-		// without a uuid: the column is nullable for exactly this case, and the
-		// backfill (or a later resolve of the same person) fills it in.
-		//
-		// This is deliberately NOT the eventual behaviour. Once every row is
-		// expected to carry a uuid, an unresolvable employee has to be refused
-		// instead — but refusing today would mean an outage in assignment the
-		// moment the directory hiccuped, in exchange for a guarantee nothing
-		// yet depends on.
-		var uuid string
-		if dirUser, dirErr := scimClient.LookupByEmail(r.Context(), req.Email); dirErr != nil {
-			slog.WarnContext(r.Context(), "resolve user: identity directory lookup failed; provisioning without a uuid",
+		//   - A CONFIRMED "no such person" (the directory answered, nobody by
+		//     this email has an Asgardeo account) refuses the assignment. This
+		//     is the "shouldn't be able to add them to the risk" rule: if the
+		//     directory can never name them, nothing downstream ever will
+		//     either.
+		//   - An UNREACHABLE directory (the call itself errored — a transient
+		//     gateway blip, a scope hiccup) does NOT refuse. Blocking a
+		//     legitimate hire's assignment because SCIM timed out for a few
+		//     seconds is a worse failure than letting the assignment through
+		//     with no uuid yet, to be backfilled by the offline tool or a
+		//     later resolve of the same person — same distinction the
+		//     directory package's own stale-serve behaviour draws elsewhere.
+		dirUser, dirErr := scimClient.LookupByEmail(r.Context(), req.Email)
+		if dirErr != nil {
+			slog.WarnContext(r.Context(), "resolve user: identity directory unreachable; provisioning without a uuid",
 				"err", dirErr)
-		} else if dirUser != nil {
+		} else if dirUser == nil {
+			response.WriteError(w, http.StatusUnprocessableEntity,
+				"email does not have an Asgardeo account and cannot be assigned")
+			return
+		}
+		var uuid string
+		if dirUser != nil {
 			uuid = dirUser.UUID
-		} else {
-			slog.InfoContext(r.Context(), "resolve user: employee has no directory account; provisioning without a uuid")
 		}
 
 		// Attribution for the provisioned row: the Compliance Entity records
@@ -127,10 +132,25 @@ func handleResolveUser(repo userentity.Repository, hrClient *hrentity.Client, sc
 			actor = info.Subject
 		}
 
-		u, err := repo.Upsert(r.Context(), uuid, req.Email, displayName, actor)
+		// No display name passed to Upsert — nothing stores one anymore. The
+		// email itself still goes, since it remains the entity's matching key
+		// for this row until that migrates too (a separate, later step).
+		u, err := repo.Upsert(r.Context(), uuid, req.Email, "", actor)
 		if err != nil {
 			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 			return
+		}
+		// The response still needs a name — the caller just picked this person
+		// and expects to see who — even though nothing was stored. Prefer the
+		// identity directory's answer (dirUser, when the lookup succeeded);
+		// fall back to hr_entity's for this response only when the directory
+		// was unreachable, so a transient SCIM blip doesn't leave the caller
+		// staring at a blank name for someone they just resolved.
+		u.Email = req.Email
+		if dirUser != nil {
+			u.DisplayName = dirUser.DisplayName
+		} else {
+			u.DisplayName = hrName
 		}
 		response.WriteJSONValue(w, http.StatusOK, u)
 	}

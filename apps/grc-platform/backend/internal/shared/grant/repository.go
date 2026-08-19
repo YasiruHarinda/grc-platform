@@ -44,18 +44,16 @@ type Repository interface {
 	Candidates(ctx context.Context, privilegeName string, teamIDs []int) ([]Candidate, error)
 }
 
-// Candidate is one user eligible for a role-gated picker field.
+// Candidate is one user eligible for a role-gated picker field. Carries only
+// id and uuid — the caller resolves a name/email from the identity directory
+// (see risk/handler/candidates.go's resolveCandidates), which is the only
+// source for either now; the entity no longer selects them.
 type Candidate struct {
 	ID int `json:"id"`
-	// UUID is the candidate's Asgardeo id, for resolving their name from the
-	// identity directory rather than from this platform's database. Empty when
-	// the row has not been backfilled yet.
+	// UUID is the candidate's Asgardeo id. Empty when the row has not been
+	// backfilled yet — the caller then cannot resolve them and must drop them
+	// from the picker rather than offer someone with no name.
 	UUID string `json:"uuid"`
-	// Email and DisplayName come from the `user` table and are on their way out
-	// — the platform is moving to storing neither. They remain until the
-	// directory lookup that replaces them is available.
-	Email       string `json:"email"`
-	DisplayName string `json:"displayName"`
 }
 
 type entityRepository struct{ c *entityclient.Client }

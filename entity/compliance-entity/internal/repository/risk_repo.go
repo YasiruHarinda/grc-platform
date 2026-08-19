@@ -46,13 +46,13 @@ const riskSelectCols = `
   r.id, r.risk_code, r.risk_year, r.risk_quarter, r.risk_title, r.risk_description,
   r.source_register_id,  src.name  AS source_register_name,
   r.assignment_team_id,  asgn.name AS assignment_team_name,
-  -- Each person is projected twice on purpose while the identity migration is
-  -- in progress: the stored display_name, which is going away, and the uuid the
-  -- caller will resolve a current name with instead. COALESCE because uuid is
-  -- nullable until every row is backfilled.
-  r.assigner_id,         u_asgn.display_name AS assigner_name, COALESCE(u_asgn.uuid,'') AS assigner_uuid,
-  r.owner_id,            u_own.display_name  AS owner_name,    COALESCE(u_own.uuid,'')  AS owner_uuid,
-  r.management_approver_id, u_mgmt.display_name AS management_approver_name, COALESCE(u_mgmt.uuid,'') AS management_approver_uuid,
+  -- Each person is projected as a uuid only — the platform stores no name or
+  -- email for anyone. COALESCE because uuid is nullable until every row is
+  -- backfilled; the caller resolves a current name from the identity
+  -- directory.
+  r.assigner_id,         COALESCE(u_asgn.uuid,'') AS assigner_uuid,
+  r.owner_id,            COALESCE(u_own.uuid,'')  AS owner_uuid,
+  r.management_approver_id, COALESCE(u_mgmt.uuid,'') AS management_approver_uuid,
   r.workflow_status, r.treatment_strategy,
   r.gross_score_id, rs.risk_level AS gross_risk_level,
   DATE_FORMAT(r.implementation_date, '%Y-%m-%d'),
@@ -732,9 +732,9 @@ func scanRiskWithExtras(s scanner, extras ...any) (*domain.Risk, error) {
 		&r.ID, &r.RiskCode, &r.RiskYear, &r.RiskQuarter, &r.RiskTitle, &desc,
 		&r.SourceRegisterID, &r.SourceRegisterName,
 		&r.AssignmentTeamID, &r.AssignmentTeamName,
-		&r.AssignerID, &r.AssignerName, &r.AssignerUUID,
-		&r.OwnerID, &r.OwnerName, &r.OwnerUUID,
-		&r.ManagementApproverID, &r.ManagementApproverName, &r.ManagementApproverUUID,
+		&r.AssignerID, &r.AssignerUUID,
+		&r.OwnerID, &r.OwnerUUID,
+		&r.ManagementApproverID, &r.ManagementApproverUUID,
 		&r.WorkflowStatus, &treatment,
 		&grossScoreID, &grossLevel,
 		&implDate, &reassDate,
@@ -838,7 +838,7 @@ LEFT JOIN risk_score eff ON eff.id = COALESCE(
 func (r *riskRepo) GetRiskDetail(ctx context.Context, id int) (*domain.RiskDetail, error) {
 	var d domain.RiskDetail
 
-	var approverName sql.NullString
+	var approverUUID string
 	var grossID, grossLikelihood, grossImpact, grossRating sql.NullInt64
 	var grossLevel, grossColor sql.NullString
 	var effID, effLikelihood, effImpact, effRating sql.NullInt64
@@ -846,7 +846,7 @@ func (r *riskRepo) GetRiskDetail(ctx context.Context, id int) (*domain.RiskDetai
 
 	row := r.db.QueryRowContext(ctx, `
 		SELECT `+riskSelectCols+`,
-		       ca.display_name,
+		       COALESCE(ca.uuid, ''),
 		       rs.id, rs.likelihood, rs.impact, rs.risk_rating, rs.risk_level, rs.color_code,
 		       eff.id, eff.likelihood, eff.impact, eff.risk_rating, eff.risk_level, eff.color_code
 		`+riskFromClause+`
@@ -854,7 +854,7 @@ func (r *riskRepo) GetRiskDetail(ctx context.Context, id int) (*domain.RiskDetai
 		WHERE r.id = ?`, id)
 
 	risk, err := scanRiskWithExtras(row,
-		&approverName,
+		&approverUUID,
 		&grossID, &grossLikelihood, &grossImpact, &grossRating, &grossLevel, &grossColor,
 		&effID, &effLikelihood, &effImpact, &effRating, &effLevel, &effColor)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -864,9 +864,7 @@ func (r *riskRepo) GetRiskDetail(ctx context.Context, id int) (*domain.RiskDetai
 		return nil, fmt.Errorf("risk.GetDetail(%d): %w", id, err)
 	}
 	d.Risk = *risk
-	if approverName.Valid {
-		d.ComplianceApproverName = &approverName.String
-	}
+	d.ComplianceApproverUUID = approverUUID
 	d.GrossScore = buildScore(grossID, grossLikelihood, grossImpact, grossRating, grossLevel, grossColor)
 	d.EffectiveScore = buildScore(effID, effLikelihood, effImpact, effRating, effLevel, effColor)
 

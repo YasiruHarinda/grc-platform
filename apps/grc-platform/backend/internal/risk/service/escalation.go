@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/apierror"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/repository"
@@ -57,13 +58,19 @@ type escalationService struct {
 	// local dev, matching hr's own nil-tolerant pattern) — managerOf then
 	// records the email only, same as before this uuid resolution existed.
 	scim *scim.Client
+	// dir resolves a platform user's uuid to their current email — the
+	// platform stores no email for anyone anymore, so this is what managerOf
+	// uses to get an address to query hr_entity with. May be nil (unconfigured
+	// local dev); managerOf then can't resolve a lead's email at all, the
+	// same soft degradation as every other unresolvable case here.
+	dir *directory.Service
 }
 
 // NewEscalationService wires the escalation service. hr may be nil in tests and
 // in any deployment without HR credentials — lead resolution then yields no
 // leads, which degrades the medium/low comment gate to compliance-admin only
-// rather than failing escalation outright. scim may independently be nil —
-// see the struct field comment.
+// rather than failing escalation outright. scim and dir may independently be
+// nil — see the struct field comments.
 func NewEscalationService(
 	repo repository.EscalationRepository,
 	riskRepo repository.RiskRepository,
@@ -71,8 +78,9 @@ func NewEscalationService(
 	users userentity.Repository,
 	hr *hrentity.Client,
 	scimClient *scim.Client,
+	dir *directory.Service,
 ) EscalationService {
-	return &escalationService{repo: repo, riskRepo: riskRepo, planRepo: planRepo, users: users, hr: hr, scim: scimClient}
+	return &escalationService{repo: repo, riskRepo: riskRepo, planRepo: planRepo, users: users, hr: hr, scim: scimClient, dir: dir}
 }
 
 func (s *escalationService) List(ctx context.Context, riskID int) ([]*model.Escalation, error) {
@@ -141,15 +149,25 @@ func (s *escalationService) resolveLeads(ctx context.Context, riskID int) (assig
 // HR entity resolves email-only — email is recorded regardless of whether the
 // uuid lookup succeeds, since it costs nothing and is a human-readable trace
 // of who was resolved even when the uuid comparison can't use them.
+//
+// Getting FROM userID TO an email is itself two hops now, not a direct read:
+// the platform stores no email for anyone, so this resolves userID's uuid
+// first, then asks the identity directory for the email that uuid resolves
+// to today. Either hop failing degrades the same way a missing email always
+// did here — no lead for this side, soft, logged, escalation proceeds.
 func (s *escalationService) managerOf(ctx context.Context, userID int) escalationLead {
-	if userID <= 0 {
+	if userID <= 0 || s.dir == nil {
 		return escalationLead{}
 	}
 	u, err := s.users.GetByID(ctx, userID)
-	if err != nil || u == nil || u.Email == "" {
+	if err != nil || u == nil || u.UUID == "" {
 		return escalationLead{}
 	}
-	emp, err := s.hr.GetEmployeeByEmail(ctx, u.Email)
+	person, ok := s.dir.Lookup(ctx, u.UUID)
+	if !ok || person.Email == "" {
+		return escalationLead{}
+	}
+	emp, err := s.hr.GetEmployeeByEmail(ctx, person.Email)
 	if err != nil {
 		slog.Warn("escalation: HR lookup failed", "err", err)
 		return escalationLead{}

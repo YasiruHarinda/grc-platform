@@ -25,21 +25,23 @@ import (
 
 // Name enrichment.
 //
-// A risk names several people, and the platform is removing the columns that
-// used to let the data layer join their names in. What the data layer returns
-// instead is each person's uuid; turning those back into names is this file's
-// job, done once per response rather than once per row.
+// A risk names several people, and the data layer only ever returns each
+// person's uuid — the platform stores no name or email anywhere anymore, in
+// either service. Turning those uuids back into names is this file's job,
+// done once per response rather than once per row.
 //
 // The batching is the point. A page of 50 risks names up to 150 people, and
 // resolving them one at a time would be 150 calls to a service on the far side
 // of an API gateway. Collecting the uuids first means the directory is asked
 // only about the ones its cache does not already hold.
 //
-// While the display_name columns still exist, this OVERWRITES what they
-// supplied only when the directory has an answer — so an unreachable directory,
-// or a uuid not yet backfilled, leaves the previous behaviour exactly intact.
-// That is what makes this safe to ship before the directory is reachable in
-// every environment.
+// An unresolvable uuid leaves the field blank, not stale — there is no stored
+// value left to fall back to. This should be rare in practice: every role a
+// risk actually names is only reachable through a picker or resolve flow that
+// already required a successful directory lookup (see candidates.go,
+// resolve.go), so a blank name here means someone's directory entry changed
+// or disappeared after they were assigned, not that resolution was never
+// attempted.
 
 // enrichListItems fills each item's owner and assigner names from the identity
 // directory, in one batch.
@@ -66,14 +68,24 @@ func (d *Deps) enrichDetail(ctx context.Context, detail *model.RiskDetail) {
 	if d.Directory == nil || detail == nil {
 		return
 	}
-	people := d.Directory.LookupAll(ctx,
-		[]string{detail.OwnerUUID, detail.AssignerUUID, detail.ManagementApproverUUID})
+	people := d.Directory.LookupAll(ctx, []string{
+		detail.OwnerUUID, detail.AssignerUUID, detail.ManagementApproverUUID, detail.ComplianceApproverUUID,
+	})
 	if len(people) == 0 {
 		return
 	}
 	applyName(people, detail.OwnerUUID, &detail.OwnerName)
 	applyName(people, detail.AssignerUUID, &detail.AssignerName)
 	applyName(people, detail.ManagementApproverUUID, &detail.ManagementApproverName)
+	// ComplianceApproverName is *string, not string like the others — nil
+	// until a risk actually clears compliance approval, at which point
+	// ComplianceApproverUUID is set and this fills in the name to match.
+	if detail.ComplianceApproverUUID != "" {
+		if p, ok := people[detail.ComplianceApproverUUID]; ok && p.DisplayName != "" {
+			name := p.DisplayName
+			detail.ComplianceApproverName = &name
+		}
+	}
 }
 
 // enrichDashboard fills the owner names on the dashboard's high-risk table.
@@ -169,12 +181,9 @@ func applyEmail(people map[string]directory.Person, uuid string, dst *string) {
 }
 
 // applyName writes the directory's name for uuid into dst, leaving dst alone
-// when the directory has nothing to say.
-//
-// Leaving it alone rather than blanking it is deliberate: dst still carries the
-// display_name the data layer joined, and an out-of-date name is far better
-// than an empty column in a table someone is trying to read. Once those columns
-// are gone dst arrives empty anyway, and this becomes the only source.
+// (i.e. blank — the data layer never populates it) when the directory has
+// nothing to say. The identity directory is the only source of a name now;
+// there is no stored value left to fall back to.
 func applyName(people map[string]directory.Person, uuid string, dst *string) {
 	if uuid == "" {
 		return

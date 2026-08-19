@@ -86,7 +86,7 @@ type entAnalytics struct {
 		RiskCode       string  `json:"riskCode"`
 		RiskTitle      string  `json:"riskTitle"`
 		RegisterName   string  `json:"registerName"`
-		OwnerName      string  `json:"ownerName"`
+		OwnerUUID      string  `json:"ownerUuid"`
 		RiskLevel      string  `json:"riskLevel"`
 		ColorCode      string  `json:"colorCode"`
 		IdentifiedDate *string `json:"identifiedDate"`
@@ -169,7 +169,7 @@ func (r *analyticsRepository) Summary(ctx context.Context, registerID *int, regi
 	for _, a := range e.AgingRisks {
 		out.AgingRisks = append(out.AgingRisks, model.AgingRiskItem{
 			ID: a.ID, RiskCode: a.RiskCode, RiskTitle: a.RiskTitle,
-			RegisterName: a.RegisterName, OwnerName: a.OwnerName,
+			RegisterName: a.RegisterName, OwnerUUID: a.OwnerUUID,
 			RiskLevel: a.RiskLevel, ColorCode: a.ColorCode,
 			IdentifiedDate: dateOnlyPtrToRFC3339(a.IdentifiedDate),
 			AgeDays:        a.AgeDays,

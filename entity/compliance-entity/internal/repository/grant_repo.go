@@ -347,18 +347,15 @@ func (r *grantRepo) CandidatesForPrivilege(ctx context.Context, privilegeName st
 		scopeCond += " OR (g.scope_type = 'RISK_TEAM' AND rt.status = 'ACTIVE' AND g.scope_id IN (" +
 			strings.Join(placeholders, ",") + "))"
 	}
-	// u.uuid is selected alongside email/display_name, not instead of them.
-	// Once those columns are gone the caller resolves each candidate's name from
-	// the identity directory by uuid — but that needs a SCIM scope this platform
-	// has not been granted yet, and dropping the columns before it lands would
-	// leave the Risk Owner / Management Approver pickers listing people with no
-	// names. Both are returned during the migration; the caller prefers the uuid.
+	// uuid only — the platform stores no name or email for anyone. The caller
+	// resolves each candidate's current name from the identity directory.
 	//
 	// COALESCE, because uuid is nullable until every row is backfilled: a
 	// candidate whose uuid is still NULL comes back as "" rather than requiring
-	// every scan target here to be nullable.
+	// every scan target here to be nullable. A caller that can't resolve ""
+	// drops that candidate rather than offering someone with no name.
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT DISTINCT u.id, COALESCE(u.uuid, ''), u.email, u.display_name
+		SELECT DISTINCT u.id, COALESCE(u.uuid, '')
 		FROM   user_role_grant g
 		JOIN   `+"`role`"+` r    ON r.id = g.role_id AND r.status = 'ACTIVE'
 		JOIN   role_privilege rp ON rp.role_id = r.id AND rp.is_active = TRUE
@@ -366,7 +363,7 @@ func (r *grantRepo) CandidatesForPrivilege(ctx context.Context, privilegeName st
 		JOIN   `+"`user`"+` u    ON u.id = g.user_id AND u.status = 'ACTIVE'
 		LEFT JOIN risk_team rt   ON g.scope_type = 'RISK_TEAM' AND rt.id = g.scope_id
 		WHERE  g.status = 'ACTIVE' AND (`+scopeCond+`)
-		ORDER BY u.display_name`, args...)
+		ORDER BY u.id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("grant.CandidatesForPrivilege: %w", err)
 	}
@@ -375,7 +372,7 @@ func (r *grantRepo) CandidatesForPrivilege(ctx context.Context, privilegeName st
 	out := []domain.GrantCandidate{}
 	for rows.Next() {
 		var c domain.GrantCandidate
-		if err := rows.Scan(&c.ID, &c.UUID, &c.Email, &c.DisplayName); err != nil {
+		if err := rows.Scan(&c.ID, &c.UUID); err != nil {
 			return nil, fmt.Errorf("grant.CandidatesForPrivilege scan: %w", err)
 		}
 		out = append(out, c)

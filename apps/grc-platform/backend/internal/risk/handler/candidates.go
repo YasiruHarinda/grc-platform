@@ -17,6 +17,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -63,6 +64,9 @@ func (d *Deps) handleListRiskAssignerCandidates(w http.ResponseWriter, r *http.R
 // grant in the risk's register, or a grant but not the group, and either way
 // they'd 403 the first time they tried to approve. This is now one query
 // against the same table the approval check itself reads.
+//
+// A candidate who doesn't resolve through the identity directory is silently
+// dropped from the list, not just shown with a blank name — see resolveCandidates.
 func (d *Deps) handleListCandidates(w http.ResponseWriter, r *http.Request, priv string) {
 	teamIDs := make([]int, 0, len(r.URL.Query()["teamId"]))
 	for _, raw := range r.URL.Query()["teamId"] {
@@ -83,7 +87,11 @@ func (d *Deps) handleListCandidates(w http.ResponseWriter, r *http.Request, priv
 			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 			return
 		}
-		response.WriteJSONValue(w, http.StatusOK, all)
+		ids := make([]idUUID, 0, len(all))
+		for _, u := range all {
+			ids = append(ids, idUUID{id: u.ID, uuid: u.UUID})
+		}
+		response.WriteJSONValue(w, http.StatusOK, d.resolveCandidates(r.Context(), ids))
 		return
 	}
 
@@ -92,13 +100,51 @@ func (d *Deps) handleListCandidates(w http.ResponseWriter, r *http.Request, priv
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
-	out := make([]*userentity.User, 0, len(candidates))
+	ids := make([]idUUID, 0, len(candidates))
 	for _, c := range candidates {
-		// RiskTeamIDs is set to an empty (never nil) slice: team membership no
-		// longer decides eligibility here — the scoped query above already did
-		// that — but the response shape is shared with GET /users, whose
-		// callers expect this field to always be an array.
-		out = append(out, &userentity.User{ID: c.ID, Email: c.Email, DisplayName: c.DisplayName, RiskTeamIDs: []int{}})
+		ids = append(ids, idUUID{id: c.ID, uuid: c.UUID})
 	}
-	response.WriteJSONValue(w, http.StatusOK, out)
+	response.WriteJSONValue(w, http.StatusOK, d.resolveCandidates(r.Context(), ids))
+}
+
+// idUUID is a candidate's platform id paired with the uuid to resolve their
+// name/email through — the two sources handleListCandidates draws candidates
+// from (d.Users.List, d.Grants.Candidates) carry this pair in different
+// shapes, so callers normalise to this before resolveCandidates.
+type idUUID struct {
+	id   int
+	uuid string
+}
+
+// resolveCandidates batch-resolves every candidate's name and email through
+// the identity directory and drops anyone who doesn't resolve — a candidate
+// with no resolvable identity should not be offered as a pickable option at
+// all, matching resolve.go's Action Owner rule: if the directory can't name
+// someone, they should not be assignable to a risk in any capacity.
+//
+// LookupAll's stale-serve behaviour is what keeps this resilient: a
+// candidate only vanishes from a picker if their uuid has never once
+// resolved, not merely because the directory hiccuped on this one request.
+func (d *Deps) resolveCandidates(ctx context.Context, candidates []idUUID) []*userentity.User {
+	out := make([]*userentity.User, 0, len(candidates))
+	if d.Directory == nil {
+		return out
+	}
+	uuids := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		uuids = append(uuids, c.uuid)
+	}
+	people := d.Directory.LookupAll(ctx, uuids)
+	for _, c := range candidates {
+		p, ok := people[c.uuid]
+		if !ok {
+			continue
+		}
+		// RiskTeamIDs is set to an empty (never nil) slice: team membership no
+		// longer decides eligibility here — the scoped query upstream already
+		// did that — but the response shape is shared with GET /users, whose
+		// callers expect this field to always be an array.
+		out = append(out, &userentity.User{ID: c.id, UUID: c.uuid, Email: p.Email, DisplayName: p.DisplayName, RiskTeamIDs: []int{}})
+	}
+	return out
 }

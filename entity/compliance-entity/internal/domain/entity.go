@@ -509,23 +509,19 @@ type Risk struct {
 	AssignmentTeamID   int     `json:"assignmentTeamId"`
 	AssignmentTeamName string  `json:"assignmentTeamName"`
 	AssignerID         int     `json:"assignerId"`
-	// *UUID fields are the Asgardeo id of each person, for a caller resolving
-	// their current name from the identity directory. The *Name fields beside
-	// them read the display_name column, which this platform is removing —
-	// both are returned during the migration so the caller can prefer the uuid
-	// while the columns still exist. Empty when the row is not backfilled.
+	// *UUID fields are the Asgardeo id of each person — the platform stores no
+	// name or email for anyone, so this is the only identity the caller gets;
+	// resolving it to a current name is the caller's job (an identity
+	// directory lookup). Empty when the row is not backfilled.
 	AssignerUUID string `json:"assignerUuid"`
-	AssignerName string `json:"assignerName"`
 	OwnerID      int    `json:"ownerId"`
 	OwnerUUID    string `json:"ownerUuid"`
-	OwnerName    string `json:"ownerName"`
 	// ManagementApproverID names the user who approves this risk during
 	// PENDING_MANAGEMENT_APPROVAL and is the target an ESCALATED risk
 	// conceptually escalates to. Required on every risk regardless of level
 	// or treatment strategy.
 	ManagementApproverID   int       `json:"managementApproverId"`
 	ManagementApproverUUID string    `json:"managementApproverUuid"`
-	ManagementApproverName string    `json:"managementApproverName"`
 	WorkflowStatus         string    `json:"workflowStatus"`
 	TreatmentStrategy      *string   `json:"treatmentStrategy"`
 	GrossScoreID           *int      `json:"grossScoreId"`
@@ -1309,7 +1305,7 @@ type RiskAssessment struct {
 	ScoreID          int       `json:"scoreId"`
 	Progress         string    `json:"progress"`
 	ReassessmentDate string    `json:"reassessmentDate"` // YYYY-MM-DD
-	AssessedBy       string    `json:"assessedBy"`       // actor email
+	AssessedBy       string    `json:"assessedBy"`       // actor uuid
 	CreatedOn        time.Time `json:"createdOn"`
 	// Residual score, resolved by joining risk_score on score_id. A bare
 	// scoreId is not enough for callers: the GRC backend renders the residual
@@ -1663,9 +1659,10 @@ type NextSequenceResponse struct {
 type RiskDetail struct {
 	Risk
 
-	// ComplianceApproverName resolves compliance_approval_by, which the
-	// summary Risk does not carry.
-	ComplianceApproverName *string `json:"complianceApproverName"`
+	// ComplianceApproverUUID resolves compliance_approval_by, which the
+	// summary Risk does not carry. Empty until a risk actually clears
+	// compliance approval.
+	ComplianceApproverUUID string `json:"complianceApproverUuid"`
 
 	// GrossScore is the rating given at creation. EffectiveScore is the
 	// residual standing now: the most recent assessment's score when one

@@ -944,7 +944,24 @@ func (d *Deps) handleCloseRisk(w http.ResponseWriter, r *http.Request) {
 	d.recordEvent(r.Context(), id, by, model.HistoryClose, model.HistoryDetails{
 		From: model.StatusPendingComplianceClosure, To: model.StatusClosed,
 	})
+	d.notifyRiskClosed(r.Context(), id, registerID, by)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// notifyRiskClosed tells everyone with a stake in this risk that it has
+// reached CLOSED: the Assigner, Risk Owner, and Management Approver by name,
+// plus the Compliance Admin role via notifyComplianceAdmins. Two calls, not
+// one, for the same reason NotifyEscalation splits them — a role has no
+// single user id to fold in alongside the three named recipients.
+func (d *Deps) notifyRiskClosed(ctx context.Context, riskID, registerID int, by string) {
+	detail, err := d.Risk.GetByID(ctx, riskID)
+	if err != nil {
+		slog.Warn("risk notification: failed to load risk for closure", "riskId", riskID, "err", err)
+		return
+	}
+	d.notifyRiskEvent(emailer.EventClosed, riskID,
+		[]int{detail.AssignerID, detail.OwnerID, detail.ManagementApproverID}, by, "")
+	d.notifyComplianceAdmins(emailer.EventClosed, riskID, registerID, by, "")
 }
 
 // notifyOwnerOfCompletion tells the risk's owner that remediation has been

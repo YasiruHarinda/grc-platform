@@ -84,9 +84,10 @@ func (s *userService) CreateUser(ctx context.Context, req domain.CreateUserReque
 	if req.Email == "" {
 		return domain.User{}, &apierror.ValidationError{Msg: "email is required"}
 	}
-	if req.DisplayName == "" {
-		return domain.User{}, &apierror.ValidationError{Msg: "displayName is required"}
-	}
+	// DisplayName is deliberately not required: callers are moving off storing
+	// one at all (see risk/handler's resolve.go, which now sends "" here on
+	// purpose) — requiring it would refuse the very provisioning flow that
+	// migration depends on.
 	if req.CreatedBy == "" {
 		return domain.User{}, &apierror.ValidationError{Msg: "createdBy is required"}
 	}

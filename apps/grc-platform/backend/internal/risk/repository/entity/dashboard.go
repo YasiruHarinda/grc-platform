@@ -97,7 +97,7 @@ type entDashboard struct {
 		RiskCode           string  `json:"riskCode"`
 		RiskTitle          string  `json:"riskTitle"`
 		RegisterName       string  `json:"registerName"`
-		OwnerName          string  `json:"ownerName"`
+		OwnerUUID          string  `json:"ownerUuid"`
 		IdentifiedDate     *string `json:"identifiedDate"`
 		TreatmentStrategy  *string `json:"treatmentStrategy"`
 		ImplementationDate *string `json:"implementationDate"`
@@ -207,7 +207,7 @@ func (r *dashboardRepository) Summary(ctx context.Context, registerID *int, regi
 	for _, h := range e.HighRisks {
 		out.HighRisks = append(out.HighRisks, model.HighRiskItem{
 			ID: h.ID, RiskCode: h.RiskCode, RiskTitle: h.RiskTitle,
-			RegisterName: h.RegisterName, OwnerName: h.OwnerName,
+			RegisterName: h.RegisterName, OwnerUUID: h.OwnerUUID,
 			IdentifiedDate:     dateOnlyPtrToRFC3339(h.IdentifiedDate),
 			TreatmentStrategy:  h.TreatmentStrategy,
 			ImplementationDate: dateOnlyPtrToRFC3339(h.ImplementationDate),

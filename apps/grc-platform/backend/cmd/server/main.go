@@ -141,9 +141,10 @@ func main() {
 	}
 
 	userDeps := userhandler.Deps{
-		Users:    userentity.NewRepository(entityCli),
-		HREntity: hrClient,
-		SCIM:     scimClient,
+		Users:     userentity.NewRepository(entityCli),
+		HREntity:  hrClient,
+		SCIM:      scimClient,
+		Directory: dirSvc,
 	}
 
 	mux := http.NewServeMux()

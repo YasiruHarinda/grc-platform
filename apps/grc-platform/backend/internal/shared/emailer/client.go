@@ -194,6 +194,12 @@ const (
 	// the email body, even though the recipient list was correct.
 	EventPendingComplianceReview  RiskEvent = "PENDING_COMPLIANCE_REVIEW"
 	EventPendingComplianceClosure RiskEvent = "PENDING_COMPLIANCE_CLOSURE"
+	// EventClosed fires once, when Compliance closes the risk
+	// (PENDING_COMPLIANCE_CLOSURE → CLOSED). Purely informational — nothing is
+	// left to do, so unlike every other event it declares no actions — and
+	// sent the same two-call way as EventEscalated: notifyRiskEvent to the
+	// three named roles, notifyComplianceAdmins for the role-wide one.
+	EventClosed RiskEvent = "CLOSED"
 )
 
 // RiskEventInfo carries everything any template might render. Fields not
@@ -385,6 +391,15 @@ var eventTemplates = map[RiskEvent]eventTemplate{
 			{RoleActionOwner, "Complete the outstanding action plan steps."},
 			{RoleRiskAssigner, "Bring remediation back on track and keep the risk updated."},
 		},
+	},
+	EventClosed: {
+		subject: func(i RiskEventInfo) string {
+			return fmt.Sprintf("Risk Closed: %s - %s", i.RiskCode, i.RiskTitle)
+		},
+		lead:       "This risk has cleared compliance closure and is now closed. No further action is required.",
+		actorLabel: "Closed by",
+		// No actions: the risk is done, so there is nobody left to list under
+		// "Who needs to act".
 	},
 }
 

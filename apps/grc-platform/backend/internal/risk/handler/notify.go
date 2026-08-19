@@ -26,7 +26,6 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
-	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
 
 // notifyTimeout caps the whole background notification: the Compliance Entity
@@ -130,12 +129,13 @@ func (d *Deps) sendRiskEvent(ctx context.Context, ev emailer.RiskEvent, riskID i
 				"event", ev, "riskId", riskID, "userId", id)
 			continue
 		}
-		// A deliverable address, from the directory where possible. This is the
-		// reason the directory cache serves stale values on failure: a
-		// recipient with no address is dropped here, and a send with none left
-		// does not happen at all — so a directory blip would otherwise turn
-		// into silently unsent notifications.
-		_, email := d.nameAndEmail(ctx, u)
+		// A deliverable address, from the directory — the only source now that
+		// the platform is removing stored emails. This is the reason the
+		// directory cache serves stale values on failure: a recipient with no
+		// address is dropped here, and a send with none left does not happen
+		// at all — so a directory blip would otherwise turn into silently
+		// unsent notifications.
+		_, email := d.resolvePerson(ctx, u.UUID)
 		if email == "" {
 			slog.Warn("risk notification: recipient has no email on file",
 				"event", ev, "riskId", riskID, "userId", id)
@@ -228,7 +228,7 @@ func (d *Deps) peopleForEvent(ctx context.Context, ev emailer.RiskEvent, riskID 
 
 // personLabel renders a platform user as "Display Name (email)", or "" when
 // they can't be resolved. Same shape as describeActor, but keyed by id rather
-// than email — the risk row stores ids.
+// than uuid — the risk row stores ids.
 func (d *Deps) personLabel(ctx context.Context, userID int) string {
 	if userID <= 0 {
 		return ""
@@ -237,7 +237,7 @@ func (d *Deps) personLabel(ctx context.Context, userID int) string {
 	if err != nil || u == nil {
 		return ""
 	}
-	name, email := d.nameAndEmail(ctx, u)
+	name, email := d.resolvePerson(ctx, u.UUID)
 	if name == "" {
 		return email
 	}
@@ -247,61 +247,45 @@ func (d *Deps) personLabel(ctx context.Context, userID int) string {
 	return fmt.Sprintf("%s (%s)", name, email)
 }
 
-// nameAndEmail resolves who a user row actually is.
+// resolvePerson answers who a uuid actually is — the identity directory is
+// the only source, now that the platform is removing stored names and
+// emails from the database entirely. Empty when the directory is
+// unconfigured, the uuid is blank, or the person is unresolvable; callers
+// must not fall back to a stored value, since none exists to fall back to.
 //
-// The identity directory is asked first and the stored columns are the
-// fallback, which is the ordering the migration needs in both directions: today
-// the columns are still populated, so a directory that is unreachable — or
-// whose users-read scope has not been granted yet — changes nothing anyone
-// sees; once the columns are dropped, the directory is simply the only answer
-// left and this code does not change again.
-//
-// A row with no uuid skips the lookup entirely rather than asking about "",
-// which the directory would refuse anyway.
-func (d *Deps) nameAndEmail(ctx context.Context, u *userentity.User) (name, email string) {
-	name, email = strings.TrimSpace(u.DisplayName), strings.TrimSpace(u.Email)
-	if d.Directory == nil || u.UUID == "" {
-		return name, email
+// This is deliberately safe to call on someone who was never validated
+// resolvable: every role a risk actually names (Owner, Assigner, Management
+// Approver, Action Owner) is now only reachable through a picker or resolve
+// flow that already required a successful directory lookup — see
+// candidates.go and resolve.go — so a miss here should be rare, not the
+// normal case this function is designed around.
+func (d *Deps) resolvePerson(ctx context.Context, uuid string) (name, email string) {
+	if d.Directory == nil || uuid == "" {
+		return "", ""
 	}
-	if p, ok := d.Directory.Lookup(ctx, u.UUID); ok {
-		if p.DisplayName != "" {
-			name = p.DisplayName
-		}
-		if p.Email != "" {
-			email = p.Email
-		}
+	p, ok := d.Directory.Lookup(ctx, uuid)
+	if !ok {
+		return "", ""
 	}
-	return name, email
+	return p.DisplayName, p.Email
 }
 
 // describeActor renders the person who triggered a notification as
-// "Display Name (email@wso2.com)". Handlers only have the caller's email (it is
-// what the JWT carries), and an email alone reads poorly in a notification —
-// but it is also the unambiguous identifier, so both are shown rather than
-// swapping one for the other.
+// "Display Name (email@wso2.com)".
 //
-// Degrades to the bare email whenever the name can't be resolved: the caller
-// may have no platform user row yet, the lookup may fail, or the row may have
-// no display name. A notification is never worth failing over a cosmetic
-// lookup, so every one of those paths returns something sendable.
+// Falls back to the raw uuid when nothing resolves — deliberately, and
+// distinct from the identity-gated roles above: the actor already
+// authenticated and acted (they are not being newly named on a risk), and
+// the daily escalation job's "system" sentinel actor depends on exactly this
+// fallback (no `user` row will ever exist for it — see escalation_job.go's
+// escalatedBy). A notification is never worth failing over a cosmetic
+// lookup, so every path here returns something sendable.
 func (d *Deps) describeActor(ctx context.Context, actorUUID string) string {
 	actorUUID = strings.TrimSpace(actorUUID)
 	if actorUUID == "" {
 		return ""
 	}
-	u, err := d.Users.GetByUUID(ctx, actorUUID)
-	if err != nil {
-		slog.Warn("risk notification: failed to resolve actor", "err", err)
-		return actorUUID
-	}
-	if u == nil {
-		// Includes the daily escalation job's "system" sentinel (see
-		// escalation_job.go's escalatedBy) — no `user` row will ever exist for
-		// it, and falling back to the raw identifier renders it exactly as
-		// intended rather than as an empty field.
-		return actorUUID
-	}
-	name, email := d.nameAndEmail(ctx, u)
+	name, email := d.resolvePerson(ctx, actorUUID)
 	switch {
 	case name != "" && email != "":
 		return fmt.Sprintf("%s (%s)", name, email)
