@@ -76,13 +76,15 @@ func main() {
 	reportPath := flag.String("report", "backfill_evidence_actors_report.txt", "file to write the anomaly report to")
 	scimTimeout := flag.Duration("scim-timeout", 90*time.Second,
 		"per-request timeout for SCIM calls; the service cold starts, so allow well over an interactive budget")
+	timeout := flag.Duration("timeout", 5*time.Minute,
+		"overall run deadline; every SCIM page and the DB query share this budget, so it must stay generous relative to -scim-timeout or a slow run can be cut off before -scim-timeout's own allowance is used")
 	flag.Parse()
 
 	if strings.TrimSpace(*domain) == "" {
 		fatal("-domain must not be empty")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
 	db, err := sql.Open("mysql", mustEnv("DB_DSN"))
@@ -108,11 +110,25 @@ func main() {
 	fmt.Printf("directory search under %q returned %d user(s)\n", *domain, len(directoryUsers))
 
 	uuidByEmail := make(map[string]string)
+	// ambiguousEmails marks an email the directory itself disagrees about, so
+	// a later entry can never re-populate uuidByEmail for it — rewriting a
+	// created_by value to any of the candidate ids would silently pick a
+	// winner.
+	ambiguousEmails := make(map[string]bool)
+	var collisions []string
 	for _, du := range directoryUsers {
 		key := strings.ToLower(strings.TrimSpace(du.Email))
-		if key != "" && du.UUID != "" {
-			uuidByEmail[key] = du.UUID
+		if key == "" || du.UUID == "" || ambiguousEmails[key] {
+			continue
 		}
+		if prev, ok := uuidByEmail[key]; ok && prev != du.UUID {
+			collisions = append(collisions,
+				fmt.Sprintf("%s — directory returned two different ids: %s and %s", du.Email, du.UUID, prev))
+			delete(uuidByEmail, key)
+			ambiguousEmails[key] = true
+			continue
+		}
+		uuidByEmail[key] = du.UUID
 	}
 	fmt.Printf("directory holds %d distinct email(s)\n", len(uuidByEmail))
 
@@ -151,7 +167,7 @@ func main() {
 	if err := os.WriteFile(*outPath, []byte(renderSQL(toRewrite, *domain)), 0o600); err != nil {
 		fatal("write %s: %v", *outPath, err)
 	}
-	report := renderReport(unresolved, len(toRewrite), len(actors), *domain)
+	report := renderReport(unresolved, collisions, len(toRewrite), len(actors), *domain)
 	if err := os.WriteFile(*reportPath, []byte(report), 0o600); err != nil {
 		fatal("write %s: %v", *reportPath, err)
 	}
@@ -160,8 +176,8 @@ func main() {
 	fmt.Printf("anomaly report → %s\n\n", *reportPath)
 	fmt.Print(report)
 
-	if len(unresolved) > 0 {
-		fmt.Fprintf(os.Stderr, "\n%d unresolved value(s) — review before applying %s\n", len(unresolved), *outPath)
+	if findings := len(unresolved) + len(collisions); findings > 0 {
+		fmt.Fprintf(os.Stderr, "\n%d finding(s) — review before applying %s\n", findings, *outPath)
 		os.Exit(2)
 	}
 	fmt.Println("no findings; every created_by value resolved.")
@@ -210,30 +226,50 @@ SELECT id, created_by FROM risk_evidence WHERE created_by LIKE '%@%' ORDER BY id
 	return b.String()
 }
 
-func sqlEscape(s string) string { return strings.ReplaceAll(s, "'", "''") }
+// sqlEscape doubles single quotes and backslashes — MySQL treats `\` as an
+// escape character inside a string literal unless NO_BACKSLASH_ESCAPES is
+// set, so a value ending in one would otherwise escape the closing quote.
+func sqlEscape(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	return strings.ReplaceAll(s, "'", "''")
+}
 
 var commentLineBreaks = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ")
 
 func sqlComment(s string) string { return commentLineBreaks.Replace(s) }
 
-func renderReport(unresolved []string, rewritten, total int, domain string) string {
+func renderReport(unresolved, collisions []string, rewritten, total int, domain string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "EVIDENCE ACTOR BACKFILL REPORT — %s\n\n", time.Now().Format(time.RFC3339))
 	fmt.Fprintf(&b, "%d of %d distinct created_by value(s) resolved to a uuid.\n\n", rewritten, total)
 
-	fmt.Fprintf(&b, "── NOT FOUND IN DIRECTORY (%d) ──\n", len(unresolved))
-	fmt.Fprintf(&b, "  No uuid could be resolved, so created_by stays an email for these rows.\n"+
-		"  The original uploader loses self-delete on them (admin override still\n"+
-		"  works). Fix: confirm they have an Asgardeo account under %q, widen\n"+
-		"  -domain, or accept it.\n", domain)
-	if len(unresolved) == 0 {
-		b.WriteString("  (none)\n")
-		return b.String()
+	section := func(title, why string, items []string) {
+		fmt.Fprintf(&b, "── %s (%d) ──\n%s\n", title, len(items), why)
+		if len(items) == 0 {
+			b.WriteString("  (none)\n\n")
+			return
+		}
+		sort.Strings(items)
+		for _, s := range items {
+			fmt.Fprintf(&b, "  - %s\n", s)
+		}
+		b.WriteString("\n")
 	}
-	sort.Strings(unresolved)
-	for _, u := range unresolved {
-		fmt.Fprintf(&b, "  - %s\n", u)
-	}
+
+	section("NOT FOUND IN DIRECTORY",
+		fmt.Sprintf("  No uuid could be resolved, so created_by stays an email for these rows.\n"+
+			"  The original uploader loses self-delete on them (admin override still\n"+
+			"  works). Fix: confirm they have an Asgardeo account under %q, widen\n"+
+			"  -domain, or accept it.", domain),
+		unresolved)
+
+	section("AMBIGUOUS IN DIRECTORY",
+		"  NO REWRITE WAS EMITTED for this created_by value. The directory\n"+
+			"  returned two different ids for the same email, so there was no single\n"+
+			"  uuid to rewrite it to. Usually a stale or duplicate Asgardeo account.\n"+
+			"  Fix: resolve the duplicate in Asgardeo, then re-run.",
+		collisions)
+
 	return b.String()
 }
 

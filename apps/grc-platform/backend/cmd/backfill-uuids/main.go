@@ -94,13 +94,15 @@ func main() {
 	reportPath := flag.String("report", "backfill_uuids_report.txt", "file to write the anomaly report to")
 	scimTimeout := flag.Duration("scim-timeout", 90*time.Second,
 		"per-request timeout for SCIM calls; the service cold starts, so allow well over an interactive budget")
+	timeout := flag.Duration("timeout", 5*time.Minute,
+		"overall run deadline; every SCIM page and the entity load share this budget, so it must stay generous relative to -scim-timeout or a slow run can be cut off before -scim-timeout's own allowance is used")
 	flag.Parse()
 
 	if strings.TrimSpace(*domain) == "" {
 		fatal("-domain must not be empty")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
 	entityURL := mustEnv("COMPLIANCE_ENTITY_BASE_URL")
@@ -131,9 +133,14 @@ func main() {
 	fmt.Printf("directory search under %q returned %d user(s)\n", *domain, len(directoryUsers))
 
 	uuidByEmail := make(map[string]string)
+	// ambiguousEmails marks an email the directory itself disagrees about, so
+	// a later entry can never re-populate uuidByEmail for it — emitting a row
+	// keyed on any of the candidate ids would silently pick a winner, the same
+	// thing the reverse-collision handling below refuses to do.
+	ambiguousEmails := make(map[string]bool)
 	for _, du := range directoryUsers {
 		key := strings.ToLower(strings.TrimSpace(du.Email))
-		if key == "" {
+		if key == "" || ambiguousEmails[key] {
 			continue
 		}
 		if du.UUID == "" {
@@ -144,6 +151,8 @@ func main() {
 		if prev, ok := uuidByEmail[key]; ok && prev != du.UUID {
 			found.collisions = append(found.collisions,
 				fmt.Sprintf("%s — directory returned two different ids: %s and %s", du.Email, du.UUID, prev))
+			delete(uuidByEmail, key)
+			ambiguousEmails[key] = true
 			continue
 		}
 		uuidByEmail[key] = du.UUID
@@ -274,10 +283,15 @@ ORDER  BY email;
 	return b.String()
 }
 
-// sqlEscape doubles single quotes. Inputs are emails and ids from your own
-// directory, but a generated .sql file that someone will run as root is not the
-// place to assume that.
-func sqlEscape(s string) string { return strings.ReplaceAll(s, "'", "''") }
+// sqlEscape doubles single quotes and backslashes. Inputs are emails and ids
+// from your own directory, but a generated .sql file that someone will run as
+// root is not the place to assume that — and MySQL treats `\` as an escape
+// character inside a string literal unless NO_BACKSLASH_ESCAPES is set, so a
+// value ending in one would otherwise escape the closing quote.
+func sqlEscape(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	return strings.ReplaceAll(s, "'", "''")
+}
 
 // sqlComment neutralises line terminators so a value can never break out of a
 // single-line `--` comment. Separate from sqlEscape: a raw newline inside a
