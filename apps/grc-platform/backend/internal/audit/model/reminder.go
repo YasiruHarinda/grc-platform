@@ -53,6 +53,6 @@ type ReminderItem struct {
 	// job.claimer.Claim succeeds, and used only by that same job to release
 	// the claim (delete the row) if the owner's digest send then fails, so
 	// the item is retried on a future run instead of staying claimed forever
-	// with nothing sent. See docs/new/Reminder-Notification-Atomic-Claim-Design.md.
+	// with nothing sent.
 	NotificationID int64
 }

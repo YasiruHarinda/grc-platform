@@ -210,7 +210,7 @@ type AssignmentRepository interface{}
 type NotificationRepository interface {
 	// Create logs one sent email. Called only after a successful send — used
 	// by every notification type except the reminder tiers, which use
-	// Claim/ReleaseClaim instead (see docs/new/Reminder-Notification-Atomic-Claim-Design.md).
+	// Claim/ReleaseClaim instead.
 	Create(ctx context.Context, n model.NotificationLogEntry) error
 	// Claim atomically reserves a (recipient, type, control/population, due
 	// date) reminder item — the insert succeeding IS the de-dup decision.

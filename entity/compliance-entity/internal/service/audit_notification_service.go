@@ -46,8 +46,7 @@ var validNotificationTypes = map[string]bool{
 
 // validReminderTypes is the subset of validNotificationTypes that claim/
 // release apply to — the other five types are single-event triggers with no
-// overlapping-run problem to guard against (see
-// docs/new/Reminder-Notification-Atomic-Claim-Design.md §1).
+// overlapping-run problem to guard against.
 var validReminderTypes = map[string]bool{
 	"REMINDER_DUE_10":  true,
 	"REMINDER_DUE_5":   true,

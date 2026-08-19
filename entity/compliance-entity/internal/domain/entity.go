@@ -1416,9 +1416,9 @@ type CreateAuditNotificationRequest struct {
 // ClaimAuditNotificationRequest is the payload for POST
 // /audit/notifications/claim — the reminder job's atomic de-dup claim. The
 // insert this triggers either succeeds (caller now owns sending this item) or
-// collides on uq_notif_reminder_dedup (someone else already claimed it) — see
-// docs/new/Reminder-Notification-Atomic-Claim-Design.md. Type must be one of
-// the three REMINDER_* values; this is not a general-purpose insert.
+// collides on uq_notif_reminder_dedup (someone else already claimed it). Type
+// must be one of the three REMINDER_* values; this is not a general-purpose
+// insert.
 type ClaimAuditNotificationRequest struct {
 	RecipientID     int     `json:"recipientId"`
 	AuditID         *int    `json:"auditId"`

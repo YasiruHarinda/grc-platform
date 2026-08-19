@@ -518,8 +518,7 @@ func TestRunOnceRejectsOverlappingRun(t *testing.T) {
 func TestRunOnceReleasesClaimOnFailedSend(t *testing.T) {
 	// A claimed item whose digest send then fails must give up its claim, so
 	// a later run can retry it instead of it staying claimed forever with
-	// nothing ever sent — see
-	// docs/new/Reminder-Notification-Atomic-Claim-Design.md §3-4.
+	// nothing ever sent.
 	today := time.Now().UTC()
 	dueSoon := today.AddDate(0, 0, 10).Format("2006-01-02")
 
@@ -555,8 +554,7 @@ func TestRunOnceSkipsItemOnClaimErrorFailClosed(t *testing.T) {
 	// A Claim call that errors (e.g. the entity is unreachable) must skip the
 	// item for this run rather than sending anyway — a deliberate change from
 	// the old Exists-based check's fail-open behavior, since a failed claim
-	// call can't tell the run whether it actually holds the claim. See
-	// docs/new/Reminder-Notification-Atomic-Claim-Design.md §5.
+	// call can't tell the run whether it actually holds the claim.
 	today := time.Now().UTC()
 	dueSoon := today.AddDate(0, 0, 5).Format("2006-01-02")
 

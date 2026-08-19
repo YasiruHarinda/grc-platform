@@ -92,9 +92,8 @@ func (d *Deps) notifyAuditEvent(ev emailer.AuditEvent, ownerUserID int, info ema
 //
 // skipLog is true only for the reminder job's own call
 // (SendReminderDigestSync): its items are already logged by the job's own
-// Claim, before the send was even attempted (see
-// docs/new/Reminder-Notification-Atomic-Claim-Design.md) — logging again here
-// would insert a second row and collide with uq_notif_reminder_dedup.
+// Claim, before the send was even attempted — logging again here would
+// insert a second row and collide with uq_notif_reminder_dedup.
 func (d *Deps) sendAuditEventSync(ctx context.Context, ev emailer.AuditEvent, ownerUserID int, info emailer.AuditEventInfo, logItems []notificationLogItem, skipLog bool) (err error) {
 	select {
 	case notifySem <- struct{}{}:
@@ -256,9 +255,8 @@ func (d *Deps) auditName(ctx context.Context, auditID int) string {
 //
 // Unlike every other notify path, this does NOT write audit_notification rows
 // on success — each item was already logged by the job's own atomic Claim,
-// before this function was even called (see
-// docs/new/Reminder-Notification-Atomic-Claim-Design.md). Logging again here
-// would insert a second row per item and collide with uq_notif_reminder_dedup.
+// before this function was even called. Logging again here would insert a
+// second row per item and collide with uq_notif_reminder_dedup.
 func (d *Deps) SendReminderDigestSync(ctx context.Context, ownerUserID int, items []model.ReminderItem) error {
 	if len(items) == 0 {
 		return nil

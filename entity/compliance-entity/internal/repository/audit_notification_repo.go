@@ -29,8 +29,7 @@ import (
 type AuditNotificationRepository interface {
 	CreateAuditNotification(ctx context.Context, req domain.CreateAuditNotificationRequest) (*domain.AuditNotification, error)
 	// ClaimAuditNotification is the reminder job's atomic de-dup claim — see
-	// audit_schema.sql's audit_notification comment and
-	// docs/new/Reminder-Notification-Atomic-Claim-Design.md.
+	// audit_schema.sql's audit_notification comment.
 	ClaimAuditNotification(ctx context.Context, req domain.ClaimAuditNotificationRequest) (*domain.AuditNotification, bool, error)
 	// ReleaseAuditNotificationClaim deletes a claim row so its item becomes
 	// retryable on a future run — used only when the owner's digest failed to

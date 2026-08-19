@@ -488,10 +488,10 @@ DEALLOCATE PREPARE add_trail_overridden_stmt;
 -- Also the de-dup mechanism for the daily reminder job (REMINDER_DUE_10 /
 -- REMINDER_DUE_5 / REMINDER_OVERDUE): the job atomically CLAIMS an item by
 -- inserting its row *before* sending — the insert's success or failure IS the
--- de-dup decision (see docs/new/Reminder-Notification-Atomic-Claim-Design.md)
--- — rather than checking-then-writing, which left a window for two overlapping
--- runs (e.g. two backend replicas both waking at the daily reminder hour) to
--- both observe "not sent yet" and both send. A failed send deletes its claim
+-- de-dup decision — rather than checking-then-writing, which left a window
+-- for two overlapping runs (e.g. two backend replicas both waking at the
+-- daily reminder hour) to both observe "not sent yet" and both send. A
+-- failed send deletes its claim
 -- row so the item is retried on the next run.
 --
 -- reminder_dedup_key makes that insert collide correctly. A plain

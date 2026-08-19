@@ -55,8 +55,7 @@ func (h *AuditNotificationHandler) CreateAuditNotification(w http.ResponseWriter
 // ClaimAuditNotification handles POST /audit/notifications/claim — the
 // reminder job's atomic de-dup claim. POST-with-body (rather than
 // GET-with-query) since it has five filter fields, two of them nullable
-// ints. Losing the race (claimed=false) is a normal 200, not an error — see
-// docs/new/Reminder-Notification-Atomic-Claim-Design.md.
+// ints. Losing the race (claimed=false) is a normal 200, not an error.
 func (h *AuditNotificationHandler) ClaimAuditNotification(w http.ResponseWriter, r *http.Request) {
 	var req domain.ClaimAuditNotificationRequest
 	if !decodeRequest(w, r, &req) {

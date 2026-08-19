@@ -46,9 +46,9 @@ type controlLister interface {
 // claimer is the reminder job's own de-dup gate — structurally satisfied by
 // auditservice.NotificationService.Claim/ReleaseClaim without this package
 // importing that package. The insert Claim triggers is the atomic de-dup
-// decision (see docs/new/Reminder-Notification-Atomic-Claim-Design.md);
-// ReleaseClaim undoes it when the owner's digest then fails to send, so the
-// item is retried on a future run instead of staying claimed forever.
+// decision; ReleaseClaim undoes it when the owner's digest then fails to
+// send, so the item is retried on a future run instead of staying claimed
+// forever.
 type claimer interface {
 	Claim(ctx context.Context, recipientID, auditID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (claimed bool, notificationID int64, err error)
 	ReleaseClaim(ctx context.Context, notificationID int64) error
@@ -82,8 +82,7 @@ type ReminderJob struct {
 	// manual-trigger endpoint (handler.reminderJobHandler.run) both end up
 	// calling runOnce on this same instance. This guards a same-process
 	// overlap cheaply; claimer's DB-level unique constraint is what makes the
-	// de-dup correct across processes/replicas too — see
-	// docs/new/Reminder-Notification-Atomic-Claim-Design.md.
+	// de-dup correct across processes/replicas too.
 	running atomic.Bool
 }
 
@@ -314,8 +313,7 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 			// with nothing ever sent, silently starving that owner of
 			// reminders. If the release itself fails, the claim IS stuck: log
 			// loud (Error, not Warn) since this is the one failure mode this
-			// mechanism doesn't self-heal from — see
-			// docs/new/Reminder-Notification-Atomic-Claim-Design.md §4.
+			// mechanism doesn't self-heal from.
 			for _, it := range items {
 				if relErr := j.claim.ReleaseClaim(ctx, it.NotificationID); relErr != nil {
 					slog.Error("reminder job: failed to release claim after failed send — item will NOT retry until this is fixed",

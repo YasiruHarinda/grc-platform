@@ -33,9 +33,8 @@ type NotificationService interface {
 	// by every notification type except the reminder tiers, which use
 	// Claim/ReleaseClaim instead.
 	Create(ctx context.Context, n model.NotificationLogEntry) error
-	// Claim atomically reserves a reminder item — see
-	// docs/new/Reminder-Notification-Atomic-Claim-Design.md. claimed=false
-	// means another caller already claimed it; not an error.
+	// Claim atomically reserves a reminder item. claimed=false means another
+	// caller already claimed it; not an error.
 	Claim(ctx context.Context, recipientID, auditID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (claimed bool, notificationID int64, err error)
 	// ReleaseClaim deletes a claim row so its item is retryable on a future
 	// run — called only when the owner's digest failed to send after the
