@@ -1420,6 +1420,17 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setTab(0);
   }, [control?.id]);
+
+  // Clear any pending override dialog target and mutation state whenever the
+  // drawer closes or a different control is opened, so a stale target or a
+  // leftover error/pending state from the previous control never carries
+  // over into the next one.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOverrideTarget(null);
+    overrideStatus.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [control?.id, open]);
   // Use local override only when it belongs to the currently open control
   const displayStatus =
     localStatus !== null && control !== null && localStatus.id === control.id
@@ -1835,7 +1846,10 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
         isPending={overrideStatus.isPending}
         error={overrideStatus.isError ? (overrideStatus.error as Error).message : null}
         onConfirm={handleConfirmOverride}
-        onClose={() => setOverrideTarget(null)}
+        onClose={() => {
+          setOverrideTarget(null);
+          overrideStatus.reset();
+        }}
       />
     </Drawer>
   );
