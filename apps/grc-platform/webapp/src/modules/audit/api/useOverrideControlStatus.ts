@@ -21,6 +21,7 @@ import { controlsQueryKey } from "@modules/audit/api/useGetControls";
 import { auditQueryKey } from "@modules/audit/api/useGetAudit";
 import { evidenceQueryKey } from "@modules/audit/api/useGetEvidence";
 import { populationQueryKey } from "@modules/audit/api/useGetPopulation";
+import { trailQueryKey } from "@modules/audit/api/useGetTrail";
 import type { ControlStatus } from "@modules/audit/types/audit";
 
 interface OverrideStatusPayload {
@@ -61,6 +62,7 @@ export function useOverrideControlStatus() {
       // invalidating evidenceQueryKey on their own reject path.
       void queryClient.invalidateQueries({ queryKey: evidenceQueryKey(auditId, controlId) });
       void queryClient.invalidateQueries({ queryKey: populationQueryKey(auditId, controlId) });
+      void queryClient.invalidateQueries({ queryKey: trailQueryKey(auditId, controlId) });
     },
   });
 }
