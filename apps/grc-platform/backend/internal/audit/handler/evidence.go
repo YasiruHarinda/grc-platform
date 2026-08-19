@@ -18,6 +18,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"mime"
@@ -26,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/apierror"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
@@ -700,9 +702,16 @@ func (h *evidenceHandler) reconcileAfterDelete(ctx context.Context, auditID, con
 
 	round, err := h.svc.LatestRound(ctx, auditID, controlID)
 	if err != nil {
-		return "", err
+		// Deleting the control's only round leaves nothing for LatestRound to
+		// find (a 404, not a real failure) — that's the same "no evidence
+		// left" state as an empty round, not an error to surface.
+		var apiErr *apierror.Error
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+			return "", err
+		}
+		round = nil
 	}
-	if len(round.Files) > 0 {
+	if round != nil && (len(round.Files) > 0 || round.Attestation != "") {
 		return control.Status, nil
 	}
 
