@@ -131,7 +131,13 @@ LEFT JOIN ` + "`user`" + ` u_owner ON u_owner.id = c.owner_id
 LEFT JOIN audit_team t            ON t.id          = c.team_id
 LEFT JOIN ` + "`user`" + ` u_aud   ON u_aud.id     = c.auditor_id
 LEFT JOIN audit_population p      ON p.control_id  = c.id
-    AND p.id = (SELECT MIN(id) FROM audit_population WHERE control_id = c.id)
+    -- Highest id = current round, matching FindActivePopulation/
+    -- demotePopulationRound/controlService.Update's own "most recent round"
+    -- convention elsewhere in this module — not MIN(id), which would pin
+    -- every consumer (control list/detail, the reminder sweep) to a
+    -- control's very first population round forever, ignoring any
+    -- resubmission cycle.
+    AND p.id = (SELECT MAX(id) FROM audit_population WHERE control_id = c.id)
 LEFT JOIN ` + "`user`" + ` u_pop_owner ON u_pop_owner.id = p.owner_id
 LEFT JOIN audit_team pop_team         ON pop_team.id     = p.team_id`
 
