@@ -90,7 +90,11 @@ func (d *Deps) notifyAuditEvent(ev emailer.AuditEvent, ownerUserID int, info ema
 // per-recipient success to count run-level failures, and a fire-and-forget
 // send there could silently under-deliver a whole day's digest run.
 func (d *Deps) sendAuditEventSync(ctx context.Context, ev emailer.AuditEvent, ownerUserID int, info emailer.AuditEventInfo, logItems []notificationLogItem) (err error) {
-	notifySem <- struct{}{}
+	select {
+	case notifySem <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	defer func() { <-notifySem }()
 	defer func() {
 		if p := recover(); p != nil {
