@@ -465,50 +465,66 @@ func (d *Deps) notifyControlComplete(ctx context.Context, control *model.AuditCo
 // the owner check — every role resolveAdminIDs resolves also holds
 // AUDIT_VIEW_INTERNAL_COMMENTS (see shared_seed_data.sql). The comment's own
 // author never gets a copy of their own comment.
-func (d *Deps) notifyCommentAdded(ctx context.Context, control *model.AuditControl, comment *model.AuditComment, actor string) {
-	// internalViewers is nil for a non-internal comment (no restriction
-	// needed). For an internal comment it is the set of user IDs allowed to
-	// see it; a lookup failure fails closed to an empty set rather than
-	// risking a leak.
-	var internalViewers map[int]bool
-	if comment.IsInternal && d.Grants != nil {
-		internalViewers = map[int]bool{}
-		if candidates, err := d.Grants.Candidates(ctx, privilege.ViewInternalComments, nil); err == nil {
-			for _, c := range candidates {
-				internalViewers[c.ID] = true
+//
+// Recipient resolution (internal-viewer/admin Candidates lookups, the actor
+// lookup, and controlEventInfo's own DB calls) all run inside the goroutine,
+// detached from the request context, for the same reason notifyAuditEvent
+// runs detached: it must survive past the handler returning, and addComment
+// must not block the response on it.
+func (d *Deps) notifyCommentAdded(reqCtx context.Context, control *model.AuditControl, comment *model.AuditComment, actor string) {
+	go func() {
+		defer func() {
+			if p := recover(); p != nil {
+				slog.Error("audit notification: panic", "event", emailer.AuditEventCommentAdded, "controlId", control.ID, "panic", p)
 			}
-		} else {
-			slog.Warn("audit notification: failed to resolve internal-comment viewers", "err", err)
-		}
-	}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), notifyTimeout)
+		defer cancel()
 
-	recipients := map[int]bool{}
-	addOwner := func(id *int) {
-		if id == nil || (internalViewers != nil && !internalViewers[*id]) {
+		// internalViewers is nil for a non-internal comment (no restriction
+		// needed). For an internal comment it is the set of user IDs allowed
+		// to see it; a lookup failure fails closed to an empty set rather
+		// than risking a leak.
+		var internalViewers map[int]bool
+		if comment.IsInternal && d.Grants != nil {
+			internalViewers = map[int]bool{}
+			if candidates, err := d.Grants.Candidates(ctx, privilege.ViewInternalComments, nil); err == nil {
+				for _, c := range candidates {
+					internalViewers[c.ID] = true
+				}
+			} else {
+				slog.Warn("audit notification: failed to resolve internal-comment viewers", "err", err)
+			}
+		}
+
+		recipients := map[int]bool{}
+		addOwner := func(id *int) {
+			if id == nil || (internalViewers != nil && !internalViewers[*id]) {
+				return
+			}
+			recipients[*id] = true
+		}
+		addOwner(control.OwnerID)
+		addOwner(control.PopulationOwnerID)
+		if !comment.IsInternal && control.AuditorID != nil {
+			recipients[*control.AuditorID] = true
+		}
+		for _, id := range d.resolveAdminIDs(ctx, emailer.AuditEventCommentAdded) {
+			recipients[id] = true
+		}
+
+		if actorUser, err := d.Users.GetByEmail(ctx, actor); err == nil && actorUser != nil {
+			delete(recipients, actorUser.ID)
+		}
+		if len(recipients) == 0 {
 			return
 		}
-		recipients[*id] = true
-	}
-	addOwner(control.OwnerID)
-	addOwner(control.PopulationOwnerID)
-	if !comment.IsInternal && control.AuditorID != nil {
-		recipients[*control.AuditorID] = true
-	}
-	for _, id := range d.resolveAdminIDs(ctx, emailer.AuditEventCommentAdded) {
-		recipients[id] = true
-	}
 
-	if actorUser, err := d.Users.GetByEmail(ctx, actor); err == nil && actorUser != nil {
-		delete(recipients, actorUser.ID)
-	}
-	if len(recipients) == 0 {
-		return
-	}
-
-	info := d.controlEventInfo(ctx, control, actor, "", "")
-	info.Comment = comment.Content
-	for id := range recipients {
-		logItems := []notificationLogItem{{AuditID: &control.AuditID, Type: "COMMENT_ADDED", ControlID: &control.ID}}
-		d.notifyAuditEvent(emailer.AuditEventCommentAdded, id, info, logItems)
-	}
+		info := d.controlEventInfo(ctx, control, actor, "", "")
+		info.Comment = comment.Content
+		for id := range recipients {
+			logItems := []notificationLogItem{{AuditID: &control.AuditID, Type: "COMMENT_ADDED", ControlID: &control.ID}}
+			d.notifyAuditEvent(emailer.AuditEventCommentAdded, id, info, logItems)
+		}
+	}()
 }
