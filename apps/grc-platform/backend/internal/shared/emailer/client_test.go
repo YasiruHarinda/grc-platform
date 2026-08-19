@@ -145,9 +145,41 @@ func TestEveryRiskEventHasATemplate(t *testing.T) {
 		if tpl.lead == "" {
 			t.Errorf("event %q has an empty lead sentence", ev)
 		}
-		if got := tpl.subject(RiskEventInfo{RiskCode: "R-1", RiskTitle: "T"}); got == "" {
-			t.Errorf("event %q produced an empty subject", ev)
+	}
+}
+
+// TestSubjectIsSameAcrossEvents guards the threading property the shared
+// subject exists for: every event about the same risk must produce the exact
+// same subject line, or a recipient's emails about that risk stop grouping
+// into one thread in their mail client (Gmail/Outlook both thread on an exact
+// subject match when there is no Message-ID chain to follow — see
+// eventTemplate's doc comment).
+func TestSubjectIsSameAcrossEvents(t *testing.T) {
+	info := RiskEventInfo{RiskCode: "R-1", RiskTitle: "T"}
+	var subjects []string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Subject string `json:"subject"`
 		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		subjects = append(subjects, body.Subject)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"message":"ok"}`))
+	})
+
+	for ev := range eventTemplates {
+		if err := c.SendRiskEvent(context.Background(), ev, []string{"a@b.com"}, info); err != nil {
+			t.Fatalf("SendRiskEvent(%q): %v", ev, err)
+		}
+	}
+	for _, s := range subjects {
+		if s != subjects[0] {
+			t.Errorf("subject %q differs from %q; every event must share one subject per risk", s, subjects[0])
+		}
+	}
+	want := "[GRC Platform] R-1 - T"
+	if subjects[0] != want {
+		t.Errorf("subject = %q, want %q", subjects[0], want)
 	}
 }
 
