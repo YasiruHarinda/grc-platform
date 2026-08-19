@@ -29,8 +29,29 @@ import (
 
 const pageLimit = 100 // entity maxLimit; List methods page through all results.
 
+// pageBody is used only by the unscoped List() methods (auditRepo, controlRepo)
+// that back internal existence/uniqueness checks (checkNameAvailable,
+// sanitizedControlNumbers) and must see every row regardless of caller
+// identity. The entity service no longer treats an omitted "scope" as
+// unrestricted — it denies by default — so ScopeAll must be sent explicitly.
 func pageBody(offset int) map[string]any {
-	return map[string]any{"pagination": map[string]int{"limit": pageLimit, "offset": offset}}
+	return map[string]any{
+		"scope":      model.ScopeAll,
+		"pagination": map[string]int{"limit": pageLimit, "offset": offset},
+	}
+}
+
+// statusActive is the only status these list endpoints should show — mirrors
+// internal/user/entity/repository.go's statusActive. Every search endpoint
+// here treats an omitted statusKey as "all statuses", so callers that want
+// only ACTIVE rows (dropdowns, catalogs) must send it explicitly.
+const statusActive = "ACTIVE"
+
+func activeStatusPageBody(offset int) map[string]any {
+	return map[string]any{
+		"statusKey":  statusActive,
+		"pagination": map[string]int{"limit": pageLimit, "offset": offset},
+	}
 }
 
 // ── Frameworks ────────────────────────────────────────────────────────────────
@@ -42,13 +63,20 @@ func NewFrameworkRepository(c *entityclient.Client) repository.FrameworkReposito
 	return &frameworkRepo{c: c}
 }
 
-func (r *frameworkRepo) List(ctx context.Context) ([]*model.AuditFramework, error) {
+func (r *frameworkRepo) List(ctx context.Context, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.AuditFramework, error) {
 	var all []*model.AuditFramework
 	for offset := 0; ; offset += pageLimit {
 		var resp struct {
 			Frameworks []*model.AuditFramework `json:"frameworks"`
 		}
-		if err := r.c.Post(ctx, "/audit/frameworks/search", pageBody(offset), &resp); err != nil {
+		body := map[string]any{
+			"statusKey":    statusActive,
+			"scope":        scope,
+			"userEmail":    userEmail,
+			"scopeTeamIds": scopeTeamIDs,
+			"pagination":   map[string]int{"limit": pageLimit, "offset": offset},
+		}
+		if err := r.c.Post(ctx, "/audit/frameworks/search", body, &resp); err != nil {
 			return nil, err
 		}
 		all = append(all, resp.Frameworks...)
@@ -93,7 +121,7 @@ func (r *productRepo) List(ctx context.Context) ([]*model.AuditProduct, error) {
 		var resp struct {
 			Products []*model.AuditProduct `json:"products"`
 		}
-		if err := r.c.Post(ctx, "/audit/products/search", pageBody(offset), &resp); err != nil {
+		if err := r.c.Post(ctx, "/audit/products/search", activeStatusPageBody(offset), &resp); err != nil {
 			return nil, err
 		}
 		all = append(all, resp.Products...)
@@ -138,7 +166,7 @@ func (r *userRepo) List(ctx context.Context) ([]*model.UserRef, error) {
 		var resp struct {
 			Users []*model.UserRef `json:"users"`
 		}
-		if err := r.c.Post(ctx, "/users/search", pageBody(offset), &resp); err != nil {
+		if err := r.c.Post(ctx, "/users/search", activeStatusPageBody(offset), &resp); err != nil {
 			return nil, err
 		}
 		all = append(all, resp.Users...)
@@ -163,7 +191,7 @@ func (r *teamRepo) List(ctx context.Context) ([]*model.AuditTeam, error) {
 		var resp struct {
 			Teams []*model.AuditTeam `json:"teams"`
 		}
-		if err := r.c.Post(ctx, "/audit/teams/search", pageBody(offset), &resp); err != nil {
+		if err := r.c.Post(ctx, "/audit/teams/search", activeStatusPageBody(offset), &resp); err != nil {
 			return nil, err
 		}
 		all = append(all, resp.Teams...)

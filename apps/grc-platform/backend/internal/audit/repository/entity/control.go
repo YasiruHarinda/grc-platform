@@ -55,6 +55,51 @@ func (r *controlRepo) List(ctx context.Context, auditID int) ([]*model.AuditCont
 	}
 }
 
+func (r *controlRepo) ListScoped(ctx context.Context, auditID int, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.AuditControl, error) {
+	var all []*model.AuditControl
+	path := fmt.Sprintf("/audits/%d/controls/search", auditID)
+	for offset := 0; ; offset += pageLimit {
+		var resp struct {
+			Controls []*model.AuditControl `json:"controls"`
+		}
+		body := map[string]any{
+			"scope":        scope,
+			"userEmail":    userEmail,
+			"scopeTeamIds": scopeTeamIDs,
+			"pagination":   map[string]int{"limit": pageLimit, "offset": offset},
+		}
+		if err := r.c.Post(ctx, path, body, &resp); err != nil {
+			return nil, err
+		}
+		all = append(all, resp.Controls...)
+		if len(resp.Controls) < pageLimit {
+			r.enrichPopulations(ctx, auditID, all)
+			return all, nil
+		}
+	}
+}
+
+// InScope reports whether controlID is visible to userEmail at scope, by
+// reusing /audits/{auditId}/controls/search (the same scoped query ListScoped
+// uses) filtered to just this one control id — avoids a bespoke endpoint for
+// what is otherwise the same check.
+func (r *controlRepo) InScope(ctx context.Context, auditID, controlID int, scope model.Scope, userEmail string, scopeTeamIDs []int) (bool, error) {
+	var resp struct {
+		Controls []*model.AuditControl `json:"controls"`
+	}
+	body := map[string]any{
+		"controlIds":   []int{controlID},
+		"scope":        scope,
+		"userEmail":    userEmail,
+		"scopeTeamIds": scopeTeamIDs,
+		"pagination":   map[string]int{"limit": 1, "offset": 0},
+	}
+	if err := r.c.Post(ctx, fmt.Sprintf("/audits/%d/controls/search", auditID), body, &resp); err != nil {
+		return false, err
+	}
+	return len(resp.Controls) > 0, nil
+}
+
 func (r *controlRepo) GetByID(ctx context.Context, auditID, controlID int) (*model.AuditControl, error) {
 	var c model.AuditControl
 	if err := r.c.Get(ctx, fmt.Sprintf("/audits/%d/controls/%d", auditID, controlID), &c); err != nil {
@@ -189,17 +234,6 @@ func (r *controlRepo) UpdateStatusWithSample(ctx context.Context, auditID, contr
 
 func (r *controlRepo) Delete(ctx context.Context, auditID, controlID int) error {
 	return r.c.Delete(ctx, fmt.Sprintf("/audits/%d/controls/%d", auditID, controlID))
-}
-
-func (r *controlRepo) ListAssignedForEvidence(ctx context.Context, userEmail string) ([]*model.AssignedControlForEvidence, error) {
-	var resp struct {
-		Controls []*model.AssignedControlForEvidence `json:"controls"`
-	}
-	path := "/controls/assigned-for-evidence?email=" + url.QueryEscape(userEmail)
-	if err := r.c.Get(ctx, path, &resp); err != nil {
-		return nil, err
-	}
-	return resp.Controls, nil
 }
 
 func (r *controlRepo) AssignedAuditID(ctx context.Context, userEmail string, controlID int) (int, bool, error) {

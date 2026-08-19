@@ -114,9 +114,19 @@ type AuditFramework struct {
 
 // SearchAuditFrameworksRequest is the payload for POST /audit/frameworks/search.
 type SearchAuditFrameworksRequest struct {
-	SearchQuery string     `json:"searchQuery"`
-	StatusKey   string     `json:"statusKey"` // ACTIVE | INACTIVE | "" (all)
-	Pagination  Pagination `json:"pagination"`
+	SearchQuery string `json:"searchQuery"`
+	StatusKey   string `json:"statusKey"` // ACTIVE | INACTIVE | "" (all)
+	// Scope/UserEmail apply the same row-scoping rule as controls/audits (see
+	// audit_dashboard_repo.go's scopeWhere): a framework has no team of its own,
+	// so it matches when it has at least one audit with at least one control in
+	// scope. Omitted/empty Scope matches nothing; internal callers that want
+	// every row must send ScopeAll explicitly.
+	Scope     Scope  `json:"scope"`
+	UserEmail string `json:"userEmail"`
+	// ScopeTeamIDs is the team(s) the caller manages, server-derived by the GRC
+	// backend from the caller's grants. Only read when Scope is ScopeTeam.
+	ScopeTeamIDs []int      `json:"scopeTeamIds"`
+	Pagination   Pagination `json:"pagination"`
 }
 
 // SearchAuditFrameworksResponse is returned by POST /audit/frameworks/search.
@@ -135,8 +145,7 @@ type SearchAuditFrameworksResponse struct {
 // `audit_framework_control` reference catalog. A control number's current row
 // (is_current=TRUE) can be edited in place (Create) or superseded with a new
 // version (NewVersion). audit_control never references this table by foreign
-// key — it's an independent, optional catalog (see
-// docs/new/Audit-Control-Framework-Optional-Design.md).
+// key — it's an independent, optional catalog.
 type AuditFrameworkControl struct {
 	ID                  int       `json:"id"`
 	FrameworkID         int       `json:"frameworkId"`
@@ -243,6 +252,20 @@ type SearchAuditsRequest struct {
 	StatusKeys   []string   `json:"statusKeys"`   // ACTIVE | COMPLETED | ARCHIVED | REMOVED
 	FrameworkIDs []int      `json:"frameworkIds"` // filter by one or more framework IDs
 	ProductIDs   []int      `json:"productIds"`   // filter by one or more product IDs
+	// AuditIDs restricts to specific audit ids — used by the GRC Backend's
+	// single-item scope check (is auditId visible to this caller at this
+	// scope?) so it can reuse this same query instead of a bespoke endpoint.
+	AuditIDs []int `json:"auditIds"`
+	// Scope/UserEmail apply the same row-scoping rule as the dashboard (see
+	// dashboard.go's Scope type and audit_dashboard_repo.go's scopeWhere): an
+	// audit matches only if it has at least one control within scope.
+	// Omitted/empty Scope matches nothing; internal callers that want every
+	// row (e.g. existence/uniqueness checks) must send ScopeAll explicitly.
+	Scope     Scope  `json:"scope"`
+	UserEmail string `json:"userEmail"`
+	// ScopeTeamIDs is the team(s) the caller manages, server-derived by the GRC
+	// backend from the caller's grants. Only read when Scope is ScopeTeam.
+	ScopeTeamIDs []int      `json:"scopeTeamIds"`
 	Pagination   Pagination `json:"pagination"`
 }
 
@@ -297,13 +320,27 @@ type AuditControl struct {
 
 // SearchControlsRequest is the payload for POST /audits/{auditId}/controls/search.
 type SearchControlsRequest struct {
-	SearchQuery      string     `json:"searchQuery"`
-	StatusKeys       []string   `json:"statusKeys"`       // control status values
-	RequirementTypes []string   `json:"requirementTypes"` // DESIGN | OE
-	TeamIDs          []int      `json:"teamIds"`
-	AuditorIDs       []int      `json:"auditorIds"` // filter by assigned auditor user IDs
-	OwnerIDs         []int      `json:"ownerIds"`   // filter by assigned owner user IDs
-	Pagination       Pagination `json:"pagination"`
+	SearchQuery      string   `json:"searchQuery"`
+	StatusKeys       []string `json:"statusKeys"`       // control status values
+	RequirementTypes []string `json:"requirementTypes"` // DESIGN | OE
+	TeamIDs          []int    `json:"teamIds"`
+	AuditorIDs       []int    `json:"auditorIds"` // filter by assigned auditor user IDs
+	OwnerIDs         []int    `json:"ownerIds"`   // filter by assigned owner user IDs
+	// ControlIDs restricts to specific control ids — used by the GRC Backend's
+	// single-item scope check (is controlId visible to this caller at this
+	// scope?) so it can reuse this same query instead of a bespoke endpoint.
+	ControlIDs []int `json:"controlIds"`
+	// Scope/UserEmail apply the same row-scoping rule as the dashboard (see
+	// dashboard.go's Scope type and audit_dashboard_repo.go's scopeWhere).
+	// Omitted/empty Scope matches nothing; internal callers that want every
+	// row must send ScopeAll explicitly.
+	Scope     Scope  `json:"scope"`
+	UserEmail string `json:"userEmail"`
+	// ScopeTeamIDs is the team(s) the caller manages, server-derived by the GRC
+	// backend from the caller's grants. Distinct from TeamIDs above, which is a
+	// client-supplied display filter — only read when Scope is ScopeTeam.
+	ScopeTeamIDs []int      `json:"scopeTeamIds"`
+	Pagination   Pagination `json:"pagination"`
 }
 
 // SearchControlsResponse is returned by POST /audits/{auditId}/controls/search.
@@ -312,31 +349,6 @@ type SearchControlsResponse struct {
 	Total    int            `json:"total"`
 	Limit    int            `json:"limit"`
 	Offset   int            `json:"offset"`
-}
-
-// AssignedControlForEvidence is a control a user's team must submit evidence for.
-// It is enriched with audit/product/framework so the Evidence Portal can render a
-// control without extra round-trips. The phase-aware base folder path is computed
-// by the GRC Backend (never trusted from a client), so it is not carried here.
-type AssignedControlForEvidence struct {
-	AuditID             int     `json:"auditId"`
-	AuditName           string  `json:"auditName"`
-	Product             string  `json:"product"`
-	Framework           string  `json:"framework"`
-	PeriodStart         string  `json:"periodStart"` // YYYY-MM-DD
-	PeriodEnd           string  `json:"periodEnd"`   // YYYY-MM-DD
-	ControlID           int     `json:"controlId"`
-	ControlNumber       string  `json:"controlNumber"`
-	Description         string  `json:"description"`
-	EvidenceRequirement *string `json:"evidenceRequirement"`
-	RequirementType     string  `json:"requirementType"` // DESIGN | OE
-	Status              string  `json:"status"`
-	DueDate             *string `json:"dueDate"` // YYYY-MM-DD
-}
-
-// ListAssignedControlsResponse is returned by GET /controls/assigned-for-evidence.
-type ListAssignedControlsResponse struct {
-	Controls []AssignedControlForEvidence `json:"controls"`
 }
 
 // EvidenceAssignmentResponse is returned by
@@ -744,8 +756,7 @@ type InlinePopulationRequest struct {
 // there is no framework-linked shape. PushToFramework optionally also writes
 // this control into the framework's catalog (audit_framework_control) as a
 // side effect: a first version if SourceFrameworkControlID is nil, or a new
-// version of that existing catalog control if it's set. See
-// docs/new/Audit-Control-Framework-Optional-Design.md §6.
+// version of that existing catalog control if it's set.
 type CreateControlRequest struct {
 	ControlSource       string                   `json:"controlSource"` // MANUAL | COPIED | CSV; defaults to MANUAL
 	ControlNumber       string                   `json:"controlNumber"`
@@ -831,6 +842,17 @@ type AuditEvidenceFile struct {
 	FileType     *string   `json:"fileType"`
 	FileSize     *int64    `json:"fileSize"`
 	CreatedOn    time.Time `json:"createdOn"`
+	// AuditorEmail is the email of the auditor assigned to the file's owning
+	// control (nil if the control has no auditor or the file has no evidence_id,
+	// e.g. a population file). Only populated by GetEvidenceFileByID, for the
+	// GRC Backend's assigned-auditor download gate — never persisted here.
+	AuditorEmail *string `json:"auditorEmail"`
+	// TeamID is the file's owning control's team_id (nil if the control has no
+	// team or the file has no evidence_id). Only populated by
+	// GetEvidenceFileByID, so the GRC Backend can authorize downloads against a
+	// team-scoped grant instead of an unscoped privilege union — never persisted
+	// here.
+	TeamID *int `json:"teamId"`
 }
 
 // CreateEvidenceFileRequest is the payload for POST /evidence/{evidenceId}/files.

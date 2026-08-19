@@ -15,7 +15,7 @@
 // under the License.
 
 import { Alert, Box, Button, CircularProgress, IconButton, Skeleton, Typography } from "@wso2/oxygen-ui";
-import { ExternalLink, FileText, Trash2 } from "@wso2/oxygen-ui-icons-react";
+import { Download, ExternalLink, FileText, Trash2 } from "@wso2/oxygen-ui-icons-react";
 import { useState, type JSX } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useGetEvidence, evidenceQueryKey } from "@modules/audit/api/useGetEvidence";
@@ -24,7 +24,7 @@ import { aiValidationQueryKey } from "@modules/audit/api/useGetAIValidation";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { formatTimestamp } from "@modules/audit/utils/format";
-import { viewOrDownloadBlob } from "@modules/audit/utils/fileView";
+import { downloadBlob, viewOrDownloadBlob } from "@modules/audit/utils/fileView";
 import { extractErrorMessage } from "@modules/audit/api/apiError";
 
 function sizeLabel(bytes: number | null): string {
@@ -67,6 +67,18 @@ export default function SubmittedEvidenceList({
       if (!res.ok) throw new Error(`Download failed (${res.status})`);
       const blob = await res.blob();
       viewOrDownloadBlob(blob, fileName);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : "Failed to download file");
+    }
+  }
+
+  async function handleDownload(readUrl: string, fileName: string): Promise<void> {
+    setDownloadError(null);
+    try {
+      const res = await authFetch(`${BACKEND_BASE_URL}${readUrl}`);
+      if (!res.ok) throw new Error(`Download failed (${res.status})`);
+      const blob = await res.blob();
+      downloadBlob(blob, fileName);
     } catch (err) {
       setDownloadError(err instanceof Error ? err.message : "Failed to download file");
     }
@@ -151,14 +163,24 @@ export default function SubmittedEvidenceList({
                 <Typography variant="caption" color="text.secondary">{sizeLabel(f.fileSize)}</Typography>
               )}
               {f.readUrl ? (
-                <Button
-                  size="small"
-                  onClick={() => { void handleView(f.readUrl as string, f.fileName); }}
-                  startIcon={<ExternalLink size={13} />}
-                  sx={{ textTransform: "none", minWidth: 0 }}
-                >
-                  View
-                </Button>
+                <>
+                  <Button
+                    size="small"
+                    onClick={() => { void handleView(f.readUrl as string, f.fileName); }}
+                    startIcon={<ExternalLink size={13} />}
+                    sx={{ textTransform: "none", minWidth: 0 }}
+                  >
+                    View
+                  </Button>
+                  <IconButton
+                    size="small"
+                    aria-label={`Download ${f.fileName}`}
+                    onClick={() => { void handleDownload(f.readUrl as string, f.fileName); }}
+                    sx={{ p: 0.5 }}
+                  >
+                    <Download size={14} />
+                  </IconButton>
+                </>
               ) : (
                 <Typography variant="caption" color="text.disabled">unavailable</Typography>
               )}

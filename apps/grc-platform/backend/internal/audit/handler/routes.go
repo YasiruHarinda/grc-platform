@@ -21,7 +21,6 @@ import (
 	"net/http"
 
 	auditservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
-	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/middleware"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/aiagent"
 )
 
@@ -57,15 +56,12 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	th := &teamHandler{svc: deps.Team}
 	dh := &dashboardHandler{svc: deps.Dashboard}
 	eh := &evidenceHandler{svc: deps.Evidence, controlSvc: deps.Control, popSvc: deps.Population, trailSvc: deps.Trail, aiClient: deps.AIAgent}
-	eah := &evidenceAppHandler{svc: deps.Evidence, controlSvc: deps.Control, popSvc: deps.Population, trailSvc: deps.Trail, aiClient: deps.AIAgent}
 	cmh := &commentHandler{svc: deps.Comment}
 	avh := &aiValidationHandler{svc: deps.AIValidation}
 
-	// Per-principal rate limiter for the Evidence Portal proxy group (design §4D):
-	// 10 req/s sustained, burst 20, keyed by authenticated email. Sits behind the
-	// Choreo gateway's perimeter throttling.
-	evidenceAppRL := middleware.NewRateLimiter(10, 20)
-	rl := evidenceAppRL.Wrap
+	// Current user (shared by both hubs — resolved privilege set unions RISK_*
+	// and AUDIT_* names).
+	mux.HandleFunc("GET /api/v1/me/privileges", deps.handleGetMyPrivileges)
 
 	// Dashboard.
 	mux.HandleFunc("GET /api/v1/audit/dashboard", dh.getDashboard)
@@ -160,17 +156,4 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 
 	// AI validation advisory results (read-only hint; SUBMIT or REVIEW evidence).
 	mux.HandleFunc("GET /api/v1/evidence/{evidenceId}/ai-validations", avh.listValidations)
-
-	// Evidence Portal proxy API (IdP-2 scope; also callable by IdP-1 users with
-	// SUBMIT_EVIDENCE). Each route is per-principal rate limited (rl). Every handler
-	// re-derives the audit from the control row and binds the folder path server-side.
-	mux.HandleFunc("GET /api/v1/evidence-app/controls", rl(eah.listControls))
-	// Evidence phase (DESIGN controls + OE controls once past the population phase).
-	mux.HandleFunc("GET /api/v1/evidence-app/controls/{controlId}/upload-link", rl(eah.uploadLink))
-	mux.HandleFunc("POST /api/v1/evidence-app/controls/{controlId}/upload", rl(eah.upload))
-	mux.HandleFunc("POST /api/v1/evidence-app/controls/{controlId}/submit", rl(eah.submit))
-	// Population phase (OE controls only — 409 when the control is DESIGN-type).
-	mux.HandleFunc("GET /api/v1/evidence-app/controls/{controlId}/population/upload-link", rl(eah.populationUploadLink))
-	mux.HandleFunc("POST /api/v1/evidence-app/controls/{controlId}/population/upload", rl(eah.populationUpload))
-	mux.HandleFunc("POST /api/v1/evidence-app/controls/{controlId}/population/submit", rl(eah.populationSubmit))
 }

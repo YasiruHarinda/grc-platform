@@ -53,7 +53,9 @@ var validStatuses = map[string]bool{
 // ControlService defines business operations for audit controls.
 type ControlService interface {
 	List(ctx context.Context, auditID int) ([]*model.AuditControl, error)
+	ListScoped(ctx context.Context, auditID int, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.AuditControl, error)
 	GetByID(ctx context.Context, auditID, controlID int) (*model.AuditControl, error)
+	InScope(ctx context.Context, auditID, controlID int, scope model.Scope, userEmail string, scopeTeamIDs []int) (bool, error)
 	Add(ctx context.Context, auditID int, req model.AddControlRequest, createdBy string) (*model.AuditControl, error)
 	BulkAdd(ctx context.Context, auditID int, reqs []model.AddControlRequest, createdBy string) ([]*model.AuditControl, error)
 	Update(ctx context.Context, auditID, controlID int, req model.UpdateControlRequest, updatedBy string) error
@@ -62,9 +64,8 @@ type ControlService interface {
 	// atomically — used when the auditor submits the sample.
 	UpdateStatusWithSample(ctx context.Context, auditID, controlID int, status, sampleReference, updatedBy string) error
 	Delete(ctx context.Context, auditID, controlID int, deletedBy string) error
-	GetAssignedForEvidence(ctx context.Context, userEmail string) ([]*model.AssignedControlForEvidence, error)
-	// AssignedAuditID returns the audit id for controlID when userEmail's team is
-	// assigned and the control is actionable; found=false means not assigned.
+	// AssignedAuditID returns the audit id for controlID when userEmail is the
+	// control's owner and the control is actionable; found=false means not assigned.
 	AssignedAuditID(ctx context.Context, userEmail string, controlID int) (auditID int, found bool, err error)
 	// ActivePopulationID returns the active population round id for an OE control;
 	// found=false means no active population (e.g. a DESIGN control).
@@ -112,6 +113,14 @@ func statusChangeAction(to string) string {
 
 func (s *controlService) List(ctx context.Context, auditID int) ([]*model.AuditControl, error) {
 	return s.repo.List(ctx, auditID)
+}
+
+func (s *controlService) ListScoped(ctx context.Context, auditID int, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.AuditControl, error) {
+	return s.repo.ListScoped(ctx, auditID, scope, userEmail, scopeTeamIDs)
+}
+
+func (s *controlService) InScope(ctx context.Context, auditID, controlID int, scope model.Scope, userEmail string, scopeTeamIDs []int) (bool, error) {
+	return s.repo.InScope(ctx, auditID, controlID, scope, userEmail, scopeTeamIDs)
 }
 
 func (s *controlService) GetByID(ctx context.Context, auditID, controlID int) (*model.AuditControl, error) {
@@ -329,10 +338,6 @@ func (s *controlService) Delete(ctx context.Context, auditID, controlID int, del
 		"controlNumber": c.ControlNumber,
 	})
 	return s.repo.Delete(ctx, auditID, controlID)
-}
-
-func (s *controlService) GetAssignedForEvidence(ctx context.Context, userEmail string) ([]*model.AssignedControlForEvidence, error) {
-	return s.repo.ListAssignedForEvidence(ctx, userEmail)
 }
 
 func (s *controlService) AssignedAuditID(ctx context.Context, userEmail string, controlID int) (int, bool, error) {

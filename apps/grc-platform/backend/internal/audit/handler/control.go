@@ -39,9 +39,16 @@ func (h *controlHandler) listControls(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	controls, err := h.svc.List(r.Context(), auditID)
+	ctx := r.Context()
+	scope, _ := deriveScopes(ctx)
+	user := auth.FromContext(ctx)
+	var email string
+	if user != nil {
+		email = user.Email
+	}
+	controls, err := h.svc.ListScoped(ctx, auditID, scope, email, managedTeamIDs(auth.Grants(ctx)))
 	if err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
 		return
 	}
 	if controls == nil {
@@ -66,9 +73,27 @@ func (h *controlHandler) getControl(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	c, err := h.svc.GetByID(r.Context(), auditID, controlID)
+	ctx := r.Context()
+	scope, _ := deriveScopes(ctx)
+	if scope != model.ScopeAll {
+		user := auth.FromContext(ctx)
+		var email string
+		if user != nil {
+			email = user.Email
+		}
+		inScope, err := h.svc.InScope(ctx, auditID, controlID, scope, email, managedTeamIDs(auth.Grants(ctx)))
+		if err != nil {
+			response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
+			return
+		}
+		if !inScope {
+			response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
+			return
+		}
+	}
+	c, err := h.svc.GetByID(ctx, auditID, controlID)
 	if err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
 		return
 	}
 	response.WriteJSONValue(w, http.StatusOK, c)

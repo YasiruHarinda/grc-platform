@@ -24,14 +24,17 @@
 //	RequirePrivilege(ctx, w, X)             — "may this user do X anywhere?"
 //	RequirePrivilegeIn(ctx, w, X, teamID)   — "may this user do X on THIS thing?"
 //
-// A user may hold different roles in different registers — Risk Owner in one,
-// Risk Assigner in another. The unscoped form unions those together, so on its
-// own it would let someone approve, as owner, a risk in a register where they
-// are only an assigner. It exists for endpoints with no object in hand, and to
-// keep the Audit Hub's existing call sites working until it migrates.
+// A user may hold different roles in different scopes — Risk Owner in one
+// register but only Risk Assigner in another; a team lead in one audit team
+// but an ordinary submitter in another. The unscoped form unions those
+// together, so on its own it would let someone act, as owner or lead, on a
+// register or team where they hold no such authority. It exists for endpoints
+// with no object in hand, and to keep existing call sites working unchanged
+// during the grant migration.
 //
-// Rule of thumb: if a handler has a risk id, it must use the scoped form. An
-// unscoped check in such a handler needs a comment saying why no scope applies.
+// Rule of thumb: if a handler has a risk or team id, it must use the scoped
+// form. An unscoped check in such a handler needs a comment saying why no
+// scope applies.
 package auth
 
 import (
@@ -69,26 +72,6 @@ func HasPrivilege(ctx context.Context, priv string) bool {
 		return true
 	}
 	return privs[priv]
-}
-
-// RequirePrivilege writes a 403 JSON response and returns false when the user
-// lacks the given privilege. Use it as an early-return guard in handlers:
-//
-//	if !auth.RequirePrivilege(r.Context(), w, privilege.ApproveRisk) {
-//	    return
-//	}
-func RequirePrivilege(ctx context.Context, w http.ResponseWriter, priv string) bool {
-	if HasPrivilege(ctx, priv) {
-		return true
-	}
-
-	response.WriteError(
-		w,
-		http.StatusForbidden,
-		response.ErrMsgForbidden,
-	)
-
-	return false
 }
 
 // Grants returns the caller's resolved grant set, or nil when grant resolution
@@ -152,6 +135,26 @@ func HasPrivilegeIn(ctx context.Context, priv string, teamID int) bool {
 //	}
 func RequirePrivilegeIn(ctx context.Context, w http.ResponseWriter, priv string, teamID int) bool {
 	if HasPrivilegeIn(ctx, priv, teamID) {
+		return true
+	}
+
+	response.WriteError(
+		w,
+		http.StatusForbidden,
+		response.ErrMsgForbidden,
+	)
+
+	return false
+}
+
+// RequirePrivilege writes a 403 JSON response and returns false when the user
+// lacks the given privilege. Use it as an early-return guard in handlers:
+//
+//	if !auth.RequirePrivilege(r.Context(), w, privilege.ComplianceApproveRisk) {
+//	    return
+//	}
+func RequirePrivilege(ctx context.Context, w http.ResponseWriter, priv string) bool {
+	if HasPrivilege(ctx, priv) {
 		return true
 	}
 

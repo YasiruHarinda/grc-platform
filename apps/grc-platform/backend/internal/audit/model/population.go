@@ -22,7 +22,7 @@ import "time"
 // AuditPopulation represents one audit_population row (a population round) for
 // an OE control. A control normally has exactly one round for its whole
 // lifecycle — both internal-review and auditor rejections reuse the same round
-// (see OE-Sample-Evidence-Flow-Design.md §3.2/§8) rather than starting a new one.
+// rather than starting a new one.
 type AuditPopulation struct {
 	ID              int       `json:"id"`
 	ControlID       int       `json:"controlId"`
@@ -50,6 +50,11 @@ type PopulationFile struct {
 	// ReadURL is the backend proxy download URL (GET .../population/files/{id}/download).
 	// Computed at list time (not persisted); nil if the file has no DB id.
 	ReadURL *string `json:"readUrl"`
+	// TeamID is this file's owning control's team_id (nil if none). Only
+	// populated by PopulationService.GetFileByID's underlying repo call, for
+	// the team-scoped download gate — omitted from JSON since it's not
+	// population metadata callers need.
+	TeamID *int `json:"-"`
 }
 
 // PopulationView is the response for GET .../population: the control's current
@@ -63,7 +68,7 @@ type PopulationView struct {
 }
 
 // PopulationSubmitResult is returned by the Evidence Portal population submit
-// endpoint (§3.5.3) once uploaded blobs are recorded and the round advances.
+// endpoint once uploaded blobs are recorded and the round advances.
 type PopulationSubmitResult struct {
 	PopulationID int    `json:"populationId"`
 	ControlID    int    `json:"controlId"`

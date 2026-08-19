@@ -15,13 +15,13 @@
 // under the License.
 
 import { Alert, Box, Button, CircularProgress, IconButton, Typography } from "@wso2/oxygen-ui";
-import { ExternalLink, FileText, Trash2 } from "@wso2/oxygen-ui-icons-react";
+import { Download, ExternalLink, FileText, Trash2 } from "@wso2/oxygen-ui-icons-react";
 import { useState, type JSX } from "react";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
 import type { PopulationFile } from "@modules/audit/api/useGetPopulation";
 import { useDeletePopulationFile } from "@modules/audit/api/useDeletePopulationFile";
-import { viewOrDownloadBlob } from "@modules/audit/utils/fileView";
+import { downloadBlob, viewOrDownloadBlob } from "@modules/audit/utils/fileView";
 
 function sizeLabel(bytes: number | null): string {
   if (bytes === null) return "";
@@ -75,6 +75,18 @@ export default function PopulationFileList({
     }
   }
 
+  async function handleDownload(readUrl: string, fileName: string): Promise<void> {
+    setDownloadError(null);
+    try {
+      const res = await authFetch(`${BACKEND_BASE_URL}${readUrl}`);
+      if (!res.ok) throw new Error(`Download failed (${res.status})`);
+      const blob = await res.blob();
+      downloadBlob(blob, fileName);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : "Failed to download file");
+    }
+  }
+
   if (files.length === 0) {
     return emptyText ? <Typography variant="body2" color="text.secondary">{emptyText}</Typography> : <></>;
   }
@@ -105,14 +117,24 @@ export default function PopulationFileList({
             <Typography variant="caption" color="text.secondary">{sizeLabel(f.fileSize)}</Typography>
           )}
           {f.readUrl ? (
-            <Button
-              size="small"
-              onClick={() => { void handleView(f.readUrl as string, f.fileName); }}
-              startIcon={<ExternalLink size={13} />}
-              sx={{ textTransform: "none", minWidth: 0 }}
-            >
-              View
-            </Button>
+            <>
+              <Button
+                size="small"
+                onClick={() => { void handleView(f.readUrl as string, f.fileName); }}
+                startIcon={<ExternalLink size={13} />}
+                sx={{ textTransform: "none", minWidth: 0 }}
+              >
+                View
+              </Button>
+              <IconButton
+                size="small"
+                aria-label={`Download ${f.fileName}`}
+                onClick={() => { void handleDownload(f.readUrl as string, f.fileName); }}
+                sx={{ p: 0.5 }}
+              >
+                <Download size={14} />
+              </IconButton>
+            </>
           ) : (
             <Typography variant="caption" color="text.disabled">unavailable</Typography>
           )}

@@ -87,10 +87,16 @@ export default function AuditDashboard(): JSX.Element {
   const { data: auditsData } = useGetAudits();
   const claims = useIdTokenClaims();
 
+  // The Frameworks tab is an org-wide readiness view — shown only to org-wide
+  // readers (admin, compliance team, management). Internal team and external
+  // auditors, who lack AUDIT_VIEW_ALL_AUDITS, never see it. See ADR-0002.
+  const canViewAll = can(AuditPrivilege.ViewAllAudits);
+
   // Tab state lives in the URL (?tab=frameworks) so a status email can link
   // straight to the Frameworks view; Overview is the default landing tab.
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = searchParams.get("tab") === TAB_FRAMEWORKS ? TAB_FRAMEWORKS : TAB_OVERVIEW;
+  const activeTab =
+    canViewAll && searchParams.get("tab") === TAB_FRAMEWORKS ? TAB_FRAMEWORKS : TAB_OVERVIEW;
   const setActiveTab = (tabId: string) => {
     const next = new URLSearchParams(searchParams);
     if (tabId === TAB_FRAMEWORKS) next.set("tab", TAB_FRAMEWORKS);
@@ -100,7 +106,7 @@ export default function AuditDashboard(): JSX.Element {
 
   const tabs: TabOption[] = [
     { id: TAB_OVERVIEW, label: "Overview" },
-    { id: TAB_FRAMEWORKS, label: "Frameworks" },
+    ...(canViewAll ? [{ id: TAB_FRAMEWORKS, label: "Frameworks" }] : []),
   ];
 
   const queueRef = useRef<HTMLDivElement>(null);
@@ -133,8 +139,15 @@ export default function AuditDashboard(): JSX.Element {
   // Privilege-driven gating (never role names).
   const canSubmit = can(AuditPrivilege.SubmitEvidence);
   const canApprove = can(AuditPrivilege.ReviewEvidence);
-  const hasQueue = canSubmit || canApprove;
-  const queueTitle = canApprove ? "Review Queue" : canSubmit ? "My Tasks" : "Action Items";
+  const canValidate = can(AuditPrivilege.ValidateEvidence);
+  const hasQueue = canSubmit || canApprove || canValidate;
+  const queueTitle = canApprove
+    ? "Review Queue"
+    : canValidate
+      ? "Validation Queue"
+      : canSubmit
+        ? "My Tasks"
+        : "Action Items";
   const awaitingCount = hasQueue ? (stats.totalActionItems ?? null) : null;
 
   const dueSoonCount = data.dueSoonItems?.length ?? 0;
@@ -165,7 +178,7 @@ export default function AuditDashboard(): JSX.Element {
         overdueCount={stats.overdueControls}
         dueSoonCount={dueSoonCount}
         awaitingCount={awaitingCount}
-        awaitingLabel={canApprove ? "to review" : "to submit"}
+        awaitingLabel={canApprove ? "to review" : canValidate ? "to validate" : "to submit"}
         onOverdueClick={() => jumpToQueue(QUEUE_TAB_OVERDUE)}
         onQueueClick={() => jumpToQueue(QUEUE_TAB_AWAITING)}
       />
@@ -216,8 +229,10 @@ export default function AuditDashboard(): JSX.Element {
             totalPendingItems={pendingCount}
             totalValidationItems={validationCount}
             totalOverdueControls={stats.overdueControls}
+            canViewAll={canViewAll}
             canApprove={canApprove}
             canSubmit={canSubmit}
+            canValidate={canValidate}
             queueTitle={queueTitle}
             tab={queueTab}
             onTabChange={setQueueTab}

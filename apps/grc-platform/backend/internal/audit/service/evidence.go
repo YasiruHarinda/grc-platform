@@ -33,7 +33,7 @@ import (
 // EvidenceService defines business operations for audit evidence submissions.
 type EvidenceService interface {
 	// GetUploadLink returns the control's evidence folder path — a deterministic,
-	// human-readable prefix (not a per-session folder; see design doc §3).
+	// human-readable prefix (not a per-session folder).
 	GetUploadLink(ctx context.Context, auditID, controlID int) (*model.UploadLinkResponse, error)
 
 	// PopulationUploadLink returns the control's population folder path — flat,
@@ -101,6 +101,13 @@ type EvidenceService interface {
 	// DownloadFile returns one evidence file's bytes (proxied via the Compliance
 	// Entity) plus its name and content type, by file ID.
 	DownloadFile(ctx context.Context, fileID int) (data []byte, fileName, contentType string, err error)
+
+	// FileAuditorEmail returns the email of the auditor assigned to fileID's
+	// owning control (nil if none) and that control's team id (nil if none),
+	// for the assigned-auditor and team-scoped download gates — the download
+	// route only carries a file id, not a control id, so this is how
+	// downloadEvidenceFile resolves assignment/team without one.
+	FileAuditorEmail(ctx context.Context, fileID int) (auditorEmail *string, teamID *int, err error)
 
 	// DeleteFile removes a single evidence file from the submission. The caller
 	// must be the file's creator or hold ManageControls (isAdmin=true). The blob
@@ -432,6 +439,14 @@ func (s *evidenceService) DownloadFile(ctx context.Context, fileID int) (data []
 		ct = *f.FileType
 	}
 	return data, f.FileName, ct, nil
+}
+
+func (s *evidenceService) FileAuditorEmail(ctx context.Context, fileID int) (auditorEmail *string, teamID *int, err error) {
+	f, err := s.repo.GetFileByID(ctx, fileID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return f.AuditorEmail, f.TeamID, nil
 }
 
 func (s *evidenceService) DeleteFile(ctx context.Context, fileID int, actor string, isAdmin bool) error {

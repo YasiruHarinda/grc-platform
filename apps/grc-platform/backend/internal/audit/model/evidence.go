@@ -31,6 +31,16 @@ type AuditEvidenceFile struct {
 	// ReadURL is the backend proxy download URL (GET /api/v1/evidence/files/{id}/download).
 	// Computed at list time (not persisted); nil if the file has no DB id.
 	ReadURL *string `json:"readUrl"`
+	// AuditorEmail is the email of the auditor assigned to this file's owning
+	// control (nil if none). Only populated by EvidenceService.GetFileByID's
+	// underlying repo call, for the assigned-auditor download gate — omitted
+	// from JSON since it's not evidence metadata callers need.
+	AuditorEmail *string `json:"-"`
+	// TeamID is this file's owning control's team_id (nil if none). Only
+	// populated by the same repo call as AuditorEmail, for the team-scoped
+	// download gate — omitted from JSON since it's not evidence metadata
+	// callers need.
+	TeamID *int `json:"-"`
 }
 
 // AuditEvidence represents one submission round for a control.
@@ -43,58 +53,6 @@ type AuditEvidence struct {
 	Files      []*AuditEvidenceFile `json:"files"`
 	CreatedBy  string               `json:"createdBy"`
 	CreatedAt  time.Time            `json:"createdAt"`
-}
-
-// AssignedControlForEvidence is the flat, enriched control record the Compliance
-// Entity returns for the authenticated user's team. It is the transport type
-// unmarshalled from the entity; the evidence-app handler reshapes it into the
-// nested EvidenceAppControl contract (§3.1) with a phase-aware base folder path.
-type AssignedControlForEvidence struct {
-	AuditID             int     `json:"auditId"`
-	AuditName           string  `json:"auditName"`
-	Product             string  `json:"product"`
-	Framework           string  `json:"framework"`
-	PeriodStart         string  `json:"periodStart"`
-	PeriodEnd           string  `json:"periodEnd"`
-	ControlID           int     `json:"controlId"`
-	ControlNumber       string  `json:"controlNumber"`
-	Description         string  `json:"description"`
-	EvidenceRequirement *string `json:"evidenceRequirement"`
-	RequirementType     string  `json:"requirementType"`
-	Status              string  `json:"status"`
-	DueDate             *string `json:"dueDate"`
-}
-
-// EvidenceAppControl is one item in the GET /api/v1/evidence-app/controls response
-// (design §3.1). The audit and control are nested, and the backend computes two
-// derived fields the portal needs: the control's phase and the phase-aware base
-// folder path — both server-side, never trusted from a client.
-type EvidenceAppControl struct {
-	Audit          EvidenceAppAudit       `json:"audit"`
-	Control        EvidenceAppControlInfo `json:"control"`
-	BaseFolderPath string                 `json:"baseFolderPath"`
-}
-
-// EvidenceAppAudit is the audit context nested in EvidenceAppControl.
-type EvidenceAppAudit struct {
-	ID          int    `json:"id"`
-	Name        string `json:"name"`
-	Product     string `json:"product"`
-	Framework   string `json:"framework"`
-	PeriodStart string `json:"periodStart"`
-	PeriodEnd   string `json:"periodEnd"`
-}
-
-// EvidenceAppControlInfo is the control detail nested in EvidenceAppControl.
-type EvidenceAppControlInfo struct {
-	ID                  int     `json:"id"`
-	Number              string  `json:"number"`
-	Description         string  `json:"description"`
-	EvidenceRequirement *string `json:"evidenceRequirement"`
-	RequirementType     string  `json:"requirementType"` // DESIGN | OE
-	Status              string  `json:"status"`
-	Phase               string  `json:"phase"` // POPULATION | EVIDENCE
-	DueDate             *string `json:"dueDate"`
 }
 
 // UploadLinkResponse is returned by GET .../evidence/upload-link.
@@ -133,18 +91,18 @@ type EvidenceFileRef struct {
 }
 
 // SubmitEvidenceRequest is the body for POST .../evidence/submit. There is no
-// folder re-listing in the flat evidence layout (see design doc §3.3): the
-// client accumulates the blobName returned by each upload call and submits the
-// exact list of files that make up this round.
+// folder re-listing in the flat evidence layout: the client accumulates the
+// blobName returned by each upload call and submits the exact list of files
+// that make up this round.
 type SubmitEvidenceRequest struct {
 	Files []EvidenceFileRef `json:"files"`
 }
 
 // PopulationSubmitRequest is the body for POST .../population/submit and
 // .../population/{controlId}/submit. Unlike evidence, population/sample keep
-// the folder-listing contract (their subfolders already fence their files —
-// see design doc §3.3), so the client only echoes back the folder path handed
-// out by the upload-link endpoint.
+// the folder-listing contract (their subfolders already fence their files),
+// so the client only echoes back the folder path handed out by the
+// upload-link endpoint.
 type PopulationSubmitRequest struct {
 	FolderPath string `json:"folderPath"`
 }

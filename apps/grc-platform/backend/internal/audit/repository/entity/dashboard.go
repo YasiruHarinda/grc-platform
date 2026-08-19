@@ -32,9 +32,16 @@ func NewDashboardRepository(c *entityclient.Client) repository.DashboardReposito
 }
 
 func (r *dashboardRepo) Get(ctx context.Context, f model.DashboardFilter) (*model.DashboardData, error) {
-	// Translate Asgardeo group names to the canonical role tokens the entity
-	// expects — unknown roles are scoped to zero rows on the entity side.
-	body := map[string]any{"roles": f.NormalizedRoles(), "userEmail": f.UserEmail}
+	// Scope is derived from the caller's privileges (ADR-0002) and sent
+	// explicitly: viewScope drives stats/charts, workQueueScope the action lists.
+	// The entity resolves the actor's team/owner/auditor identity from userEmail.
+	body := map[string]any{
+		"scope":          string(f.ViewScope),
+		"workQueueScope": string(f.WorkQueueScope),
+		"workQueueClass": string(f.WorkQueueClass),
+		"userEmail":      f.UserEmail,
+		"scopeTeamIds":   f.ScopeTeamIDs,
+	}
 	var data model.DashboardData
 	if err := r.c.Post(ctx, "/audit/dashboard/search", body, &data); err != nil {
 		return nil, err
@@ -44,17 +51,19 @@ func (r *dashboardRepo) Get(ctx context.Context, f model.DashboardFilter) (*mode
 
 func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, f model.DashboardFilter, tab model.WorkQueueTab, page, limit int) (*model.WorkQueuePage, error) {
 	body := map[string]any{
-		"roles":     f.NormalizedRoles(),
-		"userEmail": f.UserEmail,
-		"tab":       string(tab),
-		"page":      page,
-		"limit":     limit,
-		"teamIds":       f.TeamIDs,
-		"ownerIds":      f.OwnerIDs,
-		"auditIds":      f.AuditIDs,
-		"controlNumber": f.ControlNumber,
-		"statuses":      f.Statuses,
-		"dueSortDesc":   f.DueSortDesc,
+		"workQueueScope": string(f.WorkQueueScope),
+		"workQueueClass": string(f.WorkQueueClass),
+		"userEmail":      f.UserEmail,
+		"tab":            string(tab),
+		"page":           page,
+		"limit":          limit,
+		"scopeTeamIds":   f.ScopeTeamIDs,
+		"teamIds":        f.TeamIDs,
+		"ownerIds":       f.OwnerIDs,
+		"auditIds":       f.AuditIDs,
+		"controlNumber":  f.ControlNumber,
+		"statuses":       f.Statuses,
+		"dueSortDesc":    f.DueSortDesc,
 	}
 	var p model.WorkQueuePage
 	if err := r.c.Post(ctx, "/audit/work-queue/search", body, &p); err != nil {

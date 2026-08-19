@@ -36,9 +36,17 @@ func (h *auditHandler) listAudits(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAudits) {
 		return
 	}
-	audits, err := h.svc.List(r.Context())
+	ctx := r.Context()
+	scope, _ := deriveScopes(ctx)
+	scopeTeamIDs := managedTeamIDs(auth.Grants(ctx))
+	user := auth.FromContext(ctx)
+	var email string
+	if user != nil {
+		email = user.Email
+	}
+	audits, err := h.svc.ListScoped(ctx, scope, email, scopeTeamIDs)
 	if err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
 		return
 	}
 	if audits == nil {
@@ -58,6 +66,24 @@ func (h *auditHandler) getAudit(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseIntParam(w, r, "id")
 	if !ok {
 		return
+	}
+	ctx := r.Context()
+	scope, _ := deriveScopes(ctx)
+	if scope != model.ScopeAll {
+		user := auth.FromContext(ctx)
+		var email string
+		if user != nil {
+			email = user.Email
+		}
+		ok, err := h.svc.InScope(ctx, id, scope, email, managedTeamIDs(auth.Grants(ctx)))
+		if err != nil {
+			response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
+			return
+		}
+		if !ok {
+			response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
+			return
+		}
 	}
 	audit, err := h.svc.GetByID(r.Context(), id)
 	if err != nil {

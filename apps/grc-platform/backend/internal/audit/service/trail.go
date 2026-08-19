@@ -40,9 +40,8 @@ type TrailService interface {
 	// events together), newest first, narrowed by filter, with the total count.
 	ListByAudit(ctx context.Context, auditID int, filter model.TrailFilter, limit, offset int) ([]*model.AuditTrailEntry, int, error)
 	// RecordEvidenceAction appends an attribution entry for an evidence/population
-	// action, tagging the channel it came through (web-app vs evidence-app) and the
-	// token issuer so portal actions stay distinguishable (design §I). evidenceID may
-	// be 0 (population submit) — it is then omitted. fileNames is the round's file
+	// action, tagging the channel it came through and the token issuer.
+	// evidenceID may be 0 (population submit) — it is then omitted. fileNames is the round's file
 	// names at the time of this action (nil/empty when not applicable, e.g.
 	// population/sample submissions), recorded so the History tab and the
 	// audit-wide Activity Log can show what was actually submitted without a

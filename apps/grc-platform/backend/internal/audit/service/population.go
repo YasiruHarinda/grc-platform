@@ -40,8 +40,7 @@ type PopulationService interface {
 	// LatestRound returns a control's most recent population round. A control
 	// normally has exactly one round for its whole lifecycle — both internal-review
 	// and auditor rejections resubmit the same round rather than starting a new
-	// one (see OE-Sample-Evidence-Flow-Design.md §3.2/§8). Returns a 404 apierror
-	// if the control has no population round yet.
+	// one. Returns a 404 apierror if the control has no population round yet.
 	LatestRound(ctx context.Context, auditID, controlID int) (*model.AuditPopulation, error)
 
 	// ListFiles returns every file on a population round, newest first.
@@ -232,9 +231,9 @@ func (s *populationService) UpdateRoundStatus(ctx context.Context, populationID 
 }
 
 // SubmitSample records every blob at folderPath as a SAMPLE file. A sample may
-// be a note alone (see design doc — files and the note are each optional, but
-// at least one is required; the handler enforces that combined check once it
-// has both this file count and the note).
+// be a note alone — files and the note are each optional, but at least one is
+// required; the handler enforces that combined check once it has both this
+// file count and the note.
 func (s *populationService) SubmitSample(ctx context.Context, populationID int, folderPath, submittedBy string) (int, error) {
 	blobs, err := s.storage.ListBlobs(ctx, folderPath)
 	if err != nil {

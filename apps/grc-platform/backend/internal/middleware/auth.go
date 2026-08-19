@@ -51,21 +51,9 @@ type UserInfo struct {
 	Subject string
 	Email   string
 	Issuer  string // the token's verified issuer (iss)
-	Scope   string // the matched IdP's scope: config.ScopeFull | config.ScopeEvidenceApp
 	// UserID is the caller's internal user.id, resolved alongside their grants.
 	// Zero when the caller has no platform user row yet.
 	UserID int
-	// Roles is the distinct role names the caller holds, from any scope. It
-	// replaces the former Groups field, which carried Asgardeo's group claim.
-	//
-	// Prefer a privilege check over matching on these names — the Risk Hub
-	// never reads them. They exist because the Audit Hub matches role names
-	// directly in two places (external-auditor comment filtering and dashboard
-	// scoping), and those now read DB-assigned roles instead of IdP groups.
-	//
-	// Scope is flattened away here. Anything that needs to know WHERE a role is
-	// held must use the grant Set, not this list.
-	Roles []string
 }
 
 // Config holds JWT validation settings loaded from environment variables.
@@ -87,22 +75,6 @@ type Config struct {
 	// Never set in production; used by unit tests to inject pre-built key functions.
 	TestKeyFuncs map[string]jwt.Keyfunc
 }
-
-// evidenceAppPrivileges is the complete, fixed capability of an
-// evidence-app-scoped token (IdP-2, the Evidence Portal).
-//
-// External submitters are outside the grant model entirely — this platform's
-// database holds only its own users — so such a token is authorised by its
-// issuer rather than by any role lookup. That is not a weakening: the previous
-// design resolved groups → role → privileges and then intersected the result
-// down to exactly this set, so the whole chain only ever computed one bit.
-// Stating the capability directly removes the group mapping, and with it the
-// last reason to read a group claim from any token.
-//
-// The real boundary for these tokens is elsewhere and unchanged: IssuerScope
-// confines them to /api/v1/evidence-app/*, and the handlers there check that
-// the caller is the person a given evidence request was addressed to.
-var evidenceAppPrivileges = map[string]bool{privilege.SubmitEvidence: true}
 
 // idpRuntime pairs a configured IdP with its JWKS-backed key function.
 type idpRuntime struct {
@@ -126,6 +98,16 @@ func writeAuthError(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
 	_ = json.NewEncoder(w).Encode(authErrorBody{Message: message})
+}
+
+// writeGrantLoadError responds 503, not 401, when the entity is unreachable
+// mid-request. A 401 is indistinguishable from a bad token and sends the user
+// to re-login, which cannot help — the entity being down is an outage, not an
+// auth failure, and retrying the request is the correct client behaviour.
+func writeGrantLoadError(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_ = json.NewEncoder(w).Encode(authErrorBody{Message: "Unable to verify your access right now. Please try again shortly."})
 }
 
 // jwkEntry holds a single RSA public key extracted from a JWKS response.
@@ -298,20 +280,10 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 				return
 			}
 
-			info, idp, err := extractUserInfo(tokenStr, cfg, idps)
+			info, err := extractUserInfo(tokenStr, cfg, idps)
 			if err != nil {
 				slog.ErrorContext(r.Context(), "auth: token validation failed", "err", err)
 				writeAuthError(w, "You are not authorized to perform this action. Please try again.")
-				return
-			}
-
-			// Evidence-app tokens are authorised by their issuer, not by grants:
-			// external submitters have no user row here. Role resolution is
-			// skipped entirely for them.
-			if idp != nil && idp.Scope == config.ScopeEvidenceApp {
-				ctx := context.WithValue(r.Context(), userInfoKey, info)
-				ctx = privilege.WithContext(ctx, evidenceAppPrivileges)
-				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
 
@@ -325,12 +297,11 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 				userID, grants, gErr := cfg.Grants.ForEmail(r.Context(), identityKey(info))
 				if gErr != nil {
 					slog.ErrorContext(r.Context(), "auth: failed to load grants", "err", gErr)
-					writeAuthError(w, "You are not authorized to perform this action. Please try again.")
+					writeGrantLoadError(w)
 					return
 				}
 				info.UserID = userID
 				set := grant.Resolve(grants, cfg.PrivilegeStore)
-				info.Roles = set.RoleNames()
 				ctx = context.WithValue(ctx, userInfoKey, info)
 				ctx = grant.WithContext(ctx, set)
 				// The union is also published under the privilege key so the
@@ -383,33 +354,33 @@ func requestToken(r *http.Request) string {
 	return after
 }
 
-// extractUserInfo validates the token and returns the caller's identity plus the
-// IdP that issued it (nil in local-dev mode). In production it selects the IdP by
-// the token's iss claim: an unknown issuer is rejected with the same generic error
-// as any other invalid token, so the set of configured issuers is not leaked.
-func extractUserInfo(tokenStr string, cfg Config, idps map[string]idpRuntime) (*UserInfo, *config.IdPConfig, error) {
+// extractUserInfo validates the token and returns the caller's identity. In
+// production it selects the IdP by the token's iss claim: an unknown issuer is
+// rejected with the same generic error as any other invalid token, so the set of
+// configured issuers is not leaked.
+func extractUserInfo(tokenStr string, cfg Config, idps map[string]idpRuntime) (*UserInfo, error) {
 	if !cfg.TokenValidatorEnabled {
 		// Local dev: decode without signature verification. No IdP selection.
 		var c jwtClaims
 		if _, _, err := new(jwt.Parser).ParseUnverified(tokenStr, &c); err != nil {
-			return nil, nil, fmt.Errorf("decode token: %w", err)
+			return nil, fmt.Errorf("decode token: %w", err)
 		}
 		sub, err := c.GetSubject()
 		if err != nil || sub == "" {
-			return nil, nil, fmt.Errorf("token missing sub claim")
+			return nil, fmt.Errorf("token missing sub claim")
 		}
-		return &UserInfo{Subject: sub, Email: c.Email, Issuer: c.Issuer}, nil, nil
+		return &UserInfo{Subject: sub, Email: c.Email, Issuer: c.Issuer}, nil
 	}
 
 	// Read the issuer from the unverified token only to pick the IdP; nothing else
 	// from this parse is trusted.
 	var probe jwtClaims
 	if _, _, err := new(jwt.Parser).ParseUnverified(tokenStr, &probe); err != nil {
-		return nil, nil, fmt.Errorf("decode token: %w", err)
+		return nil, fmt.Errorf("decode token: %w", err)
 	}
 	rt, ok := idps[probe.Issuer]
 	if !ok {
-		return nil, nil, fmt.Errorf("unknown issuer")
+		return nil, fmt.Errorf("unknown issuer")
 	}
 
 	var c jwtClaims
@@ -421,22 +392,20 @@ func extractUserInfo(tokenStr string, cfg Config, idps map[string]idpRuntime) (*
 		jwt.WithValidMethods([]string{"RS256"}),
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("validate token: %w", err)
+		return nil, fmt.Errorf("validate token: %w", err)
 	}
 	if !token.Valid {
-		return nil, nil, fmt.Errorf("invalid token")
+		return nil, fmt.Errorf("invalid token")
 	}
 
 	sub, err := c.GetSubject()
 	if err != nil || sub == "" {
-		return nil, nil, fmt.Errorf("token missing sub claim")
+		return nil, fmt.Errorf("token missing sub claim")
 	}
 
-	idpCfg := rt.cfg
 	return &UserInfo{
 		Subject: sub,
 		Email:   c.Email,
 		Issuer:  rt.cfg.Issuer,
-		Scope:   rt.cfg.Scope,
-	}, &idpCfg, nil
+	}, nil
 }

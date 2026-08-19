@@ -23,6 +23,7 @@ import (
 	"mime"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
@@ -37,6 +38,66 @@ import (
 // through the backend, so bound them to protect memory and the gateway).
 const maxEvidenceUploadBytes = 25 << 20 // 25 MiB
 
+// channelWebApp tags audit-trail entries as originating from the GRC web app,
+// distinguishing them from other submission channels.
+const channelWebApp = "web-app"
+
+// fileNamesOf extracts file names for RecordEvidenceAction's fileNames param.
+func fileNamesOf(files []*model.AuditEvidenceFile) []string {
+	names := make([]string, 0, len(files))
+	for _, f := range files {
+		names = append(names, f.FileName)
+	}
+	return names
+}
+
+// recordEvidenceTrail appends a best-effort attribution entry. Failures are logged
+// and swallowed — they never affect the submission the user just made. fileNames
+// is nil for calls that have nothing file-shaped to attach (population/sample).
+func recordEvidenceTrail(ctx context.Context, trailSvc service.TrailService, auditID, controlID, evidenceID int, actor, via, issuer string, fileNames []string) {
+	if trailSvc == nil {
+		return
+	}
+	if err := trailSvc.RecordEvidenceAction(ctx, auditID, controlID, evidenceID, "UPLOADED", actor, via, issuer, fileNames); err != nil {
+		slog.WarnContext(ctx, "audit-trail attribution failed", "controlId", controlID, "via", via, "err", err)
+	}
+}
+
+// readUpload parses a bounded multipart upload (folderPath + file), returning the
+// folder path, base file name, sniffed content type, and bytes. It writes the error
+// response and returns ok=false on any failure. Shared by the population and
+// sample upload routes.
+func readUpload(w http.ResponseWriter, r *http.Request) (folderPath, fileName, contentType string, data []byte, ok bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxEvidenceUploadBytes)
+	if err := r.ParseMultipartForm(maxEvidenceUploadBytes); err != nil { // #nosec G120 -- body already bounded by MaxBytesReader above
+		response.WriteError(w, http.StatusRequestEntityTooLarge, "file too large or malformed upload (max 25 MB)")
+		return "", "", "", nil, false
+	}
+	folderPath = r.FormValue("folderPath")
+	f, header, err := r.FormFile("file")
+	if err != nil {
+		response.WriteError(w, http.StatusBadRequest, "file is required")
+		return "", "", "", nil, false
+	}
+	defer f.Close()
+
+	data, err = io.ReadAll(f)
+	if err != nil {
+		response.WriteError(w, http.StatusBadRequest, "could not read uploaded file")
+		return "", "", "", nil, false
+	}
+	contentType = header.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = http.DetectContentType(data)
+	}
+	fileName = filepath.Base(header.Filename)
+	if err := validateUploadFileType(fileName, contentType); err != nil {
+		response.WriteError(w, http.StatusBadRequest, err.Error())
+		return "", "", "", nil, false
+	}
+	return folderPath, fileName, contentType, data, true
+}
+
 type evidenceHandler struct {
 	svc        service.EvidenceService
 	controlSvc service.ControlService
@@ -50,17 +111,34 @@ type evidenceHandler struct {
 }
 
 // requireAssignment enforces resource-level authorization for the web-app evidence
-// routes (design §F/§G): the caller must be assigned to controlID for an actionable
+// routes: the caller must be assigned to controlID for an actionable
 // status (else 403), and the route's audit id must equal the server-derived audit
 // id (else 404 — a client cannot aim at another audit's control). It returns the
 // derived audit id and ok=false after writing the response on failure.
 //
-// Users who hold ManageControls (compliance admin) bypass the team-assignment
-// check — they already have full read/write over all audit data, so the IDOR
-// restriction is redundant and would block legitimate admin submissions.
+// Users who hold ManageControls (compliance admin) or ViewAllAudits (org-wide
+// read, e.g. compliance team — see ADR-0002) bypass the owner-assignment check —
+// they already have full or org-wide read/write over audit data, so the IDOR
+// restriction is redundant and would block legitimate submissions. Both
+// privileges can be granted scoped to a single team, though (module=AUDIT), so
+// the bypass is checked with HasPrivilegeIn against controlID's own team —
+// never the unscoped HasPrivilege, which would let a team-scoped grant bypass
+// the check for every other team's controls too.
 func (h *evidenceHandler) requireAssignment(w http.ResponseWriter, r *http.Request, auditID, controlID int) bool {
-	if auth.HasPrivilege(r.Context(), privilege.ManageControls) {
-		return true
+	if auth.HasPrivilege(r.Context(), privilege.ManageControls) || auth.HasPrivilege(r.Context(), privilege.ViewAllAudits) {
+		control, err := h.controlSvc.GetByID(r.Context(), auditID, controlID)
+		if err != nil {
+			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+			return false
+		}
+		teamID := 0
+		if control.TeamID != nil {
+			teamID = *control.TeamID
+		}
+		if auth.HasPrivilegeIn(r.Context(), privilege.ManageControls, teamID) ||
+			auth.HasPrivilegeIn(r.Context(), privilege.ViewAllAudits, teamID) {
+			return true
+		}
 	}
 	actor := auth.FromContext(r.Context())
 	derived, found, err := h.controlSvc.AssignedAuditID(r.Context(), actor.Email, controlID)
@@ -384,7 +462,7 @@ func (h *evidenceHandler) reviewEvidence(w http.ResponseWriter, r *http.Request)
 // reasoning as reviewEvidence above. Auditor-gated (see requireAssignedAuditor).
 func (h *evidenceHandler) validateEvidence(w http.ResponseWriter, r *http.Request) {
 	h.decideRound(w, r, decideRoundParams{
-		postGate:          requireAssignedAuditor,
+		postGate:          assignedAuditorGate(privilege.ValidateEvidence),
 		requiredStatus:    "EVIDENCE_UNDER_VALIDATION",
 		statusConflictMsg: "evidence can only be validated while it is under auditor validation",
 		latestRoundID: func(ctx context.Context, auditID, controlID int) (int, error) {
@@ -410,8 +488,7 @@ func (h *evidenceHandler) triggerAIValidation(auditID, controlID, evidenceID int
 
 // triggerAIValidation kicks off an advisory AI validation, detached from the
 // request context so a client disconnect cannot cancel it. Best-effort and a
-// no-op when the AI agent client is nil (AI_VALIDATION_ENABLED=false). Shared by
-// the web-app and evidence-app submit paths.
+// no-op when the AI agent client is nil (AI_VALIDATION_ENABLED=false).
 func triggerAIValidation(aiClient *aiagent.Client, auditID, controlID, evidenceID int, actor string) {
 	if aiClient == nil {
 		return
@@ -539,12 +616,48 @@ func (h *evidenceHandler) reconcileAfterDelete(ctx context.Context, auditID, con
 // downloadEvidenceFile handles GET /api/v1/evidence/files/{fileId}/download.
 // It proxies the file bytes from the Compliance Entity (which reads them from
 // Azure) so the browser never contacts Azure directly.
-func (h *evidenceHandler) downloadEvidenceFile(w http.ResponseWriter, r *http.Request) {
-	if !auth.RequirePrivilege(r.Context(), w, privilege.ReviewEvidence) {
-		return
+// requireEvidenceFileAccess authorizes downloadEvidenceFile with the same rule
+// as canViewEvidence, but resolved from a file id instead of a control — the
+// download route (GET /api/v1/evidence/files/{fileId}/download) carries no
+// auditId/controlId to look a control up by, so FileAuditorEmail returns the
+// owning control's team alongside the auditor email in one round trip.
+// ManageControls, SubmitEvidence, ReviewEvidence, and ViewAllAudits bypass —
+// checked against that team (HasPrivilegeIn), since all four can be granted
+// scoped to a single team (module=AUDIT) and the unscoped HasPrivilege would
+// let such a grant download every other team's files too. Anyone else (e.g.
+// an external auditor holding only ValidateEvidence) must be the
+// email-matched auditor of the file's owning control.
+func (h *evidenceHandler) requireEvidenceFileAccess(w http.ResponseWriter, r *http.Request, fileID int) bool {
+	ctx := r.Context()
+	auditorEmail, fileTeamID, err := h.svc.FileAuditorEmail(ctx, fileID)
+	if err != nil {
+		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
+		return false
 	}
+	teamID := 0
+	if fileTeamID != nil {
+		teamID = *fileTeamID
+	}
+	if auth.HasPrivilegeIn(ctx, privilege.ManageControls, teamID) ||
+		auth.HasPrivilegeIn(ctx, privilege.SubmitEvidence, teamID) ||
+		auth.HasPrivilegeIn(ctx, privilege.ReviewEvidence, teamID) ||
+		auth.HasPrivilegeIn(ctx, privilege.ViewAllAudits, teamID) {
+		return true
+	}
+	actor := auth.FromContext(ctx)
+	if auditorEmail == nil || !strings.EqualFold(*auditorEmail, actor.Email) {
+		response.WriteError(w, http.StatusForbidden, response.ErrMsgForbidden)
+		return false
+	}
+	return true
+}
+
+func (h *evidenceHandler) downloadEvidenceFile(w http.ResponseWriter, r *http.Request) {
 	fileID, ok := parseIntParam(w, r, "fileId")
 	if !ok {
+		return
+	}
+	if !h.requireEvidenceFileAccess(w, r, fileID) {
 		return
 	}
 	data, fileName, contentType, err := h.svc.DownloadFile(r.Context(), fileID)
@@ -566,17 +679,51 @@ func (h *evidenceHandler) downloadEvidenceFile(w http.ResponseWriter, r *http.Re
 	_, _ = w.Write(data) // #nosec G705 -- file served with nosniff + attachment disposition, browser won't execute it inline
 }
 
+// canViewEvidence allows: the team (SubmitEvidence), an internal reviewer
+// (ReviewEvidence), an org-wide reader (ViewAllAudits), ManageControls, or the
+// control's assigned auditor (by email, e.g. ValidateEvidence holders). Each
+// privilege is checked against control's own team (HasPrivilegeIn), since all
+// four can be granted scoped to a single team (module=AUDIT) — the unscoped
+// HasPrivilege would let a team-scoped grant view every other team's evidence
+// too.
+func canViewEvidence(r *http.Request, control *model.AuditControl) bool {
+	ctx := r.Context()
+	teamID := 0
+	if control.TeamID != nil {
+		teamID = *control.TeamID
+	}
+	if auth.HasPrivilegeIn(ctx, privilege.ManageControls, teamID) ||
+		auth.HasPrivilegeIn(ctx, privilege.SubmitEvidence, teamID) ||
+		auth.HasPrivilegeIn(ctx, privilege.ReviewEvidence, teamID) ||
+		auth.HasPrivilegeIn(ctx, privilege.ViewAllAudits, teamID) {
+		return true
+	}
+	actor := auth.FromContext(ctx)
+	return control.AuditorEmail != nil && strings.EqualFold(*control.AuditorEmail, actor.Email)
+}
+
 // listEvidence handles GET /api/v1/audits/{id}/controls/{controlId}/evidence.
 func (h *evidenceHandler) listEvidence(w http.ResponseWriter, r *http.Request) {
-	if !auth.RequirePrivilege(r.Context(), w, privilege.ReviewEvidence) {
-		return
-	}
 	auditID, ok := parseIntParam(w, r, "id")
 	if !ok {
 		return
 	}
 	controlID, ok := parseIntParam(w, r, "controlId")
 	if !ok {
+		return
+	}
+
+	control, err := h.controlSvc.GetByID(r.Context(), auditID, controlID)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	if control == nil {
+		response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
+		return
+	}
+	if !canViewEvidence(r, control) {
+		response.WriteError(w, http.StatusForbidden, response.ErrMsgForbidden)
 		return
 	}
 

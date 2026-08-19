@@ -82,7 +82,7 @@ func (r *riskRepository) Update(ctx context.Context, id int, req model.UpdateRis
 		})
 	}
 	// noteRestricted is logChange plus "this forces re-approval". Only the
-	// fields listed in the design doc's restricted-fields rule use it.
+	// fields subject to the restricted-fields rule use it.
 	noteRestricted := func(field, oldVal, newVal string) {
 		if newVal == "" || oldVal == newVal {
 			return

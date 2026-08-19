@@ -203,7 +203,7 @@ func (s *controlService) BulkCreateControls(ctx context.Context, auditID int, re
 	return domain.BulkCreateControlsResponse{Controls: controls, Created: len(controls)}, nil
 }
 
-// applyFrameworkPushBacks performs the optional §6 framework-catalog side
+// applyFrameworkPushBacks performs the optional framework-catalog side
 // effect for each control in a bulk create that requested it
 // (PushToFramework=true). Runs after the audit_control rows are committed:
 // pushControlToFramework writes directly to the catalog (its own commit,
@@ -374,20 +374,6 @@ func (s *controlService) CreateControl(ctx context.Context, auditID int, req dom
 		}
 	}
 	return *c, nil
-}
-
-func (s *controlService) ListAssignedForEvidence(ctx context.Context, userEmail string) (domain.ListAssignedControlsResponse, error) {
-	if userEmail == "" {
-		return domain.ListAssignedControlsResponse{}, &apierror.ValidationError{Msg: "email is required"}
-	}
-	controls, err := s.repo.ListAssignedForEvidence(ctx, userEmail)
-	if err != nil {
-		return domain.ListAssignedControlsResponse{}, err
-	}
-	if controls == nil {
-		controls = []domain.AssignedControlForEvidence{}
-	}
-	return domain.ListAssignedControlsResponse{Controls: controls}, nil
 }
 
 func (s *controlService) GetEvidenceAssignment(ctx context.Context, userEmail string, controlID int) (domain.EvidenceAssignmentResponse, error) {

@@ -18,7 +18,6 @@ package handler
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
@@ -29,24 +28,6 @@ import (
 
 type commentHandler struct {
 	svc service.CommentService
-}
-
-// externalAuditorGroups are the Asgardeo group names that map to an external
-// auditor. Internal-only comments are hidden from these viewers.
-var externalAuditorGroups = map[string]bool{
-	"grc-platform-external-auditor": true,
-}
-
-// isExternalAuditor matches the caller's role names. These are now roles
-// assigned in this platform's database (user_role_grant), not Asgardeo group
-// claims — the names are unchanged, so the membership test is unaffected.
-func isExternalAuditor(roles []string) bool {
-	for _, g := range roles {
-		if externalAuditorGroups[strings.TrimSpace(g)] {
-			return true
-		}
-	}
-	return false
 }
 
 // listComments handles GET /api/v1/audits/{id}/controls/{controlId}/comments.
@@ -62,8 +43,10 @@ func (h *commentHandler) listComments(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// External auditors do not receive internal comments.
-	includeInternal := !isExternalAuditor(auth.FromContext(r.Context()).Roles)
+	// Internal-only comments are shown to holders of the internal-comments
+	// privilege (the internal roles) and hidden from external auditors, who
+	// lack it.
+	includeInternal := auth.HasPrivilege(r.Context(), privilege.ViewInternalComments)
 	comments, err := h.svc.List(r.Context(), auditID, controlID, includeInternal)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)

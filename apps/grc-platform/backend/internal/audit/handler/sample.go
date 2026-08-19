@@ -23,6 +23,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
 // Sample-selection routes: the assigned auditor picks the sample after the
@@ -43,7 +44,7 @@ func (h *evidenceHandler) controlForAuditorAction(w http.ResponseWriter, r *http
 		response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
 		return nil, false
 	}
-	if !requireAssignedAuditor(w, r, control) {
+	if !requireAssignedAuditor(w, r, control, privilege.SelectSample) {
 		return nil, false
 	}
 	return control, true
@@ -191,9 +192,8 @@ func (h *evidenceHandler) submitSample(w http.ResponseWriter, r *http.Request) {
 // POST /api/v1/audits/{id}/controls/{controlId}/sample/request-time.
 //
 // Lets the auditor signal they need more time before selecting a sample:
-// POPULATION_COMPLETE → AWAITING_SAMPLE. A plain status flip, no note field
-// (design doc §8) — the team sees a generic "auditor is preparing the sample"
-// message.
+// POPULATION_COMPLETE → AWAITING_SAMPLE. A plain status flip, no note field —
+// the team sees a generic "auditor is preparing the sample" message.
 func (h *evidenceHandler) requestSampleTime(w http.ResponseWriter, r *http.Request) {
 	auditID, ok := parseIntParam(w, r, "id")
 	if !ok {

@@ -67,18 +67,6 @@ func (h *ControlHandler) SearchControlsGlobal(w http.ResponseWriter, r *http.Req
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// ListAssignedForEvidence handles GET /controls/assigned-for-evidence?email=.
-func (h *ControlHandler) ListAssignedForEvidence(w http.ResponseWriter, r *http.Request) {
-	email := r.URL.Query().Get("email")
-	resp, err := h.svc.ListAssignedForEvidence(r.Context(), email)
-	if err != nil {
-		writeServiceError(w, r, err)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
-}
-
 // GetEvidenceAssignment handles GET /audit-controls/{controlId}/evidence-assignment?email=.
 // 200 {"auditId":N} when the user is assigned to this actionable control; 404 otherwise.
 func (h *ControlHandler) GetEvidenceAssignment(w http.ResponseWriter, r *http.Request) {

@@ -149,24 +149,42 @@ const (
 	CompleteActionSteps = "RISK_COMPLETE_ACTION_STEPS"
 )
 
-// Audit Hub privilege names.
+// Audit Hub privilege names. All prefixed AUDIT_ so they group together apart
+// from the Risk Hub block above and stay collision-free in the shared privilege
+// table. Coarse booleans only — row scope ("owned", "assigned") is DERIVED
+// from these privileges at request time, never encoded here.
 const (
-	ViewAudits           = "VIEW_AUDITS"
-	CreateAudit          = "CREATE_AUDIT"
-	UpdateAudit          = "UPDATE_AUDIT"
-	MoveAuditToFieldwork = "MOVE_AUDIT_TO_FIELDWORK"
-	SubmitAuditForReview = "SUBMIT_AUDIT_FOR_REVIEW"
-	CompleteAudit        = "COMPLETE_AUDIT"
-	ManageControls       = "MANAGE_CONTROLS"
-	SubmitEvidence       = "SUBMIT_EVIDENCE"
-	ReviewEvidence       = "REVIEW_EVIDENCE"
-	ManagePopulation     = "MANAGE_POPULATION"
-	AddComment           = "ADD_COMMENT"
-	ManageAssignments    = "MANAGE_ASSIGNMENTS"
-	ViewTrail            = "VIEW_TRAIL"
-	ManageFrameworks     = "MANAGE_FRAMEWORKS"
-	ManageUsers          = "MANAGE_USERS"
-	ExportReport         = "EXPORT_REPORT"
+	ViewAudits = "AUDIT_VIEW_AUDITS"
+	// ViewAllAudits is the org-wide-read signal: holders get `all` row scope,
+	// the full work-queue tab set, and the Framework tab. It is what makes scope
+	// derivable from privileges alone (Management sees everything yet holds the
+	// fewest action privileges). Mirrors RISK_VIEW_ALL_RISKS.
+	ViewAllAudits    = "AUDIT_VIEW_ALL_AUDITS"
+	CreateAudit      = "AUDIT_CREATE_AUDIT"
+	UpdateAudit      = "AUDIT_UPDATE_AUDIT"
+	ManageControls   = "AUDIT_MANAGE_CONTROLS"
+	ManageFrameworks = "AUDIT_MANAGE_FRAMEWORKS"
+	SubmitEvidence   = "AUDIT_SUBMIT_EVIDENCE"
+	ReviewEvidence   = "AUDIT_REVIEW_EVIDENCE"
+	// ValidateEvidence and SelectSample are auditor-only actions, layered on top
+	// of the assigned-auditor scope check (requireAssignedAuditor) so the grant
+	// is visible in the matrix and the frontend can render off can(...).
+	ValidateEvidence = "AUDIT_VALIDATE_EVIDENCE"
+	SelectSample     = "AUDIT_SELECT_SAMPLE"
+	AddComment       = "AUDIT_ADD_COMMENT"
+	// ViewInternalComments gates internal-only control comments (hidden from
+	// external auditors) — replaces the former hardcoded group-name check.
+	ViewInternalComments = "AUDIT_VIEW_INTERNAL_COMMENTS"
+)
+
+// Shared privilege names — not RISK_ or AUDIT_ prefixed because they gate
+// platform-level capability, not a hub. Seeded with module = 'SHARED' in
+// shared_seed_data.sql, so they may only be granted GLOBAL, never team-scoped
+// (see shared.sql's role.module table comment).
+const (
+	// ManageUsers gates the (not yet wired up) admin grant editor — see
+	// entity/compliance-entity/internal/server/routes.go's grant routes comment.
+	ManageUsers = "MANAGE_USERS"
 )
 
 // AllRiskPrivileges returns every active Risk Hub privilege.

@@ -21,6 +21,20 @@
 --       it is carried by user_role_grant.scope_id, so a user's role and the
 --       scope it applies in are recorded together rather than in two tables
 --       that have to agree with each other.
+--   user            — platform identity, shared by both modules
+--   role            — platform-owned role names (no longer mirrors an IdP)
+--   privilege       — fine-grained privileges used for frontend view rendering
+--   role_privilege  — maps roles to privileges (many-to-many)
+--   user_role_grant — WHO holds WHAT role, WHERE. The single record of a user's
+--                     standing, replacing both per-module team-membership tables
+--                     and the Asgardeo group claim. See the table comment below.
+--
+-- NOTE: role assignment is owned by this platform, not by the IdP. Asgardeo
+--       authenticates users and nothing more — no group or role claim is read
+--       from its tokens. Team membership is likewise not a column on `user`:
+--       it is carried by user_role_grant.scope_id, so a user's role and the
+--       scope it applies in are recorded together rather than in two tables
+--       that have to agree with each other.
 --
 -- Assumes the `grc_platform` database already exists (e.g. provisioned ahead
 -- of time on a hosted/managed MySQL instance) and that the connecting user
@@ -43,6 +57,14 @@ SET FOREIGN_KEY_CHECKS = 0;
 
 -- -----------------------------------------------------------------------------
 -- user
+-- Platform users, authenticated via Asgardeo SSO.
+-- Neither roles nor team membership are columns here — both are rows in
+-- user_role_grant below.
+--
+-- A user row may exist with NO grants at all. That is a legitimate, expected
+-- state, not an incomplete one: an Action Owner may be any employee, resolved
+-- and upserted on the fly when named on an action plan. Such a user reaches
+-- exactly the risks they are personally named on, and nothing else.
 -- Platform users, authenticated via Asgardeo SSO.
 -- Neither roles nor team membership are columns here — both are rows in
 -- user_role_grant below.
@@ -91,7 +113,9 @@ CREATE TABLE IF NOT EXISTS `user` (
 --                     raised in. Risk Assigner, Compliance, Management.
 --   ASSIGNMENT_TEAM → matches risk.assignment_team_id. The team the work was
 --                     routed to. Risk Owner.
---   NULL            → the role is GLOBAL-only and scopes nothing (SHARED roles).
+--   NULL            → the role is GLOBAL-only and scopes nothing (SHARED roles,
+--                     and every audit role — audit_control has exactly one
+--                     team column, so this ambiguity does not exist there).
 --
 -- This has to be recorded rather than inferred, because a risk_team row can be
 -- BOTH a register and an assignment team — 7 of the 9 seeded teams are — so the
@@ -133,15 +157,10 @@ CREATE TABLE IF NOT EXISTS `role` (
 -- information_schema guard below is portable to any MySQL 8.
 --
 -- module gets a DEFAULT so existing rows backfill immediately rather than
--- failing the NOT NULL constraint; the role INSERT in this directory's
--- shared_seed_data.sql (ON DUPLICATE KEY UPDATE module = VALUES(module))
--- corrects it to the real value for every seeded role. scope_basis is nullable
--- by design (NULL means GLOBAL-only) and needs no default for the same reason.
---
--- Run Resources/shared_seed_data.sql after this file, always. Neither column
--- is written by any Go code — scope_basis in particular is only ever read, via
--- COALESCE(scope_basis,''), so a role left NULL resolves to an empty basis and
--- its holders see no risks at all. This schema is not usable on its own.
+-- failing the NOT NULL constraint; shared_seed_data.sql's role INSERT (ON
+-- DUPLICATE KEY UPDATE module = VALUES(module)) corrects it to the real value
+-- for every seeded role right after this runs. scope_basis is nullable by
+-- design (NULL means GLOBAL-only) and needs no default for the same reason.
 SET @role_has_module = (
   SELECT COUNT(*) FROM information_schema.COLUMNS
   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'role' AND COLUMN_NAME = 'module'
@@ -265,11 +284,13 @@ CREATE TABLE IF NOT EXISTS role_privilege (
 -- confers visibility and picker-eligibility only, never write or approval
 -- rights. Those follow the SOURCE register. Otherwise assigning a risk to a
 -- team — an ordinary business field any assigner can set — would hand that
--- team's role-holders authority over it.
+-- team's role-holders authority over it. On the audit side the analogous rule
+-- is enforced in code, not schema.
 --
 -- Grants are NOT the only source of access. Being personally named on a risk
 -- (owner_id, assigner_id, management_approver_id, an action plan's
--- action_owner_id) confers a narrow per-risk capability with no grant at all.
+-- action_owner_id) or an audit control (owner_id, auditor_id) confers a narrow
+-- per-record capability with no grant at all.
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS user_role_grant (
   id         INT      NOT NULL AUTO_INCREMENT,

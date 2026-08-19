@@ -567,7 +567,7 @@ function SampleWaitingCard({ status }: { status: ControlStatus }): JSX.Element {
 }
 
 // SampleUploadCard is the auditor's sample-selection form: files + a required
-// note, plus an optional "Request More Time" escape hatch (design doc §3.1).
+// note, plus an optional "Request More Time" escape hatch.
 // With editMode it doubles as the post-submission editor (status SUBMITTED_SAMPLE
 // only — the round locks once evidence review starts): it also lists the
 // already-recorded sample files with a remove button and prefills the note.
@@ -635,7 +635,7 @@ function SampleUploadCard({
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, lineHeight: 1.7 }}>
         {editMode
           ? "Add more sample files, remove ones no longer needed, or update the note below."
-          : "Upload the sample file(s) for the team to provide evidence against, and/or add a short note describing what to sample — at least one is required."}
+          : "Upload the sample file(s) for the team to provide evidence against, and/or add a short note describing what to sample. At least one is required."}
       </Typography>
 
       {editMode && existingFiles.length > 0 && (

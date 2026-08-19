@@ -17,6 +17,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -25,11 +26,74 @@ import (
 	auditservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
 type dashboardHandler struct {
 	svc auditservice.DashboardService
+}
+
+// deriveScopes computes the actor's view and work-queue row scopes from their
+// grants — no role name is consulted.
+func deriveScopes(ctx context.Context) (view, workQueue model.Scope) {
+	if auth.AllowAll(ctx) { // local dev, MUST be first — auth.Grants(ctx) is nil here
+		return model.ScopeAll, model.ScopeAll
+	}
+	set := auth.Grants(ctx)
+	switch {
+	case set.HasGlobal(privilege.ViewAllAudits):
+		return model.ScopeAll, model.ScopeAll
+	case len(managedTeamIDs(set)) > 0: // inert until a team grant exists
+		return model.ScopeTeam, model.ScopeTeam
+	case auth.HasPrivilege(ctx, privilege.SubmitEvidence):
+		return model.ScopeOwned, model.ScopeOwned
+	case auth.HasPrivilege(ctx, privilege.ValidateEvidence):
+		return model.ScopeAssigned, model.ScopeAssigned
+	default:
+		return model.ScopeNone, model.ScopeNone
+	}
+}
+
+// managedTeamIDs returns the teams where the caller holds org-wide read
+// NON-globally — i.e. AUDIT_VIEW_ALL_AUDITS scoped to a team, the only
+// team-lead shape this module has. Safe to call HasIn here: it is reached only
+// after HasGlobal(ViewAllAudits) returned false, so HasIn's global
+// short-circuit cannot fire and this reduces to the per-team grant map.
+//
+// Deliberately NOT a bare len(set.TeamIDs()) > 0check: TeamIDs() is any
+// team-scoped grant on ANY role, so gating on it would mean granting, say,
+// grc-platform-audit-internal-team at AUDIT_TEAM 2 silently promotes that
+// holder from ScopeOwned to ScopeTeam — a visibility change from a pure data
+// operation, with no code review. Gating on the privilege instead keeps the
+// authority with AUDIT_VIEW_ALL_AUDITS, which only management carries, so a
+// team-scoped grant on any other role stays inert by construction.
+func managedTeamIDs(set *grant.Set) []int {
+	out := []int{}
+	for _, id := range set.TeamIDs() {
+		if set.HasIn(privilege.ViewAllAudits, id) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// deriveWorkQueueClass computes which control-lifecycle bucket is the actor's
+// action queue, from privileges. Reviewers (compliance/admin) review; submitters
+// without review (internal team) submit; auditors validate; everyone else — most
+// notably read-only management, which holds ViewAllAudits but no action privilege
+// — has no action queue.
+func deriveWorkQueueClass(ctx context.Context) model.WorkQueueClass {
+	switch {
+	case auth.HasPrivilege(ctx, privilege.ReviewEvidence):
+		return model.WorkQueueClassReview
+	case auth.HasPrivilege(ctx, privilege.SubmitEvidence):
+		return model.WorkQueueClassSubmission
+	case auth.HasPrivilege(ctx, privilege.ValidateEvidence):
+		return model.WorkQueueClassValidation
+	default:
+		return model.WorkQueueClassNone
+	}
 }
 
 func (h *dashboardHandler) getDashboard(w http.ResponseWriter, r *http.Request) {
@@ -40,9 +104,11 @@ func (h *dashboardHandler) getDashboard(w http.ResponseWriter, r *http.Request) 
 
 	f := model.DashboardFilter{}
 	if user != nil {
-		f.Roles = user.Roles
 		f.UserEmail = user.Email
 	}
+	f.ViewScope, f.WorkQueueScope = deriveScopes(r.Context())
+	f.ScopeTeamIDs = managedTeamIDs(auth.Grants(r.Context()))
+	f.WorkQueueClass = deriveWorkQueueClass(r.Context())
 
 	data, err := h.svc.Get(r.Context(), f)
 	if err != nil {
@@ -61,9 +127,11 @@ func (h *dashboardHandler) getWorkQueue(w http.ResponseWriter, r *http.Request) 
 
 	f := model.DashboardFilter{}
 	if user != nil {
-		f.Roles = user.Roles
 		f.UserEmail = user.Email
 	}
+	f.ViewScope, f.WorkQueueScope = deriveScopes(r.Context())
+	f.ScopeTeamIDs = managedTeamIDs(auth.Grants(r.Context()))
+	f.WorkQueueClass = deriveWorkQueueClass(r.Context())
 
 	q := r.URL.Query()
 	tab := model.WorkQueueTab(q.Get("tab"))

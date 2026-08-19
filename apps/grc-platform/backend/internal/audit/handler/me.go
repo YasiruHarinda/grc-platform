@@ -32,7 +32,9 @@ type privilegesResponse struct {
 
 // handleGetMyPrivileges serves GET /api/v1/me/privileges.
 // Returns the resolved privilege list for the authenticated user (union of all
-// their roles' privileges via the role_privilege DB table).
+// their roles' privileges via the role_privilege DB table). Lives on the audit
+// Deps but is shared by both hubs — the resolved set already unions RISK_* and
+// AUDIT_* names, so the Risk Hub frontend calls this same endpoint.
 // When no privilege store is configured (TokenValidatorEnabled=false local dev),
 // privs is nil and we return allowAll=true — matching HasPrivilege's allow-all behaviour.
 func (d *Deps) handleGetMyPrivileges(w http.ResponseWriter, r *http.Request) {

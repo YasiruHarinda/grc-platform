@@ -23,8 +23,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
-	"sync"
 	"testing"
 	"time"
 
@@ -112,11 +110,10 @@ func unsignedToken(issuer, sub, email string, groups []string) string {
 // There is no group→role map any more: roles are assigned in this platform's
 // database and resolved per request from user_role_grant, so no IdP config
 // participates in authorisation beyond identifying the issuer.
-func idpCfg(issuer, audience, scope string) config.IdPConfig {
+func idpCfg(issuer, audience string) config.IdPConfig {
 	return config.IdPConfig{
 		Issuer:   issuer,
 		Audience: audience,
-		Scope:    scope,
 	}
 }
 
@@ -177,13 +174,6 @@ func TestAuth_ValidDevToken_PopulatesContext(t *testing.T) {
 	if captured.Email != "dev@example.com" {
 		t.Errorf("Email: got %q, want %q", captured.Email, "dev@example.com")
 	}
-	// The token carries a "groups" claim, and it must be ignored: role
-	// assignment lives in this platform's database, not in the IdP. Honouring
-	// it would leave a second, invisible source of authority that no admin
-	// could revoke from User Management.
-	if len(captured.Roles) != 0 {
-		t.Errorf("Roles: got %v, want empty — a token's groups claim must never confer roles", captured.Roles)
-	}
 }
 
 // ── new security tests ─────────────────────────────────────────────────────────
@@ -196,7 +186,7 @@ func TestAuth_XJwtAssertion_ValidSignature_PopulatesContext(t *testing.T) {
 	const issuer = "https://idp.example.com"
 	cfg := middleware.Config{
 		TokenValidatorEnabled: true,
-		IdPs:                  []config.IdPConfig{idpCfg(issuer, "api", config.ScopeFull)},
+		IdPs:                  []config.IdPConfig{idpCfg(issuer, "api")},
 		TestKeyFuncs:          map[string]jwt.Keyfunc{issuer: testKeyFunc},
 	}
 
@@ -232,7 +222,7 @@ func TestAuth_XJwtAssertion_UnsignedForgery_Returns401(t *testing.T) {
 	const issuer = "https://idp.example.com"
 	cfg := middleware.Config{
 		TokenValidatorEnabled: true,
-		IdPs:                  []config.IdPConfig{idpCfg(issuer, "api", config.ScopeFull)},
+		IdPs:                  []config.IdPConfig{idpCfg(issuer, "api")},
 		TestKeyFuncs:          map[string]jwt.Keyfunc{issuer: testKeyFunc},
 	}
 
@@ -255,7 +245,7 @@ func TestAuth_XJwtAssertion_TakesPriorityOverBearerToken(t *testing.T) {
 	const issuer = "https://idp.example.com"
 	cfg := middleware.Config{
 		TokenValidatorEnabled: true,
-		IdPs:                  []config.IdPConfig{idpCfg(issuer, "api", config.ScopeFull)},
+		IdPs:                  []config.IdPConfig{idpCfg(issuer, "api")},
 		TestKeyFuncs:          map[string]jwt.Keyfunc{issuer: testKeyFunc},
 	}
 
@@ -287,7 +277,7 @@ func TestAuth_UnknownIssuer_Returns401(t *testing.T) {
 	const knownIssuer = "https://idp.example.com"
 	cfg := middleware.Config{
 		TokenValidatorEnabled: true,
-		IdPs:                  []config.IdPConfig{idpCfg(knownIssuer, "api", config.ScopeFull)},
+		IdPs:                  []config.IdPConfig{idpCfg(knownIssuer, "api")},
 		TestKeyFuncs:          map[string]jwt.Keyfunc{knownIssuer: testKeyFunc},
 	}
 
@@ -300,61 +290,6 @@ func TestAuth_UnknownIssuer_Returns401(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("unknown issuer: got %d, want 401", rec.Code)
-	}
-}
-
-// TestAuth_IdP2TokenGetsExactlySubmitEvidence verifies that an evidence-app
-// token (ScopeEvidenceApp) receives exactly SUBMIT_EVIDENCE and nothing else.
-//
-// The assertion is stronger than the ceiling it replaced. Previously the token's
-// groups were mapped to a role, resolved to privileges, and then intersected
-// down to this one — so the ceiling was the only thing standing between a
-// misconfigured map and a privileged external token. Now the capability comes
-// from the issuer alone: the grant repository is deliberately wired here and
-// would fail the test if consulted, and the privilege store grants "full_access"
-// everything, yet neither can widen the result.
-func TestAuth_IdP2TokenGetsExactlySubmitEvidence(t *testing.T) {
-	const issuer2 = "https://idp2.example.com"
-
-	store := privilege.NewForTest(map[string]map[string]bool{
-		"full_access": {
-			privilege.CreateAudit:    true,
-			privilege.ManageControls: true,
-			privilege.SubmitEvidence: true,
-		},
-	})
-
-	cfg := middleware.Config{
-		TokenValidatorEnabled: true,
-		PrivilegeStore:        store,
-		// Any call to this repository is a bug: an external submitter has no
-		// user row here, so grants must not be consulted for their tokens.
-		Grants:       &failingGrants{t: t},
-		IdPs:         []config.IdPConfig{idpCfg(issuer2, "api2", config.ScopeEvidenceApp)},
-		TestKeyFuncs: map[string]jwt.Keyfunc{issuer2: testKeyFunc},
-	}
-
-	tok := signedToken(issuer2, "api2", "ext-uid", "ext@example.com", []string{"ext_group"})
-
-	var privs map[string]bool
-	h := middleware.Auth(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		privs = privilege.FromContext(r.Context())
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/evidence-app/controls", nil)
-	req.Header.Set("Authorization", "Bearer "+tok)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("IdP-2 token: got %d, want 200", rec.Code)
-	}
-	if !privs[privilege.SubmitEvidence] {
-		t.Error("IdP-2 token: SUBMIT_EVIDENCE should be granted")
-	}
-	if len(privs) != 1 {
-		t.Errorf("IdP-2 token: got %d privileges, want exactly 1 (SUBMIT_EVIDENCE): %v", len(privs), privs)
 	}
 }
 
@@ -396,7 +331,7 @@ func grantCfg(issuer string, store *privilege.Store, grants grant.Repository) mi
 		TokenValidatorEnabled: true,
 		PrivilegeStore:        store,
 		Grants:                grants,
-		IdPs:                  []config.IdPConfig{idpCfg(issuer, "api", config.ScopeFull)},
+		IdPs:                  []config.IdPConfig{idpCfg(issuer, "api")},
 		TestKeyFuncs:          map[string]jwt.Keyfunc{issuer: testKeyFunc},
 	}
 }
@@ -503,11 +438,12 @@ func TestAuth_GlobalGrantCoversEveryScope(t *testing.T) {
 	}
 }
 
-// TestAuth_GrantLoadFailure_Returns401 verifies the request fails closed when
+// TestAuth_GrantLoadFailure_Returns503 verifies the request fails closed when
 // grants cannot be loaded. Serving the request with no privileges would look to
 // the user exactly like having been revoked, and serving it with stale ones
-// would need a cache this design deliberately does not have.
-func TestAuth_GrantLoadFailure_Returns401(t *testing.T) {
+// would need a cache this design deliberately does not have. 503, not 401: this
+// is a grant-store failure, not a rejection of the caller's identity.
+func TestAuth_GrantLoadFailure_Returns503(t *testing.T) {
 	const issuer = "https://idp.example.com"
 	store := privilege.NewForTest(map[string]map[string]bool{})
 	grants := &stubGrants{err: errors.New("entity unavailable")}
@@ -522,8 +458,8 @@ func TestAuth_GrantLoadFailure_Returns401(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("grant load failure: got %d, want 401", rec.Code)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("grant load failure: got %d, want 503", rec.Code)
 	}
 	if called {
 		t.Error("handler must not run when grants could not be loaded")
@@ -584,92 +520,4 @@ func TestAuth_GrantsLoadedEveryRequest(t *testing.T) {
 	if grants.calls != 3 {
 		t.Errorf("grants loaded %d times across 3 requests, want 3 — grants must never be cached", grants.calls)
 	}
-}
-
-// TestIssuerScope_EvidenceAppToken_BlockedOutsidePath verifies that an
-// evidence-app-scoped token cannot reach routes outside /api/v1/evidence-app/.
-func TestIssuerScope_EvidenceAppToken_BlockedOutsidePath(t *testing.T) {
-	info := &middleware.UserInfo{Scope: "evidence-app"}
-	h := middleware.IssuerScope(okHandler())
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/audits", nil)
-	req = req.WithContext(middleware.WithUserInfo(req.Context(), info))
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("evidence-app token outside prefix: got %d, want 403", rec.Code)
-	}
-}
-
-// TestIssuerScope_EvidenceAppToken_AllowedOnPath verifies that the scope middleware
-// passes evidence-app tokens through when the path starts with /api/v1/evidence-app/.
-func TestIssuerScope_EvidenceAppToken_AllowedOnPath(t *testing.T) {
-	info := &middleware.UserInfo{Scope: "evidence-app"}
-	h := middleware.IssuerScope(okHandler())
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/evidence-app/controls", nil)
-	req = req.WithContext(middleware.WithUserInfo(req.Context(), info))
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("evidence-app token on prefix: got %d, want 200", rec.Code)
-	}
-}
-
-// TestRateLimiter_Blocks429WithRetryAfter verifies that exhausting the burst budget
-// returns 429 with a non-empty Retry-After header.
-func TestRateLimiter_Blocks429WithRetryAfter(t *testing.T) {
-	// burst=1 means the first request consumes the only token; the second is denied.
-	rl := middleware.NewRateLimiter(1, 1)
-	h := rl.Wrap(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
-
-	send := func() *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/evidence-app/controls/1/submit", nil)
-		req.Header.Set("X-Forwarded-For", "203.0.113.1")
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		return rec
-	}
-
-	if first := send(); first.Code != http.StatusOK {
-		t.Fatalf("first request (within burst): got %d, want 200", first.Code)
-	}
-
-	second := send()
-	if second.Code != http.StatusTooManyRequests {
-		t.Fatalf("second request (burst exhausted): got %d, want 429", second.Code)
-	}
-	ra := second.Header().Get("Retry-After")
-	if ra == "" {
-		t.Fatal("429 response missing Retry-After header")
-	}
-	secs, err := strconv.Atoi(ra)
-	if err != nil || secs < 1 {
-		t.Fatalf("Retry-After %q: want a positive integer seconds value", ra)
-	}
-}
-
-// TestRateLimiter_AllowsWithinBurst verifies that requests within the burst budget
-// are not rate-limited when spread across distinct callers.
-func TestRateLimiter_AllowsWithinBurst(t *testing.T) {
-	rl := middleware.NewRateLimiter(10, 5)
-	h := rl.Wrap(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
-
-	var wg sync.WaitGroup
-	for i := range 5 {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/evidence-app/controls", nil)
-			req.Header.Set("X-Forwarded-For", "10.0.0."+strconv.Itoa(i+1))
-			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, req)
-			if rec.Code != http.StatusOK {
-				t.Errorf("caller %d within burst: got %d, want 200", i, rec.Code)
-			}
-		}(i)
-	}
-	wg.Wait()
 }

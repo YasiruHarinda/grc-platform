@@ -84,10 +84,10 @@ type PopulationDetails struct {
 // AddControlRequest is the payload for POST /api/v1/audits/{id}/controls.
 // Always creates a standalone control with full definition text.
 // PushToFramework optionally also writes the control into the audit's
-// framework catalog as a side effect (see model/framework_control.go and
-// docs/new/Audit-Control-Framework-Optional-Design.md §6): a first version
-// when SourceFrameworkControlID is nil, or a new version of that existing
-// catalog control when it's set (edited-existing-control push-back).
+// framework catalog as a side effect (see model/framework_control.go): a
+// first version when SourceFrameworkControlID is nil, or a new version of
+// that existing catalog control when it's set (edited-existing-control
+// push-back).
 type AddControlRequest struct {
 	ControlSource       string             `json:"controlSource"` // MANUAL | COPIED | CSV; defaults to MANUAL
 	ControlNumber       string             `json:"controlNumber"`

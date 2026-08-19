@@ -32,8 +32,7 @@ import (
 // Web-app population submission routes. These mirror the evidence submission
 // flow (upload-link → upload → submit) but write POPULATION files against the
 // control's active population round, then advance the control to
-// POPULATION_INTERNAL_REVIEW. The Evidence Portal has its own equivalents under
-// /api/v1/evidence-app (see evidence_app.go).
+// POPULATION_INTERNAL_REVIEW.
 
 // activePopulationID resolves the active population round for an OE control.
 // Writes 409 and returns ok=false when there is none (e.g. DESIGN control).
@@ -171,14 +170,24 @@ func (h *evidenceHandler) submitPopulation(w http.ResponseWriter, r *http.Reques
 }
 
 // canViewPopulation allows: the team (SubmitEvidence), an internal reviewer
-// (ReviewEvidence), the control's assigned auditor (by email), or ManageControls.
+// (ReviewEvidence), an org-wide reader (ViewAllAudits, e.g. management — see
+// ADR-0002), the control's assigned auditor (by email), or ManageControls.
 // Unlike the write routes there is no team-assignment (IDOR) check here — this
 // mirrors listEvidence/downloadEvidenceFile, which are privilege-gated only.
+// Each privilege is checked against control's own team (HasPrivilegeIn), since
+// all four can be granted scoped to a single team (module=AUDIT) — the
+// unscoped HasPrivilege would let a team-scoped grant view every other team's
+// population too.
 func canViewPopulation(r *http.Request, control *model.AuditControl) bool {
 	ctx := r.Context()
-	if auth.HasPrivilege(ctx, privilege.ManageControls) ||
-		auth.HasPrivilege(ctx, privilege.SubmitEvidence) ||
-		auth.HasPrivilege(ctx, privilege.ReviewEvidence) {
+	teamID := 0
+	if control.TeamID != nil {
+		teamID = *control.TeamID
+	}
+	if auth.HasPrivilegeIn(ctx, privilege.ManageControls, teamID) ||
+		auth.HasPrivilegeIn(ctx, privilege.SubmitEvidence, teamID) ||
+		auth.HasPrivilegeIn(ctx, privilege.ReviewEvidence, teamID) ||
+		auth.HasPrivilegeIn(ctx, privilege.ViewAllAudits, teamID) {
 		return true
 	}
 	actor := auth.FromContext(ctx)
@@ -199,7 +208,7 @@ func withReadURLs(files []*model.PopulationFile) []*model.PopulationFile {
 // Returns the control's current population round plus its files split into
 // population[] (team-submitted) and sample[] (auditor-selected), and the
 // auditor's sample note. A control normally has exactly one round for its whole
-// lifecycle (see design doc §3.2/§8), so "current" and "latest" are the same.
+// lifecycle, so "current" and "latest" are the same.
 func (h *evidenceHandler) listPopulation(w http.ResponseWriter, r *http.Request) {
 	auditID, ok := parseIntParam(w, r, "id")
 	if !ok {
@@ -257,12 +266,32 @@ func (h *evidenceHandler) listPopulation(w http.ResponseWriter, r *http.Request)
 // GET /api/v1/population/files/{fileId}/download.
 // It proxies the file bytes the same way downloadEvidenceFile does — the
 // backend reads the blob directly from Azure using its own storage credential.
+//
+// SubmitEvidence, ReviewEvidence, ManageControls, and ViewAllAudits gate
+// access, checked against the file's owning control's own team
+// (HasPrivilegeIn) since all four can be granted scoped to a single team
+// (module=AUDIT) — the unscoped RequireAnyPrivilege this replaced would let a
+// team-scoped grant download every other team's population files too.
 func (h *evidenceHandler) downloadPopulationFile(w http.ResponseWriter, r *http.Request) {
-	if !auth.RequireAnyPrivilege(r.Context(), w, privilege.SubmitEvidence, privilege.ReviewEvidence, privilege.ManageControls) {
-		return
-	}
+	ctx := r.Context()
 	fileID, ok := parseIntParam(w, r, "fileId")
 	if !ok {
+		return
+	}
+	f, err := h.popSvc.GetFileByID(ctx, fileID)
+	if err != nil {
+		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
+		return
+	}
+	teamID := 0
+	if f.TeamID != nil {
+		teamID = *f.TeamID
+	}
+	if !auth.HasPrivilegeIn(ctx, privilege.SubmitEvidence, teamID) &&
+		!auth.HasPrivilegeIn(ctx, privilege.ReviewEvidence, teamID) &&
+		!auth.HasPrivilegeIn(ctx, privilege.ManageControls, teamID) &&
+		!auth.HasPrivilegeIn(ctx, privilege.ViewAllAudits, teamID) {
+		response.WriteError(w, http.StatusForbidden, response.ErrMsgForbidden)
 		return
 	}
 	data, fileName, contentType, err := h.popSvc.DownloadFile(r.Context(), fileID)
@@ -336,7 +365,7 @@ func (h *evidenceHandler) deletePopulationFile(w http.ResponseWriter, r *http.Re
 				response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
 				return
 			}
-			if !requireAssignedAuditor(w, r, control) {
+			if !requireAssignedAuditor(w, r, control, privilege.SelectSample) {
 				return
 			}
 			if !sampleEligibleStatuses[control.Status] {
@@ -385,7 +414,7 @@ func (h *evidenceHandler) deletePopulationFile(w http.ResponseWriter, r *http.Re
 //
 // Internal reviewer decision on a submitted population: approve advances it to
 // auditor validation; reject sends it back to the team on the same round
-// (see design doc §3.2/§8 — both rejection paths reuse the round).
+// (both rejection paths reuse the round).
 func (h *evidenceHandler) reviewPopulation(w http.ResponseWriter, r *http.Request) {
 	h.decideRound(w, r, decideRoundParams{
 		preGate: func(w http.ResponseWriter, r *http.Request) bool {
@@ -424,7 +453,7 @@ func (h *evidenceHandler) reviewPopulation(w http.ResponseWriter, r *http.Reques
 // same round.
 func (h *evidenceHandler) validatePopulation(w http.ResponseWriter, r *http.Request) {
 	h.decideRound(w, r, decideRoundParams{
-		postGate:          requireAssignedAuditor,
+		postGate:          assignedAuditorGate(privilege.ValidateEvidence),
 		requiredStatus:    "POPULATION_UNDER_VALIDATION",
 		statusConflictMsg: "population can only be validated while it is under auditor validation",
 		latestRoundID: func(ctx context.Context, auditID, controlID int) (int, error) {

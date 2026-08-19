@@ -58,6 +58,35 @@ FROM audit a
 JOIN audit_framework f ON f.id = a.framework_id
 JOIN audit_product   p ON p.id = a.product_id`
 
+// auditScopeWhere returns a WHERE fragment (starting with "AND") and its bind
+// args for the given row scope. Audits have no team/owner/auditor of their own
+// (only their controls do), so — per the same rule the dashboard applies at the
+// control level (see audit_dashboard_repo.go's scopeWhere) — an audit is in
+// scope when it has at least one control in scope, checked via EXISTS against
+// audit_control c.
+//
+// An unset (zero-value "") scope is NOT treated as ScopeAll: it falls through
+// to the default deny-all case below, matching scopeWhere's behaviour. A
+// caller that genuinely wants every row (an internal existence/uniqueness
+// check, never an external request) must pass domain.ScopeAll explicitly.
+func auditScopeWhere(scope domain.Scope, userEmail string, scopeTeamIDs []int) (string, []any) {
+	switch scope {
+	case domain.ScopeAll:
+		return "", nil
+	case domain.ScopeOwned:
+		return " AND EXISTS (SELECT 1 FROM audit_control c WHERE c.audit_id = a.id AND c.owner_id = (SELECT id FROM `user` WHERE email = ?))",
+			[]any{userEmail}
+	case domain.ScopeAssigned:
+		return " AND EXISTS (SELECT 1 FROM audit_control c WHERE c.audit_id = a.id AND c.auditor_id = (SELECT id FROM `user` WHERE email = ?))",
+			[]any{userEmail}
+	case domain.ScopeTeam:
+		pred, args := teamScopePredicate("c", scopeTeamIDs, userEmail)
+		return " AND EXISTS (SELECT 1 FROM audit_control c WHERE c.audit_id = a.id AND " + pred + ")", args
+	default: // ScopeNone and any unrecognized value scope to nothing.
+		return " AND 1=0", nil
+	}
+}
+
 func (r *auditRepo) SearchAudits(ctx context.Context, req domain.SearchAuditsRequest) ([]domain.Audit, int, error) {
 	args := []any{}
 	where := "WHERE 1=1"
@@ -93,6 +122,17 @@ func (r *auditRepo) SearchAudits(ctx context.Context, req domain.SearchAuditsReq
 			args = append(args, id)
 		}
 	}
+	if len(req.AuditIDs) > 0 {
+		placeholders := strings.Repeat("?,", len(req.AuditIDs))
+		placeholders = placeholders[:len(placeholders)-1]
+		where += " AND a.id IN (" + placeholders + ")"
+		for _, id := range req.AuditIDs {
+			args = append(args, id)
+		}
+	}
+	scopeClause, scopeArgs := auditScopeWhere(req.Scope, req.UserEmail, req.ScopeTeamIDs)
+	where += scopeClause
+	args = append(args, scopeArgs...)
 
 	var total int
 	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) "+auditFromClause+" "+where, args...).Scan(&total); err != nil {

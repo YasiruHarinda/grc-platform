@@ -62,28 +62,18 @@ type AIValidationConfig struct {
 	AgentAPIKey  string
 }
 
-// Auth scope values classify what an IdP's tokens are allowed to reach.
-// A full-scope token (IdP-1, the GRC web app) can reach the whole API; an
-// evidence-app-scoped token (IdP-2, the Evidence Portal) is restricted to
-// /api/v1/evidence-app/* and capped at the evidence-app privilege ceiling.
-const (
-	ScopeFull        = "full"
-	ScopeEvidenceApp = "evidence-app"
-)
-
 // IdPConfig describes one trusted identity provider (Asgardeo organization).
 // Tokens are validated against the matching issuer's JWKS/audience only.
 type IdPConfig struct {
 	Issuer       string
 	JWKSEndpoint string
 	Audience     string
-	Scope        string // ScopeFull | ScopeEvidenceApp
 }
 
 type AuthConfig struct {
-	// IdPs holds every trusted issuer. IdP-1 (index 0) is the GRC web app; IdP-2,
-	// when configured, is the Evidence Portal. Empty when TokenValidatorEnabled is
-	// false (local dev decodes tokens without verification).
+	// IdPs holds every trusted issuer — today, just the GRC web app. Empty when
+	// TokenValidatorEnabled is false (local dev decodes tokens without
+	// verification).
 	IdPs                  []IdPConfig
 	ClockSkew             time.Duration
 	TokenValidatorEnabled bool
@@ -220,20 +210,10 @@ func Load() (Config, error) {
 	}, nil
 }
 
-// loadIdPs builds the trusted-issuer list from the environment. IdP-1 (the GRC
-// web app) is always required. IdP-2 (the Evidence Portal) is optional — it is
-// appended only when AUTH_ISSUER_2 is set, so single-IdP deployments are
-// unchanged. When AUTH_ISSUER_2 is set, all of its companion vars are required
-// (fail fast).
-//
-// AUTH_GROUP_ROLE_MAP_2 is gone. It mapped the Evidence Portal's group claims
-// onto GRC role names, which were then resolved to privileges and intersected
-// down to exactly {SUBMIT_EVIDENCE} — so the whole chain only ever produced one
-// bit. An evidence-app token now carries that capability by virtue of its
-// issuer (see middleware.evidenceAppPrivileges), and no token's group claim is
-// read anywhere.
+// loadIdPs builds the trusted-issuer list from the environment — today, just
+// the GRC web app's IdP.
 func loadIdPs() ([]IdPConfig, error) {
-	idp1 := IdPConfig{Scope: ScopeFull}
+	idp1 := IdPConfig{}
 	var err error
 	if idp1.JWKSEndpoint, err = mustEnv("AUTH_JWKS_ENDPOINT"); err != nil {
 		return nil, err
@@ -244,23 +224,7 @@ func loadIdPs() ([]IdPConfig, error) {
 	if idp1.Audience, err = mustEnv("AUTH_AUDIENCE"); err != nil {
 		return nil, err
 	}
-	idps := []IdPConfig{idp1}
-
-	if os.Getenv("AUTH_ISSUER_2") == "" {
-		return idps, nil // single-IdP deployment
-	}
-
-	idp2 := IdPConfig{Scope: ScopeEvidenceApp}
-	if idp2.Issuer, err = mustEnv("AUTH_ISSUER_2"); err != nil {
-		return nil, err
-	}
-	if idp2.JWKSEndpoint, err = mustEnv("AUTH_JWKS_ENDPOINT_2"); err != nil {
-		return nil, err
-	}
-	if idp2.Audience, err = mustEnv("AUTH_AUDIENCE_2"); err != nil {
-		return nil, err
-	}
-	return append(idps, idp2), nil
+	return []IdPConfig{idp1}, nil
 }
 
 func mustEnv(key string) (string, error) {

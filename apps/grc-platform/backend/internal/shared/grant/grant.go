@@ -25,12 +25,10 @@
 // The problem this package exists to solve is that a user no longer has one
 // privilege set. Someone may be Risk Owner in one register and Risk Assigner in
 // another; flattening those into a single set would let them approve, as owner,
-// a risk belonging to the register where they are merely an assigner. So the
-// enforcement callers reach for is HasIn(priv, teamID) — "may this user do X on
-// THIS thing?" — never an unscoped union. The Audit Hub's unscoped call sites
-// read that union too, but not through this package: PrivilegeMap() publishes
-// it under the privilege package's context key, which is what
-// auth.HasPrivilege actually reads.
+// a risk belonging to the register where they are merely an assigner. HasIn
+// answers the question that matters — "may this user do X on THIS thing?" —
+// scoped to the team whose authority governs the action. PrivilegeMap exposes
+// the flattened union for the handful of call sites with no object in hand.
 package grant
 
 import (
@@ -288,6 +286,22 @@ func (s *Set) IsEmpty() bool {
 	return s == nil || len(s.grants) == 0
 }
 
+// TeamIDs returns the team ids the caller holds a non-global grant on, sorted
+// for stable query plans and reproducible test output. Empty for a GLOBAL-only
+// caller, whose access is not expressible as a team list — check IsGlobal
+// first, or an unrestricted caller will be scoped to nothing.
+func (s *Set) TeamIDs() []int {
+	if s == nil {
+		return nil
+	}
+	ids := make([]int, 0, len(s.byTeam))
+	for id := range s.byTeam {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	return ids
+}
+
 // PrivilegesIn returns, sorted, the privileges the caller holds in one scope —
 // their GLOBAL grants plus any grant on that specific team.
 //
@@ -306,26 +320,6 @@ func (s *Set) PrivilegesIn(teamID int) []string {
 				seen[p] = true
 				out = append(out, p)
 			}
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// RoleNames returns the distinct role names the caller holds, in any scope,
-// sorted. Scope is deliberately flattened away: this answers "what is this
-// person" for consumers that match on role names, not "what may they do here".
-// Anything scope-sensitive must use HasIn.
-func (s *Set) RoleNames() []string {
-	if s == nil {
-		return nil
-	}
-	seen := make(map[string]bool, len(s.grants))
-	out := make([]string, 0, len(s.grants))
-	for _, g := range s.grants {
-		if !seen[g.RoleName] {
-			seen[g.RoleName] = true
-			out = append(out, g.RoleName)
 		}
 	}
 	sort.Strings(out)

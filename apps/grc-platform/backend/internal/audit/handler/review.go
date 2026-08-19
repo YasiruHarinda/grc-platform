@@ -31,20 +31,22 @@ import (
 // requireAssignedAuditor authorizes population-validation, sample-selection, and
 // evidence-validation actions to the control's assigned auditor POC only —
 // matched by email against control.AuditorEmail — since those are external-
-// auditor decisions, not internal-reviewer ones (design doc §2, §5.4).
+// auditor decisions, not internal-reviewer ones.
 //
-// ManageControls holders bypass this check, consistent with requireAssignment
+// requiredPriv is the auditor privilege for the action — AUDIT_VALIDATE_EVIDENCE
+// for the validate endpoints, AUDIT_SELECT_SAMPLE for the sample endpoints. It
+// layers on top of the assigned-auditor scope (ADR-0002): the caller must both
+// hold the privilege AND be the control's assigned auditor. Requiring the
+// specific privilege (stronger than the old baseline ViewAudits check) also
+// stops a token with zero auditor grants from acting by an auditor_id coincidence.
+//
+// ManageControls holders bypass the scope check, consistent with requireAssignment
 // elsewhere: they already have full read/write over all audit data.
-//
-// The caller must also hold ViewAudits (baseline GRC access) so a valid IdP
-// token with zero GRC privileges cannot act purely by an auditor_id coincidence.
-// There is no dedicated "external auditor" privilege in the platform today — if
-// one is introduced later, swap this baseline check for it.
-func requireAssignedAuditor(w http.ResponseWriter, r *http.Request, control *model.AuditControl) bool {
+func requireAssignedAuditor(w http.ResponseWriter, r *http.Request, control *model.AuditControl, requiredPriv string) bool {
 	if auth.HasPrivilege(r.Context(), privilege.ManageControls) {
 		return true
 	}
-	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAudits) {
+	if !auth.RequirePrivilege(r.Context(), w, requiredPriv) {
 		return false
 	}
 	actor := auth.FromContext(r.Context())
@@ -53,6 +55,14 @@ func requireAssignedAuditor(w http.ResponseWriter, r *http.Request, control *mod
 		return false
 	}
 	return true
+}
+
+// assignedAuditorGate adapts requireAssignedAuditor to the decideRound postGate
+// signature, binding the auditor privilege the action requires.
+func assignedAuditorGate(requiredPriv string) func(http.ResponseWriter, *http.Request, *model.AuditControl) bool {
+	return func(w http.ResponseWriter, r *http.Request, control *model.AuditControl) bool {
+		return requireAssignedAuditor(w, r, control, requiredPriv)
+	}
 }
 
 // decideRoundParams configures decideRound for one of the four review/validate

@@ -158,8 +158,7 @@ interface DraftControl {
   population: PopulationDraft | null; // non-null for OE controls
 
   // Framework-catalog push-back (only ever meaningful under the "Copy from
-  // Framework" top source — see docs/new/Audit-Control-Framework-Optional-Design.md
-  // §6). Never set for "Copy from Previous Audit" drafts.
+  // Framework" top source). Never set for "Copy from Previous Audit" drafts.
   //
   // sourceFrameworkControlId: set when this row was picked from *this*
   // framework's current catalog — identifies which catalog control a
@@ -213,7 +212,7 @@ function controlToDraft(c: AuditControl): DraftControl {
     teamId: c.teamId ?? null,
     auditorId: c.auditorId ?? null,
     population: c.requirementType === "OE" ? blankPopulation() : null,
-    // Copy from Previous Audit never pushes to the framework catalog (§6) —
+    // Copy from Previous Audit never pushes to the framework catalog —
     // no toggle, always false, regardless of what the source control was.
     pushToFramework: false,
   };
@@ -467,7 +466,7 @@ interface EditableControlsTableProps {
   users: AuditUser[];
   teams: AuditTeam[];
   // Shows the "also add/update framework library" column. Only meaningful
-  // under the "Copy from Framework" top source (§6) — Copy from Previous
+  // under the "Copy from Framework" top source — Copy from Previous
   // Audit never pushes, so the caller passes false there.
   showPushColumn: boolean;
 }
@@ -749,7 +748,7 @@ function EditableControlsTable({ drafts, onChange, users, teams, showPushColumn 
                   />
                 </Tooltip>
               </TableCell>
-              {/* Add to Library — §6: whether this row also writes into the
+              {/* Add to Library: whether this row also writes into the
                   framework catalog. Hidden per-row when pushLocked (catalog
                   started empty, or this row was cloned from another
                   framework) since there's nothing to choose. */}
@@ -1352,7 +1351,7 @@ function Step2Controls({
       auditorId: null,
       population: fc.requirementType === "OE" ? blankPopulation() : null,
       // Identifies which catalog control an edit-and-push-back should version
-      // (§6) — set even though it's unedited right now.
+      // — set even though it's unedited right now.
       sourceFrameworkControlId: fc.id,
       pushToFramework: false,
     };
@@ -1381,7 +1380,7 @@ function Step2Controls({
       teamId: null,
       auditorId: null,
       population: fc.requirementType === "OE" ? blankPopulation() : null,
-      // Cloning always seeds this framework's catalog (§6) — no toggle.
+      // Cloning always seeds this framework's catalog — no toggle.
       pushToFramework: true,
       pushLocked: true,
       clonedFromControlId: fc.id,
@@ -1437,7 +1436,7 @@ function Step2Controls({
         onDraftsChange([]);
       } else {
         onCsvErrorChange(null);
-        // Empty catalog → every CSV row auto-seeds the library (§6), no choice.
+        // Empty catalog → every CSV row auto-seeds the library, no choice.
         onDraftsChange(result.map((d) => ({ ...d, pushToFramework: catalogEmpty, pushLocked: catalogEmpty })));
       }
     };

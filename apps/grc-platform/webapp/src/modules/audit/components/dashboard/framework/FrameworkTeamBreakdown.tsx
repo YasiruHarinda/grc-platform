@@ -24,7 +24,7 @@ interface FrameworkTeamBreakdownProps {
 }
 
 // "Who owns the gap" — per-team completion. The reader draws the escalation
-// conclusion; this panel only states the fact it would be built on (§10).
+// conclusion; this panel only states the fact it would be built on.
 export default function FrameworkTeamBreakdown({ scope }: FrameworkTeamBreakdownProps): JSX.Element {
   const theme = useTheme();
 

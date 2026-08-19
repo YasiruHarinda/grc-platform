@@ -54,6 +54,9 @@ func (r *auditFrameworkRepo) SearchAuditFrameworks(ctx context.Context, req doma
 		where += " AND status = ?"
 		args = append(args, req.StatusKey)
 	}
+	scopeClause, scopeArgs := frameworkScopeWhere(req.Scope, req.UserEmail, req.ScopeTeamIDs)
+	where += scopeClause
+	args = append(args, scopeArgs...)
 
 	var total int
 	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM audit_framework "+where, args...).Scan(&total); err != nil {
@@ -132,6 +135,38 @@ func (r *auditFrameworkRepo) UpdateAuditFramework(ctx context.Context, id int, r
 		return nil, fmt.Errorf("audit_framework.Update(%d): %w", id, err)
 	}
 	return r.GetAuditFrameworkByID(ctx, id)
+}
+
+// frameworkScopeWhere returns a WHERE fragment (starting with "AND") and its
+// bind args for the given row scope. Frameworks have no team/owner/auditor of
+// their own (only their audits' controls do), so — one level deeper than
+// auditScopeWhere's "audit qualifies if any control does" — a framework
+// qualifies if any of its audits has any control in scope.
+//
+// An unset (zero-value "") scope is NOT treated as ScopeAll: it falls through
+// to the default deny-all case below, matching scopeWhere's behaviour. A
+// caller that genuinely wants every row (an internal existence/uniqueness
+// check, never an external request) must pass domain.ScopeAll explicitly.
+func frameworkScopeWhere(scope domain.Scope, userEmail string, scopeTeamIDs []int) (string, []any) {
+	switch scope {
+	case domain.ScopeAll:
+		return "", nil
+	case domain.ScopeOwned:
+		return ` AND EXISTS (SELECT 1 FROM audit a JOIN audit_control c ON c.audit_id = a.id
+			WHERE a.framework_id = audit_framework.id AND c.owner_id = (SELECT id FROM ` + "`user`" + ` WHERE email = ?))`,
+			[]any{userEmail}
+	case domain.ScopeAssigned:
+		return ` AND EXISTS (SELECT 1 FROM audit a JOIN audit_control c ON c.audit_id = a.id
+			WHERE a.framework_id = audit_framework.id AND c.auditor_id = (SELECT id FROM ` + "`user`" + ` WHERE email = ?))`,
+			[]any{userEmail}
+	case domain.ScopeTeam:
+		pred, args := teamScopePredicate("c", scopeTeamIDs, userEmail)
+		return ` AND EXISTS (SELECT 1 FROM audit a JOIN audit_control c ON c.audit_id = a.id
+			WHERE a.framework_id = audit_framework.id AND ` + pred + `)`,
+			args
+	default: // ScopeNone and any unrecognized value scope to nothing.
+		return " AND 1=0", nil
+	}
 }
 
 func scanFramework(s scanner) (*domain.AuditFramework, error) {

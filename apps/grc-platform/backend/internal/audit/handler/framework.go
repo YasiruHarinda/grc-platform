@@ -35,9 +35,16 @@ func (h *frameworkHandler) listFrameworks(w http.ResponseWriter, r *http.Request
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAudits) {
 		return
 	}
-	frameworks, err := h.svc.ListFrameworks(r.Context())
+	ctx := r.Context()
+	scope, _ := deriveScopes(ctx)
+	user := auth.FromContext(ctx)
+	var email string
+	if user != nil {
+		email = user.Email
+	}
+	frameworks, err := h.svc.ListFrameworks(ctx, scope, email, managedTeamIDs(auth.Grants(ctx)))
 	if err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
 		return
 	}
 	if frameworks == nil {

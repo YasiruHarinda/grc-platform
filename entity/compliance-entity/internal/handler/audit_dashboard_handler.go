@@ -34,7 +34,10 @@ func NewDashboardHandler(svc service.DashboardService) *DashboardHandler {
 	return &DashboardHandler{svc: svc}
 }
 
-// GetDashboard handles POST /audit/dashboard/search. Body: { roles, userEmail }.
+// GetDashboard handles POST /audit/dashboard/search.
+// Body: { scope, workQueueScope, workQueueClass, userEmail, scopeTeamIds }.
+// scopeTeamIds is the server-derived team scope (from the caller's grants),
+// not a client-supplied filter.
 func (h *DashboardHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	var req domain.AuditDashboardRequest
 	if !decodeRequest(w, r, &req) {
@@ -50,7 +53,9 @@ func (h *DashboardHandler) GetDashboard(w http.ResponseWriter, r *http.Request) 
 }
 
 // GetWorkQueuePage handles POST /audit/work-queue/search.
-// Body: { roles, userEmail, tab, page, limit }.
+// Body: { workQueueScope, workQueueClass, userEmail, tab, page, limit, scopeTeamIds, ...filters }.
+// scopeTeamIds is the server-derived team scope (from the caller's grants);
+// distinct from the client-supplied teamIds display filter among ...filters.
 func (h *DashboardHandler) GetWorkQueuePage(w http.ResponseWriter, r *http.Request) {
 	var req domain.WorkQueueRequest
 	if !decodeRequest(w, r, &req) {

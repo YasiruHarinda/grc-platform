@@ -39,7 +39,7 @@ interface BlockerListProps {
 }
 
 // "What's blocking" — ranked overdue, then needs-clarification, then due
-// within 7 days (§3.3). scope.blockers already arrives in that order.
+// within 7 days. scope.blockers already arrives in that order.
 export default function BlockerList({ scope, showAuditLabel }: BlockerListProps): JSX.Element {
   const navigate = useNavigate();
   const overdueCount = scope.blockers.filter((b) => b.reason === "overdue").length;

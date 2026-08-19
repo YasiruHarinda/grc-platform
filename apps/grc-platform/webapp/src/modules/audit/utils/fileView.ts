@@ -41,14 +41,25 @@ const SAFE_INLINE_CONTENT_TYPES = new Set([
 /** Opens a fetched file inline when safe to render, otherwise forces a download. */
 export function viewOrDownloadBlob(blob: Blob, fileName: string): void {
   const contentType = blob.type.split(";")[0].trim().toLowerCase();
-  const objectUrl = URL.createObjectURL(blob);
   if (SAFE_INLINE_CONTENT_TYPES.has(contentType)) {
+    const objectUrl = URL.createObjectURL(blob);
     window.open(objectUrl, "_blank", "noopener,noreferrer");
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
   } else {
-    const link = document.createElement("a");
-    link.href = objectUrl;
-    link.download = fileName;
-    link.click();
+    downloadBlob(blob, fileName);
   }
+}
+
+/**
+ * Always saves the fetched file to disk, regardless of content type — for an
+ * explicit "Download" action alongside "View" (which opens PDFs/images/Office
+ * docs inline instead, per SAFE_INLINE_CONTENT_TYPES above).
+ */
+export function downloadBlob(blob: Blob, fileName: string): void {
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = fileName;
+  link.click();
   setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
 }

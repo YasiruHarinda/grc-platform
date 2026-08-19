@@ -229,9 +229,9 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	// Controls (cross-audit search; nested CRUD under audits)
 	mux.HandleFunc("POST /audit/dashboard/search", dashboardH.GetDashboard)
 	mux.HandleFunc("POST /audit/work-queue/search", dashboardH.GetWorkQueuePage)
-	mux.HandleFunc("GET /controls/assigned-for-evidence", controlH.ListAssignedForEvidence)
-	// Evidence Portal proxy support: resource-level assignment check (returns the
-	// derived audit id) and active-population lookup for OE controls.
+	// Resource-level assignment check (returns the derived audit id, used by the
+	// web app's own evidence-submission IDOR gate) and active-population lookup
+	// for OE controls.
 	mux.HandleFunc("GET /audit-controls/{controlId}/evidence-assignment", controlH.GetEvidenceAssignment)
 	mux.HandleFunc("GET /audit-controls/{controlId}/active-population", controlH.GetActivePopulation)
 	mux.HandleFunc("POST /controls/search", controlH.SearchControlsGlobal)
