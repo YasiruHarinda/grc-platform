@@ -1830,7 +1830,7 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
 
       <OverrideStatusDialog
         open={overrideTarget !== null}
-        from={control?.status ?? null}
+        from={displayStatus ?? null}
         to={overrideTarget}
         isPending={overrideStatus.isPending}
         error={overrideStatus.isError ? (overrideStatus.error as Error).message : null}
