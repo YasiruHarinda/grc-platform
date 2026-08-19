@@ -636,7 +636,7 @@ func (h *evidenceHandler) deleteControlEvidenceFile(w http.ResponseWriter, r *ht
 // EVIDENCE_INTERNAL_REVIEW control drops it back to EVIDENCE_PENDING the same
 // way emptying a file-based round does.
 func (h *evidenceHandler) deleteEvidenceRound(w http.ResponseWriter, r *http.Request) {
-	if !auth.RequirePrivilege(r.Context(), w, privilege.SubmitEvidence) {
+	if !auth.RequireAnyPrivilege(r.Context(), w, privilege.SubmitEvidence, privilege.ManageControls) {
 		return
 	}
 	auditID, ok := parseIntParam(w, r, "id")
