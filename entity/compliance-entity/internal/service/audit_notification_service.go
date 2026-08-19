@@ -36,6 +36,7 @@ func NewAuditNotificationService(repo repository.AuditNotificationRepository) Au
 var validNotificationTypes = map[string]bool{
 	"OWNER_ASSIGNED_CONTROL":    true,
 	"OWNER_ASSIGNED_POPULATION": true,
+	"AUDITOR_ASSIGNED_CONTROL":  true,
 	"REMINDER_DUE_10":           true,
 	"REMINDER_DUE_5":            true,
 	"REMINDER_OVERDUE":          true,

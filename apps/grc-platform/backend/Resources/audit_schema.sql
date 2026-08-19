@@ -512,6 +512,7 @@ CREATE TABLE IF NOT EXISTS audit_notification (
   type              ENUM(
                         'OWNER_ASSIGNED_CONTROL',
                         'OWNER_ASSIGNED_POPULATION',
+                        'AUDITOR_ASSIGNED_CONTROL',
                         'REMINDER_DUE_10',
                         'REMINDER_DUE_5',
                         'REMINDER_OVERDUE',
