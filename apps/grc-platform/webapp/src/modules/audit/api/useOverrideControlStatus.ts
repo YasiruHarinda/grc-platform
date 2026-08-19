@@ -22,6 +22,7 @@ import { auditQueryKey } from "@modules/audit/api/useGetAudit";
 import { evidenceQueryKey } from "@modules/audit/api/useGetEvidence";
 import { populationQueryKey } from "@modules/audit/api/useGetPopulation";
 import { trailQueryKey } from "@modules/audit/api/useGetTrail";
+import { extractErrorMessage } from "@modules/audit/api/apiError";
 import type { ControlStatus } from "@modules/audit/types/audit";
 
 interface OverrideStatusPayload {
@@ -47,7 +48,9 @@ export function useOverrideControlStatus() {
           body: JSON.stringify({ status }),
         },
       );
-      if (!res.ok) throw new Error(`Failed to override control status (${res.status})`);
+      if (!res.ok) {
+        throw new Error(await extractErrorMessage(res, `Failed to override control status (${res.status})`));
+      }
     },
 
     onSuccess: (_data, { auditId, controlId }) => {
