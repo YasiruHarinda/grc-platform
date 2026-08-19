@@ -215,6 +215,44 @@ CREATE TABLE IF NOT EXISTS audit_control (
   CONSTRAINT fk_control_auditor FOREIGN KEY (auditor_id)           REFERENCES `user`(id)                  ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Backfill the status-override columns onto an audit_control table created
+-- before this feature existed. Deliberately not `ADD COLUMN IF NOT EXISTS`:
+-- that syntax needs MySQL 8.0.29+, and nothing in this repo pins a MySQL
+-- patch version — the information_schema guard below is portable to any
+-- MySQL 8, matching the pattern in shared.sql's role table migration.
+SET @control_has_status_overridden = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_control' AND COLUMN_NAME = 'status_overridden'
+);
+SET @add_status_overridden_sql = IF(@control_has_status_overridden = 0,
+  'ALTER TABLE audit_control ADD COLUMN status_overridden BOOLEAN NOT NULL DEFAULT FALSE AFTER control_source',
+  'SELECT 1');
+PREPARE add_status_overridden_stmt FROM @add_status_overridden_sql;
+EXECUTE add_status_overridden_stmt;
+DEALLOCATE PREPARE add_status_overridden_stmt;
+
+SET @control_has_overridden_by = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_control' AND COLUMN_NAME = 'overridden_by'
+);
+SET @add_overridden_by_sql = IF(@control_has_overridden_by = 0,
+  'ALTER TABLE audit_control ADD COLUMN overridden_by VARCHAR(255) NULL AFTER status_overridden',
+  'SELECT 1');
+PREPARE add_overridden_by_stmt FROM @add_overridden_by_sql;
+EXECUTE add_overridden_by_stmt;
+DEALLOCATE PREPARE add_overridden_by_stmt;
+
+SET @control_has_overridden_at = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_control' AND COLUMN_NAME = 'overridden_at'
+);
+SET @add_overridden_at_sql = IF(@control_has_overridden_at = 0,
+  'ALTER TABLE audit_control ADD COLUMN overridden_at DATETIME NULL AFTER overridden_by',
+  'SELECT 1');
+PREPARE add_overridden_at_stmt FROM @add_overridden_at_sql;
+EXECUTE add_overridden_at_stmt;
+DEALLOCATE PREPARE add_overridden_at_stmt;
+
 -- =============================================================================
 -- audit_population  (OE-type control population phase record)
 --
