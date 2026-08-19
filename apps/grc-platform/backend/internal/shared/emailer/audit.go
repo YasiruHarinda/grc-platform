@@ -94,6 +94,14 @@ type AuditEventInfo struct {
 	Comment   string
 	DetailURL string
 	Items     []AuditEventItem
+	// ShowStatus renders the table's Status column. Only the reminder digest
+	// sets this: it's the only email whose Items mix tiers (an owner's items
+	// due across all three tiers in one email), so Status is the only place
+	// to tell them apart. Every other event's items share one implicit status
+	// (whatever the event itself already says in Lead), so an empty column
+	// would just be dead width — see the "Status column only used in overdue
+	// ones" note.
+	ShowStatus bool
 }
 
 // auditEventTemplate is the per-event copy — the audit equivalent of
@@ -218,7 +226,7 @@ var auditBodyTemplate = template.Must(template.New("auditEvent").Parse(`<html>
 <body style="margin:0; padding:0; background-color:#f4f5f7;">
 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f5f7; padding:24px 12px;">
 <tr><td align="center">
-<table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px; background-color:#ffffff; border:1px solid #e1e4e8; border-radius:6px; font-family:Arial,Helvetica,sans-serif; font-size:14px; color:#1a1a1a;">
+<table width="680" cellpadding="0" cellspacing="0" border="0" style="max-width:680px; background-color:#ffffff; border:1px solid #e1e4e8; border-radius:6px; font-family:Arial,Helvetica,sans-serif; font-size:14px; color:#1a1a1a;">
 
 <tr><td style="padding:20px 24px 8px 24px; font-size:15px; line-height:1.5;">{{.Lead}}</td></tr>
 
@@ -229,18 +237,18 @@ var auditBodyTemplate = template.Must(template.New("auditEvent").Parse(`<html>
 {{if .Info.Items}}<tr><td style="padding:8px 24px 4px 24px;">
 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed; font-size:13px; border-collapse:collapse;">
 <tr style="color:#57606a; text-align:left;">
-<td width="14%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Requirement Type</td>
-<td width="13%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Control No</td>
-<td width="38%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Description</td>
-<td width="18%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Due Date</td>
-<td width="17%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Status</td>
+<td width="29%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Requirement Type</td>
+<td width="14%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Control No</td>
+<td width="{{if .Info.ShowStatus}}23{{else}}42{{end}}%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Description</td>
+<td width="15%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Due Date</td>
+{{if .Info.ShowStatus}}<td width="19%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Status</td>{{end}}
 </tr>
 {{range .Info.Items}}<tr>
 <td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; word-break:break-word;">{{.RequirementType}}</td>
 <td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; font-weight:bold; word-break:break-word;">{{.ControlNumber}}</td>
 <td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; word-break:break-word; overflow-wrap:break-word;">{{.Description}}</td>
 <td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; white-space:nowrap;">{{.DueDate}}</td>
-<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; white-space:nowrap;">{{.Tier}}</td>
+{{if $.Info.ShowStatus}}<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; white-space:nowrap;">{{.Tier}}</td>{{end}}
 </tr>{{end}}
 </table>
 </td></tr>{{end}}

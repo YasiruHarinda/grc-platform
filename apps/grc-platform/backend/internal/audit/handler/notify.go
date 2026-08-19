@@ -295,6 +295,10 @@ func (d *Deps) SendReminderDigestSync(ctx context.Context, ownerUserID int, item
 	info := emailer.AuditEventInfo{
 		DetailURL: d.FrontendBaseURL + "/audit/dashboard",
 		Items:     emailItems,
+		// Only this digest mixes tiers in one email (an owner's due-in-10,
+		// due-in-5, and overdue items all together) — Status is the only
+		// place that distinguishes them, so only here is it worth showing.
+		ShowStatus: true,
 	}
 	return d.sendAuditEventSync(ctx, ev, ownerUserID, info, nil, true)
 }
