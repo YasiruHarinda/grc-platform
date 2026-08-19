@@ -323,6 +323,9 @@ func (h *evidenceHandler) submitEvidence(w http.ResponseWriter, r *http.Request)
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	if control, err := h.controlSvc.GetByID(r.Context(), auditID, controlID); err == nil && control != nil {
+		h.notify.notifyControlStatusReached(r.Context(), control, "EVIDENCE_INTERNAL_REVIEW", actor)
+	}
 
 	// Best-effort audit-trail attribution: this submission came through the web
 	// app. A fileless round has no file names to log, so log the attestation text

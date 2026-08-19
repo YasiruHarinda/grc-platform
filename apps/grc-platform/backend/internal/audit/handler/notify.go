@@ -25,6 +25,7 @@ import (
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
 // notifyTimeout caps the whole background notification: the user lookup plus
@@ -183,11 +184,34 @@ func (d *Deps) describeActor(ctx context.Context, email string) string {
 	return fmt.Sprintf("%s (%s)", strings.TrimSpace(u.DisplayName), email)
 }
 
-// detailURL builds the "View in Audit Hub" link for auditID — every audit
-// notification links to the audit detail page; the frontend has no
-// deep-link support for opening one control's drawer directly.
+// detailURL builds the "View in Audit Hub" link for auditID alone — used only
+// where no single control applies (the reminder digest, which can span many
+// controls across many audits). Every other notification is about one
+// control and should use controlDetailURL instead.
 func (d *Deps) detailURL(auditID int) string {
 	return fmt.Sprintf("%s/audit/audits/%d", d.FrontendBaseURL, auditID)
+}
+
+// controlDetailURL builds a "View in Audit Hub" link that deep-links straight
+// to one control's drawer, via the ?control= query param the audit detail
+// page already reads on load (AuditDetailPage.tsx — the same param
+// WorkQueue/BlockerList use to jump from the dashboard).
+func (d *Deps) controlDetailURL(auditID, controlID int) string {
+	return fmt.Sprintf("%s/audit/audits/%d?control=%d", d.FrontendBaseURL, auditID, controlID)
+}
+
+// singleControlID returns the one control ID in ids and true, only when ids
+// contains exactly one entry — used to decide whether a batched
+// owner-assigned email (which can span more than one control) can still link
+// straight to a control instead of falling back to the audit's control list.
+func singleControlID(ids map[int]bool) (int, bool) {
+	if len(ids) != 1 {
+		return 0, false
+	}
+	for id := range ids {
+		return id, true
+	}
+	return 0, false
 }
 
 // auditName resolves auditID to its display name for the "Audit: ..." line
@@ -307,7 +331,7 @@ func (d *Deps) notifyResubmission(ctx context.Context, control *model.AuditContr
 		AuditName: d.auditName(ctx, control.AuditID),
 		Actor:     d.describeActor(ctx, actor),
 		Comment:   commentText,
-		DetailURL: d.detailURL(control.AuditID),
+		DetailURL: d.controlDetailURL(control.AuditID, control.ID),
 		Items: []emailer.AuditEventItem{{
 			ControlNumber:   control.ControlNumber,
 			Description:     control.Description,
@@ -322,4 +346,146 @@ func (d *Deps) notifyResubmission(ctx context.Context, control *model.AuditContr
 		PopulationID: logPopID,
 	}}
 	d.notifyAuditEvent(emailer.AuditEventResubmissionNeeded, *ownerID, info, logItems)
+}
+
+// notifyControlStatusReached fires whatever email (if any) is mapped to
+// newStatus, regardless of which endpoint produced the transition —
+// decideRound's approve branch, submitEvidence, submitPopulation, or an
+// admin status override. Statuses with no mapping are a no-op; reject has its
+// own separate notifyResubmission path, untouched by this.
+func (d *Deps) notifyControlStatusReached(ctx context.Context, control *model.AuditControl, newStatus, actor string) {
+	switch newStatus {
+	case "EVIDENCE_INTERNAL_REVIEW":
+		d.notifyAdmins(ctx, emailer.AuditEventEvidenceInternalReview, control, actor, "EVIDENCE_INTERNAL_REVIEW", "Evidence Requirement", derefString(control.DueDate))
+	case "POPULATION_INTERNAL_REVIEW":
+		d.notifyAdmins(ctx, emailer.AuditEventPopulationInternalReview, control, actor, "POPULATION_INTERNAL_REVIEW", "Population Requirement", derefString(control.PopulationDueDate))
+	case "EVIDENCE_UNDER_VALIDATION":
+		d.notifyAuditor(ctx, emailer.AuditEventEvidenceUnderValidation, control, actor, "EVIDENCE_UNDER_VALIDATION", "Evidence Requirement", derefString(control.DueDate))
+	case "POPULATION_UNDER_VALIDATION":
+		d.notifyAuditor(ctx, emailer.AuditEventPopulationUnderValidation, control, actor, "POPULATION_UNDER_VALIDATION", "Population Requirement", derefString(control.PopulationDueDate))
+	case "POPULATION_COMPLETE":
+		d.notifyAuditor(ctx, emailer.AuditEventPopulationCompleteSampleNeeded, control, actor, "POPULATION_COMPLETE_SAMPLE_NEEDED", "Population Requirement", derefString(control.PopulationDueDate))
+	case "COMPLETE":
+		d.notifyControlComplete(ctx, control, actor)
+	}
+}
+
+// controlEventInfo builds the one-item AuditEventInfo shared by
+// notifyControlStatusReached's recipients. Comment is deliberately never set
+// here — none of these six events carry one.
+func (d *Deps) controlEventInfo(ctx context.Context, control *model.AuditControl, actor, requirementType, dueDate string) emailer.AuditEventInfo {
+	return emailer.AuditEventInfo{
+		AuditName: d.auditName(ctx, control.AuditID),
+		Actor:     d.describeActor(ctx, actor),
+		DetailURL: d.controlDetailURL(control.AuditID, control.ID),
+		Items: []emailer.AuditEventItem{{
+			ControlNumber:   control.ControlNumber,
+			Description:     control.Description,
+			DueDate:         dueDate,
+			RequirementType: requirementType,
+		}},
+	}
+}
+
+// resolveAdminIDs returns the platform user IDs of every active Audit
+// Compliance Admin (AUDIT_MANAGE_CONTROLS is unique to that role). Best-effort:
+// a Candidates lookup failure is logged and swallowed, returning nil, same
+// contract as every other notify path here.
+func (d *Deps) resolveAdminIDs(ctx context.Context, ev emailer.AuditEvent) []int {
+	if d.Grants == nil {
+		return nil
+	}
+	admins, err := d.Grants.Candidates(ctx, privilege.ManageControls, nil)
+	if err != nil {
+		slog.Warn("audit notification: failed to resolve admin recipients", "event", ev, "err", err)
+		return nil
+	}
+	ids := make([]int, 0, len(admins))
+	for _, admin := range admins {
+		ids = append(ids, admin.ID)
+	}
+	return ids
+}
+
+// notifyAdmins emails every admin about a control reaching a status they're
+// named recipients for.
+func (d *Deps) notifyAdmins(ctx context.Context, ev emailer.AuditEvent, control *model.AuditControl, actor, logType, requirementType, dueDate string) {
+	info := d.controlEventInfo(ctx, control, actor, requirementType, dueDate)
+	for _, id := range d.resolveAdminIDs(ctx, ev) {
+		logItems := []notificationLogItem{{AuditID: &control.AuditID, Type: logType, ControlID: &control.ID}}
+		d.notifyAuditEvent(ev, id, info, logItems)
+	}
+}
+
+// notifyAuditor emails the control's assigned auditor (control.AuditorID).
+// Silently skipped when no auditor is assigned, matching the cross-cutting
+// "unassigned recipient = skip" rule notifyResubmission already follows.
+func (d *Deps) notifyAuditor(ctx context.Context, ev emailer.AuditEvent, control *model.AuditControl, actor, logType, requirementType, dueDate string) {
+	if control.AuditorID == nil {
+		return
+	}
+	info := d.controlEventInfo(ctx, control, actor, requirementType, dueDate)
+	logItems := []notificationLogItem{{AuditID: &control.AuditID, Type: logType, ControlID: &control.ID}}
+	d.notifyAuditEvent(ev, *control.AuditorID, info, logItems)
+}
+
+// notifyControlComplete fires when a control reaches COMPLETE: the owner,
+// every admin, and (if assigned) the auditor each get their own send — the
+// email client has no multi-recipient batching, so this is one call per
+// resolved recipient. Recipients are deduplicated by user ID first: the same
+// person can hold more than one of these roles on a control (e.g. owner and
+// assigned auditor), and must get exactly one email, not one per role.
+func (d *Deps) notifyControlComplete(ctx context.Context, control *model.AuditControl, actor string) {
+	const logType = "CONTROL_COMPLETE"
+	info := d.controlEventInfo(ctx, control, actor, "Evidence Requirement", derefString(control.DueDate))
+
+	recipients := map[int]bool{}
+	if control.OwnerID != nil {
+		recipients[*control.OwnerID] = true
+	}
+	if control.AuditorID != nil {
+		recipients[*control.AuditorID] = true
+	}
+	for _, id := range d.resolveAdminIDs(ctx, emailer.AuditEventControlComplete) {
+		recipients[id] = true
+	}
+	for id := range recipients {
+		logItems := []notificationLogItem{{AuditID: &control.AuditID, Type: logType, ControlID: &control.ID}}
+		d.notifyAuditEvent(emailer.AuditEventControlComplete, id, info, logItems)
+	}
+}
+
+// notifyCommentAdded emails the control's owner(s), every admin, and — when
+// the comment is not internal — the assigned auditor about a new comment. An
+// internal comment never reaches the auditor: they lack
+// AUDIT_VIEW_INTERNAL_COMMENTS, the same gate the read path enforces. The
+// comment's own author never gets a copy of their own comment.
+func (d *Deps) notifyCommentAdded(ctx context.Context, control *model.AuditControl, comment *model.AuditComment, actor string) {
+	recipients := map[int]bool{}
+	if control.OwnerID != nil {
+		recipients[*control.OwnerID] = true
+	}
+	if control.PopulationOwnerID != nil {
+		recipients[*control.PopulationOwnerID] = true
+	}
+	if !comment.IsInternal && control.AuditorID != nil {
+		recipients[*control.AuditorID] = true
+	}
+	for _, id := range d.resolveAdminIDs(ctx, emailer.AuditEventCommentAdded) {
+		recipients[id] = true
+	}
+
+	if actorUser, err := d.Users.GetByEmail(ctx, actor); err == nil && actorUser != nil {
+		delete(recipients, actorUser.ID)
+	}
+	if len(recipients) == 0 {
+		return
+	}
+
+	info := d.controlEventInfo(ctx, control, actor, "", "")
+	info.Comment = comment.Content
+	for id := range recipients {
+		logItems := []notificationLogItem{{AuditID: &control.AuditID, Type: "COMMENT_ADDED", ControlID: &control.ID}}
+		d.notifyAuditEvent(emailer.AuditEventCommentAdded, id, info, logItems)
+	}
 }

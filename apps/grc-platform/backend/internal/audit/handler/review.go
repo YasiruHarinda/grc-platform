@@ -151,6 +151,8 @@ func (h *evidenceHandler) decideRound(w http.ResponseWriter, r *http.Request, p 
 	}
 	if reject {
 		h.notify.notifyResubmission(r.Context(), control, controlStatus, req.Comment, actor)
+	} else {
+		h.notify.notifyControlStatusReached(r.Context(), control, controlStatus, actor)
 	}
 	response.WriteJSONValue(w, http.StatusOK, map[string]any{"status": controlStatus})
 }

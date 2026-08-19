@@ -104,7 +104,7 @@ func main() {
 	riskDeps := buildRiskDeps(entityCli, fileSvc, hrClient, grantRepo, cfg.Email)
 	riskhandler.RegisterRoutes(mux, riskDeps)
 
-	auditDeps := buildAuditDeps(fileSvc, entityCli, cfg.AIValidation, cfg.Email)
+	auditDeps := buildAuditDeps(fileSvc, entityCli, cfg.AIValidation, cfg.Email, grantRepo)
 	reminderJob := auditjob.NewReminderJob(auditDeps.Audit, auditDeps.Control, auditDeps.Notification, auditDeps.SendReminderDigestSync)
 	auditDeps.TriggerReminderJob = reminderJob.RunOnce
 	audithandler.RegisterRoutes(mux, auditDeps)

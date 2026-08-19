@@ -122,9 +122,9 @@ func TestSendAuditEventEscapesUserSuppliedText(t *testing.T) {
 	}
 }
 
-// A mixed control+population batch must still resolve to exactly one
-// AuditEventOwnerAssigned subject, not fail or render blank.
-func TestOwnerAssignedSubjectCoversMixedKinds(t *testing.T) {
+// A mixed control+population batch must still resolve to one subject, not
+// fail or render blank.
+func TestControlThreadSubjectCoversMixedKinds(t *testing.T) {
 	tests := []struct {
 		name  string
 		items []AuditEventItem
@@ -139,7 +139,7 @@ func TestOwnerAssignedSubjectCoversMixedKinds(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ownerAssignedSubject(AuditEventInfo{Items: tt.items})
+			got := controlThreadSubject(AuditEventInfo{AuditName: "Q3 Audit", Items: tt.items})
 			if got == "" {
 				t.Error("subject must never be empty")
 			}

@@ -25,6 +25,7 @@ import (
 	auditservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/aiagent"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 )
 
 // Deps holds all service dependencies for Audit Hub handlers.
@@ -56,6 +57,12 @@ type Deps struct {
 	// backs the owner/auditor dropdown UI) — this is the same repository,
 	// used for direct lookups instead of listing.
 	Users repository.UserRepository
+	// Grants answers "which active users hold AUDIT_MANAGE_CONTROLS" — the
+	// admin recipient set for notify.go's notifyControlStatusReached. Same
+	// repository the Risk Hub already uses for its role-gated pickers
+	// (internal/risk/handler/candidates.go); nil in local dev (no privilege
+	// store configured), in which case admin notifications are skipped.
+	Grants grant.Repository
 	// FrontendBaseURL builds the "View in Audit Hub" link inside notification
 	// emails.
 	FrontendBaseURL string
@@ -77,7 +84,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	th := &teamHandler{svc: deps.Team}
 	dh := &dashboardHandler{svc: deps.Dashboard}
 	eh := &evidenceHandler{svc: deps.Evidence, controlSvc: deps.Control, popSvc: deps.Population, trailSvc: deps.Trail, aiClient: deps.AIAgent, notify: &deps}
-	cmh := &commentHandler{svc: deps.Comment}
+	cmh := &commentHandler{svc: deps.Comment, controlSvc: deps.Control, notify: &deps}
 	avh := &aiValidationHandler{svc: deps.AIValidation}
 	rjh := &reminderJobHandler{trigger: deps.TriggerReminderJob}
 

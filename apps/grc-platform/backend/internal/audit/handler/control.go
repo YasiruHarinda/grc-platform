@@ -205,9 +205,18 @@ func (h *controlHandler) notifyOwnerAssignments(ctx context.Context, auditID int
 
 	byOwner := map[int][]emailer.AuditEventItem{}
 	logsByOwner := map[int][]notificationLogItem{}
-	add := func(ownerID int, item emailer.AuditEventItem, logItem notificationLogItem) {
+	// ownerControlIDs tracks which control(s) each owner's batch touches, so
+	// the email can deep-link straight to a control when the batch is about
+	// only one — the common case — and fall back to the audit's control list
+	// when an owner picked up more than one control in the same submission.
+	ownerControlIDs := map[int]map[int]bool{}
+	add := func(ownerID, controlID int, item emailer.AuditEventItem, logItem notificationLogItem) {
 		byOwner[ownerID] = append(byOwner[ownerID], item)
 		logsByOwner[ownerID] = append(logsByOwner[ownerID], logItem)
+		if ownerControlIDs[ownerID] == nil {
+			ownerControlIDs[ownerID] = map[int]bool{}
+		}
+		ownerControlIDs[ownerID][controlID] = true
 	}
 
 	for _, req := range reqs {
@@ -216,7 +225,7 @@ func (h *controlHandler) notifyOwnerAssignments(ctx context.Context, auditID int
 			continue
 		}
 		if req.OwnerID != nil {
-			add(*req.OwnerID, emailer.AuditEventItem{
+			add(*req.OwnerID, c.ID, emailer.AuditEventItem{
 				ControlNumber:   c.ControlNumber,
 				Description:     c.Description,
 				DueDate:         derefString(c.DueDate),
@@ -228,7 +237,7 @@ func (h *controlHandler) notifyOwnerAssignments(ctx context.Context, auditID int
 			})
 		}
 		if req.Population != nil && req.Population.OwnerID != nil {
-			add(*req.Population.OwnerID, emailer.AuditEventItem{
+			add(*req.Population.OwnerID, c.ID, emailer.AuditEventItem{
 				ControlNumber:   c.ControlNumber,
 				Description:     c.Description,
 				DueDate:         derefString(req.Population.DueDate),
@@ -243,10 +252,14 @@ func (h *controlHandler) notifyOwnerAssignments(ctx context.Context, auditID int
 
 	name := h.notify.auditName(ctx, auditID)
 	for ownerID, items := range byOwner {
+		detailURL := h.notify.detailURL(auditID)
+		if controlID, ok := singleControlID(ownerControlIDs[ownerID]); ok {
+			detailURL = h.notify.controlDetailURL(auditID, controlID)
+		}
 		info := emailer.AuditEventInfo{
 			AuditName: name,
 			Actor:     h.notify.describeActor(ctx, actor),
-			DetailURL: h.notify.detailURL(auditID),
+			DetailURL: detailURL,
 			Items:     items,
 		}
 		h.notify.notifyAuditEvent(emailer.AuditEventOwnerAssigned, ownerID, info, logsByOwner[ownerID])
@@ -304,7 +317,7 @@ func (h *controlHandler) notifyReassignments(ctx context.Context, auditID, contr
 		info := emailer.AuditEventInfo{
 			AuditName: name,
 			Actor:     h.notify.describeActor(ctx, actor),
-			DetailURL: h.notify.detailURL(auditID),
+			DetailURL: h.notify.controlDetailURL(auditID, c.ID),
 			Items:     items,
 		}
 		h.notify.notifyAuditEvent(emailer.AuditEventOwnerAssigned, owner, info, logsByOwner[owner])
@@ -371,6 +384,9 @@ func (h *controlHandler) overrideControlStatus(w http.ResponseWriter, r *http.Re
 	if err := h.svc.OverrideStatus(r.Context(), auditID, controlID, req, actor); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
+	}
+	if control, err := h.svc.GetByID(r.Context(), auditID, controlID); err == nil && control != nil {
+		h.notify.notifyControlStatusReached(r.Context(), control, req.Status, actor)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

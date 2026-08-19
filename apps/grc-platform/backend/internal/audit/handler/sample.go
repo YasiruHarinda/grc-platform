@@ -183,7 +183,7 @@ func (h *evidenceHandler) submitSample(w http.ResponseWriter, r *http.Request) {
 		h.notify.notifyAuditEvent(emailer.AuditEventSampleSubmitted, *control.OwnerID, emailer.AuditEventInfo{
 			AuditName: h.notify.auditName(r.Context(), auditID),
 			Actor:     h.notify.describeActor(r.Context(), actor),
-			DetailURL: h.notify.detailURL(auditID),
+			DetailURL: h.notify.controlDetailURL(auditID, control.ID),
 			Items: []emailer.AuditEventItem{{
 				ControlNumber: control.ControlNumber,
 				Description:   control.Description,

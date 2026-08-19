@@ -45,6 +45,24 @@ const (
 	AuditEventReminderOverdue    AuditEvent = "AUDIT_REMINDER_OVERDUE"
 	AuditEventResubmissionNeeded AuditEvent = "AUDIT_RESUBMISSION_NEEDED"
 	AuditEventSampleSubmitted    AuditEvent = "AUDIT_SAMPLE_SUBMITTED"
+
+	// The six below notify admin/auditor recipients when a control reaches a
+	// given status, regardless of which endpoint produced the transition —
+	// see handler/notify.go's notifyControlStatusReached. None ever populate
+	// AuditEventInfo.Comment: an internal reviewer's comment must never reach
+	// an external auditor, who lacks AUDIT_VIEW_INTERNAL_COMMENTS.
+	AuditEventEvidenceInternalReview         AuditEvent = "AUDIT_EVIDENCE_INTERNAL_REVIEW"
+	AuditEventPopulationInternalReview       AuditEvent = "AUDIT_POPULATION_INTERNAL_REVIEW"
+	AuditEventEvidenceUnderValidation        AuditEvent = "AUDIT_EVIDENCE_UNDER_VALIDATION"
+	AuditEventPopulationUnderValidation      AuditEvent = "AUDIT_POPULATION_UNDER_VALIDATION"
+	AuditEventPopulationCompleteSampleNeeded AuditEvent = "AUDIT_POPULATION_COMPLETE_SAMPLE_NEEDED"
+	AuditEventControlComplete                AuditEvent = "AUDIT_CONTROL_COMPLETE"
+
+	// AuditEventCommentAdded notifies a control's owner(s), admins, and (for a
+	// non-internal comment) its assigned auditor that someone commented.
+	// Unlike the six above, this one does set Comment — see
+	// handler/notify.go's notifyCommentAdded for the internal-visibility gate.
+	AuditEventCommentAdded AuditEvent = "AUDIT_COMMENT_ADDED"
 )
 
 // AuditEventItem is one control or population round an AuditEventInfo email
@@ -89,34 +107,22 @@ type auditEventTemplate struct {
 	actorLabel string
 }
 
-// itemRequirementTypes returns the distinct AuditEventItem.RequirementType
-// values present, in first-seen order — used to phrase a subject that covers
-// a mixed batch ("2 evidence requirements and 1 population requirement")
-// without listing every item.
-func itemRequirementTypes(items []AuditEventItem) []string {
-	seen := map[string]bool{}
-	var kinds []string
-	for _, it := range items {
-		if it.RequirementType != "" && !seen[it.RequirementType] {
-			seen[it.RequirementType] = true
-			kinds = append(kinds, it.RequirementType)
-		}
+// controlThreadSubject is the shared subject line for every control-tied
+// audit email — old and new alike. There's no real Message-ID/In-Reply-To
+// transport, so a mail client can only group messages that share one literal
+// subject string; this stays stable for a control's whole lifecycle, spanning
+// both population and evidence phases.
+//
+// Only meaningful when Info is about exactly one control (Items has one
+// entry) — the common case for every event that uses it. A multi-item
+// owner-assigned batch (someone assigned owner of more than one
+// control/population at once) isn't "one control"'s thread either, so it
+// falls back to the audit-only subject.
+func controlThreadSubject(i AuditEventInfo) string {
+	if len(i.Items) != 1 {
+		return fmt.Sprintf("[GRC Platform] %s", i.AuditName)
 	}
-	return kinds
-}
-
-func ownerAssignedSubject(i AuditEventInfo) string {
-	kinds := itemRequirementTypes(i.Items)
-	switch {
-	case len(i.Items) == 0:
-		return "New Audit Assignment"
-	case len(kinds) > 1:
-		return fmt.Sprintf("New Audit Assignment: %d items assigned to you", len(i.Items))
-	case len(i.Items) == 1:
-		return fmt.Sprintf("New Audit Assignment: %s", i.Items[0].ControlNumber)
-	default:
-		return fmt.Sprintf("New Audit Assignment: %d %ss assigned to you", len(i.Items), strings.ToLower(kinds[0]))
-	}
+	return fmt.Sprintf("[GRC Platform] %s - %s", i.AuditName, i.Items[0].ControlNumber)
 }
 
 func reminderSubject(tier string) func(AuditEventInfo) string {
@@ -130,7 +136,7 @@ func reminderSubject(tier string) func(AuditEventInfo) string {
 // SendAuditEvent rejects it rather than sending a blank email.
 var auditEventTemplates = map[AuditEvent]auditEventTemplate{
 	AuditEventOwnerAssigned: {
-		subject:    ownerAssignedSubject,
+		subject:    controlThreadSubject,
 		lead:       "You have been assigned as owner on the following item(s).",
 		actorLabel: "Assigned by",
 	},
@@ -150,24 +156,51 @@ var auditEventTemplates = map[AuditEvent]auditEventTemplate{
 		actorLabel: "",
 	},
 	AuditEventResubmissionNeeded: {
-		subject: func(i AuditEventInfo) string {
-			if len(i.Items) == 0 {
-				return "Resubmission Needed"
-			}
-			return fmt.Sprintf("Resubmission Needed: %s", i.Items[0].ControlNumber)
-		},
+		subject:    controlThreadSubject,
 		lead:       "This item was rejected and needs to be resubmitted.",
 		actorLabel: "Rejected by",
 	},
 	AuditEventSampleSubmitted: {
-		subject: func(i AuditEventInfo) string {
-			if len(i.Items) == 0 {
-				return "Sample Submitted — Evidence Needed"
-			}
-			return fmt.Sprintf("Sample Submitted — Evidence Needed: %s", i.Items[0].ControlNumber)
-		},
+		subject:    controlThreadSubject,
 		lead:       "A sample has been submitted for this control. Please submit evidence.",
 		actorLabel: "Submitted by",
+	},
+
+	// Facts only — never set Comment.
+	AuditEventEvidenceInternalReview: {
+		subject:    controlThreadSubject,
+		lead:       "Evidence has been submitted and is awaiting internal review.",
+		actorLabel: "Submitted by",
+	},
+	AuditEventPopulationInternalReview: {
+		subject:    controlThreadSubject,
+		lead:       "A population has been submitted and is awaiting internal review.",
+		actorLabel: "Submitted by",
+	},
+	AuditEventEvidenceUnderValidation: {
+		subject:    controlThreadSubject,
+		lead:       "Evidence has passed internal review and is ready for your validation.",
+		actorLabel: "Reviewed by",
+	},
+	AuditEventPopulationUnderValidation: {
+		subject:    controlThreadSubject,
+		lead:       "A population has passed internal review and is ready for your validation.",
+		actorLabel: "Reviewed by",
+	},
+	AuditEventPopulationCompleteSampleNeeded: {
+		subject:    controlThreadSubject,
+		lead:       "The population has been validated. Please submit a sample for evidence collection.",
+		actorLabel: "Validated by",
+	},
+	AuditEventControlComplete: {
+		subject:    controlThreadSubject,
+		lead:       "This control has been validated and is now complete.",
+		actorLabel: "Validated by",
+	},
+	AuditEventCommentAdded: {
+		subject:    controlThreadSubject,
+		lead:       "A new comment has been added to this control.",
+		actorLabel: "Commented by",
 	},
 }
 
