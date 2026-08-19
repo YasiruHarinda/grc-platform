@@ -20,16 +20,21 @@ import {
   Button,
   Checkbox,
   Chip,
+  CircularProgress,
   Divider,
   FormControlLabel,
+  IconButton,
   Skeleton,
   TextField,
   Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
-import { Lock, MessageSquare } from "@wso2/oxygen-ui-icons-react";
+import { Lock, MessageSquare, Trash2 } from "@wso2/oxygen-ui-icons-react";
 import { useState, type JSX } from "react";
-import { useAddComment, useGetComments } from "@modules/audit/api/useComments";
+import { useAddComment, useDeleteComment, useGetComments } from "@modules/audit/api/useComments";
+import { useCurrentUserEmail } from "@modules/audit/hooks/useCurrentUserEmail";
+import { useAuditPrivileges } from "@modules/audit/hooks/useAuditPrivileges";
+import { AuditPrivilege } from "@modules/audit/privileges";
 import { formatTimestamp } from "@modules/audit/utils/format";
 
 /**
@@ -49,15 +54,28 @@ export default function CommentsSection({
 }): JSX.Element {
   const comments = useGetComments(auditId, controlId);
   const addComment = useAddComment();
+  const deleteComment = useDeleteComment();
+  const currentUserEmail = useCurrentUserEmail();
+  const { can } = useAuditPrivileges();
+  const isAdmin = can(AuditPrivilege.ManageControls);
 
   const [text, setText] = useState("");
   const [internal, setInternal] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
   function handleAdd() {
     if (text.trim() === "") return;
     addComment.mutate(
       { auditId, controlId, content: text.trim(), isInternal: internal },
       { onSuccess: () => { setText(""); setInternal(false); } },
+    );
+  }
+
+  function handleDelete(commentId: number) {
+    setDeletingId(commentId);
+    deleteComment.mutate(
+      { auditId, controlId, commentId },
+      { onSettled: () => setDeletingId(null) },
     );
   }
 
@@ -81,15 +99,18 @@ export default function CommentsSection({
               key={c.id}
               sx={(theme) => ({
                 borderLeft: "3px solid",
-                borderColor: c.isInternal
-                  ? theme.palette.warning.main
-                  : theme.palette.mode === "dark" ? "#1d4ed8" : "#93c5fd",
+                // "rgba(59,130,246,0.6)" rather than a theme.palette.mode check:
+                // this design system themes via CSS variables, so mode read
+                // inside a plain sx callback doesn't reflect the active color
+                // scheme (always resolves the light branch, even in dark mode —
+                // see ControlDrawer.tsx's SampleSelectionCard for the same fix).
+                borderColor: c.isInternal ? theme.palette.warning.main : "rgba(59,130,246,0.6)",
                 pl: 2, py: 0.75,
                 borderRadius: "0 4px 4px 0",
               })}
             >
               <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
-                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, flex: 1 }}>
                   {c.createdBy || "Unknown"} · {formatTimestamp(c.createdAt)}
                 </Typography>
                 {c.isInternal && (
@@ -102,11 +123,30 @@ export default function CommentsSection({
                     variant="outlined"
                   />
                 )}
+                {canComment && (isAdmin || c.createdBy === currentUserEmail) && (
+                  <IconButton
+                    size="small"
+                    aria-label="Delete comment"
+                    disabled={deletingId !== null}
+                    onClick={() => handleDelete(c.id)}
+                    sx={{ p: 0.5, color: "error.main", "&:hover": { bgcolor: "rgba(220,38,38,0.06)" } }}
+                  >
+                    {deletingId === c.id
+                      ? <CircularProgress size={12} color="inherit" />
+                      : <Trash2 size={13} />}
+                  </IconButton>
+                )}
               </Box>
               <Typography variant="body2" sx={{ lineHeight: 1.7 }}>{c.content}</Typography>
             </Box>
           ))}
         </Box>
+      )}
+
+      {deleteComment.isError && (
+        <Alert severity="error" sx={{ mb: 1.5, fontSize: "0.8rem" }}>
+          {(deleteComment.error as Error).message}
+        </Alert>
       )}
 
       {canComment && (

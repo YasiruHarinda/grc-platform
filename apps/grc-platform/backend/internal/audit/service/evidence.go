@@ -71,7 +71,12 @@ type EvidenceService interface {
 	// name must fall under this control's server-derived evidence folder or the
 	// call is rejected. The caller (handler) is responsible for advancing the
 	// control status afterwards.
-	Submit(ctx context.Context, auditID, controlID int, files []model.EvidenceFileRef, submittedBy string) (*model.AuditEvidence, error)
+	//
+	// A submission with zero files is rejected unless isAdmin is true and
+	// attestation is non-empty (fileless completion, gated on ManageControls —
+	// see the handler). Everyone else submitting zero files gets the ordinary
+	// "no files provided" rejection regardless of what they put in attestation.
+	Submit(ctx context.Context, auditID, controlID int, files []model.EvidenceFileRef, attestation string, isAdmin bool, submittedBy string) (*model.AuditEvidence, error)
 
 	// AddFiles appends files to the control's current evidence round instead of
 	// starting a new one — used by "Add Files" while a submission is still
@@ -113,6 +118,13 @@ type EvidenceService interface {
 	// must be the file's creator or hold ManageControls (isAdmin=true). The blob
 	// in Azure is not deleted — only the DB record is removed.
 	DeleteFile(ctx context.Context, fileID int, actor string, isAdmin bool) error
+
+	// DeleteRound removes a whole fileless (attestation-only) evidence round —
+	// the "Completed without files" case, which has no per-file delete to fall
+	// back on (rounds holding files go through DeleteFile instead, one file at
+	// a time). The caller must be the round's creator or hold ManageControls
+	// (isAdmin=true).
+	DeleteRound(ctx context.Context, auditID, controlID, evidenceID int, actor string, isAdmin bool) error
 }
 
 type evidenceService struct {
@@ -287,8 +299,10 @@ func isHex(s string) bool {
 	return true
 }
 
-func (s *evidenceService) Submit(ctx context.Context, auditID, controlID int, files []model.EvidenceFileRef, submittedBy string) (*model.AuditEvidence, error) {
-	if len(files) == 0 {
+func (s *evidenceService) Submit(ctx context.Context, auditID, controlID int, files []model.EvidenceFileRef, attestation string, isAdmin bool, submittedBy string) (*model.AuditEvidence, error) {
+	fileless := len(files) == 0
+	attestation = strings.TrimSpace(attestation)
+	if fileless && !(isAdmin && attestation != "") {
 		return nil, &apierror.Error{
 			StatusCode: http.StatusUnprocessableEntity,
 			Body:       "no files provided — upload files first",
@@ -305,7 +319,11 @@ func (s *evidenceService) Submit(ctx context.Context, auditID, controlID int, fi
 		}
 	}
 
-	evidenceID, err := s.repo.Create(ctx, auditID, controlID, prefix, submittedBy)
+	roundAttestation := ""
+	if fileless {
+		roundAttestation = attestation
+	}
+	evidenceID, err := s.repo.Create(ctx, auditID, controlID, prefix, roundAttestation, submittedBy)
 	if err != nil {
 		return nil, err
 	}
@@ -330,13 +348,14 @@ func (s *evidenceService) Submit(ctx context.Context, auditID, controlID int, fi
 	}
 
 	return &model.AuditEvidence{
-		ID:         evidenceID,
-		ControlID:  controlID,
-		Status:     "SUBMITTED",
-		FolderPath: prefix,
-		Files:      evidenceFiles,
-		CreatedBy:  submittedBy,
-		CreatedAt:  time.Now(),
+		ID:          evidenceID,
+		ControlID:   controlID,
+		Status:      "SUBMITTED",
+		FolderPath:  prefix,
+		Files:       evidenceFiles,
+		Attestation: roundAttestation,
+		CreatedBy:   submittedBy,
+		CreatedAt:   time.Now(),
 	}, nil
 }
 
@@ -461,4 +480,28 @@ func (s *evidenceService) DeleteFile(ctx context.Context, fileID int, actor stri
 		return &apierror.Error{StatusCode: http.StatusForbidden, Body: "forbidden"}
 	}
 	return s.repo.DeleteFile(ctx, fileID)
+}
+
+func (s *evidenceService) DeleteRound(ctx context.Context, auditID, controlID, evidenceID int, actor string, isAdmin bool) error {
+	rounds, err := s.repo.ListByControl(ctx, auditID, controlID)
+	if err != nil {
+		return err
+	}
+	var round *model.AuditEvidence
+	for _, r := range rounds {
+		if r.ID == evidenceID {
+			round = r
+			break
+		}
+	}
+	if round == nil {
+		return &apierror.Error{StatusCode: http.StatusNotFound, Body: "evidence round not found"}
+	}
+	if len(round.Files) > 0 {
+		return &apierror.Error{StatusCode: http.StatusConflict, Body: "round has files — delete them individually"}
+	}
+	if !isAdmin && round.CreatedBy != actor {
+		return &apierror.Error{StatusCode: http.StatusForbidden, Body: "forbidden"}
+	}
+	return s.repo.DeleteEvidence(ctx, evidenceID)
 }

@@ -51,8 +51,11 @@ type AuditEvidence struct {
 	Status     string               `json:"status"`
 	FolderPath string               `json:"folderPath"`
 	Files      []*AuditEvidenceFile `json:"files"`
-	CreatedBy  string               `json:"createdBy"`
-	CreatedAt  time.Time            `json:"createdAt"`
+	// Attestation is a written justification for a round with no files. Empty
+	// for ordinary rounds.
+	Attestation string    `json:"attestation,omitempty"`
+	CreatedBy   string    `json:"createdBy"`
+	CreatedAt   time.Time `json:"createdAt"`
 }
 
 // UploadLinkResponse is returned by GET .../evidence/upload-link.
@@ -91,18 +94,32 @@ type EvidenceFileRef struct {
 }
 
 // SubmitEvidenceRequest is the body for POST .../evidence/submit. There is no
-// folder re-listing in the flat evidence layout: the client accumulates the
-// blobName returned by each upload call and submits the exact list of files
-// that make up this round.
+// folder re-listing in the flat evidence layout (see design doc §3.3): the
+// client accumulates the blobName returned by each upload call and submits the
+// exact list of files that make up this round.
+//
+// Attestation is only honored when Files is empty AND the caller holds
+// ManageControls — see EvidenceService.Submit. Anyone else submitting zero
+// files still gets the ordinary "no files provided" rejection regardless of
+// what they put here.
 type SubmitEvidenceRequest struct {
-	Files []EvidenceFileRef `json:"files"`
+	Files       []EvidenceFileRef `json:"files"`
+	Attestation string            `json:"attestation,omitempty"`
 }
 
 // PopulationSubmitRequest is the body for POST .../population/submit and
 // .../population/{controlId}/submit. Unlike evidence, population/sample keep
-// the folder-listing contract (their subfolders already fence their files),
-// so the client only echoes back the folder path handed out by the
-// upload-link endpoint.
+// the folder-listing contract (their subfolders already fence their files —
+// see design doc §3.3), so the client only echoes back the folder path handed
+// out by the upload-link endpoint.
+//
+// Attestation is a written note standing in for population files — required
+// when the folder has none (mirrors SampleSubmitRequest.Note: files, a note,
+// or both, at least one required). Unlike SubmitEvidenceRequest.Attestation,
+// there is no privilege gate — anyone who can submit population files can use
+// this too, matching sample selection's openness rather than evidence's
+// ManageControls-only fileless completion.
 type PopulationSubmitRequest struct {
-	FolderPath string `json:"folderPath"`
+	FolderPath  string `json:"folderPath"`
+	Attestation string `json:"attestation,omitempty"`
 }

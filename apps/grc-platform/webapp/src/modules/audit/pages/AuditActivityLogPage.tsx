@@ -37,6 +37,7 @@ const ACTION_LABELS: Record<TrailEntry["action"], string> = {
   ESCALATED: "Escalated",
   AI_VALIDATED: "AI validated",
   EXPORTED: "Exported",
+  OVERRIDDEN: "Status overridden",
 };
 
 /** One-line human summary of an entry's details for the Details column — plain

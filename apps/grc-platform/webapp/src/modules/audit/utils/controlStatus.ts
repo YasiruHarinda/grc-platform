@@ -68,6 +68,41 @@ export const PHASE_COLORS: Record<ControlPhase, string> = {
 
 export const PHASE_ORDER: ControlPhase[] = ["NOT_STARTED", "IN_PROGRESS", "BLOCKED", "COMPLETE"];
 
+// ── Backward status override ─────────────────────────────────────────────
+// Mirrors the entity's controlStatusRank (audit_control_service.go): a single
+// ordered list rather than a second transition map. An override to `target`
+// is only offered when rank(target) < rank(current) — DESIGN controls are
+// floored at CONTROL_STATUS_RANK.EVIDENCE_PENDING since they have no
+// population row to rewind into.
+
+export const CONTROL_STATUS_RANK: Record<ControlStatus, number> = {
+  POPULATION_PENDING:            0,
+  POPULATION_INTERNAL_REVIEW:    1,
+  POPULATION_NEED_CLARIFICATION: 1,
+  POPULATION_UNDER_VALIDATION:   2,
+  POPULATION_COMPLETE:           3,
+  AWAITING_SAMPLE:               4,
+  SUBMITTED_SAMPLE:              5,
+  EVIDENCE_PENDING:              6,
+  EVIDENCE_NEED_CLARIFICATION:   6,
+  EVIDENCE_INTERNAL_REVIEW:      7,
+  EVIDENCE_UNDER_VALIDATION:     8,
+  COMPLETE:                      9,
+};
+
+const DESIGN_CONTROL_FLOOR_RANK = CONTROL_STATUS_RANK.EVIDENCE_PENDING;
+
+// overridableStatuses returns every status the given control could be
+// backward-overridden to: strictly lower rank than `current`, floored for
+// DESIGN controls (they have no audit_population row to rewind into).
+export function overridableStatuses(current: ControlStatus, requirementType: "DESIGN" | "OE"): ControlStatus[] {
+  const currentRank = CONTROL_STATUS_RANK[current];
+  const floor = requirementType === "DESIGN" ? DESIGN_CONTROL_FLOOR_RANK : 0;
+  return (Object.keys(CONTROL_STATUS_RANK) as ControlStatus[]).filter(
+    (status) => CONTROL_STATUS_RANK[status] < currentRank && CONTROL_STATUS_RANK[status] >= floor,
+  );
+}
+
 export const CONTROL_STATUS_COLORS: Record<ControlStatus, string> = {
   // OE population phase
   POPULATION_PENDING:            "#94A3B8", // slate   — not started

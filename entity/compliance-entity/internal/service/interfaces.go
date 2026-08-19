@@ -83,6 +83,10 @@ type ControlService interface {
 	CreateControl(ctx context.Context, auditID int, req domain.CreateControlRequest) (domain.AuditControl, error)
 	BulkCreateControls(ctx context.Context, auditID int, req domain.BulkCreateControlsRequest) (domain.BulkCreateControlsResponse, error)
 	UpdateControl(ctx context.Context, auditID, controlID int, req domain.UpdateControlRequest) (domain.AuditControl, error)
+	// OverrideControlStatus backward-overrides a control's status (rank-based,
+	// demotion only), cascading dependent population/evidence rows and
+	// stamping the override marker. See ControlRepository.OverrideControlStatus.
+	OverrideControlStatus(ctx context.Context, auditID, controlID int, req domain.OverrideControlStatusRequest) (domain.AuditControl, error)
 	DeleteControl(ctx context.Context, auditID, controlID int) error
 	// GetEvidenceAssignment confirms userEmail is assigned to an actionable control
 	// and returns its audit id (for server-side folder-path derivation).
@@ -101,6 +105,9 @@ type EvidenceService interface {
 	ListEvidenceFiles(ctx context.Context, evidenceID int) (domain.ListEvidenceFilesResponse, error)
 	GetEvidenceFileByID(ctx context.Context, fileID int) (domain.AuditEvidenceFile, error)
 	DeleteEvidenceFile(ctx context.Context, fileID int) error
+	// DeleteEvidence removes a whole round — used for the fileless (attestation-
+	// only) completion, which has no files to delete individually.
+	DeleteEvidence(ctx context.Context, evidenceID int) error
 }
 
 // PopulationService defines operations on audit_population and its files.

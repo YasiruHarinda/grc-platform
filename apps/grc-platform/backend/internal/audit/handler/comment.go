@@ -83,3 +83,36 @@ func (h *commentHandler) addComment(w http.ResponseWriter, r *http.Request) {
 	}
 	response.WriteJSONValue(w, http.StatusCreated, c)
 }
+
+// deleteComment handles
+// DELETE /api/v1/audits/{id}/controls/{controlId}/comments/{commentId}.
+//
+// The caller must be the comment's original author or hold ManageControls.
+// isAdmin below is intentionally the unscoped HasPrivilege: ManageControls is
+// never granted scoped to a single team, so there is no team to check it
+// against (contrast evidence/population's HasPrivilegeIn bypass checks, which
+// exist because those privileges can be team-scoped).
+func (h *commentHandler) deleteComment(w http.ResponseWriter, r *http.Request) {
+	if !auth.RequirePrivilege(r.Context(), w, privilege.AddComment) {
+		return
+	}
+	auditID, ok := parseIntParam(w, r, "id")
+	if !ok {
+		return
+	}
+	controlID, ok := parseIntParam(w, r, "controlId")
+	if !ok {
+		return
+	}
+	commentID, ok := parseIntParam(w, r, "commentId")
+	if !ok {
+		return
+	}
+	actor := auth.FromContext(r.Context()).Email
+	isAdmin := auth.HasPrivilege(r.Context(), privilege.ManageControls)
+	if err := h.svc.Delete(r.Context(), auditID, controlID, commentID, actor, isAdmin); err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

@@ -18,7 +18,6 @@ package handler
 
 import (
 	"context"
-	"log/slog"
 	"net/http"
 	"strings"
 
@@ -35,7 +34,7 @@ import (
 //
 // requiredPriv is the auditor privilege for the action — AUDIT_VALIDATE_EVIDENCE
 // for the validate endpoints, AUDIT_SELECT_SAMPLE for the sample endpoints. It
-// layers on top of the assigned-auditor scope (ADR-0002): the caller must both
+// layers on top of the assigned-auditor scope: the caller must both
 // hold the privilege AND be the control's assigned auditor. Requiring the
 // specific privilege (stronger than the old baseline ViewAudits check) also
 // stops a token with zero auditor grants from acting by an auditor_id coincidence.
@@ -69,10 +68,11 @@ func assignedAuditorGate(requiredPriv string) func(http.ResponseWriter, *http.Re
 // endpoints (evidence or population, at either the internal-review or the
 // auditor-validation stage). The four handlers differ only in these fields —
 // everything else (fetch control, guard status, decode the decision, fetch
-// the round, commit round status then control status in that order, and any
-// reject-time cleanup) lives once in decideRound, so that order and the
-// reject-time cleanup (population only — see clearFilesOnReject) can't
-// silently diverge between evidence and population again.
+// the round, commit round status then control status in that order) lives
+// once in decideRound, so that order can't silently diverge between evidence
+// and population again. A rejected round's files are never auto-cleared —
+// they stay on record (visible/deletable, same as evidence) so the team can
+// see what was rejected and clean it up themselves before resubmitting.
 type decideRoundParams struct {
 	// preGate runs before the control is fetched — for checks that don't need
 	// it (the internal reviewer's plain privilege check). nil to skip.
@@ -89,14 +89,6 @@ type decideRoundParams struct {
 
 	approveRoundStatus, approveControlStatus string
 	rejectRoundStatus, rejectControlStatus   string
-
-	// clearFilesOnReject, if set, best-effort clears the rejected round's files
-	// after the round/control status has already committed. Population only:
-	// a resubmitted evidence round is always fresh, but population reuses the
-	// same round across resubmissions, so old files must be cleared explicitly.
-	// A failure here only logs — the decision itself is already durably
-	// recorded by the time this runs.
-	clearFilesOnReject func(ctx context.Context, roundID int) error
 }
 
 // decideRound implements the shared shape of an internal-review or
@@ -156,11 +148,6 @@ func (h *evidenceHandler) decideRound(w http.ResponseWriter, r *http.Request, p 
 	if err := h.controlSvc.UpdateStatus(r.Context(), auditID, controlID, statusReq, actor); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
-	}
-	if reject && p.clearFilesOnReject != nil {
-		if err := p.clearFilesOnReject(r.Context(), roundID); err != nil {
-			slog.WarnContext(r.Context(), "round file cleanup failed", "roundId", roundID, "err", err)
-		}
 	}
 	response.WriteJSONValue(w, http.StatusOK, map[string]any{"status": controlStatus})
 }

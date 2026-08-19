@@ -50,6 +50,23 @@ func (r *populationRepo) UpdateStatus(ctx context.Context, populationID int, sta
 	return r.c.Patch(ctx, fmt.Sprintf("/populations/%d", populationID), body, nil)
 }
 
+func (r *populationRepo) UpdateStatusWithAttestation(ctx context.Context, populationID int, status, attestation, updatedBy string) error {
+	body := map[string]any{"status": status, "updatedBy": updatedBy}
+	if attestation != "" {
+		body["attestation"] = attestation
+	}
+	return r.c.Patch(ctx, fmt.Sprintf("/populations/%d", populationID), body, nil)
+}
+
+// ClearAttestation blanks the round's attestation column. The entity's PATCH
+// treats a JSON key's absence as "leave untouched" (see UpdateStatusWithAttestation
+// above, which omits the key entirely for that reason) — so clearing requires
+// sending the key with an empty string, not omitting it.
+func (r *populationRepo) ClearAttestation(ctx context.Context, populationID int, updatedBy string) error {
+	body := map[string]any{"attestation": "", "updatedBy": updatedBy}
+	return r.c.Patch(ctx, fmt.Sprintf("/populations/%d", populationID), body, nil)
+}
+
 func (r *populationRepo) UpdateDetails(ctx context.Context, populationID int, details model.PopulationDetails, updatedBy string) error {
 	body := map[string]any{
 		"description":     details.Description,
@@ -72,6 +89,7 @@ type entPopulationRound struct {
 	Status          string    `json:"status"`
 	DueDate         *string   `json:"dueDate"`
 	Comments        *string   `json:"comments"`
+	Attestation     *string   `json:"attestation"`
 	CreatedOn       time.Time `json:"createdOn"`
 	UpdatedOn       time.Time `json:"updatedOn"`
 }
@@ -84,6 +102,7 @@ func (p entPopulationRound) toModel() *model.AuditPopulation {
 		ReferenceNumber: p.ReferenceNumber,
 		Description:     p.Description,
 		DueDate:         p.DueDate,
+		Attestation:     p.Attestation,
 		Comments:        p.Comments,
 		CreatedAt:       p.CreatedOn,
 		UpdatedAt:       p.UpdatedOn,

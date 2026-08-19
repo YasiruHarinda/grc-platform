@@ -131,6 +131,11 @@ export interface AuditControl {
   populationDueDate?: string | null;
   populationOwnerName?: string | null;
   populationTeamName?: string | null;
+  // Set when this control's status was last set by a backward override
+  // rather than the ordinary workflow.
+  statusOverridden?: boolean;
+  overriddenBy?: string | null;
+  overriddenAt?: string | null;
 }
 
 export interface AuditListResponse {

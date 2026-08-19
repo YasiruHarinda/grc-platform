@@ -33,6 +33,10 @@ type CommentService interface {
 	// (external auditor), is_internal comments are excluded.
 	List(ctx context.Context, auditID, controlID int, includeInternal bool) ([]*model.AuditComment, error)
 	Add(ctx context.Context, auditID, controlID int, req model.AddCommentRequest, createdBy string) (*model.AuditComment, error)
+	// Delete removes a comment. The caller must be the comment's original
+	// author or hold ManageControls — same authorization contract as
+	// evidenceService.DeleteFile.
+	Delete(ctx context.Context, auditID, controlID, commentID int, actor string, isAdmin bool) error
 }
 
 type commentService struct {
@@ -66,4 +70,29 @@ func (s *commentService) Add(ctx context.Context, auditID, controlID int, req mo
 		return nil, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "content is required"}
 	}
 	return s.repo.Create(ctx, auditID, controlID, req.Content, req.IsInternal, req.ParentCommentID, createdBy)
+}
+
+func (s *commentService) Delete(ctx context.Context, auditID, controlID, commentID int, actor string, isAdmin bool) error {
+	// The entity's delete-by-ID route carries no ownership check, so it is
+	// enforced here — list rather than a single-comment fetch, since the
+	// entity exposes no GET for one comment (mirrors evidenceService.DeleteFile,
+	// which has a single-file fetch to check against instead).
+	all, err := s.repo.ListByControl(ctx, auditID, controlID)
+	if err != nil {
+		return err
+	}
+	var found *model.AuditComment
+	for _, c := range all {
+		if c.ID == commentID {
+			found = c
+			break
+		}
+	}
+	if found == nil {
+		return &apierror.Error{StatusCode: http.StatusNotFound, Body: "comment not found"}
+	}
+	if !isAdmin && found.CreatedBy != actor {
+		return &apierror.Error{StatusCode: http.StatusForbidden, Body: "forbidden"}
+	}
+	return s.repo.Delete(ctx, commentID)
 }

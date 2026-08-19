@@ -35,6 +35,9 @@ export interface EvidenceSubmission {
   status: string;
   folderPath: string | null;
   files: EvidenceFile[] | null; // null when a submission round has no files
+  // Written justification for a round with no files (fileless completion).
+  // Empty for ordinary rounds.
+  attestation?: string;
   createdBy: string;
   createdAt: string;
 }

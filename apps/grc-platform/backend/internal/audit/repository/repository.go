@@ -31,8 +31,8 @@ type AuditRepository interface {
 	List(ctx context.Context) ([]*model.Audit, error)
 	// ListScoped returns only audits with at least one control within scope —
 	// audits have no team/owner/auditor of their own (only their controls do),
-	// so scope is evaluated per ADR-0002 at the control level and an audit
-	// qualifies if any of its controls do. Used by the Audits tab (listAudits).
+	// so scope is evaluated at the control level and an audit qualifies if any
+	// of its controls do. Used by the Audits tab (listAudits).
 	ListScoped(ctx context.Context, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.Audit, error)
 	GetByID(ctx context.Context, id int) (*model.Audit, error)
 	// InScope reports whether id is within scope for userEmail — used by
@@ -54,8 +54,8 @@ type FrameworkControlRepository interface {
 type FrameworkRepository interface {
 	// List returns frameworks with at least one audit in scope — a framework
 	// has no team/owner/auditor of its own (only its audits' controls do), so
-	// scope is evaluated per ADR-0002 at the control level, one level deeper
-	// than ListScoped does for audits.
+	// scope is evaluated at the control level, one level deeper than
+	// ListScoped does for audits.
 	List(ctx context.Context, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.AuditFramework, error)
 	// GetByID is intentionally unscoped — used internally to validate a
 	// frameworkId reference (e.g. audit creation), which must succeed
@@ -79,7 +79,7 @@ type ControlRepository interface {
 	// see ListScoped.
 	List(ctx context.Context, auditID int) ([]*model.AuditControl, error)
 	// ListScoped returns auditID's controls visible to userEmail at scope —
-	// used by the Audits tab (listControls); see ADR-0002.
+	// used by the Audits tab (listControls).
 	ListScoped(ctx context.Context, auditID int, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.AuditControl, error)
 	GetByID(ctx context.Context, auditID, controlID int) (*model.AuditControl, error)
 	// InScope reports whether controlID is within scope for userEmail — used
@@ -94,6 +94,10 @@ type ControlRepository interface {
 	// in one call — used when the auditor submits the sample, so the two can never
 	// be observed out of step with each other.
 	UpdateStatusWithSample(ctx context.Context, auditID, controlID int, status string, sampleReference string, updatedBy string) error
+	// OverrideStatus backward-overrides a control's status via the entity's
+	// rank-based status-override endpoint (see ControlService.OverrideStatus) —
+	// distinct from UpdateStatus, which drives the ordinary forward workflow.
+	OverrideStatus(ctx context.Context, auditID, controlID int, status string, updatedBy string) error
 	Delete(ctx context.Context, auditID, controlID int) error
 	// AssignedAuditID reports whether userEmail is the owner of controlID for
 	// an actionable status, and returns the control's audit id (for server-side
@@ -123,7 +127,9 @@ type DashboardRepository interface {
 // EvidenceRepository is the data-access contract for audit evidence submissions.
 type EvidenceRepository interface {
 	// Create inserts a new evidence row for the given control and returns its ID.
-	Create(ctx context.Context, auditID, controlID int, folderPath, createdBy string) (int, error)
+	// attestation is the written justification for a fileless round; "" for an
+	// ordinary round.
+	Create(ctx context.Context, auditID, controlID int, folderPath, attestation, createdBy string) (int, error)
 	// AddFile inserts a single audit_evidence_file row linked to evidenceID.
 	AddFile(ctx context.Context, evidenceID int, fileName, filePath string, fileType *string, fileSize *int64, createdBy string) error
 	// DeleteEvidence removes an evidence row by ID (used for best-effort rollback on partial failure).
@@ -147,6 +153,17 @@ type PopulationRepository interface {
 	AddFile(ctx context.Context, populationID int, fileKind, fileName, filePath string, fileType *string, fileSize *int64, createdBy string) error
 	// UpdateStatus advances the population round's status (e.g. → SUBMITTED).
 	UpdateStatus(ctx context.Context, populationID int, status, updatedBy string) error
+	// UpdateStatusWithAttestation is UpdateStatus plus a written note standing
+	// in for population files (a fileless submit, or a note alongside files) —
+	// used by SubmitPopulation instead of UpdateStatus when there's an
+	// attestation to record. attestation == "" behaves exactly like
+	// UpdateStatus (no attestation column write).
+	UpdateStatusWithAttestation(ctx context.Context, populationID int, status, attestation, updatedBy string) error
+	// ClearAttestation blanks a population round's note, independent of its
+	// status (unlike UpdateStatusWithAttestation, which only ever writes one
+	// alongside a status transition) — for removing a fileless (or
+	// note-alongside-files) submission's note after the fact.
+	ClearAttestation(ctx context.Context, populationID int, updatedBy string) error
 	// UpdateDetails edits a population round's requirement text, due date,
 	// comments, owner, and team — used when a manager edits an OE control's
 	// population details from the same form used to create them.
@@ -167,6 +184,8 @@ type PopulationRepository interface {
 type CommentRepository interface {
 	Create(ctx context.Context, auditID, controlID int, content string, isInternal bool, parentCommentID *int, createdBy string) (*model.AuditComment, error)
 	ListByControl(ctx context.Context, auditID, controlID int) ([]*model.AuditComment, error)
+	// Delete removes a single comment by ID.
+	Delete(ctx context.Context, commentID int) error
 }
 type AssignmentRepository interface{}
 type NotificationRepository interface{}

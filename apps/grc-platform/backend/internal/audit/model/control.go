@@ -23,14 +23,14 @@ import "time"
 // control owns its full definition text directly — it is never linked to the
 // framework catalog by foreign key.
 type AuditControl struct {
-	ID                  int       `json:"id"`
-	AuditID             int       `json:"auditId"`
-	OwnerID             *int      `json:"ownerId"`
-	OwnerName           *string   `json:"ownerName"`
-	TeamID              *int      `json:"teamId"`
-	TeamName            *string   `json:"teamName"`
-	AuditorID           *int      `json:"auditorId"`
-	AuditorName         *string   `json:"auditorName"`
+	ID          int     `json:"id"`
+	AuditID     int     `json:"auditId"`
+	OwnerID     *int    `json:"ownerId"`
+	OwnerName   *string `json:"ownerName"`
+	TeamID      *int    `json:"teamId"`
+	TeamName    *string `json:"teamName"`
+	AuditorID   *int    `json:"auditorId"`
+	AuditorName *string `json:"auditorName"`
 	// AuditorEmail backs the assigned-auditor gate: the backend compares it
 	// against the caller's token email to authorize population/sample/evidence
 	// validation, and the frontend compares it against the signed-in user's email
@@ -59,6 +59,12 @@ type AuditControl struct {
 	PopulationDueDate     *string `json:"populationDueDate"`
 	PopulationOwnerName   *string `json:"populationOwnerName"`
 	PopulationTeamName    *string `json:"populationTeamName"`
+	// StatusOverridden/OverriddenBy/OverriddenAt record that this control's
+	// status was last set by a backward override rather than the ordinary
+	// workflow.
+	StatusOverridden bool       `json:"statusOverridden"`
+	OverriddenBy     *string    `json:"overriddenBy"`
+	OverriddenAt     *time.Time `json:"overriddenAt"`
 }
 
 // ControlListResponse is returned by GET /api/v1/audits/{id}/controls.
@@ -133,4 +139,12 @@ type UpdateControlRequest struct {
 type UpdateStatusRequest struct {
 	Status  string  `json:"status"`
 	Comment *string `json:"comment"`
+}
+
+// OverrideStatusRequest is the payload for
+// POST /api/v1/audits/{id}/controls/{controlId}/status/override. Unlike
+// UpdateStatusRequest, the target status is validated as a backward-only rank
+// move by the entity, not the ordinary forward workflow transitions.
+type OverrideStatusRequest struct {
+	Status string `json:"status"`
 }

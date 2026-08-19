@@ -37,6 +37,10 @@ type EvidenceRepository interface {
 	ListEvidenceFiles(ctx context.Context, evidenceID int) (*domain.ListEvidenceFilesResponse, error)
 	GetEvidenceFileByID(ctx context.Context, fileID int) (*domain.AuditEvidenceFile, error)
 	DeleteEvidenceFile(ctx context.Context, fileID int) error
+	// DeleteEvidence removes a whole round (audit_evidence row). Its files
+	// (audit_evidence_file) and AI validation logs cascade via FK; audit_trail
+	// rows referencing it are detached (evidence_id set NULL), not deleted.
+	DeleteEvidence(ctx context.Context, evidenceID int) error
 }
 
 type evidenceRepo struct{ db *sql.DB }
@@ -46,12 +50,13 @@ func NewEvidenceRepository(db *sql.DB) EvidenceRepository { return &evidenceRepo
 
 func (r *evidenceRepo) CreateEvidence(ctx context.Context, controlID int, req domain.CreateEvidenceRequest) (*domain.AuditEvidence, error) {
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO audit_evidence (control_id, submitted_by, reused_from_evidence_id, folder_path, status, created_by, updated_by)
-		 VALUES (?, ?, ?, ?, 'SUBMITTED', ?, ?)`,
+		`INSERT INTO audit_evidence (control_id, submitted_by, reused_from_evidence_id, folder_path, attestation, status, created_by, updated_by)
+		 VALUES (?, ?, ?, ?, ?, 'SUBMITTED', ?, ?)`,
 		controlID,
 		nullableInt(req.SubmittedBy),
 		nullableInt(req.ReusedFromEvidenceID),
 		req.FolderPath,
+		nullableString(req.Attestation),
 		req.CreatedBy, req.CreatedBy)
 	if err != nil {
 		return nil, fmt.Errorf("evidence.Create: %w", err)
@@ -63,10 +68,10 @@ func (r *evidenceRepo) CreateEvidence(ctx context.Context, controlID int, req do
 func (r *evidenceRepo) GetEvidenceByID(ctx context.Context, evidenceID int) (*domain.AuditEvidence, error) {
 	var e domain.AuditEvidence
 	var submittedBy, reusedFrom sql.NullInt64
-	var folderPath, createdBy sql.NullString
+	var folderPath, createdBy, attestation sql.NullString
 	err := r.db.QueryRowContext(ctx,
-		"SELECT id, control_id, submitted_by, status, folder_path, reused_from_evidence_id, created_by, created_at, updated_at FROM audit_evidence WHERE id = ?",
-		evidenceID).Scan(&e.ID, &e.ControlID, &submittedBy, &e.Status, &folderPath, &reusedFrom, &createdBy, &e.CreatedOn, &e.UpdatedOn)
+		"SELECT id, control_id, submitted_by, status, folder_path, reused_from_evidence_id, attestation, created_by, created_at, updated_at FROM audit_evidence WHERE id = ?",
+		evidenceID).Scan(&e.ID, &e.ControlID, &submittedBy, &e.Status, &folderPath, &reusedFrom, &attestation, &createdBy, &e.CreatedOn, &e.UpdatedOn)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, &apierror.NotFoundError{Msg: fmt.Sprintf("evidence %d not found", evidenceID)}
 	}
@@ -84,6 +89,9 @@ func (r *evidenceRepo) GetEvidenceByID(ctx context.Context, evidenceID int) (*do
 		v := int(reusedFrom.Int64)
 		e.ReusedFromEvidenceID = &v
 	}
+	if attestation.Valid {
+		e.Attestation = &attestation.String
+	}
 	if createdBy.Valid {
 		e.CreatedBy = &createdBy.String
 	}
@@ -96,7 +104,7 @@ func (r *evidenceRepo) ListEvidenceByControl(ctx context.Context, auditID, contr
 	// audit's evidence.
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT e.id, e.control_id, e.submitted_by, e.status, e.folder_path,
-		        e.reused_from_evidence_id, e.created_by, e.created_at, e.updated_at
+		        e.reused_from_evidence_id, e.attestation, e.created_by, e.created_at, e.updated_at
 		 FROM audit_evidence e
 		 JOIN audit_control c ON c.id = e.control_id
 		 WHERE e.control_id = ? AND c.audit_id = ?
@@ -111,8 +119,8 @@ func (r *evidenceRepo) ListEvidenceByControl(ctx context.Context, auditID, contr
 	for rows.Next() {
 		var e domain.AuditEvidence
 		var submittedBy, reusedFrom sql.NullInt64
-		var folderPath, createdBy sql.NullString
-		if err := rows.Scan(&e.ID, &e.ControlID, &submittedBy, &e.Status, &folderPath, &reusedFrom, &createdBy, &e.CreatedOn, &e.UpdatedOn); err != nil {
+		var folderPath, createdBy, attestation sql.NullString
+		if err := rows.Scan(&e.ID, &e.ControlID, &submittedBy, &e.Status, &folderPath, &reusedFrom, &attestation, &createdBy, &e.CreatedOn, &e.UpdatedOn); err != nil {
 			return nil, fmt.Errorf("evidence.ListByControl scan: %w", err)
 		}
 		if folderPath.Valid {
@@ -125,6 +133,9 @@ func (r *evidenceRepo) ListEvidenceByControl(ctx context.Context, auditID, contr
 		if reusedFrom.Valid {
 			v := int(reusedFrom.Int64)
 			e.ReusedFromEvidenceID = &v
+		}
+		if attestation.Valid {
+			e.Attestation = &attestation.String
 		}
 		if createdBy.Valid {
 			e.CreatedBy = &createdBy.String
@@ -304,6 +315,18 @@ func (r *evidenceRepo) ListEvidenceFiles(ctx context.Context, evidenceID int) (*
 		return nil, fmt.Errorf("evidence_file.List rows: %w", err)
 	}
 	return &domain.ListEvidenceFilesResponse{Files: files}, nil
+}
+
+func (r *evidenceRepo) DeleteEvidence(ctx context.Context, evidenceID int) error {
+	result, err := r.db.ExecContext(ctx, "DELETE FROM audit_evidence WHERE id = ?", evidenceID)
+	if err != nil {
+		return fmt.Errorf("evidence.Delete(%d): %w", evidenceID, err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return &apierror.NotFoundError{Msg: fmt.Sprintf("evidence %d not found", evidenceID)}
+	}
+	return nil
 }
 
 func (r *evidenceRepo) DeleteEvidenceFile(ctx context.Context, fileID int) error {

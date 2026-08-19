@@ -33,7 +33,8 @@ export interface TrailEntry {
     | "AI_VALIDATED"
     | "EXPORTED"
     | "UPDATED"
-    | "DELETED";
+    | "DELETED"
+    | "OVERRIDDEN";
   controlId: number | null;
   evidenceId: number | null;
   createdBy: string;

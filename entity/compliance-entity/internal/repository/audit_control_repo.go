@@ -35,6 +35,14 @@ type ControlRepository interface {
 	CreateControl(ctx context.Context, auditID int, req domain.CreateControlRequest) (*domain.AuditControl, error)
 	BulkCreateControls(ctx context.Context, auditID int, reqs []domain.CreateControlRequest) ([]domain.AuditControl, error)
 	UpdateControl(ctx context.Context, auditID, controlID int, req domain.UpdateControlRequest) (*domain.AuditControl, error)
+	// OverrideControlStatus writes a backward status override: the control's
+	// status write, the demotion cascade of its dependent population/evidence
+	// row (see overridePopulationTarget/overrideEvidenceTarget), and the derived
+	// audit.status recompute all happen in one transaction, so a mid-flight
+	// failure can never leave the control demoted but its dependent rows
+	// stale. req.ExpectedStatus is the atomic concurrency guard, same as
+	// UpdateControl.
+	OverrideControlStatus(ctx context.Context, auditID, controlID int, req domain.OverrideControlStatusRequest) (*domain.AuditControl, error)
 	DeleteControl(ctx context.Context, auditID, controlID int) error
 	// GetEvidenceAssignment returns the control's audit id when userEmail is the
 	// control's owner and it is currently actionable, else sql.ErrNoRows.
@@ -82,16 +90,19 @@ func (r *controlRepo) GetEvidenceAssignment(ctx context.Context, userEmail strin
 }
 
 // FindActivePopulation returns the active population round for an OE control:
-// PENDING (first submission), COMPLIANCE_REJECTED (internal review sent it back),
-// or AUDITOR_REJECTED (auditor sent it back) — all three are states from which the
-// population state machine allows a transition straight back to SUBMITTED on the
-// same round (see allowedPopulationTransitions in audit_population_service.go).
+// PENDING (first submission), SUBMITTED (still under internal review — the team
+// can keep adding files up until the reviewer decides, same as
+// teamEditablePopulationStatuses on the backend), COMPLIANCE_REJECTED (internal
+// review sent it back), or AUDITOR_REJECTED (auditor sent it back) — all four are
+// states from which the population state machine allows a transition straight
+// back to SUBMITTED on the same round (see allowedPopulationTransitions in
+// audit_population_service.go; SUBMITTED -> SUBMITTED is the no-op case).
 // Not found (no active population / DESIGN control) → sql.ErrNoRows.
 func (r *controlRepo) FindActivePopulation(ctx context.Context, controlID int) (int, error) {
 	var populationID int
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id FROM audit_population
-		WHERE control_id = ? AND status IN ('PENDING','COMPLIANCE_REJECTED','AUDITOR_REJECTED')
+		WHERE control_id = ? AND status IN ('PENDING','SUBMITTED','COMPLIANCE_REJECTED','AUDITOR_REJECTED')
 		ORDER BY id DESC LIMIT 1`, controlID).Scan(&populationID)
 	if err != nil {
 		return 0, err
@@ -107,9 +118,10 @@ const controlSelectCols = `
   c.team_id,    t.name               AS team_name,
   c.auditor_id, u_aud.display_name   AS auditor_name, u_aud.email AS auditor_email,
   DATE_FORMAT(c.due_date, '%Y-%m-%d') AS due_date,
-  c.status, c.control_source,
+  c.status, c.sample_reference, c.comments, c.control_source,
   (c.due_date IS NOT NULL AND c.due_date < CURDATE() AND c.status != 'COMPLETE') AS is_overdue,
   c.created_at, c.updated_at,
+  c.status_overridden, c.overridden_by, c.overridden_at,
   p.description                        AS population_description,
   p.comments                           AS population_comments,
   DATE_FORMAT(p.due_date, '%Y-%m-%d')  AS population_due_date,
@@ -542,29 +554,223 @@ func (r *controlRepo) UpdateControl(ctx context.Context, auditID, controlID int,
 		query = "UPDATE audit_control SET " + strings.Join(sets, ", ") + " WHERE audit_id = ? AND id = ?" // #nosec G202
 	}
 
-	result, err := r.db.ExecContext(ctx, query, args...)
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("control.Update begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("control.Update(%d,%d): %w", auditID, controlID, err)
 	}
 	if req.ExpectedStatus != "" {
 		if n, _ := result.RowsAffected(); n == 0 {
-			current, err := r.GetControlByID(ctx, auditID, controlID)
+			var currentStatus string
+			err := tx.QueryRowContext(ctx, "SELECT status FROM audit_control WHERE audit_id = ? AND id = ?", auditID, controlID).Scan(&currentStatus)
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, &apierror.NotFoundError{Msg: fmt.Sprintf("control %d not found in audit %d", controlID, auditID)}
+			}
 			if err != nil {
-				return nil, err // propagates NotFoundError if record was deleted
+				return nil, fmt.Errorf("control.Update(%d,%d) recheck: %w", auditID, controlID, err)
 			}
-			if current.Status == req.ExpectedStatus && (req.Status == nil || *req.Status == req.ExpectedStatus) {
-				return current, nil // MySQL no-op: status not being changed, or being set to its current value
+			if currentStatus != req.ExpectedStatus || (req.Status != nil && *req.Status != req.ExpectedStatus) {
+				return nil, &apierror.ConflictError{Msg: "control was modified concurrently, please retry"}
 			}
-			return nil, &apierror.ConflictError{Msg: "control was modified concurrently, please retry"}
+			// MySQL no-op: status not being changed, or being set to its current value.
 		}
 	}
+
+	if req.Status != nil {
+		if err := recomputeAuditStatus(ctx, tx, auditID); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("control.Update commit: %w", err)
+	}
 	return r.GetControlByID(ctx, auditID, controlID)
+}
+
+// OverrideControlStatus writes the control's demoted status, cascades its
+// dependent population/evidence row per overridePopulationTarget/
+// overrideEvidenceTarget, and recomputes the derived audit status — all in one
+// transaction, so a mid-flight failure can never strand the control demoted
+// with a stale dependent row. The cascade itself exists to prevent two
+// failure modes: a FindActivePopulation deadlock, and a stale round's status
+// getting silently overwritten by a later reviewer decision.
+func (r *controlRepo) OverrideControlStatus(ctx context.Context, auditID, controlID int, req domain.OverrideControlStatusRequest) (*domain.AuditControl, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("control.OverrideStatus begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx,
+		`UPDATE audit_control
+		 SET status = ?, status_overridden = TRUE, overridden_by = ?, overridden_at = NOW(), updated_by = ?
+		 WHERE audit_id = ? AND id = ? AND status = ?`,
+		req.Status, req.UpdatedBy, req.UpdatedBy, auditID, controlID, req.ExpectedStatus)
+	if err != nil {
+		return nil, fmt.Errorf("control.OverrideStatus(%d,%d): %w", auditID, controlID, err)
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return nil, &apierror.ConflictError{Msg: "control was modified concurrently, please retry"}
+	}
+
+	if popTarget, ok := overridePopulationTarget[req.Status]; ok {
+		if err := demotePopulationRound(ctx, tx, controlID, popTarget); err != nil {
+			return nil, err
+		}
+	}
+	if evTarget, ok := overrideEvidenceTarget[req.Status]; ok {
+		if err := demoteEvidenceRound(ctx, tx, controlID, evTarget); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := recomputeAuditStatus(ctx, tx, auditID); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("control.OverrideStatus commit: %w", err)
+	}
+	return r.GetControlByID(ctx, auditID, controlID)
+}
+
+// overridePopulationTarget maps a control override target to the
+// audit_population status its dependent population row demotes to, when that
+// row's current rank is strictly higher (see populationStatusRank). Targets
+// not present here leave the population row untouched.
+var overridePopulationTarget = map[string]string{
+	"POPULATION_PENDING":            "PENDING",
+	"POPULATION_INTERNAL_REVIEW":    "SUBMITTED",
+	"POPULATION_UNDER_VALIDATION":   "COMPLIANCE_APPROVED",
+	"POPULATION_NEED_CLARIFICATION": "AUDITOR_REJECTED",
+	"POPULATION_COMPLETE":           "APPROVED",
+	"AWAITING_SAMPLE":               "APPROVED",
+	"SUBMITTED_SAMPLE":              "APPROVED",
+}
+
+// overrideEvidenceTarget is overridePopulationTarget's counterpart for the
+// control's latest audit_evidence round.
+var overrideEvidenceTarget = map[string]string{
+	"EVIDENCE_INTERNAL_REVIEW":    "SUBMITTED",
+	"EVIDENCE_UNDER_VALIDATION":   "COMPLIANCE_APPROVED",
+	"EVIDENCE_NEED_CLARIFICATION": "AUDITOR_REJECTED",
+}
+
+// populationStatusRank orders audit_population.status for the cascade: a
+// mapped overridePopulationTarget only applies when its rank is strictly
+// below the row's current rank (never promotes a population row).
+var populationStatusRank = map[string]int{
+	"PENDING":             0,
+	"COMPLIANCE_REJECTED": 0,
+	"AUDITOR_REJECTED":    0,
+	"SUBMITTED":           1,
+	"COMPLIANCE_APPROVED": 2,
+	"APPROVED":            3,
+}
+
+// evidenceStatusRank is populationStatusRank's counterpart for an
+// audit_evidence round's status.
+var evidenceStatusRank = map[string]int{
+	"COMPLIANCE_REJECTED": 0,
+	"AUDITOR_REJECTED":    0,
+	"SUBMITTED":           1,
+	"COMPLIANCE_APPROVED": 2,
+	"APPROVED":            3,
+}
+
+// demotePopulationRound sets controlID's latest audit_population row to
+// target, but only when target's rank is strictly below the row's current
+// rank (populationStatusRank) — an override never promotes a dependent row.
+// No-op if the control has no population row (DESIGN controls).
+func demotePopulationRound(ctx context.Context, tx *sql.Tx, controlID int, target string) error {
+	var id int
+	var status string
+	err := tx.QueryRowContext(ctx,
+		`SELECT id, status FROM audit_population WHERE control_id = ? ORDER BY id DESC LIMIT 1`, controlID,
+	).Scan(&id, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("control.OverrideStatus population lookup(%d): %w", controlID, err)
+	}
+	if populationStatusRank[target] >= populationStatusRank[status] {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE audit_population SET status = ? WHERE id = ?`, target, id); err != nil {
+		return fmt.Errorf("control.OverrideStatus population update(%d): %w", id, err)
+	}
+	return nil
+}
+
+// demoteEvidenceRound is demotePopulationRound's counterpart for the
+// control's latest audit_evidence round.
+func demoteEvidenceRound(ctx context.Context, tx *sql.Tx, controlID int, target string) error {
+	var id int
+	var status string
+	err := tx.QueryRowContext(ctx,
+		`SELECT id, status FROM audit_evidence WHERE control_id = ? ORDER BY id DESC LIMIT 1`, controlID,
+	).Scan(&id, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("control.OverrideStatus evidence lookup(%d): %w", controlID, err)
+	}
+	if evidenceStatusRank[target] >= evidenceStatusRank[status] {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE audit_evidence SET status = ? WHERE id = ?`, target, id); err != nil {
+		return fmt.Errorf("control.OverrideStatus evidence update(%d): %w", id, err)
+	}
+	return nil
+}
+
+// recomputeAuditStatus derives audit.status from its controls' completion
+// state: ACTIVE while any control is not COMPLETE, COMPLETED once every
+// control is. ARCHIVED and REMOVED are admin-set and sticky — never
+// overwritten here. Called after any control status write (ordinary or
+// overridden) within the same transaction as that write.
+func recomputeAuditStatus(ctx context.Context, tx *sql.Tx, auditID int) error {
+	var current string
+	if err := tx.QueryRowContext(ctx, "SELECT status FROM audit WHERE id = ? FOR UPDATE", auditID).Scan(&current); err != nil {
+		return fmt.Errorf("recomputeAuditStatus get(%d): %w", auditID, err)
+	}
+	if current == "ARCHIVED" || current == "REMOVED" {
+		return nil
+	}
+	var incomplete int
+	if err := tx.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM audit_control WHERE audit_id = ? AND status <> 'COMPLETE' FOR UPDATE", auditID,
+	).Scan(&incomplete); err != nil {
+		return fmt.Errorf("recomputeAuditStatus count(%d): %w", auditID, err)
+	}
+	target := "ACTIVE"
+	if incomplete == 0 {
+		target = "COMPLETED"
+	}
+	if target == current {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE audit SET status = ? WHERE id = ?", target, auditID); err != nil {
+		return fmt.Errorf("recomputeAuditStatus update(%d): %w", auditID, err)
+	}
+	return nil
 }
 
 func scanControl(s scanner) (*domain.AuditControl, error) {
 	var c domain.AuditControl
 	var ownerID, teamID, auditorID sql.NullInt64
 	var evidenceReq, ownerName, teamName, auditorName, auditorEmail, dueDate sql.NullString
+	var sampleReference, comments sql.NullString
+	var overriddenBy sql.NullString
+	var overriddenAt sql.NullTime
 	var popDescription, popComments, popDueDate, popOwnerName, popTeamName sql.NullString
 	err := s.Scan(
 		&c.ID, &c.AuditID,
@@ -574,8 +780,9 @@ func scanControl(s scanner) (*domain.AuditControl, error) {
 		&teamID, &teamName,
 		&auditorID, &auditorName, &auditorEmail,
 		&dueDate,
-		&c.Status, &c.ControlSource, &c.IsOverdue,
+		&c.Status, &sampleReference, &comments, &c.ControlSource, &c.IsOverdue,
 		&c.CreatedOn, &c.UpdatedOn,
+		&c.StatusOverridden, &overriddenBy, &overriddenAt,
 		&popDescription, &popComments, &popDueDate, &popOwnerName, &popTeamName,
 	)
 	if err != nil {
@@ -603,11 +810,17 @@ func scanControl(s scanner) (*domain.AuditControl, error) {
 	c.AuditorName = nullStrPtr(auditorName)
 	c.AuditorEmail = nullStrPtr(auditorEmail)
 	c.DueDate = nullStrPtr(dueDate)
+	c.SampleReference = nullStrPtr(sampleReference)
+	c.Comments = nullStrPtr(comments)
 	c.PopulationDescription = nullStrPtr(popDescription)
 	c.PopulationComments = nullStrPtr(popComments)
 	c.PopulationDueDate = nullStrPtr(popDueDate)
 	c.PopulationOwnerName = nullStrPtr(popOwnerName)
 	c.PopulationTeamName = nullStrPtr(popTeamName)
+	c.OverriddenBy = nullStrPtr(overriddenBy)
+	if overriddenAt.Valid {
+		c.OverriddenAt = &overriddenAt.Time
+	}
 	return &c, nil
 }
 

@@ -18,6 +18,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"mime"
@@ -26,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/apierror"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
@@ -49,6 +51,16 @@ func fileNamesOf(files []*model.AuditEvidenceFile) []string {
 		names = append(names, f.FileName)
 	}
 	return names
+}
+
+// trailFileNames is fileNamesOf, except a fileless round (attestation-only)
+// logs the attestation text instead of an empty file list — otherwise the
+// trail would record a submission with nothing attached to it.
+func trailFileNames(evidence *model.AuditEvidence) []string {
+	if len(evidence.Files) == 0 && evidence.Attestation != "" {
+		return []string{evidence.Attestation}
+	}
+	return fileNamesOf(evidence.Files)
 }
 
 // recordEvidenceTrail appends a best-effort attribution entry. Failures are logged
@@ -117,7 +129,7 @@ type evidenceHandler struct {
 // derived audit id and ok=false after writing the response on failure.
 //
 // Users who hold ManageControls (compliance admin) or ViewAllAudits (org-wide
-// read, e.g. compliance team — see ADR-0002) bypass the owner-assignment check —
+// read, e.g. compliance team) bypass the owner-assignment check —
 // they already have full or org-wide read/write over audit data, so the IDOR
 // restriction is redundant and would block legitimate submissions. Both
 // privileges can be granted scoped to a single team, though (module=AUDIT), so
@@ -283,6 +295,9 @@ func (h *evidenceHandler) submitEvidence(w http.ResponseWriter, r *http.Request)
 	if !h.requireAssignment(w, r, auditID, controlID) {
 		return
 	}
+	if h.requireControlNotComplete(w, r, auditID, controlID) == nil {
+		return
+	}
 
 	var req model.SubmitEvidenceRequest
 	if err := response.DecodeJSON(w, r, &req); err != nil {
@@ -291,8 +306,9 @@ func (h *evidenceHandler) submitEvidence(w http.ResponseWriter, r *http.Request)
 
 	user := auth.FromContext(r.Context())
 	actor := user.Email
+	isAdmin := auth.HasPrivilege(r.Context(), privilege.ManageControls)
 
-	evidence, err := h.svc.Submit(r.Context(), auditID, controlID, req.Files, actor)
+	evidence, err := h.svc.Submit(r.Context(), auditID, controlID, req.Files, req.Attestation, isAdmin, actor)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
@@ -305,13 +321,18 @@ func (h *evidenceHandler) submitEvidence(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Best-effort audit-trail attribution: this submission came through the web app.
-	recordEvidenceTrail(r.Context(), h.trailSvc, auditID, controlID, evidence.ID, actor, channelWebApp, user.Issuer, fileNamesOf(evidence.Files))
+	// Best-effort audit-trail attribution: this submission came through the web
+	// app. A fileless round has no file names to log, so log the attestation text
+	// instead.
+	recordEvidenceTrail(r.Context(), h.trailSvc, auditID, controlID, evidence.ID, actor, channelWebApp, user.Issuer, trailFileNames(evidence))
 
-	// Fire-and-forget AI validation. Detached from the request context (a client
-	// disconnect must not cancel it) and best-effort — a failure here never
-	// affects the submission the user just made.
-	h.triggerAIValidation(auditID, controlID, evidence.ID, actor)
+	// Fire-and-forget AI validation — skipped for a fileless round, which has
+	// nothing for the validator to analyze. Detached from the request context (a
+	// client disconnect must not cancel it) and best-effort — a failure here
+	// never affects the submission the user just made.
+	if len(evidence.Files) > 0 {
+		h.triggerAIValidation(auditID, controlID, evidence.ID, actor)
+	}
 
 	response.WriteJSONValue(w, http.StatusCreated, evidence)
 }
@@ -339,6 +360,9 @@ func (h *evidenceHandler) addEvidenceFiles(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if !h.requireAssignment(w, r, auditID, controlID) {
+		return
+	}
+	if h.requireControlNotComplete(w, r, auditID, controlID) == nil {
 		return
 	}
 
@@ -531,6 +555,43 @@ func (h *evidenceHandler) deleteEvidenceFile(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// teamEditableControlStatuses are the control statuses from which the team may
+// still delete an evidence file or round — exactly the statuses where the
+// frontend (DesignEvidenceSection/OEEvidenceSection) passes canDelete to
+// SubmittedEvidenceList. Once a control reaches EVIDENCE_UNDER_VALIDATION,
+// evidence is locked for the team; ManageControls may still act there (an
+// admin correction) — but not once the control is COMPLETE, which is a hard
+// lock for everyone (see requireControlNotComplete). Mirrors
+// teamEditablePopulationStatuses (population.go) — this endpoint previously
+// had no backend-side counterpart to that gate, relying solely on the
+// frontend not rendering the delete button past this point.
+var teamEditableControlStatuses = map[string]bool{
+	"EVIDENCE_PENDING":            true,
+	"EVIDENCE_NEED_CLARIFICATION": true,
+	"EVIDENCE_INTERNAL_REVIEW":    true,
+	"SUBMITTED_SAMPLE":            true,
+}
+
+// requireEditableEvidenceControl loads the control, rejects with 409 if it is
+// COMPLETE (nobody may edit evidence past that point, not even
+// ManageControls — see requireControlNotComplete), and otherwise requires the
+// status be team-editable unless the caller holds ManageControls. Returns nil
+// after writing the response on failure.
+func (h *evidenceHandler) requireEditableEvidenceControl(w http.ResponseWriter, r *http.Request, auditID, controlID int) *model.AuditControl {
+	control := h.requireControlNotComplete(w, r, auditID, controlID)
+	if control == nil {
+		return nil
+	}
+	if auth.HasPrivilege(r.Context(), privilege.ManageControls) {
+		return control
+	}
+	if !teamEditableControlStatuses[control.Status] {
+		response.WriteError(w, http.StatusConflict, "evidence can only be edited before validation, or after being sent back for changes")
+		return nil
+	}
+	return control
+}
+
 // deleteControlEvidenceFile handles
 // DELETE /api/v1/audits/{id}/controls/{controlId}/evidence/files/{fileId}.
 //
@@ -557,7 +618,55 @@ func (h *evidenceHandler) deleteControlEvidenceFile(w http.ResponseWriter, r *ht
 	if !h.requireAssignment(w, r, auditID, controlID) {
 		return
 	}
+	if h.requireEditableEvidenceControl(w, r, auditID, controlID) == nil {
+		return
+	}
 	if !h.deleteFile(w, r, fileID) {
+		return
+	}
+
+	status, err := h.reconcileAfterDelete(r.Context(), auditID, controlID)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	response.WriteJSONValue(w, http.StatusOK, map[string]any{"status": status})
+}
+
+// deleteEvidenceRound handles
+// DELETE /api/v1/audits/{id}/controls/{controlId}/evidence/{evidenceId}.
+//
+// Removes a whole fileless (attestation-only) round — the "Completed without
+// files" case has no individual file to fall back on deleteControlEvidenceFile
+// for. Reuses reconcileAfterDelete so a round deleted out from under an
+// EVIDENCE_INTERNAL_REVIEW control drops it back to EVIDENCE_PENDING the same
+// way emptying a file-based round does.
+func (h *evidenceHandler) deleteEvidenceRound(w http.ResponseWriter, r *http.Request) {
+	if !auth.RequireAnyPrivilege(r.Context(), w, privilege.SubmitEvidence, privilege.ManageControls) {
+		return
+	}
+	auditID, ok := parseIntParam(w, r, "id")
+	if !ok {
+		return
+	}
+	controlID, ok := parseIntParam(w, r, "controlId")
+	if !ok {
+		return
+	}
+	evidenceID, ok := parseIntParam(w, r, "evidenceId")
+	if !ok {
+		return
+	}
+	if !h.requireAssignment(w, r, auditID, controlID) {
+		return
+	}
+	if h.requireEditableEvidenceControl(w, r, auditID, controlID) == nil {
+		return
+	}
+	actor := auth.FromContext(r.Context()).Email
+	isAdmin := auth.HasPrivilege(r.Context(), privilege.ManageControls)
+	if err := h.svc.DeleteRound(r.Context(), auditID, controlID, evidenceID, actor, isAdmin); err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
 
@@ -599,9 +708,16 @@ func (h *evidenceHandler) reconcileAfterDelete(ctx context.Context, auditID, con
 
 	round, err := h.svc.LatestRound(ctx, auditID, controlID)
 	if err != nil {
-		return "", err
+		// Deleting the control's only round leaves nothing for LatestRound to
+		// find (a 404, not a real failure) — that's the same "no evidence
+		// left" state as an empty round, not an error to surface.
+		var apiErr *apierror.Error
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+			return "", err
+		}
+		round = nil
 	}
-	if len(round.Files) > 0 {
+	if round != nil && (len(round.Files) > 0 || round.Attestation != "") {
 		return control.Status, nil
 	}
 

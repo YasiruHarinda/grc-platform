@@ -190,6 +190,13 @@ CREATE TABLE IF NOT EXISTS audit_control (
   sample_reference     VARCHAR(255) NULL,
   comments             TEXT         NULL,
   control_source       ENUM('MANUAL','COPIED','CSV') NOT NULL DEFAULT 'MANUAL',
+
+  -- Status override marker: set whenever an admin backward-overrides this
+  -- control's status instead of it advancing through the normal workflow.
+  status_overridden    BOOLEAN      NOT NULL DEFAULT FALSE,
+  overridden_by        VARCHAR(255) NULL,
+  overridden_at        DATETIME     NULL,
+
   created_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by           VARCHAR(255) NULL,
   updated_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -207,6 +214,44 @@ CREATE TABLE IF NOT EXISTS audit_control (
   CONSTRAINT fk_control_team    FOREIGN KEY (team_id)              REFERENCES audit_team(id)              ON DELETE SET NULL,
   CONSTRAINT fk_control_auditor FOREIGN KEY (auditor_id)           REFERENCES `user`(id)                  ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Backfill the status-override columns onto an audit_control table created
+-- before this feature existed. Deliberately not `ADD COLUMN IF NOT EXISTS`:
+-- that syntax needs MySQL 8.0.29+, and nothing in this repo pins a MySQL
+-- patch version — the information_schema guard below is portable to any
+-- MySQL 8, matching the pattern in shared.sql's role table migration.
+SET @control_has_status_overridden = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_control' AND COLUMN_NAME = 'status_overridden'
+);
+SET @add_status_overridden_sql = IF(@control_has_status_overridden = 0,
+  'ALTER TABLE audit_control ADD COLUMN status_overridden BOOLEAN NOT NULL DEFAULT FALSE AFTER control_source',
+  'SELECT 1');
+PREPARE add_status_overridden_stmt FROM @add_status_overridden_sql;
+EXECUTE add_status_overridden_stmt;
+DEALLOCATE PREPARE add_status_overridden_stmt;
+
+SET @control_has_overridden_by = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_control' AND COLUMN_NAME = 'overridden_by'
+);
+SET @add_overridden_by_sql = IF(@control_has_overridden_by = 0,
+  'ALTER TABLE audit_control ADD COLUMN overridden_by VARCHAR(255) NULL AFTER status_overridden',
+  'SELECT 1');
+PREPARE add_overridden_by_stmt FROM @add_overridden_by_sql;
+EXECUTE add_overridden_by_stmt;
+DEALLOCATE PREPARE add_overridden_by_stmt;
+
+SET @control_has_overridden_at = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_control' AND COLUMN_NAME = 'overridden_at'
+);
+SET @add_overridden_at_sql = IF(@control_has_overridden_at = 0,
+  'ALTER TABLE audit_control ADD COLUMN overridden_at DATETIME NULL AFTER overridden_by',
+  'SELECT 1');
+PREPARE add_overridden_at_stmt FROM @add_overridden_at_sql;
+EXECUTE add_overridden_at_stmt;
+DEALLOCATE PREPARE add_overridden_at_stmt;
 
 -- =============================================================================
 -- audit_population  (OE-type control population phase record)
@@ -231,6 +276,7 @@ CREATE TABLE IF NOT EXISTS audit_population (
                    ) NOT NULL DEFAULT 'PENDING',
   due_date         DATE         NULL,
   comments         TEXT         NULL,
+  attestation      TEXT         NULL COMMENT 'Written note standing in for population files',
   created_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by       VARCHAR(255) NULL,
   updated_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -241,6 +287,21 @@ CREATE TABLE IF NOT EXISTS audit_population (
   CONSTRAINT fk_pop_owner   FOREIGN KEY (owner_id)   REFERENCES `user`(id)        ON DELETE SET NULL,
   CONSTRAINT fk_pop_team    FOREIGN KEY (team_id)    REFERENCES audit_team(id)    ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Backfill the attestation column onto an audit_population table created
+-- before fileless population completion existed (see audit_control's
+-- status-override backfill above for why an information_schema guard instead
+-- of `ADD COLUMN IF NOT EXISTS`).
+SET @pop_has_attestation = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_population' AND COLUMN_NAME = 'attestation'
+);
+SET @add_pop_attestation_sql = IF(@pop_has_attestation = 0,
+  'ALTER TABLE audit_population ADD COLUMN attestation TEXT NULL COMMENT ''Written note standing in for population files'' AFTER comments',
+  'SELECT 1');
+PREPARE add_pop_attestation_stmt FROM @add_pop_attestation_sql;
+EXECUTE add_pop_attestation_stmt;
+DEALLOCATE PREPARE add_pop_attestation_stmt;
 
 -- =============================================================================
 -- audit_evidence  (evidence submission for a control)
@@ -263,6 +324,7 @@ CREATE TABLE IF NOT EXISTS audit_evidence (
                           ) NOT NULL DEFAULT 'SUBMITTED',
   reused_from_evidence_id INT          NULL,
   folder_path             VARCHAR(500) NULL,
+  attestation             TEXT         NULL COMMENT 'Written justification for a round with no files',
   created_at              DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by              VARCHAR(255) NULL,
   updated_at              DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -274,6 +336,21 @@ CREATE TABLE IF NOT EXISTS audit_evidence (
   CONSTRAINT fk_evidence_submitter FOREIGN KEY (submitted_by)            REFERENCES `user`(id)         ON DELETE SET NULL,
   CONSTRAINT fk_evidence_reused    FOREIGN KEY (reused_from_evidence_id) REFERENCES audit_evidence(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Backfill the attestation column onto an audit_evidence table created before
+-- fileless evidence completion existed (see audit_control's status-override
+-- backfill above for why an information_schema guard instead of
+-- `ADD COLUMN IF NOT EXISTS`).
+SET @evidence_has_attestation = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_evidence' AND COLUMN_NAME = 'attestation'
+);
+SET @add_evidence_attestation_sql = IF(@evidence_has_attestation = 0,
+  'ALTER TABLE audit_evidence ADD COLUMN attestation TEXT NULL COMMENT ''Written justification for a round with no files'' AFTER folder_path',
+  'SELECT 1');
+PREPARE add_evidence_attestation_stmt FROM @add_evidence_attestation_sql;
+EXECUTE add_evidence_attestation_stmt;
+DEALLOCATE PREPARE add_evidence_attestation_stmt;
 
 -- =============================================================================
 -- audit_evidence_file  (files attached to evidence or population)
@@ -370,7 +447,7 @@ CREATE TABLE IF NOT EXISTS audit_trail (
   evidence_id INT          NULL,
   action      ENUM('CREATED','UPLOADED','RESUBMITTED','APPROVED','REJECTED',
                   'COMMENTED','ESCALATED','AI_VALIDATED','EXPORTED',
-                  'UPDATED','DELETED') NOT NULL,
+                  'UPDATED','DELETED','OVERRIDDEN') NOT NULL,
   details     JSON         NULL,
   created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by  VARCHAR(255) NULL,
@@ -382,6 +459,24 @@ CREATE TABLE IF NOT EXISTS audit_trail (
   CONSTRAINT fk_trail_control  FOREIGN KEY (control_id)  REFERENCES audit_control(id)  ON DELETE SET NULL,
   CONSTRAINT fk_trail_evidence FOREIGN KEY (evidence_id) REFERENCES audit_evidence(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Backfill the OVERRIDDEN action value onto an audit_trail table created
+-- before status override existed (see audit_control's status-override
+-- backfill above for why an information_schema guard instead of a bare
+-- MODIFY COLUMN — this keeps the migration idempotent and avoids rewriting
+-- the column on every deploy once it's already current).
+SET @trail_has_overridden_action = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_trail' AND COLUMN_NAME = 'action'
+    AND COLUMN_TYPE LIKE '%''OVERRIDDEN''%'
+);
+SET @add_trail_overridden_sql = IF(@trail_has_overridden_action = 0,
+  'ALTER TABLE audit_trail MODIFY COLUMN action ENUM(''CREATED'',''UPLOADED'',''RESUBMITTED'',''APPROVED'',''REJECTED'',
+  ''COMMENTED'',''ESCALATED'',''AI_VALIDATED'',''EXPORTED'',''UPDATED'',''DELETED'',''OVERRIDDEN'') NOT NULL',
+  'SELECT 1');
+PREPARE add_trail_overridden_stmt FROM @add_trail_overridden_sql;
+EXECUTE add_trail_overridden_stmt;
+DEALLOCATE PREPARE add_trail_overridden_stmt;
 
 SET FOREIGN_KEY_CHECKS = 1;
 

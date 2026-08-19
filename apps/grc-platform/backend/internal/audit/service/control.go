@@ -60,6 +60,9 @@ type ControlService interface {
 	BulkAdd(ctx context.Context, auditID int, reqs []model.AddControlRequest, createdBy string) ([]*model.AuditControl, error)
 	Update(ctx context.Context, auditID, controlID int, req model.UpdateControlRequest, updatedBy string) error
 	UpdateStatus(ctx context.Context, auditID, controlID int, req model.UpdateStatusRequest, updatedBy string) error
+	// OverrideStatus backward-overrides a control's status (ManageControls-gated
+	// admin escape hatch) — distinct from UpdateStatus's ordinary forward workflow.
+	OverrideStatus(ctx context.Context, auditID, controlID int, req model.OverrideStatusRequest, actor string) error
 	// UpdateStatusWithSample is UpdateStatus plus setting the sample note
 	// atomically — used when the auditor submits the sample.
 	UpdateStatusWithSample(ctx context.Context, auditID, controlID int, status, sampleReference, updatedBy string) error
@@ -273,15 +276,10 @@ func (s *controlService) UpdateStatus(ctx context.Context, auditID, controlID in
 	if c == nil {
 		return &apierror.Error{StatusCode: http.StatusNotFound, Body: "control not found"}
 	}
-	// TODO(status-workflow): enforce the control status TRANSITION rules here.
-	// Above only checks that req.Status is a valid enum value — a caller can still
-	// jump straight to any status (e.g. EVIDENCE_PENDING -> COMPLETE) and skip
-	// internal review + auditor validation. The current status is already loaded in
-	// `c.Status`, so add: if the move c.Status -> req.Status is not allowed, return
-	// 422 "invalid status transition". Reuse the same transition map implemented in
-	// compliance-entity/internal/service/audit_control_service.go (allowedControlTransitions
-	// / isValidControlTransition) so both layers agree. (This is the live enforcement
-	// point until the backend is migrated to call the compliance entity.)
+	// Above only checks that req.Status is a valid enum value — transition
+	// legality (is c.Status -> req.Status an allowed workflow step) is enforced
+	// by the compliance entity when this PATCH lands on it; the entity is the
+	// sole enforcer, so this layer does not duplicate that check.
 	if err := s.repo.UpdateStatus(ctx, auditID, controlID, req.Status, req.Comment, updatedBy); err != nil {
 		return err
 	}
@@ -296,6 +294,33 @@ func (s *controlService) UpdateStatus(ctx context.Context, auditID, controlID in
 		}
 		s.recordTrail(ctx, auditID, controlID, statusChangeAction(req.Status), updatedBy, details)
 	}
+	return nil
+}
+
+// OverrideStatus backward-overrides a control's status via the entity's
+// rank-based status-override endpoint (see ControlRepository.OverrideStatus).
+// Unlike UpdateStatus, transition legality is backward-only by rank rather
+// than the ordinary forward workflow, and is enforced entirely by the entity.
+// The trail entry is always recorded — the *_INTERNAL_REVIEW suppression in
+// UpdateStatus does not apply here, since an override is never the routine
+// submission event that suppression exists to avoid double-logging.
+func (s *controlService) OverrideStatus(ctx context.Context, auditID, controlID int, req model.OverrideStatusRequest, actor string) error {
+	if !validStatuses[req.Status] {
+		return &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "invalid status value"}
+	}
+	c, err := s.repo.GetByID(ctx, auditID, controlID)
+	if err != nil {
+		return err
+	}
+	if c == nil {
+		return &apierror.Error{StatusCode: http.StatusNotFound, Body: "control not found"}
+	}
+	if err := s.repo.OverrideStatus(ctx, auditID, controlID, req.Status, actor); err != nil {
+		return err
+	}
+
+	details := map[string]any{"from": c.Status, "to": req.Status}
+	s.recordTrail(ctx, auditID, controlID, "OVERRIDDEN", actor, details)
 	return nil
 }
 

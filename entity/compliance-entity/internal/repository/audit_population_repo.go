@@ -71,7 +71,7 @@ func (r *populationRepo) CreatePopulation(ctx context.Context, auditID, controlI
 func (r *populationRepo) GetPopulationByID(ctx context.Context, populationID int) (*domain.AuditPopulation, error) {
 	pop, err := scanPopulationRow(r.db.QueryRowContext(ctx,
 		`SELECT id, control_id, owner_id, team_id, reference_number, description,
-		        status, DATE_FORMAT(due_date,'%Y-%m-%d'), comments, created_at, updated_at
+		        status, DATE_FORMAT(due_date,'%Y-%m-%d'), comments, attestation, created_at, updated_at
 		 FROM audit_population WHERE id = ?`, populationID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, &apierror.NotFoundError{Msg: fmt.Sprintf("population %d not found", populationID)}
@@ -85,7 +85,7 @@ func (r *populationRepo) GetPopulationByID(ctx context.Context, populationID int
 func (r *populationRepo) ListPopulations(ctx context.Context, auditID, controlID int) ([]domain.AuditPopulation, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT p.id, p.control_id, p.owner_id, p.team_id, p.reference_number, p.description,
-		        p.status, DATE_FORMAT(p.due_date,'%Y-%m-%d'), p.comments, p.created_at, p.updated_at
+		        p.status, DATE_FORMAT(p.due_date,'%Y-%m-%d'), p.comments, p.attestation, p.created_at, p.updated_at
 		 FROM audit_population p
 		 JOIN audit_control c ON c.id = p.control_id
 		 WHERE p.control_id = ? AND c.audit_id = ? ORDER BY p.id`,
@@ -137,6 +137,10 @@ func (r *populationRepo) UpdatePopulation(ctx context.Context, populationID int,
 	if req.DueDate != nil {
 		sets = append(sets, "due_date = ?")
 		args = append(args, *req.DueDate)
+	}
+	if req.Attestation != nil {
+		sets = append(sets, "attestation = ?")
+		args = append(args, *req.Attestation)
 	}
 	sets = append(sets, "updated_by = ?")
 	args = append(args, req.UpdatedBy)
@@ -317,11 +321,11 @@ func (r *populationRepo) DeletePopulationFile(ctx context.Context, fileID int) e
 func scanPopulationRow(s scanner) (*domain.AuditPopulation, error) {
 	var p domain.AuditPopulation
 	var ownerID, teamID, refNum sql.NullInt64
-	var desc, dueDate, comments sql.NullString
+	var desc, dueDate, comments, attestation sql.NullString
 	err := s.Scan(
 		&p.ID, &p.ControlID,
 		&ownerID, &teamID, &refNum, &desc,
-		&p.Status, &dueDate, &comments,
+		&p.Status, &dueDate, &comments, &attestation,
 		&p.CreatedOn, &p.UpdatedOn,
 	)
 	if err != nil {
@@ -347,6 +351,9 @@ func scanPopulationRow(s scanner) (*domain.AuditPopulation, error) {
 	}
 	if comments.Valid {
 		p.Comments = &comments.String
+	}
+	if attestation.Valid {
+		p.Attestation = &attestation.String
 	}
 	return &p, nil
 }

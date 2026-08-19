@@ -207,3 +207,28 @@ func (h *ControlHandler) UpdateControl(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(c)
 }
+
+// OverrideControlStatus handles POST /audits/{auditId}/controls/{controlId}/status-override.
+func (h *ControlHandler) OverrideControlStatus(w http.ResponseWriter, r *http.Request) {
+	auditID, err := strconv.Atoi(r.PathValue("auditId"))
+	if err != nil {
+		writeServiceError(w, r, &apierror.ValidationError{Msg: "auditId must be a positive integer"})
+		return
+	}
+	controlID, err := strconv.Atoi(r.PathValue("controlId"))
+	if err != nil {
+		writeServiceError(w, r, &apierror.ValidationError{Msg: "controlId must be a positive integer"})
+		return
+	}
+	var req domain.OverrideControlStatusRequest
+	if !decodeRequest(w, r, &req) {
+		return
+	}
+	c, err := h.svc.OverrideControlStatus(r.Context(), auditID, controlID, req)
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(c)
+}

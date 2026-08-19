@@ -93,6 +93,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("PUT /api/v1/audits/{id}/controls/{controlId}", ch.updateControl)
 	mux.HandleFunc("DELETE /api/v1/audits/{id}/controls/{controlId}", ch.deleteControl)
 	mux.HandleFunc("PATCH /api/v1/audits/{id}/controls/{controlId}/status", ch.updateControlStatus)
+	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/status/override", ch.overrideControlStatus)
 	// Immutable per-control history (append-only audit_trail) for the History tab.
 	mux.HandleFunc("GET /api/v1/audits/{id}/controls/{controlId}/trail", tlh.listControlTrail)
 	// Audit-wide activity log (audit-level events + every control's events, filterable).
@@ -120,6 +121,9 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	// Audit-scoped file delete: knows the control, so it can send an emptied
 	// submission back to EVIDENCE_PENDING (see deleteControlEvidenceFile).
 	mux.HandleFunc("DELETE /api/v1/audits/{id}/controls/{controlId}/evidence/files/{fileId}", eh.deleteControlEvidenceFile)
+	// Whole-round delete for a fileless (attestation-only) completion — no
+	// individual file exists to delete instead (see deleteEvidenceRound).
+	mux.HandleFunc("DELETE /api/v1/audits/{id}/controls/{controlId}/evidence/{evidenceId}", eh.deleteEvidenceRound)
 	mux.HandleFunc("GET /api/v1/audits/{id}/controls/{controlId}/evidence", eh.listEvidence)
 	// Proxied file download by file ID (bytes streamed via the Compliance Entity).
 	mux.HandleFunc("GET /api/v1/evidence/files/{fileId}/download", eh.downloadEvidenceFile)
@@ -138,6 +142,9 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/v1/audits/{id}/controls/{controlId}/population", eh.listPopulation)
 	// Remove a population/sample file (see deletePopulationFile for the per-kind gate).
 	mux.HandleFunc("DELETE /api/v1/audits/{id}/controls/{controlId}/population/files/{fileId}", eh.deletePopulationFile)
+	// Blank the team's population-submission note without touching files/status
+	// (see deletePopulationAttestation) — the round itself is never deleted.
+	mux.HandleFunc("DELETE /api/v1/audits/{id}/controls/{controlId}/population/attestation", eh.deletePopulationAttestation)
 	// Proxied file download by file ID (mirrors the evidence download route).
 	mux.HandleFunc("GET /api/v1/population/files/{fileId}/download", eh.downloadPopulationFile)
 
@@ -153,6 +160,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	// evidence/population round existing yet; is_internal hides from external auditors)
 	mux.HandleFunc("GET /api/v1/audits/{id}/controls/{controlId}/comments", cmh.listComments)
 	mux.HandleFunc("POST /api/v1/audits/{id}/controls/{controlId}/comments", cmh.addComment)
+	mux.HandleFunc("DELETE /api/v1/audits/{id}/controls/{controlId}/comments/{commentId}", cmh.deleteComment)
 
 	// AI validation advisory results (read-only hint; SUBMIT or REVIEW evidence).
 	mux.HandleFunc("GET /api/v1/evidence/{evidenceId}/ai-validations", avh.listValidations)

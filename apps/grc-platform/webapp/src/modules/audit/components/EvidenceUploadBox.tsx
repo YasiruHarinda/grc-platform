@@ -14,12 +14,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Alert, Box, Button, CircularProgress, IconButton, Typography } from "@wso2/oxygen-ui";
+import { Alert, Box, Button, CircularProgress, IconButton, TextField, Typography } from "@wso2/oxygen-ui";
 import { FileUp, Upload, X } from "@wso2/oxygen-ui-icons-react";
 import { useRef, useState, type JSX } from "react";
 import { useSubmitEvidence } from "@modules/audit/api/useSubmitEvidence";
 import { useAddEvidenceFiles } from "@modules/audit/api/useAddEvidenceFiles";
 import { useSubmitPopulation } from "@modules/audit/api/useSubmitPopulation";
+import { useAuditPrivileges } from "@modules/audit/hooks/useAuditPrivileges";
+import { AuditPrivilege } from "@modules/audit/privileges";
 
 /**
  * Largest file the backend accepts per upload request. Must stay in sync with
@@ -78,15 +80,25 @@ export default function EvidenceUploadBox({
   const [files, setFiles] = useState<File[]>([]);
   const [sizeError, setSizeError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [attestation, setAttestation] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const submitEvidence = useSubmitEvidence();
   const addEvidenceFiles = useAddEvidenceFiles();
   const submitPopulation = useSubmitPopulation();
+  const { can } = useAuditPrivileges();
   const submit =
     phase === "population" ? submitPopulation
     : evidenceMode === "append" ? addEvidenceFiles
     : submitEvidence;
   const busy = submit.isPending;
+  // Fileless completion, gated differently per phase: evidence restricts it to
+  // ManageControls admins (a control-level exception); population is open to
+  // whoever can submit population files at all, matching sample selection's
+  // own "files, a note, or both" rule one step later in the same OE flow (no
+  // extra privilege check there either). Neither applies to "Add Files".
+  const allowAttestation =
+    evidenceMode === "new" &&
+    (phase === "population" || (phase === "evidence" && can(AuditPrivilege.ManageControls)));
 
   function addFiles(list: FileList | null) {
     if (!list) return;
@@ -111,11 +123,20 @@ export default function EvidenceUploadBox({
   }
 
   function handleSubmit() {
-    submit.mutate(
-      { auditId, controlId, files },
-      { onSuccess: () => { setFiles([]); setSizeError(null); onSubmitted(); } },
-    );
+    const onDone = { onSuccess: () => { setFiles([]); setSizeError(null); setAttestation(""); onSubmitted(); } };
+    if (allowAttestation && files.length === 0) {
+      if (phase === "population") {
+        submitPopulation.mutate({ auditId, controlId, files, attestation }, onDone);
+      } else {
+        submitEvidence.mutate({ auditId, controlId, files, attestation }, onDone);
+      }
+      return;
+    }
+    submit.mutate({ auditId, controlId, files }, onDone);
   }
+
+  const fileless = allowAttestation && files.length === 0;
+  const submitDisabled = fileless ? attestation.trim() === "" || busy : files.length === 0 || busy;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", flex: 1 }}>
@@ -184,9 +205,27 @@ export default function EvidenceUploadBox({
         </Alert>
       )}
 
-      {submit.isError && (
+      {allowAttestation && files.length === 0 && (
+        <TextField
+          multiline
+          minRows={2}
+          placeholder={
+            phase === "population"
+              ? "Written note explaining why there are no population files (required)"
+              : "Written justification for completing this control with no files (required)"
+          }
+          value={attestation}
+          onChange={(e) => setAttestation(e.target.value)}
+          disabled={busy}
+          fullWidth
+          size="small"
+          sx={{ mb: 1.5 }}
+        />
+      )}
+
+      {(submit.isError || (fileless && phase === "evidence" && submitEvidence.isError)) && (
         <Alert severity="error" sx={{ mb: 1.5, fontSize: "0.8rem" }}>
-          {(submit.error as Error).message}
+          {((fileless && phase === "evidence" ? submitEvidence.error : submit.error) as Error).message}
         </Alert>
       )}
 
@@ -195,7 +234,7 @@ export default function EvidenceUploadBox({
         fullWidth
         disableElevation
         startIcon={busy ? <CircularProgress size={15} color="inherit" /> : <FileUp size={15} />}
-        disabled={files.length === 0 || busy}
+        disabled={submitDisabled}
         onClick={handleSubmit}
         sx={{ textTransform: "none", fontWeight: 600 }}
       >

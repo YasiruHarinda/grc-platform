@@ -577,7 +577,7 @@ export default function WorkQueue({
     },
   ];
 
-  // Privilege-driven tab visibility (ADR-0002): org-wide readers get everything;
+  // Privilege-driven tab visibility: org-wide readers get everything;
   // narrow roles get the union of tabs their privileges unlock — a reviewer sees
   // Action Items, a submitter Pending Submission, an auditor Under Validation,
   // and a caller holding more than one privilege sees all of them. Due Soon and

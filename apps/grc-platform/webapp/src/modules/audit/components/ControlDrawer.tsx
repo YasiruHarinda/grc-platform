@@ -19,6 +19,10 @@ import {
   Button,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Drawer,
   IconButton,
   Paper,
@@ -43,6 +47,7 @@ import {
   History,
   MessageSquare,
   RotateCcw,
+  Trash2,
   Upload,
   Users,
   X,
@@ -59,6 +64,7 @@ import CommentsSection from "@modules/audit/components/CommentsSection";
 import AIValidationCard from "@modules/audit/components/AIValidationCard";
 import PopulationFileList from "@modules/audit/components/PopulationFileList";
 import { useGetPopulation } from "@modules/audit/api/useGetPopulation";
+import { useDeletePopulationAttestation } from "@modules/audit/api/useDeletePopulationAttestation";
 import { usePopulationReview } from "@modules/audit/api/usePopulationReview";
 import { usePopulationValidate } from "@modules/audit/api/usePopulationValidate";
 import { useSubmitSample } from "@modules/audit/api/useSubmitSample";
@@ -66,10 +72,12 @@ import { useRequestSampleTime } from "@modules/audit/api/useRequestSampleTime";
 import { useValidateEvidence } from "@modules/audit/api/useValidateEvidence";
 import { useReviewEvidence } from "@modules/audit/api/useReviewEvidence";
 import { useCurrentUserEmail } from "@modules/audit/hooks/useCurrentUserEmail";
+import { useOverrideControlStatus } from "@modules/audit/api/useOverrideControlStatus";
 import { isAssignedAuditor } from "@modules/audit/utils/auditor";
 import type { AuditControl, ControlStatus } from "@modules/audit/types/audit";
 import { useAuditPrivileges } from "@modules/audit/hooks/useAuditPrivileges";
 import { AuditPrivilege } from "@modules/audit/privileges";
+import { CONTROL_STATUS_LABELS } from "@modules/audit/utils/controlStatus";
 
 interface ControlDrawerProps {
   control: AuditControl | null;
@@ -301,10 +309,12 @@ function DesignEvidenceSection({
   control,
   onStatusChange,
   canSubmitEvidence,
+  canManageControls,
 }: {
   control: AuditControl;
   onStatusChange: (s: ControlStatus) => void;
   canSubmitEvidence: boolean;
+  canManageControls: boolean;
 }): JSX.Element {
   const activeStep = designActiveStep(control.status);
 
@@ -319,14 +329,24 @@ function DesignEvidenceSection({
       </Paper>
 
       {activeStep === 0 && (
-        <>
-          {control.comments && (
-            <SectionCard icon={<AlertCircle size={16} />} iconBg="transparent" title="Evidence Rejected">
-              <Typography variant="body2" sx={{ lineHeight: 1.7 }}>{control.comments}</Typography>
-            </SectionCard>
-          )}
+        <SectionCard icon={<FileUp size={16} />} iconBg="transparent" title="Evidence Submission" flexContent>
+          {/* A round left over from before the status reverted here (a
+              reject, or an admin override) is still on record — show it
+              with delete so the team can clear it and resubmit, instead
+              of it staying invisible until a fresh upload creates a new
+              round (which used to leave the old one an orphaned duplicate).
+              rejectionReason only when plain EVIDENCE_PENDING — this activeStep
+              also covers EVIDENCE_NEED_CLARIFICATION, whose own status label
+              already conveys "sent back", unlike bare EVIDENCE_PENDING. */}
+          <SubmittedEvidenceList
+            auditId={control.auditId}
+            controlId={control.id}
+            canDelete={canSubmitEvidence || canManageControls}
+            rejectionReason={control.status === "EVIDENCE_PENDING" ? (control.comments ?? null) : undefined}
+            onStatusChange={(s) => onStatusChange(s as ControlStatus)}
+          />
           {canSubmitEvidence && (
-            <SectionCard icon={<FileUp size={16} />} iconBg="transparent" title="Evidence Submission" flexContent>
+            <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
               <EvidenceUploadBox
                 auditId={control.auditId}
                 controlId={control.id}
@@ -334,9 +354,9 @@ function DesignEvidenceSection({
                 buttonLabel="Submit Evidence"
                 onSubmitted={() => onStatusChange("EVIDENCE_INTERNAL_REVIEW")}
               />
-            </SectionCard>
+            </Box>
           )}
-        </>
+        </SectionCard>
       )}
 
       {/* Submitted files + add-more: same card position as upload so layout stays
@@ -347,7 +367,7 @@ function DesignEvidenceSection({
           <SubmittedEvidenceList
             auditId={control.auditId}
             controlId={control.id}
-            canDelete={canSubmitEvidence}
+            canDelete={canSubmitEvidence || canManageControls}
             onStatusChange={(s) => onStatusChange(s as ControlStatus)}
           />
           {canSubmitEvidence && (
@@ -373,7 +393,11 @@ function DesignEvidenceSection({
 
       {activeStep === 2 && (
         <SectionCard icon={<ClipboardCheck size={16} />} iconBg="transparent" title="Submitted Evidence">
-          <SubmittedEvidenceList auditId={control.auditId} controlId={control.id} />
+          {/* Locked for the team once the round reaches auditor validation —
+              canDelete is ManageControls-only here, for the same admin
+              cleanup case as a status override landing the control back on
+              this step. */}
+          <SubmittedEvidenceList auditId={control.auditId} controlId={control.id} canDelete={canManageControls} />
           <Box sx={{ mt: 1.5, py: 1, px: 1.5, borderRadius: 1.5, bgcolor: "action.hover", display: "flex", alignItems: "center", gap: 1 }}>
             <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: "#7c3aed", flexShrink: 0 }} />
             <Typography variant="body2" color="text.secondary">Passed internal review. External auditor is validating.</Typography>
@@ -405,35 +429,141 @@ function DesignEvidenceSection({
 
 // ─── OE evidence section ──────────────────────────────────────────────────────
 
-// SubmittedPopulationFiles shows the round's already-recorded POPULATION-kind
-// files with a remove button, so a team resubmitting after a rejection can see
-// and edit what is already on record rather than only being able to add more
-// on top of it blind. Renders nothing while there is nothing to show (e.g. a
-// brand-new round that was never submitted).
-function SubmittedPopulationFiles({
+// AttestationNote renders a population round's written note (a fileless
+// submit, or a note alongside files) with an optional remove button — shared
+// by SubmittedPopulationFiles and PopulationSubmissionCard so the delete
+// wiring (useDeletePopulationAttestation) exists in one place instead of two.
+// Blanking the note never touches the round's files or status (see
+// deletePopulationAttestation on the backend).
+function AttestationNote({
   auditId,
   controlId,
+  attestation,
+  filesEmpty,
+  canDelete,
 }: {
   auditId: number;
   controlId: number;
+  attestation: string;
+  filesEmpty: boolean;
+  canDelete: boolean;
+}): JSX.Element {
+  const deleteAttestation = useDeletePopulationAttestation();
+  return (
+    <Box sx={{ display: "flex", alignItems: "flex-start", gap: 1, px: 1.25, py: 0.85, borderRadius: 1, border: "1px solid", borderColor: "divider", bgcolor: "action.hover" }}>
+      <FileText size={15} style={{ flexShrink: 0, marginTop: 2 }} />
+      <Box sx={{ flex: 1 }}>
+        <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, display: "block" }}>
+          {filesEmpty ? "Completed without files." : "Note"}
+        </Typography>
+        <Typography variant="body2" sx={{ lineHeight: 1.6 }}>{attestation}</Typography>
+        {deleteAttestation.isError && (
+          <Typography variant="caption" color="error" sx={{ display: "block", mt: 0.5 }}>
+            {(deleteAttestation.error as Error).message}
+          </Typography>
+        )}
+      </Box>
+      {canDelete && (
+        <IconButton
+          size="small"
+          aria-label="Remove note"
+          disabled={deleteAttestation.isPending}
+          onClick={() => deleteAttestation.mutate({ auditId, controlId })}
+          sx={{ p: 0.5, color: "error.main", "&:hover": { bgcolor: "rgba(220,38,38,0.06)" } }}
+        >
+          {deleteAttestation.isPending ? <CircularProgress size={13} color="inherit" /> : <Trash2 size={14} />}
+        </IconButton>
+      )}
+    </Box>
+  );
+}
+
+// SubmittedPopulationFiles renders the round's already-recorded POPULATION-kind
+// files (with a remove button) inline — no card of its own — so it lives
+// inside the same Submit/Resubmit Population card as the upload box, the same
+// way SubmittedEvidenceList sits inside DesignEvidenceSection's Evidence
+// Submission card. Always renders something (even "no files yet") instead of
+// disappearing, so the resubmit card doesn't jump around depending on whether
+// a round has files on record.
+//
+// Pass `rejectionReason` only when control.status is plain POPULATION_PENDING
+// — same contract and reasoning as SubmittedEvidenceList's prop of the same
+// name: internal-review reject and a status override both land on plain
+// PENDING (indistinguishable from a first-time submission), while
+// POPULATION_NEED_CLARIFICATION's own label already says "sent back", so
+// never pass this prop there.
+function SubmittedPopulationFiles({
+  auditId,
+  controlId,
+  rejectionReason,
+  canDelete,
+}: {
+  auditId: number;
+  controlId: number;
+  rejectionReason?: string | null;
+  canDelete: boolean;
 }): JSX.Element {
   const population = useGetPopulation(auditId, controlId, true);
   const files = population.data?.populationFiles ?? [];
+  const attestation = population.data?.round.attestation ?? null;
 
   if (population.isLoading) {
     return <Skeleton variant="rounded" height={44} />;
   }
+
+  if (population.isError) {
+    // Same reasoning as PopulationSubmissionCard: a failed fetch must read as
+    // an error, not silently fall through to "No population files on record
+    // yet." for a round that actually has files.
+    return (
+      <Alert severity="error" sx={{ fontSize: "0.8rem" }}>
+        {(population.error as Error)?.message ?? "Failed to load the submitted population."}
+      </Alert>
+    );
+  }
+
+  const showResubmissionNote = rejectionReason !== undefined && (files.length > 0 || Boolean(rejectionReason));
+  const resubmissionNote = showResubmissionNote && (
+    <Box sx={{ display: "flex", alignItems: "flex-start", gap: 0.75 }}>
+      <RotateCcw size={13} color="#b45309" style={{ flexShrink: 0, marginTop: 2 }} />
+      <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.6 }}>
+        {rejectionReason ? `Sent back for revision: ${rejectionReason}` : "Resubmit to continue."}
+      </Typography>
+    </Box>
+  );
+  // A round submitted with a note instead of (or alongside) files — same
+  // "Completed without files" treatment as SubmittedEvidenceList's fileless
+  // rounds, just for the one persistent population round instead of a list.
+  const attestationNote = attestation && (
+    <AttestationNote
+      auditId={auditId}
+      controlId={controlId}
+      attestation={attestation}
+      filesEmpty={files.length === 0}
+      canDelete={canDelete}
+    />
+  );
+
   if (files.length === 0) {
-    return <></>;
+    return (
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+        {resubmissionNote}
+        {attestationNote}
+        {!attestation && (
+          <Typography variant="body2" color="text.secondary">
+            No population files on record yet.
+          </Typography>
+        )}
+      </Box>
+    );
   }
 
   return (
-    <SectionCard icon={<FileText size={16} />} iconBg="transparent" title="Currently Submitted Files">
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, lineHeight: 1.7 }}>
-        Remove a file you no longer need, or add more below before resubmitting.
-      </Typography>
-      <PopulationFileList files={files} emptyText="" auditId={auditId} controlId={controlId} canDelete />
-    </SectionCard>
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      {resubmissionNote}
+      {attestationNote}
+      <PopulationFileList files={files} emptyText="" auditId={auditId} controlId={controlId} canDelete={canDelete} />
+    </Box>
   );
 }
 
@@ -462,12 +592,33 @@ function SampleSelectionCard({
         </Typography>
       )}
 
+      {/* Same "Completed without files" visual language as SubmittedEvidenceList's
+          fileless rounds and the population attestation note (PopulationSubmissionCard/
+          SubmittedPopulationFiles) — neutral action.hover/divider tokens, not a
+          one-off accent color, so every "note standing in for files" surface
+          in the drawer looks consistent. */}
       {hasNote && (
-        <Box sx={{ p: 1.5, borderRadius: 1.5, bgcolor: "#eff6ff", border: "1px solid #bfdbfe", mb: sampleFiles.length > 0 ? 1.5 : 0 }}>
-          <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ display: "block", mb: 0.5 }}>
-            Auditor Note
-          </Typography>
-          <Typography variant="body2" sx={{ lineHeight: 1.7 }}>{sampleReference}</Typography>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 1,
+            px: 1.25,
+            py: 0.85,
+            borderRadius: 1,
+            border: "1px solid",
+            borderColor: "divider",
+            bgcolor: "action.hover",
+            mb: sampleFiles.length > 0 ? 1.5 : 0,
+          }}
+        >
+          <FileText size={15} style={{ flexShrink: 0, marginTop: 2 }} />
+          <Box sx={{ flex: 1 }}>
+            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, display: "block" }}>
+              Auditor Note
+            </Typography>
+            <Typography variant="body2" sx={{ lineHeight: 1.6 }}>{sampleReference}</Typography>
+          </Box>
         </Box>
       )}
 
@@ -591,23 +742,36 @@ function SampleUploadCard({
   const inputRef = useRef<HTMLInputElement>(null);
   const submitSample = useSubmitSample();
   const requestTime = useRequestSampleTime();
-  const population = useGetPopulation(auditId, controlId, editMode);
-  const existingFiles = editMode ? (population.data?.sampleFiles ?? []) : [];
+  // Always fetched (not just in editMode): an admin status override can land
+  // the control back on POPULATION_COMPLETE/AWAITING_SAMPLE with sample files
+  // already on the round (the override cascade demotes the round's status but
+  // never deletes its files — see useOverrideControlStatus). Gating this on
+  // editMode hid those files here until the auditor's next submit dragged
+  // them back into view alongside the new ones, reading as files reappearing
+  // out of nowhere.
+  const population = useGetPopulation(auditId, controlId, true);
+  const existingFiles = population.data?.sampleFiles ?? [];
   const busy = submitSample.isPending || requestTime.isPending;
 
   // initialNote comes from the parent's (possibly pre-refetch, stale) control
   // prop — right after the first submit it can still read the old value while
   // this card mounts in edit mode. Once useGetPopulation's own fetch lands, it
-  // is the authoritative source, so sync note from it exactly once so a save
-  // here can't overwrite the just-stored note with a stale empty string.
-  const noteSyncedRef = useRef(false);
+  // is the authoritative source, so sync note from it — but NOT just once: the
+  // query cache can already hold a stale snapshot from an unrelated earlier
+  // subscriber (e.g. PopulationSubmissionCard, which keeps the same query key
+  // mounted elsewhere) at the exact moment this component mounts, so the
+  // FIRST population.data this effect sees can itself be pre-refetch-stale —
+  // syncing once and locking via a ref would sync to that stale value and then
+  // ignore the real fresh data that lands a moment later from the background
+  // refetch useSubmitSample's invalidation kicked off. Instead, keep re-syncing
+  // on every population.data change until the user actually edits the field.
+  const [noteDirty, setNoteDirty] = useState(false);
   useEffect(() => {
-    if (editMode && population.data && !noteSyncedRef.current) {
+    if (editMode && population.data && !noteDirty) {
       const syncedNote = population.data.sampleReference ?? "";
       queueMicrotask(() => setNote(syncedNote));
-      noteSyncedRef.current = true;
     }
-  }, [editMode, population.data]);
+  }, [editMode, population.data, noteDirty]);
 
   function addFiles(list: FileList | null) {
     if (!list) return;
@@ -635,10 +799,10 @@ function SampleUploadCard({
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, lineHeight: 1.7 }}>
         {editMode
           ? "Add more sample files, remove ones no longer needed, or update the note below."
-          : "Upload the sample file(s) for the team to provide evidence against, and/or add a short note describing what to sample. At least one is required."}
+          : "Upload the sample file(s)"}
       </Typography>
 
-      {editMode && existingFiles.length > 0 && (
+      {existingFiles.length > 0 && (
         <Box sx={{ mb: 1.5 }}>
           <PopulationFileList files={existingFiles} emptyText="" auditId={auditId} controlId={controlId} canDelete />
         </Box>
@@ -682,7 +846,7 @@ function SampleUploadCard({
         minRows={2}
         placeholder="Sample note (e.g. which items to provide evidence for)"
         value={note}
-        onChange={(e) => setNote(e.target.value)}
+        onChange={(e) => { setNote(e.target.value); setNoteDirty(true); }}
         disabled={busy}
         fullWidth
         size="small"
@@ -733,14 +897,18 @@ function PopulationSubmissionCard({
   auditId,
   controlId,
   editable,
+  canDelete,
   onStatusChange,
 }: {
   auditId: number;
   controlId: number;
   editable: boolean;
+  canDelete: boolean;
   onStatusChange: (s: ControlStatus) => void;
 }): JSX.Element {
   const population = useGetPopulation(auditId, controlId, true);
+  const attestation = population.data?.round.attestation ?? null;
+  const files = population.data?.populationFiles ?? [];
   return (
     <SectionCard icon={<FileUp size={16} />} iconBg="transparent" title="Population Submission">
       {population.isLoading ? (
@@ -754,13 +922,29 @@ function PopulationSubmissionCard({
           {(population.error as Error)?.message ?? "Failed to load the submitted population."}
         </Alert>
       ) : (
-        <PopulationFileList
-          files={population.data?.populationFiles ?? []}
-          emptyText="No population files submitted yet."
-          auditId={auditId}
-          controlId={controlId}
-          canDelete={editable}
-        />
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+          {/* A round submitted with a note instead of (or alongside) files —
+              same "Completed without files" treatment as
+              SubmittedEvidenceList's fileless rounds. */}
+          {attestation && (
+            <AttestationNote
+              auditId={auditId}
+              controlId={controlId}
+              attestation={attestation}
+              filesEmpty={files.length === 0}
+              canDelete={canDelete}
+            />
+          )}
+          {(files.length > 0 || !attestation) && (
+            <PopulationFileList
+              files={files}
+              emptyText="No population files submitted yet."
+              auditId={auditId}
+              controlId={controlId}
+              canDelete={canDelete}
+            />
+          )}
+        </Box>
       )}
       {editable && (
         <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
@@ -774,7 +958,7 @@ function PopulationSubmissionCard({
             auditId={auditId}
             controlId={controlId}
             phase="population"
-            hint="CSV or XLSX - complete list of in-scope items"
+            hint="CSV or XLSX complete list of in-scope items"
             buttonLabel="Add Files"
             onSubmitted={() => onStatusChange("POPULATION_INTERNAL_REVIEW")}
           />
@@ -789,12 +973,14 @@ function OEEvidenceSection({
   onStatusChange,
   canSubmitEvidence,
   canReviewEvidence,
+  canManageControls,
   isAuditor,
 }: {
   control: AuditControl;
   onStatusChange: (s: ControlStatus) => void;
   canSubmitEvidence: boolean;
   canReviewEvidence: boolean;
+  canManageControls: boolean;
   isAuditor: boolean;
 }): JSX.Element {
   const activeStep = oeActiveStep(control.status);
@@ -809,7 +995,23 @@ function OEEvidenceSection({
   // Files can only still be added/removed during internal review — once the
   // round is approved and moves to auditor validation it's locked, same as
   // teamEditablePopulationStatuses on the backend (population/handler.go).
+  // Drives the upload box too, so it stays plain SubmitEvidence-gated: the
+  // backend's uploadPopulation/submitPopulation routes have no ManageControls
+  // bypass (only the delete routes do — see canDeletePopulationRecord below).
   const canEditPopulationFiles = canSubmitEvidence && control.status === "POPULATION_INTERNAL_REVIEW";
+  // Removing a file or the note is allowed beyond the team-editable window
+  // for ManageControls, mirroring deletePopulationFile/
+  // deletePopulationAttestation's isAdmin bypass on the backend — an admin
+  // cleaning up a note left over from a status override (round now locked,
+  // so plain SubmitEvidence can't touch it) needs this even outside internal
+  // review. Deliberately separate from canEditPopulationFiles so it never
+  // also exposes the upload box, which admins aren't exempted for. COMPLETE
+  // is excluded even for ManageControls — requireControlNotComplete on the
+  // backend hard-locks it there regardless of privilege, so showing the
+  // button would just produce a 409; an admin has to override the status off
+  // COMPLETE first, which re-opens this on whatever earlier status it lands on.
+  const canDeletePopulationRecord =
+    control.status !== "COMPLETE" && (canEditPopulationFiles || canManageControls);
 
   return (
     <>
@@ -829,6 +1031,7 @@ function OEEvidenceSection({
           auditId={control.auditId}
           controlId={control.id}
           editable={canEditPopulationFiles}
+          canDelete={canDeletePopulationRecord}
           onStatusChange={onStatusChange}
         />
       )}
@@ -840,30 +1043,30 @@ function OEEvidenceSection({
             <>
               {/* Internal-review reject lands back here (not a separate
                   clarification state — mirrors EVIDENCE_PENDING in the Design
-                  flow), so show the rejection reason when there is one. */}
-              {control.comments && (
-                <SectionCard icon={<AlertCircle size={16} />} iconBg="transparent" title="Population Clarification Required">
-                  <Typography variant="body2" sx={{ lineHeight: 1.7 }}>{control.comments}</Typography>
-                </SectionCard>
-              )}
-              {/* Population Requirement is shown on the Overview tab instead
-                  (see ControlDrawer's Overview panel) — kept out of this tab
-                  since it already has a lot going on. */}
-              {control.comments && <SubmittedPopulationFiles auditId={control.auditId} controlId={control.id} />}
+                  flow). Population Requirement is shown on the Overview tab
+                  instead (see ControlDrawer's Overview panel) — kept out of
+                  this tab since it already has a lot going on. Files on
+                  record (e.g. from before a reject, or an admin override back
+                  to POPULATION_PENDING) live inside this same card via
+                  SubmittedPopulationFiles rather than a separate card — same
+                  layout as DesignEvidenceSection's Evidence Submission card. */}
               <SectionCard
                 icon={<FileUp size={16} />}
                 iconBg="transparent"
                 title={control.comments ? "Resubmit Population" : "Submit Population"}
                 flexContent
               >
-                <EvidenceUploadBox
-                  auditId={control.auditId}
-                  controlId={control.id}
-                  phase="population"
-                  hint="CSV or XLSX complete list of in-scope items"
-                  buttonLabel={control.comments ? "Resubmit Population" : "Submit Population"}
-                  onSubmitted={() => onStatusChange("POPULATION_INTERNAL_REVIEW")}
-                />
+                <SubmittedPopulationFiles auditId={control.auditId} controlId={control.id} rejectionReason={control.comments ?? null} canDelete={canDeletePopulationRecord} />
+                <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
+                  <EvidenceUploadBox
+                    auditId={control.auditId}
+                    controlId={control.id}
+                    phase="population"
+                    hint="CSV or XLSX complete list of in-scope items"
+                    buttonLabel={control.comments ? "Resubmit Population" : "Submit Population"}
+                    onSubmitted={() => onStatusChange("POPULATION_INTERNAL_REVIEW")}
+                  />
+                </Box>
               </SectionCard>
             </>
           )}
@@ -936,21 +1139,18 @@ function OEEvidenceSection({
 
           {control.status === "POPULATION_NEED_CLARIFICATION" && (
             <>
-              <SectionCard icon={<AlertCircle size={16} />} iconBg="transparent" title="Population Clarification Required">
-                <Typography variant="body2" sx={{ lineHeight: 1.7 }}>
-                  {control.comments ?? "The auditor has requested clarification. Please review and resubmit your population."}
-                </Typography>
-              </SectionCard>
-              <SubmittedPopulationFiles auditId={control.auditId} controlId={control.id} />
               <SectionCard icon={<FileUp size={16} />} iconBg="transparent" title="Resubmit Population" flexContent>
-                <EvidenceUploadBox
-                  auditId={control.auditId}
-                  controlId={control.id}
-                  phase="population"
-                  hint="CSV or XLSX — complete list of in-scope items"
-                  buttonLabel="Resubmit Population"
-                  onSubmitted={() => onStatusChange("POPULATION_INTERNAL_REVIEW")}
-                />
+                <SubmittedPopulationFiles auditId={control.auditId} controlId={control.id} canDelete={canDeletePopulationRecord} />
+                <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
+                  <EvidenceUploadBox
+                    auditId={control.auditId}
+                    controlId={control.id}
+                    phase="population"
+                    hint="CSV or XLSX — complete list of in-scope items"
+                    buttonLabel="Resubmit Population"
+                    onSubmitted={() => onStatusChange("POPULATION_INTERNAL_REVIEW")}
+                  />
+                </Box>
               </SectionCard>
             </>
           )}
@@ -1008,13 +1208,29 @@ function OEEvidenceSection({
               <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, lineHeight: 1.7 }}>
                 Upload evidence covering all selected samples listed above.
               </Typography>
-              <EvidenceUploadBox
+              {/* SUBMITTED_SAMPLE is normally evidence's first-ever stop, so
+                  there is usually nothing to list here. But an admin override
+                  can also land the control here from further along
+                  (EVIDENCE_INTERNAL_REVIEW/NEED_CLARIFICATION/UNDER_VALIDATION)
+                  — the cascade demotes that round's status without deleting
+                  its files (see useOverrideControlStatus), so they're still on
+                  record. Without this, they stayed invisible until a fresh
+                  upload dragged them back into view merged with the new one. */}
+              <SubmittedEvidenceList
                 auditId={control.auditId}
                 controlId={control.id}
-                hint="PDF, XLSX, PNG up to 25 MB each"
-                buttonLabel="Submit Evidence"
-                onSubmitted={() => onStatusChange("EVIDENCE_INTERNAL_REVIEW")}
+                canDelete={canSubmitEvidence || canManageControls}
+                onStatusChange={(s) => onStatusChange(s as ControlStatus)}
               />
+              <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
+                <EvidenceUploadBox
+                  auditId={control.auditId}
+                  controlId={control.id}
+                  hint="PDF, XLSX, PNG up to 25 MB each"
+                  buttonLabel="Submit Evidence"
+                  onSubmitted={() => onStatusChange("EVIDENCE_INTERNAL_REVIEW")}
+                />
+              </Box>
             </SectionCard>
           )}
         </>
@@ -1023,26 +1239,34 @@ function OEEvidenceSection({
       {/* ── Step 2: Evidence rejected → resubmit ── */}
       {activeStep === 2 && (
         <>
-          {control.comments && (
-            <SectionCard icon={<AlertCircle size={16} />} iconBg="transparent" title="Evidence Rejected">
-              <Typography variant="body2" sx={{ lineHeight: 1.7 }}>{control.comments}</Typography>
-            </SectionCard>
-          )}
           <SampleSelectionCard auditId={control.auditId} controlId={control.id} sampleReference={control.sampleReference} />
-          {canSubmitEvidence && (
-            <SectionCard icon={<FileUp size={16} />} iconBg="transparent" title="Resubmit Evidence" flexContent>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, lineHeight: 1.7 }}>
-                Upload updated evidence addressing the rejection reason above.
-              </Typography>
-              <EvidenceUploadBox
-                auditId={control.auditId}
-                controlId={control.id}
-                hint="PDF, XLSX, PNG up to 25 MB each"
-                buttonLabel="Resubmit Evidence"
-                onSubmitted={() => onStatusChange("EVIDENCE_INTERNAL_REVIEW")}
-              />
-            </SectionCard>
-          )}
+          <SectionCard icon={<FileUp size={16} />} iconBg="transparent" title="Resubmit Evidence" flexContent>
+            {/* Same reasoning as DesignEvidenceSection's activeStep 0: the
+                round left over from before the reject/override is still on
+                record and was otherwise invisible until a fresh upload
+                created a duplicate round. rejectionReason only when plain
+                EVIDENCE_PENDING — this activeStep also covers
+                EVIDENCE_NEED_CLARIFICATION, whose own status label already
+                conveys "sent back". */}
+            <SubmittedEvidenceList
+              auditId={control.auditId}
+              controlId={control.id}
+              canDelete={canSubmitEvidence || canManageControls}
+              rejectionReason={control.status === "EVIDENCE_PENDING" ? (control.comments ?? null) : undefined}
+              onStatusChange={(s) => onStatusChange(s as ControlStatus)}
+            />
+            {canSubmitEvidence && (
+              <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
+                <EvidenceUploadBox
+                  auditId={control.auditId}
+                  controlId={control.id}
+                  hint="PDF, XLSX, PNG up to 25 MB each"
+                  buttonLabel="Resubmit Evidence"
+                  onSubmitted={() => onStatusChange("EVIDENCE_INTERNAL_REVIEW")}
+                />
+              </Box>
+            )}
+          </SectionCard>
         </>
       )}
 
@@ -1054,7 +1278,7 @@ function OEEvidenceSection({
             <SubmittedEvidenceList
               auditId={control.auditId}
               controlId={control.id}
-              canDelete={canSubmitEvidence}
+              canDelete={canSubmitEvidence || canManageControls}
               onStatusChange={(s) => onStatusChange(s as ControlStatus)}
             />
             {canSubmitEvidence && (
@@ -1087,7 +1311,11 @@ function OEEvidenceSection({
         <>
           <SampleSelectionCard auditId={control.auditId} controlId={control.id} sampleReference={control.sampleReference} />
           <SectionCard icon={<ClipboardCheck size={16} />} iconBg="transparent" title="Submitted Evidence">
-            <SubmittedEvidenceList auditId={control.auditId} controlId={control.id} />
+            {/* Locked for the team once the round reaches auditor validation —
+                canDelete is ManageControls-only here, for the same admin
+                cleanup case as a status override landing the control back on
+                this step. */}
+            <SubmittedEvidenceList auditId={control.auditId} controlId={control.id} canDelete={canManageControls} />
             <Box sx={{ mt: 1.5, py: 1, px: 1.5, borderRadius: 1.5, bgcolor: "action.hover", display: "flex", alignItems: "center", gap: 1 }}>
               <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: "#7c3aed", flexShrink: 0 }} />
               <Typography variant="body2" color="text.secondary">Passed internal review. External auditor is validating.</Typography>
@@ -1124,6 +1352,56 @@ function OEEvidenceSection({
   );
 }
 
+// ─── Status override confirm dialog ────────────────────────────────────────────
+// Selecting a target status in the (admin-only, editable) header chip does not
+// commit it — this dialog shows the transition and cascade consequence
+// explicitly and requires an extra confirm click, so a stray click never
+// silently rewinds a control.
+
+function OverrideStatusDialog({
+  open,
+  from,
+  to,
+  isPending,
+  error,
+  onConfirm,
+  onClose,
+}: {
+  open: boolean;
+  from: ControlStatus | null;
+  to: ControlStatus | null;
+  isPending: boolean;
+  error: string | null;
+  onConfirm: () => void;
+  onClose: () => void;
+}): JSX.Element {
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle sx={{ fontWeight: 700 }}>Override control status?</DialogTitle>
+      <DialogContent>
+        {error && <Alert severity="error" sx={{ mb: 1.5 }}>{error}</Alert>}
+        <Typography variant="body2">
+          This moves the control from <strong>{from ? CONTROL_STATUS_LABELS[from] : ""}</strong> to{" "}
+          <strong>{to ? CONTROL_STATUS_LABELS[to] : ""}</strong>.
+        </Typography>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, py: 2 }}>
+        <Button onClick={onClose} variant="outlined" disabled={isPending}>
+          Cancel
+        </Button>
+        <Button
+          onClick={onConfirm}
+          variant="contained"
+          disabled={isPending}
+          startIcon={isPending ? <CircularProgress size={14} color="inherit" /> : undefined}
+        >
+          {isPending ? "Overriding…" : "Confirm Override"}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function ControlDrawer({ control, open, onClose }: ControlDrawerProps): JSX.Element {
@@ -1139,9 +1417,11 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
   const isAuditor = Boolean(control) && (isAssignedAuditor(control as AuditControl, currentUserEmail) || canManageControls);
   const validateEvidence = useValidateEvidence();
   const reviewEvidence = useReviewEvidence();
+  const overrideStatus = useOverrideControlStatus();
 
   const [tab, setTab] = useState(0);
   const [localStatus, setLocalStatus] = useState<{ id: number; status: ControlStatus } | null>(null);
+  const [overrideTarget, setOverrideTarget] = useState<ControlStatus | null>(null);
 
   // Reset to the Overview tab whenever a different control is opened, so the
   // drawer doesn't retain the previous control's active tab. Syncing tab state to
@@ -1150,6 +1430,17 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setTab(0);
   }, [control?.id]);
+
+  // Clear any pending override dialog target and mutation state whenever the
+  // drawer closes or a different control is opened, so a stale target or a
+  // leftover error/pending state from the previous control never carries
+  // over into the next one.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOverrideTarget(null);
+    overrideStatus.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [control?.id, open]);
   // Use local override only when it belongs to the currently open control
   const displayStatus =
     localStatus !== null && control !== null && localStatus.id === control.id
@@ -1164,6 +1455,19 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
   // value a moment later.
   function applyServerStatus(c: AuditControl, newStatus: ControlStatus) {
     setLocalStatus({ id: c.id, status: newStatus });
+  }
+
+  function handleConfirmOverride() {
+    if (!control || !overrideTarget) return;
+    overrideStatus.mutate(
+      { auditId: control.auditId, controlId: control.id, status: overrideTarget },
+      {
+        onSuccess: () => {
+          applyServerStatus(control, overrideTarget);
+          setOverrideTarget(null);
+        },
+      },
+    );
   }
 
   return (
@@ -1198,7 +1502,13 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
                 <Typography variant="h5" fontWeight={700}>
                   {control.controlNumber}
                 </Typography>
-                <ControlStatusChip status={displayStatus ?? control.status} size="medium" />
+                <ControlStatusChip
+                  status={displayStatus ?? control.status}
+                  size="medium"
+                  editable={canManageControls}
+                  requirementType={control.requirementType as "DESIGN" | "OE"}
+                  onOverride={setOverrideTarget}
+                />
                 {control.isOverdue && (
                   <Chip
                     icon={<AlertCircle size={13} />}
@@ -1413,6 +1723,7 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
                 onStatusChange={(s) => applyServerStatus(control, s)}
                 canSubmitEvidence={canSubmitEvidence}
                 canReviewEvidence={canReviewEvidence}
+                canManageControls={canManageControls}
                 isAuditor={isAuditor}
               />
             ) : (
@@ -1420,6 +1731,7 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
                 control={{ ...control, status: displayStatus ?? control.status }}
                 onStatusChange={(s) => applyServerStatus(control, s)}
                 canSubmitEvidence={canSubmitEvidence}
+                canManageControls={canManageControls}
               />
             )}
 
@@ -1536,6 +1848,19 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
 
         </Box>
       )}
+
+      <OverrideStatusDialog
+        open={overrideTarget !== null}
+        from={displayStatus ?? null}
+        to={overrideTarget}
+        isPending={overrideStatus.isPending}
+        error={overrideStatus.isError ? (overrideStatus.error as Error).message : null}
+        onConfirm={handleConfirmOverride}
+        onClose={() => {
+          setOverrideTarget(null);
+          overrideStatus.reset();
+        }}
+      />
     </Drawer>
   );
 }

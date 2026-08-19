@@ -32,8 +32,8 @@ func NewDashboardRepository(c *entityclient.Client) repository.DashboardReposito
 }
 
 func (r *dashboardRepo) Get(ctx context.Context, f model.DashboardFilter) (*model.DashboardData, error) {
-	// Scope is derived from the caller's privileges (ADR-0002) and sent
-	// explicitly: viewScope drives stats/charts, workQueueScope the action lists.
+	// Scope is derived from the caller's privileges and sent explicitly:
+	// viewScope drives stats/charts, workQueueScope the action lists.
 	// The entity resolves the actor's team/owner/auditor identity from userEmail.
 	body := map[string]any{
 		"scope":          string(f.ViewScope),

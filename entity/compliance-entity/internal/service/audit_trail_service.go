@@ -51,7 +51,7 @@ var validTrailActions = map[string]bool{
 	"CREATED": true, "UPLOADED": true, "RESUBMITTED": true,
 	"APPROVED": true, "REJECTED": true, "COMMENTED": true,
 	"ESCALATED": true, "AI_VALIDATED": true, "EXPORTED": true,
-	"UPDATED": true, "DELETED": true,
+	"UPDATED": true, "DELETED": true, "OVERRIDDEN": true,
 }
 
 func (s *auditTrailService) CreateAuditTrail(ctx context.Context, auditID int, req domain.CreateAuditTrailRequest) (domain.AuditTrail, error) {

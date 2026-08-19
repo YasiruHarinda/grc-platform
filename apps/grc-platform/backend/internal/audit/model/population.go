@@ -24,15 +24,18 @@ import "time"
 // lifecycle — both internal-review and auditor rejections reuse the same round
 // rather than starting a new one.
 type AuditPopulation struct {
-	ID              int       `json:"id"`
-	ControlID       int       `json:"controlId"`
-	Status          string    `json:"status"` // PENDING|SUBMITTED|COMPLIANCE_APPROVED|COMPLIANCE_REJECTED|APPROVED|AUDITOR_REJECTED
-	ReferenceNumber *int      `json:"referenceNumber"`
-	Description     *string   `json:"description"`
-	DueDate         *string   `json:"dueDate"`
-	Comments        *string   `json:"comments"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	ID              int     `json:"id"`
+	ControlID       int     `json:"controlId"`
+	Status          string  `json:"status"` // PENDING|SUBMITTED|COMPLIANCE_APPROVED|COMPLIANCE_REJECTED|APPROVED|AUDITOR_REJECTED
+	ReferenceNumber *int    `json:"referenceNumber"`
+	Description     *string `json:"description"`
+	DueDate         *string `json:"dueDate"`
+	Comments        *string `json:"comments"`
+	// Attestation is a written note standing in for population files (a
+	// fileless submit, or a note alongside files). Nil otherwise.
+	Attestation *string   `json:"attestation"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 // PopulationFile is one file on a population round, tagged POPULATION

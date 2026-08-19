@@ -84,3 +84,29 @@ export function useAddComment() {
     },
   });
 }
+
+interface DeleteCommentPayload {
+  auditId: number;
+  controlId: number;
+  commentId: number;
+}
+
+/** Deletes a comment. The caller must be its author or hold ManageControls. */
+export function useDeleteComment() {
+  const authFetch = useAuthApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ auditId, controlId, commentId }: DeleteCommentPayload): Promise<void> => {
+      const res = await authFetch(
+        `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}/comments/${commentId}`,
+        { method: "DELETE" },
+      );
+      if (!res.ok) {
+        throw new Error(await extractErrorMessage(res, `Failed to delete comment (${res.status})`));
+      }
+    },
+    onSuccess: (_data, { auditId, controlId }) => {
+      void queryClient.invalidateQueries({ queryKey: commentsQueryKey(auditId, controlId) });
+    },
+  });
+}

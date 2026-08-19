@@ -14,33 +14,70 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Chip } from "@wso2/oxygen-ui";
-import type { JSX } from "react";
-import { CONTROL_STATUS_COLORS, CONTROL_STATUS_LABELS } from "@modules/audit/utils/controlStatus";
+import { Chip, Menu, MenuItem } from "@wso2/oxygen-ui";
+import { type JSX, useState } from "react";
+import { CONTROL_STATUS_COLORS, CONTROL_STATUS_LABELS, overridableStatuses } from "@modules/audit/utils/controlStatus";
 import type { ControlStatus } from "@modules/audit/types/audit";
 
 interface ControlStatusChipProps {
   status: ControlStatus;
   size?: "small" | "medium";
+  // editable=true renders the chip as an override trigger (drawer, admin-only —
+  // see ControlDrawer). Picking a status does not commit it: onOverride is
+  // called with the chosen target so the caller can confirm before writing.
+  editable?: boolean;
+  requirementType?: "DESIGN" | "OE";
+  onOverride?: (target: ControlStatus) => void;
 }
 
 export default function ControlStatusChip({
   status,
   size = "small",
+  editable = false,
+  requirementType = "OE",
+  onOverride,
 }: ControlStatusChipProps): JSX.Element {
+  const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
   const color = CONTROL_STATUS_COLORS[status];
-  return (
+  const options = editable ? overridableStatuses(status, requirementType) : [];
+
+  const chip = (
     <Chip
       label={CONTROL_STATUS_LABELS[status]}
       size={size}
       variant="outlined"
+      onClick={editable && options.length > 0 ? (e) => setMenuAnchor(e.currentTarget) : undefined}
       sx={{
         color,
         borderColor: color,
         bgcolor: "transparent",
         fontWeight: 500,
+        cursor: editable && options.length > 0 ? "pointer" : undefined,
         "& .MuiChip-label": { px: 1.25 },
       }}
     />
+  );
+
+  if (!editable || options.length === 0) {
+    return chip;
+  }
+
+  return (
+    <>
+      {chip}
+      <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={() => setMenuAnchor(null)}>
+        {options.map((target) => (
+          <MenuItem
+            key={target}
+            onClick={() => {
+              setMenuAnchor(null);
+              onOverride?.(target);
+            }}
+          >
+            {CONTROL_STATUS_LABELS[target]}
+          </MenuItem>
+        ))}
+      </Menu>
+    </>
   );
 }

@@ -203,6 +203,37 @@ func (h *controlHandler) updateControlStatus(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// overrideControlStatus handles POST /api/v1/audits/{id}/controls/{controlId}/status/override.
+//
+// Gated on the unscoped ManageControls, like every other control-CRUD write in
+// this file (addControl/updateControl/deleteControl/updateControlStatus) —
+// unlike evidence/population's HasPrivilegeIn bypass checks, ManageControls
+// itself is never granted scoped to a single team, so there is no narrower
+// scope to check here.
+func (h *controlHandler) overrideControlStatus(w http.ResponseWriter, r *http.Request) {
+	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageControls) {
+		return
+	}
+	auditID, ok := parseIntParam(w, r, "id")
+	if !ok {
+		return
+	}
+	controlID, ok := parseIntParam(w, r, "controlId")
+	if !ok {
+		return
+	}
+	var req model.OverrideStatusRequest
+	if err := response.DecodeJSON(w, r, &req); err != nil {
+		return
+	}
+	actor := auth.FromContext(r.Context()).Email
+	if err := h.svc.OverrideStatus(r.Context(), auditID, controlID, req, actor); err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // deleteControl handles DELETE /api/v1/audits/{id}/controls/{controlId}.
 func (h *controlHandler) deleteControl(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageControls) {

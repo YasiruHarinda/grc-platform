@@ -34,8 +34,12 @@ import (
 type PopulationService interface {
 	// SubmitPopulation records every blob at folderPath as a POPULATION file on the
 	// population round and advances it to SUBMITTED. The caller (handler) advances
-	// the control to POPULATION_INTERNAL_REVIEW afterwards.
-	SubmitPopulation(ctx context.Context, controlID, populationID int, folderPath, submittedBy string) (*model.PopulationSubmitResult, error)
+	// the control to POPULATION_INTERNAL_REVIEW afterwards. attestation is a
+	// written note standing in for files — required when the folder has none
+	// (files, a note, or both; at least one), same rule as SubmitSample/
+	// SampleSubmitRequest.Note, and with no privilege gate (unlike evidence's
+	// admin-only fileless completion).
+	SubmitPopulation(ctx context.Context, controlID, populationID int, folderPath, attestation, submittedBy string) (*model.PopulationSubmitResult, error)
 
 	// LatestRound returns a control's most recent population round. A control
 	// normally has exactly one round for its whole lifecycle — both internal-review
@@ -59,14 +63,11 @@ type PopulationService interface {
 	// comment for why that differs from evidence's DeleteFile.
 	DeleteFile(ctx context.Context, fileID int) error
 
-	// ClearFiles removes every file of the given kind on a population round —
-	// DB record and blob, same as DeleteFile — so that a round sent back to
-	// the team for changes starts empty rather than carrying the rejected
-	// submission's files forward. Population reuses one round for its whole
-	// lifecycle instead of starting a fresh round per resubmission (see
-	// LatestRound), so without this a reject leaves the old files in place and
-	// they resurface in the resubmission UI as if they were still current.
-	ClearFiles(ctx context.Context, populationID int, kind string) error
+	// ClearAttestation blanks a population round's note (a fileless submit, or
+	// a note alongside files) without touching its files or status — the
+	// counterpart to evidence's DeleteRound for a round that still has files
+	// left after the note goes, where deleting the whole round isn't right.
+	ClearAttestation(ctx context.Context, populationID int, updatedBy string) error
 
 	// UpdateRoundStatus advances the population round's own status (distinct from
 	// the control's status) — e.g. SUBMITTED → COMPLIANCE_APPROVED.
@@ -119,23 +120,28 @@ func (s *populationService) addNewBlobsAsFiles(ctx context.Context, populationID
 	return added, nil
 }
 
-func (s *populationService) SubmitPopulation(ctx context.Context, controlID, populationID int, folderPath, submittedBy string) (*model.PopulationSubmitResult, error) {
+func (s *populationService) SubmitPopulation(ctx context.Context, controlID, populationID int, folderPath, attestation, submittedBy string) (*model.PopulationSubmitResult, error) {
 	blobs, err := s.storage.ListBlobs(ctx, folderPath)
 	if err != nil {
 		return nil, err
 	}
-	if len(blobs) == 0 {
+	// Files, a note, or both — at least one required (same rule as
+	// SubmitSample/SampleSubmitRequest.Note; no privilege gate, unlike
+	// evidence's ManageControls-only fileless completion).
+	if len(blobs) == 0 && strings.TrimSpace(attestation) == "" {
 		return nil, &apierror.Error{
 			StatusCode: http.StatusUnprocessableEntity,
-			Body:       "no files found at the specified folderPath — upload files first",
+			Body:       "provide population files, a note, or both",
 		}
 	}
 
-	if _, err := s.addNewBlobsAsFiles(ctx, populationID, "POPULATION", blobs, submittedBy); err != nil {
-		return nil, err
+	if len(blobs) > 0 {
+		if _, err := s.addNewBlobsAsFiles(ctx, populationID, "POPULATION", blobs, submittedBy); err != nil {
+			return nil, err
+		}
 	}
 
-	if err := s.repo.UpdateStatus(ctx, populationID, "SUBMITTED", submittedBy); err != nil {
+	if err := s.repo.UpdateStatusWithAttestation(ctx, populationID, "SUBMITTED", attestation, submittedBy); err != nil {
 		return nil, err
 	}
 
@@ -203,27 +209,8 @@ func (s *populationService) DeleteFile(ctx context.Context, fileID int) error {
 	return nil
 }
 
-// ClearFiles removes every file of the given kind on populationID. Errors
-// deleting a blob are logged and swallowed (same tolerance as DeleteFile) so
-// one bad blob doesn't block the round from being reopened for resubmission;
-// the DB record is still removed either way.
-func (s *populationService) ClearFiles(ctx context.Context, populationID int, kind string) error {
-	files, err := s.repo.ListFiles(ctx, populationID)
-	if err != nil {
-		return err
-	}
-	for _, f := range files {
-		if !strings.EqualFold(f.FileKind, kind) {
-			continue
-		}
-		if err := s.repo.DeleteFile(ctx, f.ID); err != nil {
-			return err
-		}
-		if err := s.storage.Delete(ctx, f.FilePath); err != nil {
-			slog.WarnContext(ctx, "delete population blob failed", "fileId", f.ID, "path", f.FilePath, "err", err)
-		}
-	}
-	return nil
+func (s *populationService) ClearAttestation(ctx context.Context, populationID int, updatedBy string) error {
+	return s.repo.ClearAttestation(ctx, populationID, updatedBy)
 }
 
 func (s *populationService) UpdateRoundStatus(ctx context.Context, populationID int, status, updatedBy string) error {

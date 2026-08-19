@@ -17,37 +17,35 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
-import { controlsQueryKey } from "@modules/audit/api/useGetControls";
-import { auditQueryKey } from "@modules/audit/api/useGetAudit";
-import type { ControlStatus } from "@modules/audit/types/audit";
+import { populationQueryKey } from "@modules/audit/api/useGetPopulation";
+import { extractErrorMessage } from "@modules/audit/api/apiError";
 
-interface UpdateStatusPayload {
+interface DeletePopulationAttestationPayload {
   auditId: number;
   controlId: number;
-  status: ControlStatus;
-  comment?: string;
 }
 
-export function useUpdateControlStatus() {
+/**
+ * Blanks the team's population-submission note (see DELETE
+ * .../population/attestation) without touching the round's files or status —
+ * the counterpart to useDeletePopulationFile for the note instead of a file.
+ */
+export function useDeletePopulationAttestation() {
   const authFetch = useAuthApiClient();
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ auditId, controlId, status, comment }: UpdateStatusPayload) => {
+    mutationFn: async ({ auditId, controlId }: DeletePopulationAttestationPayload): Promise<void> => {
       const res = await authFetch(
-        `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}/status`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status, comment: comment ?? null }),
-        },
+        `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}/population/attestation`,
+        { method: "DELETE" },
       );
-      if (!res.ok) throw new Error(`Failed to update control status (${res.status})`);
+      if (!res.ok) {
+        throw new Error(await extractErrorMessage(res, `Failed to remove note (${res.status})`));
+      }
     },
-
-    onSuccess: (_data, { auditId }) => {
-      void queryClient.invalidateQueries({ queryKey: controlsQueryKey(auditId) });
-      void queryClient.invalidateQueries({ queryKey: auditQueryKey(auditId) });
+    onSuccess: (_data, { auditId, controlId }) => {
+      void queryClient.invalidateQueries({ queryKey: populationQueryKey(auditId, controlId) });
     },
   });
 }

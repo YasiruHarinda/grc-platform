@@ -248,10 +248,10 @@ type Audit struct {
 
 // SearchAuditsRequest is the payload for POST /audits/search.
 type SearchAuditsRequest struct {
-	SearchQuery  string     `json:"searchQuery"`
-	StatusKeys   []string   `json:"statusKeys"`   // ACTIVE | COMPLETED | ARCHIVED | REMOVED
-	FrameworkIDs []int      `json:"frameworkIds"` // filter by one or more framework IDs
-	ProductIDs   []int      `json:"productIds"`   // filter by one or more product IDs
+	SearchQuery  string   `json:"searchQuery"`
+	StatusKeys   []string `json:"statusKeys"`   // ACTIVE | COMPLETED | ARCHIVED | REMOVED
+	FrameworkIDs []int    `json:"frameworkIds"` // filter by one or more framework IDs
+	ProductIDs   []int    `json:"productIds"`   // filter by one or more product IDs
 	// AuditIDs restricts to specific audit ids — used by the GRC Backend's
 	// single-item scope check (is auditId visible to this caller at this
 	// scope?) so it can reuse this same query instead of a bespoke endpoint.
@@ -303,13 +303,25 @@ type AuditControl struct {
 	// AuditorEmail identifies the assigned auditor for the assigned-auditor gate
 	// (population validation, sample selection, evidence validation): the caller
 	// is authorized when their token email matches this value.
-	AuditorEmail  *string   `json:"auditorEmail"`
-	DueDate       *string   `json:"dueDate"` // YYYY-MM-DD
-	Status        string    `json:"status"`
-	ControlSource string    `json:"controlSource"` // MANUAL | COPIED | CSV
-	IsOverdue     bool      `json:"isOverdue"`
-	CreatedOn     time.Time `json:"createdOn"`
-	UpdatedOn     time.Time `json:"updatedOn"`
+	AuditorEmail *string `json:"auditorEmail"`
+	DueDate      *string `json:"dueDate"` // YYYY-MM-DD
+	Status       string  `json:"status"`
+	// SampleReference is the auditor's sample-selection note (set via
+	// UpdateControlRequest.SampleReference / UpdateStatusWithSample). Comments
+	// is the reviewer/auditor's most recent reject reason. Both are plain
+	// audit_control columns, not derived from population/evidence rows.
+	SampleReference *string   `json:"sampleReference"`
+	Comments        *string   `json:"comments"`
+	ControlSource   string    `json:"controlSource"` // MANUAL | COPIED | CSV
+	IsOverdue       bool      `json:"isOverdue"`
+	CreatedOn       time.Time `json:"createdOn"`
+	UpdatedOn       time.Time `json:"updatedOn"`
+	// StatusOverridden/OverriddenBy/OverriddenAt record that this control's
+	// status was last set by a backward override rather than the ordinary
+	// workflow — see ControlService.OverrideControlStatus.
+	StatusOverridden bool       `json:"statusOverridden"`
+	OverriddenBy     *string    `json:"overriddenBy"`
+	OverriddenAt     *time.Time `json:"overriddenAt"`
 	// Population-phase fields (OE controls only), from the initial audit_population record.
 	PopulationDescription *string `json:"populationDescription"`
 	PopulationComments    *string `json:"populationComments"`
@@ -798,21 +810,36 @@ type UpdateControlRequest struct {
 	ExpectedStatus      string  `json:"-"` // set server-side for atomic transition; never decoded from JSON
 }
 
+// OverrideControlStatusRequest is the payload for
+// POST /audits/{auditId}/controls/{controlId}/status-override. Unlike
+// UpdateControlRequest's Status field, the target here is validated by rank
+// (backward-only) instead of allowedControlTransitions, and the write also
+// cascades dependent audit_population/audit_evidence rows and stamps the
+// override marker on audit_control.
+type OverrideControlStatusRequest struct {
+	Status         string `json:"status"`
+	UpdatedBy      string `json:"updatedBy"`
+	ExpectedStatus string `json:"-"` // set server-side for atomic transition; never decoded from JSON
+}
+
 // =============================================================================
 // Evidence (audit_evidence + audit_evidence_file)
 // =============================================================================
 
 // AuditEvidence is a single evidence submission row.
 type AuditEvidence struct {
-	ID                   int       `json:"id"`
-	ControlID            int       `json:"controlId"`
-	SubmittedBy          *int      `json:"submittedBy"`
-	Status               string    `json:"status"`
-	FolderPath           *string   `json:"folderPath"`
-	ReusedFromEvidenceID *int      `json:"reusedFromEvidenceId"`
-	CreatedBy            *string   `json:"createdBy"`
-	CreatedOn            time.Time `json:"createdOn"`
-	UpdatedOn            time.Time `json:"updatedOn"`
+	ID                   int     `json:"id"`
+	ControlID            int     `json:"controlId"`
+	SubmittedBy          *int    `json:"submittedBy"`
+	Status               string  `json:"status"`
+	FolderPath           *string `json:"folderPath"`
+	ReusedFromEvidenceID *int    `json:"reusedFromEvidenceId"`
+	// Attestation is a written justification for a round submitted with no
+	// files (fileless completion). Nil for ordinary rounds.
+	Attestation *string   `json:"attestation"`
+	CreatedBy   *string   `json:"createdBy"`
+	CreatedOn   time.Time `json:"createdOn"`
+	UpdatedOn   time.Time `json:"updatedOn"`
 }
 
 // CreateEvidenceRequest is the payload for POST /audits/{auditId}/controls/{controlId}/evidence.
@@ -820,6 +847,7 @@ type CreateEvidenceRequest struct {
 	SubmittedBy          *int    `json:"submittedBy"`
 	FolderPath           *string `json:"folderPath"`
 	ReusedFromEvidenceID *int    `json:"reusedFromEvidenceId"`
+	Attestation          *string `json:"attestation"`
 	CreatedBy            string  `json:"createdBy"`
 }
 
@@ -904,17 +932,23 @@ type ListEvidenceResponse struct {
 
 // AuditPopulation is the population record for an OE-type control.
 type AuditPopulation struct {
-	ID              int       `json:"id"`
-	ControlID       int       `json:"controlId"`
-	OwnerID         *int      `json:"ownerId"`
-	TeamID          *int      `json:"teamId"`
-	ReferenceNumber *int      `json:"referenceNumber"`
-	Description     *string   `json:"description"`
-	Status          string    `json:"status"`
-	DueDate         *string   `json:"dueDate"`
-	Comments        *string   `json:"comments"`
-	CreatedOn       time.Time `json:"createdOn"`
-	UpdatedOn       time.Time `json:"updatedOn"`
+	ID              int     `json:"id"`
+	ControlID       int     `json:"controlId"`
+	OwnerID         *int    `json:"ownerId"`
+	TeamID          *int    `json:"teamId"`
+	ReferenceNumber *int    `json:"referenceNumber"`
+	Description     *string `json:"description"`
+	Status          string  `json:"status"`
+	DueDate         *string `json:"dueDate"`
+	Comments        *string `json:"comments"`
+	// Attestation is a written note standing in for population files (a round
+	// submitted with no files, or with a note alongside them). Nil otherwise.
+	// Unlike AuditEvidence.Attestation (set once at Create — evidence starts a
+	// fresh round per submission), population reuses one round for its whole
+	// lifecycle, so this is set via UpdatePopulationRequest instead.
+	Attestation *string   `json:"attestation"`
+	CreatedOn   time.Time `json:"createdOn"`
+	UpdatedOn   time.Time `json:"updatedOn"`
 }
 
 // CreatePopulationRequest is the payload for POST /audits/{auditId}/controls/{controlId}/populations.
@@ -936,6 +970,7 @@ type UpdatePopulationRequest struct {
 	ReferenceNumber *int    `json:"referenceNumber"`
 	Description     *string `json:"description"`
 	DueDate         *string `json:"dueDate"`
+	Attestation     *string `json:"attestation"`
 	UpdatedBy       string  `json:"updatedBy"`
 	ExpectedStatus  string  `json:"-"` // set server-side for atomic transition; never decoded from JSON
 }
