@@ -269,7 +269,11 @@ func (d *riskDashboardRepo) HighRisks(ctx context.Context, registerID *int, regi
 
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT r.id, r.risk_code, r.risk_title, st.name,
-		       COALESCE(owner.display_name, ''),
+		       -- Both the stored name and the uuid: the caller resolves a
+		       -- current name from the identity directory, and falls back to
+		       -- this column for as long as it exists. See the same pairing in
+		       -- risk_repo.go's riskSelectCols.
+		       COALESCE(owner.display_name, ''), COALESCE(owner.uuid, ''),
 		       DATE_FORMAT(r.risk_identified_date, '%Y-%m-%d'),
 		       r.treatment_strategy,
 		       DATE_FORMAT(r.implementation_date, '%Y-%m-%d')
@@ -290,7 +294,7 @@ func (d *riskDashboardRepo) HighRisks(ctx context.Context, registerID *int, regi
 	for rows.Next() {
 		var h domain.HighRiskItem
 		if err := rows.Scan(
-			&h.ID, &h.RiskCode, &h.RiskTitle, &h.RegisterName, &h.OwnerName,
+			&h.ID, &h.RiskCode, &h.RiskTitle, &h.RegisterName, &h.OwnerName, &h.OwnerUUID,
 			&h.IdentifiedDate, &h.TreatmentStrategy, &h.ImplementationDate,
 		); err != nil {
 			return nil, fmt.Errorf("scan high risk item: %w", err)

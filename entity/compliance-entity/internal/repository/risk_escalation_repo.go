@@ -135,13 +135,16 @@ func (r *riskEscalationRepo) Escalate(ctx context.Context, riskID int, req domai
 	ins, err := tx.ExecContext(ctx,
 		`INSERT INTO risk_escalation
 		 (risk_id, new_treatment_strategy, action_plan_id,
-		  assigner_lead_email, action_owner_lead_email, status, created_by, updated_by)
-		 VALUES (?, ?, ?, ?, ?, 'OPEN', ?, ?)`,
+		  assigner_lead_email, action_owner_lead_email,
+		  assigner_lead_uuid, action_owner_lead_uuid, status, created_by, updated_by)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?)`,
 		riskID,
 		nullableString(req.NewTreatmentStrategy),
 		nullableInt(req.ActionPlanID),
 		nullableString(req.AssignerLeadEmail),
 		nullableString(req.ActionOwnerLeadEmail),
+		nullableString(req.AssignerLeadUUID),
+		nullableString(req.ActionOwnerLeadUUID),
 		req.CreatedBy, req.CreatedBy)
 	if err != nil {
 		return nil, fmt.Errorf("risk_escalation.Escalate insert: %w", err)

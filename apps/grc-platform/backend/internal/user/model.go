@@ -25,7 +25,16 @@ package user
 // via the entity's user_risk_team join table — empty, never nil, when a user
 // belongs to no risk team.
 type User struct {
-	ID          int    `json:"id"`
+	ID int `json:"id"`
+	// UUID is the user's Asgardeo id — the same value their token carries as
+	// `sub`, and this platform's identity for them. Empty for a row that
+	// predates the identity migration and whose email matched no Asgardeo
+	// account; such a user cannot be resolved by uuid.
+	UUID string `json:"uuid"`
+	// DisplayName and Email are being removed from the database — a security
+	// review required that the platform stop storing them. Both are still
+	// populated for as long as the columns exist; new code should resolve a
+	// person's name from the identity directory by UUID instead.
 	DisplayName string `json:"display_name"`
 	Email       string `json:"email"`
 	Status      string `json:"status"` // ACTIVE | INACTIVE | REMOVED

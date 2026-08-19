@@ -21,6 +21,7 @@ import (
 	"net/http"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
 
@@ -28,11 +29,14 @@ import (
 type Deps struct {
 	Users    userentity.Repository
 	HREntity *hrentity.Client
+	// SCIM resolves an email to the person's Asgardeo id when provisioning a
+	// user, so the row carries the identity they will authenticate as.
+	SCIM *scim.Client
 }
 
 // RegisterRoutes mounts shared user routes onto mux.
 func RegisterRoutes(mux *http.ServeMux, deps Deps) {
-	mux.HandleFunc("GET /api/v1/me/profile", handleGetMyProfile(deps.HREntity))
+	mux.HandleFunc("GET /api/v1/me/profile", handleGetMyProfile(deps.HREntity, deps.Users))
 	mux.HandleFunc("GET /api/v1/users", handleListUsers(deps.Users))
-	mux.HandleFunc("POST /api/v1/users/resolve", handleResolveUser(deps.Users, deps.HREntity))
+	mux.HandleFunc("POST /api/v1/users/resolve", handleResolveUser(deps.Users, deps.HREntity, deps.SCIM))
 }

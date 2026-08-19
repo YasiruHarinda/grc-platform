@@ -17,11 +17,13 @@
 package handler
 
 import (
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
@@ -46,11 +48,17 @@ type resolveUserRequest struct {
 // ones. Rejecting an email hr_entity doesn't recognise closes the same gap
 // for newly-created rows.
 //
+// hr_entity is consulted even though its display name is on its way out of the
+// database, because the two directories answer different questions. hr_entity
+// says "is this a current WSO2 employee", which is the check that gate exists
+// for; Asgardeo says "does this person have an account", which can outlive
+// their employment. Only the first is a reason to refuse an assignment.
+//
 // This writes, so it is gated. The privileges are the risk module's because
 // that is the only flow that calls it: an employee is resolved to a user id
 // while creating or editing a risk. Either privilege is enough — a user who
 // may only edit still has to assign an action owner.
-func handleResolveUser(repo userentity.Repository, hrClient *hrentity.Client) http.HandlerFunc {
+func handleResolveUser(repo userentity.Repository, hrClient *hrentity.Client, scimClient *scim.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !auth.RequireAnyPrivilege(r.Context(), w, privilege.CreateRisk, privilege.UpdateRisk) {
 			return
@@ -82,15 +90,44 @@ func handleResolveUser(repo userentity.Repository, hrClient *hrentity.Client) ht
 			return
 		}
 
+		// Resolve the employee's Asgardeo id, so the row is provisioned with the
+		// identity they will actually authenticate as.
+		//
+		// A failure here does not fail the request. The directory is a separate
+		// service behind a gateway, the scope this call needs is narrower than
+		// the one the platform already holds, and neither is a reason to block
+		// someone from being named an Action Owner. Provisioning proceeds
+		// without a uuid: the column is nullable for exactly this case, and the
+		// backfill (or a later resolve of the same person) fills it in.
+		//
+		// This is deliberately NOT the eventual behaviour. Once every row is
+		// expected to carry a uuid, an unresolvable employee has to be refused
+		// instead — but refusing today would mean an outage in assignment the
+		// moment the directory hiccuped, in exchange for a guarantee nothing
+		// yet depends on.
+		var uuid string
+		if dirUser, dirErr := scimClient.LookupByEmail(r.Context(), req.Email); dirErr != nil {
+			slog.WarnContext(r.Context(), "resolve user: identity directory lookup failed; provisioning without a uuid",
+				"err", dirErr)
+		} else if dirUser != nil {
+			uuid = dirUser.UUID
+		} else {
+			slog.InfoContext(r.Context(), "resolve user: employee has no directory account; provisioning without a uuid")
+		}
+
 		// Attribution for the provisioned row: the Compliance Entity records
 		// this as created_by/updated_by (see auth.FromContext — nil only when
 		// the Auth middleware didn't run).
-		var actorEmail string
+		//
+		// The actor's uuid, not their email — the whole point of the migration
+		// is that this column stops holding addresses. Subject is what the
+		// verified token carries and what authorisation is already keyed on.
+		var actor string
 		if info := auth.FromContext(r.Context()); info != nil {
-			actorEmail = info.Email
+			actor = info.Subject
 		}
 
-		u, err := repo.Upsert(r.Context(), req.Email, displayName, actorEmail)
+		u, err := repo.Upsert(r.Context(), uuid, req.Email, displayName, actor)
 		if err != nil {
 			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 			return

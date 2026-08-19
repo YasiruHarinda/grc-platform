@@ -40,6 +40,7 @@ const manageUsersPrivilege = "MANAGE_USERS"
 type GrantService interface {
 	GrantsForUserID(ctx context.Context, userID int) (domain.UserGrantsResponse, error)
 	GrantsForUserEmail(ctx context.Context, email string) (domain.UserGrantsResponse, error)
+	GrantsForUserUUID(ctx context.Context, uuid string) (domain.UserGrantsResponse, error)
 	CreateGrant(ctx context.Context, userID int, req domain.CreateUserGrantRequest) (domain.UserGrant, error)
 	RevokeGrant(ctx context.Context, userID, grantID int, revokedBy string) error
 	ListRoles(ctx context.Context) (domain.ListRolesResponse, error)
@@ -83,6 +84,18 @@ func (s *grantService) GrantsForUserEmail(ctx context.Context, email string) (do
 		return domain.UserGrantsResponse{}, &apierror.ValidationError{Msg: "email is required"}
 	}
 	userID, grants, err := s.repo.GrantsForUserEmail(ctx, email)
+	if err != nil {
+		return domain.UserGrantsResponse{}, err
+	}
+	return domain.UserGrantsResponse{UserID: userID, Grants: orEmpty(grants)}, nil
+}
+
+func (s *grantService) GrantsForUserUUID(ctx context.Context, uuid string) (domain.UserGrantsResponse, error) {
+	uuid = strings.TrimSpace(uuid)
+	if uuid == "" {
+		return domain.UserGrantsResponse{}, &apierror.ValidationError{Msg: "uuid is required"}
+	}
+	userID, grants, err := s.repo.GrantsForUserUUID(ctx, uuid)
 	if err != nil {
 		return domain.UserGrantsResponse{}, err
 	}

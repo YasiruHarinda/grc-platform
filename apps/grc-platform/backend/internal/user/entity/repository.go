@@ -50,6 +50,7 @@ func NewRepository(c *entityclient.Client) user.Repository {
 // on the entity side and nothing in the GRC backend or webapp consumes it.
 type entUser struct {
 	ID          int    `json:"id"`
+	UUID        string `json:"uuid"`
 	Email       string `json:"email"`
 	DisplayName string `json:"displayName"`
 	UserType    string `json:"userType"`
@@ -60,6 +61,7 @@ type entUser struct {
 func (u entUser) toModel() *user.User {
 	return &user.User{
 		ID:          u.ID,
+		UUID:        u.UUID,
 		DisplayName: u.DisplayName,
 		Email:       u.Email,
 		Status:      u.Status,
@@ -89,17 +91,34 @@ func (r *repository) GetByID(ctx context.Context, id int) (*user.User, error) {
 	return u.toModel(), nil
 }
 
+func (r *repository) GetByUUID(ctx context.Context, uuid string) (*user.User, error) {
+	var u entUser
+	if err := r.c.Get(ctx, "/users/by-uuid/"+url.PathEscape(uuid), &u); err != nil {
+		if notFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get user by uuid: %w", err)
+	}
+	return u.toModel(), nil
+}
+
 // Upsert provisions an account for an employee picked from an HR entity search
 // (e.g. as a risk's Action Owner) who may never have signed in to grc-platform.
 // POST /users is an upsert on the entity side — it inserts when the email is
 // new and refreshes display_name when it isn't — so this is a single round trip
 // with no read-then-write race. userType/status are left empty so the entity
 // applies its own defaults (INTERNAL / ACTIVE).
-func (r *repository) Upsert(ctx context.Context, email, displayName, actorEmail string) (*user.User, error) {
+//
+// uuid is sent even though the row is still keyed on email: this upsert is how
+// an existing row acquires the uuid it was created without. The entity fills
+// only a gap and never overwrites, and it rejects a uuid already held by a
+// different email rather than rewriting that person's row.
+func (r *repository) Upsert(ctx context.Context, uuid, email, displayName, actor string) (*user.User, error) {
 	body := map[string]any{
+		"uuid":        uuid,
 		"email":       email,
 		"displayName": displayName,
-		"createdBy":   actorEmail,
+		"createdBy":   actor,
 	}
 	var u entUser
 	if err := r.c.Post(ctx, "/users", body, &u); err != nil {

@@ -24,20 +24,21 @@ import (
 	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
 
-// stubUsers resolves one email to one id; anything else is "not found".
+// stubUsers resolves one uuid to one id; anything else is "not found".
 type stubUsers struct {
-	email string
-	id    int
+	uuid string
+	id   int
 }
 
-func (s stubUsers) GetByEmail(_ context.Context, email string) (*userentity.User, error) {
-	if email != s.email {
+func (s stubUsers) GetByEmail(context.Context, string) (*userentity.User, error) { return nil, nil }
+func (s stubUsers) GetByID(context.Context, int) (*userentity.User, error)       { return nil, nil }
+func (s stubUsers) GetByUUID(_ context.Context, uuid string) (*userentity.User, error) {
+	if uuid != s.uuid {
 		return nil, nil
 	}
-	return &userentity.User{ID: s.id, Email: email}, nil
+	return &userentity.User{ID: s.id, UUID: uuid}, nil
 }
-func (s stubUsers) GetByID(context.Context, int) (*userentity.User, error) { return nil, nil }
-func (s stubUsers) Upsert(context.Context, string, string, string) (*userentity.User, error) {
+func (s stubUsers) Upsert(context.Context, string, string, string, string) (*userentity.User, error) {
 	return nil, nil
 }
 func (s stubUsers) List(context.Context) ([]*userentity.User, error) { return nil, nil }
@@ -49,7 +50,7 @@ func strp(s string) *string { return &s }
 // this wrong either strands a risk nobody can un-escalate, or lets the wrong
 // person wave one through.
 func TestAuthorizeComment(t *testing.T) {
-	const caller = "caller@wso2.com"
+	const caller = "885aeeb0-2086-4ca4-83c9-b2a62b299967"
 	high := &model.RiskDetail{
 		ManagementApproverID: 42,
 		EffectiveScore:       &model.RiskScore{RiskLevel: "HIGH"},
@@ -77,19 +78,24 @@ func TestAuthorizeComment(t *testing.T) {
 		},
 		{
 			"HIGH: a lead is not enough",
-			high, &model.Escalation{AssignerLeadEmail: strp(caller)}, stubUsers{caller, 7}, false, true,
+			high, &model.Escalation{AssignerLeadUUID: strp(caller)}, stubUsers{caller, 7}, false, true,
 		},
 		{
 			"MEDIUM: the assigner's lead may comment",
-			medium, &model.Escalation{AssignerLeadEmail: strp(caller)}, stubUsers{caller, 7}, false, false,
+			medium, &model.Escalation{AssignerLeadUUID: strp(caller)}, stubUsers{caller, 7}, false, false,
 		},
 		{
 			"MEDIUM: the action owner's lead may comment",
-			medium, &model.Escalation{ActionOwnerLeadEmail: strp(caller)}, stubUsers{caller, 7}, false, false,
+			medium, &model.Escalation{ActionOwnerLeadUUID: strp(caller)}, stubUsers{caller, 7}, false, false,
 		},
 		{
-			"MEDIUM: lead matching is case-insensitive",
-			medium, &model.Escalation{AssignerLeadEmail: strp("CALLER@WSO2.COM")}, stubUsers{caller, 7}, false, false,
+			// uuid matching is exact, unlike the email matching it replaced —
+			// Asgardeo ids come back in one consistent case, so there is no
+			// folding to preserve. A near-miss (wrong case, stray space) is
+			// correctly a different identity, not the same one spelled
+			// differently.
+			"MEDIUM: uuid matching is exact, not fuzzy",
+			medium, &model.Escalation{AssignerLeadUUID: strp("7782633A-25B3-42FA-A78E-F05C577090BD")}, stubUsers{caller, 7}, false, true,
 		},
 		{
 			"MEDIUM: the management approver is not a lead",
@@ -98,6 +104,13 @@ func TestAuthorizeComment(t *testing.T) {
 		{
 			"MEDIUM: no leads recorded means nobody but an admin",
 			medium, &model.Escalation{}, stubUsers{caller, 7}, false, true,
+		},
+		{
+			// A lead resolvable in HR entity but with no Asgardeo account: the
+			// email column would still be set (see managerOf), but the uuid
+			// column stays nil, and matching only ever happens on uuid now.
+			"MEDIUM: a lead resolved to email but not uuid grants nobody",
+			medium, &model.Escalation{AssignerLeadEmail: strp("lead@wso2.com")}, stubUsers{caller, 7}, false, true,
 		},
 		// The escape hatch: without it, an escalation whose named commenter has
 		// left the company would strand the risk permanently.

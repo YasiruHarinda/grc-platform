@@ -39,8 +39,16 @@ type Escalation struct {
 	// the broad RISK_VIEW_RISKS privilege, so anyone who can view an
 	// escalated risk would otherwise receive two other people's email
 	// addresses that the webapp never reads.
-	AssignerLeadEmail    *string   `json:"-"`
-	ActionOwnerLeadEmail *string   `json:"-"`
+	AssignerLeadEmail    *string `json:"-"`
+	ActionOwnerLeadEmail *string `json:"-"`
+	// AssignerLeadUUID/ActionOwnerLeadUUID are the same leads' Asgardeo ids,
+	// resolved independently from AssignerLeadEmail/ActionOwnerLeadEmail (see
+	// escalationService.managerOf) — a lead may resolve by email but not by
+	// uuid (no Asgardeo account), so these can be nil even when the email
+	// fields are set. authorizeComment compares the caller by uuid, not
+	// email, so these are what actually grant comment rights.
+	AssignerLeadUUID     *string   `json:"-"`
+	ActionOwnerLeadUUID  *string   `json:"-"`
 	Status               string    `json:"status"` // OPEN | RESOLVED
 	CreatedAt            time.Time `json:"created_at"`
 }

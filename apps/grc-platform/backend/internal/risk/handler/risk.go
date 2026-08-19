@@ -115,10 +115,7 @@ func (d *Deps) handleCreateRisk(w http.ResponseWriter, r *http.Request) {
 		req.IdentifiedByName = &trimmed
 	}
 
-	createdBy := user.Email
-	if createdBy == "" {
-		createdBy = user.Subject
-	}
+	createdBy := user.Subject
 	result, err := d.Risk.Create(r.Context(), req, createdBy)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
@@ -131,10 +128,10 @@ func (d *Deps) handleCreateRisk(w http.ResponseWriter, r *http.Request) {
 	d.recordEvent(r.Context(), result.ID, createdBy, model.HistorySubmit, model.HistoryDetails{
 		To: model.StatusPendingOwnerApproval,
 	})
-	// The risk owner is notified by name; compliance admins are a role and stay
-	// suppressed for now — see notifyComplianceAdmins.
+	// The risk owner is notified by name; compliance admins are a role,
+	// resolved separately — see notifyComplianceAdmins.
 	d.notifyRiskEvent(emailer.EventCreated, result.ID, []int{req.OwnerID}, createdBy, "")
-	notifyComplianceAdmins(emailer.EventCreated, result.ID)
+	d.notifyComplianceAdmins(emailer.EventCreated, result.ID, req.SourceRegisterID, createdBy, "")
 
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/risks/%d", result.ID))
 	response.WriteJSONValue(w, http.StatusCreated, result)

@@ -1,0 +1,258 @@
+// Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+// Command backfill-evidence-actors rewrites risk_evidence.created_by from
+// email to uuid for rows that predate the identity migration.
+//
+// # WHY THIS EXISTS
+//
+// handleDeleteRiskEvidence's ownership check is a direct string comparison —
+// `ev.CreatedBy != actor` — not an id lookup. Once the request path stamps new
+// evidence with a uuid (see requireCallerUUID), that comparison stays correct
+// for every row created afterward, but every row created before it keeps an
+// email in created_by — which a uuid actor can never equal. Left alone, nobody
+// could self-delete evidence they uploaded before this shipped; only the
+// compliance-admin override would still work.
+//
+// # THE MATCH IS NARROWER THAN cmd/backfill-uuids
+//
+// It only rewrites rows whose created_by is a known-resolvable email — one
+// that appears as a member of -groups. A row whose uploader has since left, or
+// was never in a searched group, is left untouched and reported: its original
+// uploader permanently loses self-delete on it (falls back to the admin
+// override), which is the same fate an un-backfilled `user` row has under the
+// wider migration.
+//
+// # IT WRITES NOTHING
+//
+// Emits reviewable SQL, never touches the database. Each UPDATE is scoped to
+// one exact created_by value, so once a row is rewritten the same statement
+// matches nothing on a second run — naturally idempotent without a sentinel
+// column.
+//
+// Usage:
+//
+//	backfill-evidence-actors [-groups wso2-everyone] [-out evidence_actors.sql] [-report evidence_actors_report.txt]
+//
+// Requires the same environment as the server: COMPLIANCE_ENTITY_BASE_URL is
+// NOT used — this talks to MySQL directly via DB_DSN, since risk_evidence has
+// no Compliance Entity endpoint for a bulk actor rewrite — and the SCIM_*
+// variables.
+package main
+
+import (
+	"context"
+	"database/sql"
+	"flag"
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+	"time"
+
+	_ "github.com/go-sql-driver/mysql"
+
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
+)
+
+func main() {
+	groupsFlag := flag.String("groups", "wso2-everyone",
+		"comma-separated Asgardeo group names to source (email, uuid) pairs from")
+	outPath := flag.String("out", "backfill_evidence_actors.sql", "file to write the UPDATE statements to")
+	reportPath := flag.String("report", "backfill_evidence_actors_report.txt", "file to write the anomaly report to")
+	scimTimeout := flag.Duration("scim-timeout", 90*time.Second,
+		"per-request timeout for SCIM calls; the service cold starts, so allow well over an interactive budget")
+	flag.Parse()
+
+	groups := splitGroups(*groupsFlag)
+	if len(groups) == 0 {
+		fatal("-groups must name at least one Asgardeo group")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	db, err := sql.Open("mysql", mustEnv("DB_DSN"))
+	if err != nil {
+		fatal("open DB_DSN: %v", err)
+	}
+	defer db.Close()
+	if err := db.PingContext(ctx); err != nil {
+		fatal("connect to database: %v", err)
+	}
+
+	scimCli := scim.NewClient(
+		mustEnv("SCIM_BASE_URL"), mustEnv("SCIM_TOKEN_URL"),
+		mustEnv("SCIM_CLIENT_ID"), mustEnv("SCIM_CLIENT_SECRET"), mustEnv("SCIM_SCOPES"),
+	)
+	scimCli.SetHTTPTimeout(*scimTimeout)
+
+	// ── Load the directory ──────────────────────────────────────────────────
+	uuidByEmail := make(map[string]string)
+	for _, g := range groups {
+		members, err := scimCli.ListGroupMembers(ctx, g)
+		if err != nil {
+			fatal("SCIM group search for %q: %v", g, err)
+		}
+		for _, m := range members {
+			key := strings.ToLower(strings.TrimSpace(m.Email))
+			if key != "" && m.UUID != "" {
+				uuidByEmail[key] = m.UUID
+			}
+		}
+		fmt.Printf("  %-42s %d member(s)\n", g, len(members))
+	}
+	fmt.Printf("directory holds %d distinct email(s)\n", len(uuidByEmail))
+
+	// ── Load every distinct created_by value already on risk_evidence ───────
+	rows, err := db.QueryContext(ctx,
+		"SELECT DISTINCT created_by FROM risk_evidence WHERE created_by IS NOT NULL AND created_by LIKE '%@%'")
+	if err != nil {
+		fatal("query risk_evidence.created_by: %v", err)
+	}
+	var actors []string
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			fatal("scan created_by: %v", err)
+		}
+		actors = append(actors, a)
+	}
+	rows.Close()
+	fmt.Printf("%d distinct email-shaped created_by value(s) on risk_evidence\n", len(actors))
+
+	// ── Resolve ──────────────────────────────────────────────────────────────
+	var toRewrite []rewrite
+	var unresolved []string
+	for _, a := range actors {
+		if uuid, ok := uuidByEmail[strings.ToLower(strings.TrimSpace(a))]; ok {
+			toRewrite = append(toRewrite, rewrite{email: a, uuid: uuid})
+		} else {
+			unresolved = append(unresolved, a)
+		}
+	}
+
+	// ── Write ────────────────────────────────────────────────────────────────
+	if err := os.WriteFile(*outPath, []byte(renderSQL(toRewrite, groups)), 0o600); err != nil {
+		fatal("write %s: %v", *outPath, err)
+	}
+	report := renderReport(unresolved, len(toRewrite), len(actors))
+	if err := os.WriteFile(*reportPath, []byte(report), 0o600); err != nil {
+		fatal("write %s: %v", *reportPath, err)
+	}
+
+	fmt.Printf("\n%d rewrite(s) → %s\n", len(toRewrite), *outPath)
+	fmt.Printf("anomaly report → %s\n\n", *reportPath)
+	fmt.Print(report)
+
+	if len(unresolved) > 0 {
+		fmt.Fprintf(os.Stderr, "\n%d unresolved value(s) — review before applying %s\n", len(unresolved), *outPath)
+		os.Exit(2)
+	}
+	fmt.Println("no findings; every created_by value resolved.")
+}
+
+// rewrite is one created_by value resolved from email to uuid.
+type rewrite struct{ email, uuid string }
+
+func splitGroups(s string) []string {
+	var out []string
+	for _, g := range strings.Split(s, ",") {
+		if g = strings.TrimSpace(g); g != "" {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+func renderSQL(rows []rewrite, groups []string) string {
+	sort.Slice(rows, func(i, j int) bool { return rows[i].email < rows[j].email })
+
+	var b strings.Builder
+	fmt.Fprintf(&b, `-- =============================================================================
+-- risk_evidence.created_by backfill — GENERATED, review before running.
+--
+-- Rewrites historical (pre-migration) created_by values from email to uuid, so
+-- handleDeleteRiskEvidence's ownership check (a direct string comparison, not
+-- an id lookup) keeps recognising the original uploader.
+--
+-- Each UPDATE is scoped to one exact, no-longer-current created_by value, so
+-- once applied it matches nothing on a second run — no guard column needed.
+--
+-- Directory: %s
+--
+-- Read the companion report before running this. Anyone listed there keeps an
+-- email in created_by and loses self-delete on their historical evidence
+-- (falls back to the compliance-admin override).
+-- =============================================================================
+
+USE grc_platform;
+
+`, sqlComment(strings.Join(groups, ", ")))
+
+	if len(rows) == 0 {
+		b.WriteString("-- No rewrites. Either nothing to backfill, or nothing resolved; check the report.\n")
+		return b.String()
+	}
+	for _, r := range rows {
+		fmt.Fprintf(&b, "-- %s\n", sqlComment(r.email))
+		fmt.Fprintf(&b, "UPDATE risk_evidence SET created_by = '%s' WHERE created_by = '%s';\n\n",
+			sqlEscape(r.uuid), sqlEscape(r.email))
+	}
+	b.WriteString(`-- Verify: no row should still hold an email after the findings above are dealt with.
+SELECT id, created_by FROM risk_evidence WHERE created_by LIKE '%@%' ORDER BY id;
+`)
+	return b.String()
+}
+
+func sqlEscape(s string) string { return strings.ReplaceAll(s, "'", "''") }
+
+var commentLineBreaks = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ")
+
+func sqlComment(s string) string { return commentLineBreaks.Replace(s) }
+
+func renderReport(unresolved []string, rewritten, total int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "EVIDENCE ACTOR BACKFILL REPORT — %s\n\n", time.Now().Format(time.RFC3339))
+	fmt.Fprintf(&b, "%d of %d distinct created_by value(s) resolved to a uuid.\n\n", rewritten, total)
+
+	fmt.Fprintf(&b, "── NOT IN ANY SEARCHED GROUP (%d) ──\n", len(unresolved))
+	fmt.Fprintf(&b, "  No uuid could be resolved, so created_by stays an email for these rows.\n"+
+		"  The original uploader loses self-delete on them (admin override still\n"+
+		"  works). Fix: widen -groups, or accept it.\n")
+	if len(unresolved) == 0 {
+		b.WriteString("  (none)\n")
+		return b.String()
+	}
+	sort.Strings(unresolved)
+	for _, u := range unresolved {
+		fmt.Fprintf(&b, "  - %s\n", u)
+	}
+	return b.String()
+}
+
+func mustEnv(k string) string {
+	v := os.Getenv(k)
+	if v == "" {
+		fatal("required environment variable is not set: %s", k)
+	}
+	return v
+}
+
+func fatal(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "backfill-evidence-actors: "+format+"\n", args...)
+	os.Exit(1)
+}

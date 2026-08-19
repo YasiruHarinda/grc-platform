@@ -130,7 +130,7 @@ func (r *riskRepository) List(ctx context.Context, filter model.ListRisksFilter)
 		"dueOverdueOnly":         filter.DueOverdueOnly,
 		"openEscalationOnly":     filter.OpenEscalationOnly,
 		"excludeOpenEscalation":  filter.ExcludeOpenEscalation,
-		"escalationLeadEmail":    filter.EscalationLeadEmail,
+		"escalationLeadUuid":     filter.EscalationLeadUUID,
 		"actionOwnerId":          filter.ActionOwnerID,
 		"scopeSourceRegisterIds": filter.ScopeSourceRegisterIDs,
 		"scopeAssignmentTeamIds": filter.ScopeAssignmentTeamIDs,

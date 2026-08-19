@@ -25,6 +25,8 @@ import (
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
+	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
 
 // notifyTimeout caps the whole background notification: the Compliance Entity
@@ -123,12 +125,23 @@ func (d *Deps) sendRiskEvent(ctx context.Context, ev emailer.RiskEvent, riskID i
 				"event", ev, "riskId", riskID, "userId", id, "err", err)
 			continue
 		}
-		if u == nil || u.Email == "" {
+		if u == nil {
+			slog.Warn("risk notification: recipient has no user row",
+				"event", ev, "riskId", riskID, "userId", id)
+			continue
+		}
+		// A deliverable address, from the directory where possible. This is the
+		// reason the directory cache serves stale values on failure: a
+		// recipient with no address is dropped here, and a send with none left
+		// does not happen at all — so a directory blip would otherwise turn
+		// into silently unsent notifications.
+		_, email := d.nameAndEmail(ctx, u)
+		if email == "" {
 			slog.Warn("risk notification: recipient has no email on file",
 				"event", ev, "riskId", riskID, "userId", id)
 			continue
 		}
-		emails = append(emails, u.Email)
+		emails = append(emails, email)
 	}
 	if len(emails) == 0 {
 		slog.Warn("risk notification: no deliverable recipients", "event", ev, "riskId", riskID)
@@ -224,14 +237,41 @@ func (d *Deps) personLabel(ctx context.Context, userID int) string {
 	if err != nil || u == nil {
 		return ""
 	}
-	name := strings.TrimSpace(u.DisplayName)
+	name, email := d.nameAndEmail(ctx, u)
 	if name == "" {
-		return u.Email
+		return email
 	}
-	if u.Email == "" {
+	if email == "" {
 		return name
 	}
-	return fmt.Sprintf("%s (%s)", name, u.Email)
+	return fmt.Sprintf("%s (%s)", name, email)
+}
+
+// nameAndEmail resolves who a user row actually is.
+//
+// The identity directory is asked first and the stored columns are the
+// fallback, which is the ordering the migration needs in both directions: today
+// the columns are still populated, so a directory that is unreachable — or
+// whose users-read scope has not been granted yet — changes nothing anyone
+// sees; once the columns are dropped, the directory is simply the only answer
+// left and this code does not change again.
+//
+// A row with no uuid skips the lookup entirely rather than asking about "",
+// which the directory would refuse anyway.
+func (d *Deps) nameAndEmail(ctx context.Context, u *userentity.User) (name, email string) {
+	name, email = strings.TrimSpace(u.DisplayName), strings.TrimSpace(u.Email)
+	if d.Directory == nil || u.UUID == "" {
+		return name, email
+	}
+	if p, ok := d.Directory.Lookup(ctx, u.UUID); ok {
+		if p.DisplayName != "" {
+			name = p.DisplayName
+		}
+		if p.Email != "" {
+			email = p.Email
+		}
+	}
+	return name, email
 }
 
 // describeActor renders the person who triggered a notification as
@@ -244,46 +284,86 @@ func (d *Deps) personLabel(ctx context.Context, userID int) string {
 // may have no platform user row yet, the lookup may fail, or the row may have
 // no display name. A notification is never worth failing over a cosmetic
 // lookup, so every one of those paths returns something sendable.
-func (d *Deps) describeActor(ctx context.Context, email string) string {
-	email = strings.TrimSpace(email)
-	if email == "" {
+func (d *Deps) describeActor(ctx context.Context, actorUUID string) string {
+	actorUUID = strings.TrimSpace(actorUUID)
+	if actorUUID == "" {
 		return ""
 	}
-	u, err := d.Users.GetByEmail(ctx, email)
+	u, err := d.Users.GetByUUID(ctx, actorUUID)
 	if err != nil {
-		slog.Warn("risk notification: failed to resolve actor name", "actor", email, "err", err)
-		return email
+		slog.Warn("risk notification: failed to resolve actor", "err", err)
+		return actorUUID
 	}
-	if u == nil || strings.TrimSpace(u.DisplayName) == "" {
-		return email
+	if u == nil {
+		// Includes the daily escalation job's "system" sentinel (see
+		// escalation_job.go's escalatedBy) — no `user` row will ever exist for
+		// it, and falling back to the raw identifier renders it exactly as
+		// intended rather than as an empty field.
+		return actorUUID
 	}
-	return fmt.Sprintf("%s (%s)", strings.TrimSpace(u.DisplayName), email)
+	name, email := d.nameAndEmail(ctx, u)
+	switch {
+	case name != "" && email != "":
+		return fmt.Sprintf("%s (%s)", name, email)
+	case name != "":
+		return name
+	case email != "":
+		return email
+	default:
+		return actorUUID
+	}
 }
 
-// notifyComplianceAdmins is a deliberate no-op.
+// notifyComplianceAdmins emails everyone who holds RISK_COMPLIANCE_APPROVE in
+// registerID — GLOBAL, or scoped to that specific register — at one of three
+// lifecycle points: risk created, risk reaching PENDING_COMPLIANCE_REVIEW, and
+// risk reaching PENDING_COMPLIANCE_CLOSURE.
 //
-// Three lifecycle points should notify the Compliance Admin role — risk
-// created, risk reaching PENDING_COMPLIANCE_REVIEW, and risk reaching
-// PENDING_COMPLIANCE_CLOSURE. Unlike every other notification, the recipient is
-// a *role* rather than a named individual, so it would fan out to everyone
-// holding it. Who should actually receive these has not been decided, and
-// sending to the whole role in the meantime would be worse than sending
-// nothing.
+// Resolved the same way candidates.go populates the Risk Owner/Management
+// Approver pickers — one query against user_role_grant — rather than the
+// retired RISK_COMPLIANCE_ADMIN_GROUP Asgardeo group, so "who gets notified"
+// and "who could actually approve this" can never drift apart.
 //
-// It is wired into all three call sites and logs, so the trigger points are
-// exercised and observable while testing. Turning it on later means resolving
-// the role to a recipient list here — no call-site changes.
-//
-// TODO: resolve the Compliance Admin role to recipients and send, once it is
-// decided who should be on that list. RISK_COMPLIANCE_ADMIN_GROUP
-// (config.RiskGroupsConfig) is provisioned for an Asgardeo-group-based
-// resolution, but /management-approvers and /risk-owner-candidates no longer
-// work that way — they now read user_role_grant (see candidates.go) — so
-// whichever mechanism is picked here should be decided fresh, not assumed to
-// match those.
-func notifyComplianceAdmins(ev emailer.RiskEvent, riskID int) {
-	slog.Info("compliance-admin notification suppressed (not yet wired)",
-		"event", ev, "riskId", riskID)
+// Detached and best-effort, mirroring notifyRiskEvent: the candidate lookup is
+// itself a Compliance Entity round trip, so it runs inside the same
+// goroutine/semaphore/timeout envelope rather than blocking the caller, whose
+// transition is already committed by the time this runs. A register nobody
+// currently holds the privilege in logs a warning rather than failing that
+// already-committed transition.
+func (d *Deps) notifyComplianceAdmins(ev emailer.RiskEvent, riskID, registerID int, actor, comment string) {
+	if d.Grants == nil {
+		// Local dev: no privilege store configured, so no grants exist to
+		// resolve a recipient list from.
+		return
+	}
+	go func() {
+		defer func() {
+			if p := recover(); p != nil {
+				slog.Error("compliance-admin notification: panic", "event", ev, "riskId", riskID, "panic", p)
+			}
+		}()
+		notifySem <- struct{}{}
+		defer func() { <-notifySem }()
+		ctx, cancel := context.WithTimeout(context.Background(), notifyTimeout)
+		defer cancel()
+
+		candidates, err := d.Grants.Candidates(ctx, privilege.ComplianceApproveRisk, []int{registerID})
+		if err != nil {
+			slog.Warn("compliance-admin notification: failed to resolve recipients",
+				"event", ev, "riskId", riskID, "err", err)
+			return
+		}
+		if len(candidates) == 0 {
+			slog.Warn("compliance-admin notification: nobody holds RISK_COMPLIANCE_APPROVE in this register",
+				"event", ev, "riskId", riskID, "registerId", registerID)
+			return
+		}
+		ids := make([]int, len(candidates))
+		for i, c := range candidates {
+			ids[i] = c.ID
+		}
+		_ = d.sendRiskEvent(ctx, ev, riskID, ids, actor, comment)
+	}()
 }
 
 // notifyEscalationLeads is a deliberate no-op, for the same reason as

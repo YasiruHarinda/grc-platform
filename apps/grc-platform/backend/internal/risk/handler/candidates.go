@@ -44,6 +44,17 @@ func (d *Deps) handleListRiskOwnerCandidates(w http.ResponseWriter, r *http.Requ
 	d.handleListCandidates(w, r, privilege.OwnerApproveRisk)
 }
 
+// handleListRiskAssignerCandidates serves GET /api/v1/risk-assigner-candidates:
+// every user who holds RISK_CREATE, GLOBAL or scoped to one of the given
+// teamId query params (Add Risk passes the chosen source register). Assigning
+// a risk to someone who holds no CreateRisk grant in that register is
+// meaningless — they could never have raised it there themselves — so this is
+// the same "offer exactly who the server would accept" guarantee
+// handleListManagementApprovers documents, applied to the assigner field.
+func (d *Deps) handleListRiskAssignerCandidates(w http.ResponseWriter, r *http.Request) {
+	d.handleListCandidates(w, r, privilege.CreateRisk)
+}
+
 // handleListCandidates returns everyone eligible for a role-gated picker
 // field. This replaced a live SCIM lookup against an Asgardeo group,
 // intersected client-side against the (now deprecated) user_risk_team table —

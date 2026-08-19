@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Controller, useFormContext, useWatch } from "react-hook-form";
 import {
   AdapterDateFns,
@@ -38,9 +38,10 @@ import {
 import type { JSX, ReactNode } from "react";
 import type { AddRiskFormValues } from "./types";
 import { QUARTERS, YEAR_OPTIONS } from "./constants";
-import { searchEmployees } from "../../api/riskApi";
+import { fetchRiskAssignerCandidates, searchEmployees } from "../../api/riskApi";
 import type { ComplianceReference, EmployeeOption, RiskCategory, RiskTeam, UserOption } from "../../api/riskApi";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
+import { BACKEND_BASE_URL } from "@config/apiConfig";
 
 // Minimum characters before searching — matches the backend's own floor
 // (GET /api/v1/employees/search ignores shorter queries) so we don't fire
@@ -91,7 +92,6 @@ interface BasicInformationStepProps {
   sourceRegisterTeams: RiskTeam[];
   complianceRefs: ComplianceReference[];
   riskCategories: RiskCategory[];
-  users: UserOption[];
 }
 
 export default function BasicInformationStep({
@@ -99,7 +99,6 @@ export default function BasicInformationStep({
   sourceRegisterTeams,
   complianceRefs,
   riskCategories,
-  users,
 }: BasicInformationStepProps): JSX.Element {
   const { control, clearErrors, setValue } = useFormContext<AddRiskFormValues>();
   const authFetch = useAuthApiClient();
@@ -108,6 +107,79 @@ export default function BasicInformationStep({
   const quarter          = useWatch({ control, name: "quarter" });
   const sourceRegister   = useWatch({ control, name: "sourceRegister" });
   const identifiedByType = useWatch({ control, name: "identifiedByType" });
+
+  // Risk Assigned To is restricted to users who already hold RISK_CREATE in
+  // the chosen source register — the same grant handleCreateRisk itself
+  // checks, so a candidate offered here can never 403 on submit. Was
+  // previously every platform user, unfiltered by role or register — see
+  // ActionPlanStep's identical pattern for Risk Owner / Management Approver,
+  // which this mirrors. Fetched fresh whenever the source register changes,
+  // rather than filtered from a static list, since eligibility is
+  // scope-dependent.
+  const assignerTeamIds = typeof sourceRegister === "number" ? [sourceRegister] : [];
+  const [riskAssignerCandidates, setRiskAssignerCandidates] = useState<UserOption[]>([]);
+
+  // The signed-in caller's own identity, from GET /me/profile — not decoded
+  // from an ID token client-side, since mock-auth mode has no real Asgardeo
+  // session to decode one from. Fetched once, independent of source register:
+  // the register dropdown itself already only offers registers the caller
+  // holds RISK_CREATE in (see AddRisk.tsx's fetchSourceRegisterTeams call), so
+  // whichever one they pick, they are necessarily an eligible assigner there —
+  // there is nothing to wait for.
+  const [me, setMe] = useState<{ id: number; name: string } | null>(null);
+  useEffect(() => {
+    authFetch(`${BACKEND_BASE_URL}/api/v1/me/profile`)
+      .then((res) =>
+        res.ok
+          ? (res.json() as Promise<{ user_id?: number; first_name?: string; last_name?: string }>)
+          : null,
+      )
+      .then((profile) => {
+        if (profile?.user_id == null) return setMe(null);
+        const name = `${profile.first_name ?? ""} ${profile.last_name ?? ""}`.trim();
+        setMe({ id: profile.user_id, name: name || "Me" });
+      })
+      .catch(() => setMe(null));
+  }, [authFetch]);
+
+  // Seeds the picker with just the caller, so it has a name to show and a
+  // valid default the instant the page loads — before any register is picked
+  // and before the real, possibly-larger candidate list has loaded. Once a
+  // register is chosen, the fetch below replaces this with the full eligible
+  // list (which always still includes the caller, per the guarantee above);
+  // this only ever runs again if `me` itself changes, which it won't within a
+  // single session.
+  useEffect(() => {
+    // email/risk_team_ids are unused by this picker (only display_name
+    // renders) — empty placeholders, since this entry is only ever transient,
+    // replaced the moment the real, register-scoped fetch below resolves.
+    if (me) setRiskAssignerCandidates([{ id: me.id, display_name: me.name, email: "", risk_team_ids: [] }]);
+  }, [me]);
+
+  useEffect(() => {
+    if (assignerTeamIds.length === 0) return; // nothing chosen yet — keep the seeded self-entry
+    fetchRiskAssignerCandidates(authFetch, assignerTeamIds)
+      .then(setRiskAssignerCandidates)
+      .catch(() => setRiskAssignerCandidates([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-fetch when the source register changes
+  }, [assignerTeamIds.join(","), authFetch]);
+
+  // Clear a previously-selected assignee if changing the source register
+  // makes them no longer eligible — avoids submitting a value that's
+  // silently stale relative to the visible options. Defaults to the caller
+  // themselves as soon as their own id is known, independent of the
+  // candidate list — see the fetch above for why that's always safe here.
+  const assignedBy = useWatch({ control, name: "assignedBy" });
+  useEffect(() => {
+    if (assignedBy !== "" && !riskAssignerCandidates.some((u) => u.id === assignedBy)) {
+      setValue("assignedBy", "", { shouldDirty: false });
+      return;
+    }
+    if (assignedBy === "" && me !== null) {
+      setValue("assignedBy", me.id, { shouldDirty: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-check when the candidate list or "me" changes
+  }, [riskAssignerCandidates, me]);
 
   // Employee search is live against the HR entity (never our own database),
   // so — unlike the other dropdowns — options aren't fetched once up front.
@@ -625,7 +697,7 @@ export default function BasicInformationStep({
                     if (e.target.value) clearErrors("assignedBy");
                   }}
                 >
-                  {users.map((u) => (
+                  {riskAssignerCandidates.map((u) => (
                     <ComplexSelect.MenuItem key={u.id} value={u.id}>
                       {u.display_name}
                     </ComplexSelect.MenuItem>

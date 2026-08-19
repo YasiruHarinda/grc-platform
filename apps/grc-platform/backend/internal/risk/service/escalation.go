@@ -26,6 +26,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/repository"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
 
@@ -51,20 +52,27 @@ type escalationService struct {
 	planRepo repository.ActionPlanRepository
 	users    userentity.Repository
 	hr       *hrentity.Client
+	// scim resolves a lead's email to their Asgardeo id, so authorizeComment
+	// can compare a caller by uuid instead of email. May be nil (unconfigured
+	// local dev, matching hr's own nil-tolerant pattern) — managerOf then
+	// records the email only, same as before this uuid resolution existed.
+	scim *scim.Client
 }
 
 // NewEscalationService wires the escalation service. hr may be nil in tests and
 // in any deployment without HR credentials — lead resolution then yields no
 // leads, which degrades the medium/low comment gate to compliance-admin only
-// rather than failing escalation outright.
+// rather than failing escalation outright. scim may independently be nil —
+// see the struct field comment.
 func NewEscalationService(
 	repo repository.EscalationRepository,
 	riskRepo repository.RiskRepository,
 	planRepo repository.ActionPlanRepository,
 	users userentity.Repository,
 	hr *hrentity.Client,
+	scimClient *scim.Client,
 ) EscalationService {
-	return &escalationService{repo: repo, riskRepo: riskRepo, planRepo: planRepo, users: users, hr: hr}
+	return &escalationService{repo: repo, riskRepo: riskRepo, planRepo: planRepo, users: users, hr: hr, scim: scimClient}
 }
 
 func (s *escalationService) List(ctx context.Context, riskID int) ([]*model.Escalation, error) {
@@ -82,24 +90,32 @@ func (s *escalationService) Escalate(ctx context.Context, riskID int, createdBy 
 		return nil, badRequest("createdBy is required")
 	}
 	assignerLead, actionOwnerLead := s.resolveLeads(ctx, riskID)
-	return s.repo.Escalate(ctx, riskID, createdBy, assignerLead, actionOwnerLead)
+	return s.repo.Escalate(ctx, riskID, createdBy,
+		assignerLead.email, actionOwnerLead.email, assignerLead.uuid, actionOwnerLead.uuid)
 }
+
+// escalationLead is one person resolved by resolveLeads/managerOf: their email
+// (from HR entity) and, where resolvable, their Asgardeo id (from the identity
+// directory). Both are frozen onto the escalation row — see
+// domain.RiskEscalation's field comment on the entity side for why holding
+// onto both, and why neither is ever re-resolved later.
+type escalationLead struct{ email, uuid *string }
 
 // resolveLeads looks up the line managers of the risk's assigner and of its
 // action plan owner(s), once, so they can be frozen on the escalation row.
 //
 // Every failure is soft: a missing lead is ordinary (the org chart has roots,
 // and joiners are sometimes unassigned), and an HR outage must not block an
-// escalation that is already overdue. Both return nil in that case, which
-// simply means nobody is granted the lead's comment rights or visibility.
-func (s *escalationService) resolveLeads(ctx context.Context, riskID int) (assignerLead, actionOwnerLead *string) {
+// escalation that is already overdue. A fully-unresolved lead simply means
+// nobody is granted that lead's comment rights or visibility.
+func (s *escalationService) resolveLeads(ctx context.Context, riskID int) (assignerLead, actionOwnerLead escalationLead) {
 	if s.hr == nil {
-		return nil, nil
+		return escalationLead{}, escalationLead{}
 	}
 	detail, err := s.riskRepo.GetByID(ctx, riskID)
 	if err != nil {
 		slog.Warn("escalation: failed to load risk for lead resolution", "riskId", riskID, "err", err)
-		return nil, nil
+		return escalationLead{}, escalationLead{}
 	}
 	assignerLead = s.managerOf(ctx, detail.AssignerID)
 
@@ -108,7 +124,7 @@ func (s *escalationService) resolveLeads(ctx context.Context, riskID int) (assig
 	plans, err := s.planRepo.List(ctx, riskID)
 	if err != nil {
 		slog.Warn("escalation: failed to list plans for lead resolution", "riskId", riskID, "err", err)
-		return assignerLead, nil
+		return assignerLead, escalationLead{}
 	}
 	for _, p := range plans {
 		if p.ActionOwnerID != nil {
@@ -119,26 +135,43 @@ func (s *escalationService) resolveLeads(ctx context.Context, riskID int) (assig
 	return assignerLead, actionOwnerLead
 }
 
-// managerOf returns a user's line-manager email, or nil when it can't be
-// determined for any reason.
-func (s *escalationService) managerOf(ctx context.Context, userID int) *string {
+// managerOf resolves a user's line manager: their email from HR entity, then
+// (best-effort, independently) that email's Asgardeo id from the identity
+// directory. A manager who has left WSO2's directory but is still on file in
+// HR entity resolves email-only — email is recorded regardless of whether the
+// uuid lookup succeeds, since it costs nothing and is a human-readable trace
+// of who was resolved even when the uuid comparison can't use them.
+func (s *escalationService) managerOf(ctx context.Context, userID int) escalationLead {
 	if userID <= 0 {
-		return nil
+		return escalationLead{}
 	}
 	u, err := s.users.GetByID(ctx, userID)
 	if err != nil || u == nil || u.Email == "" {
-		return nil
+		return escalationLead{}
 	}
 	emp, err := s.hr.GetEmployeeByEmail(ctx, u.Email)
 	if err != nil {
-		slog.Warn("escalation: HR lookup failed", "email", u.Email, "err", err)
-		return nil
+		slog.Warn("escalation: HR lookup failed", "err", err)
+		return escalationLead{}
 	}
 	if emp == nil || strings.TrimSpace(emp.ManagerEmail) == "" {
-		return nil
+		return escalationLead{}
 	}
-	lead := strings.TrimSpace(emp.ManagerEmail)
-	return &lead
+	email := strings.TrimSpace(emp.ManagerEmail)
+	lead := escalationLead{email: &email}
+
+	if s.scim != nil {
+		dirUser, err := s.scim.LookupByEmail(ctx, email)
+		if err != nil {
+			slog.Warn("escalation: directory lookup for lead failed; comment/visibility rights via this lead are unavailable this time",
+				"err", err)
+		} else if dirUser != nil {
+			lead.uuid = &dirUser.UUID
+		}
+		// dirUser == nil (no error): the manager has no Asgardeo account. lead.uuid
+		// stays nil — same soft degradation as every other unresolvable case here.
+	}
+	return lead
 }
 
 func (s *escalationService) Comment(ctx context.Context, riskID, escalationID int, comment, callerEmail string, canOverride bool) (*model.Escalation, error) {
@@ -206,12 +239,12 @@ func (s *escalationService) Comment(ctx context.Context, riskID, escalationID in
 // A compliance admin bypasses both, mirroring the identity gates on the
 // approval transitions — otherwise an escalation whose named commenter has left
 // would strand the risk permanently.
-func (s *escalationService) authorizeComment(ctx context.Context, detail *model.RiskDetail, esc *model.Escalation, callerEmail string, canOverride bool) error {
+func (s *escalationService) authorizeComment(ctx context.Context, detail *model.RiskDetail, esc *model.Escalation, callerUUID string, canOverride bool) error {
 	if canOverride {
 		return nil
 	}
 	if isHighRisk(detail) {
-		caller, err := s.users.GetByEmail(ctx, callerEmail)
+		caller, err := s.users.GetByUUID(ctx, callerUUID)
 		if err != nil {
 			return err
 		}
@@ -224,9 +257,14 @@ func (s *escalationService) authorizeComment(ctx context.Context, detail *model.
 		return nil
 	}
 
-	// Matched on email, not user id: a line manager need not be a platform user.
-	for _, lead := range []*string{esc.AssignerLeadEmail, esc.ActionOwnerLeadEmail} {
-		if lead != nil && strings.EqualFold(strings.TrimSpace(*lead), strings.TrimSpace(callerEmail)) {
+	// Matched on uuid, not user id: a line manager need not be a platform user
+	// — resolveLeads records their Asgardeo id directly from the identity
+	// directory, not from any row in `user`. A nil lead (SCIM couldn't resolve
+	// the manager, or none is recorded) grants nobody the right via that arm —
+	// same soft-degradation resolveLeads already applies when HR entity itself
+	// has nothing to offer.
+	for _, lead := range []*string{esc.AssignerLeadUUID, esc.ActionOwnerLeadUUID} {
+		if lead != nil && *lead == callerUUID {
 			return nil
 		}
 	}

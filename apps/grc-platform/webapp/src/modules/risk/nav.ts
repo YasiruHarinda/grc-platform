@@ -16,10 +16,16 @@
 
 import { BarChart2, ClipboardList, LayoutDashboard, PlusCircle, ShieldAlert } from "@wso2/oxygen-ui-icons-react";
 import type { NavSection } from "@components/side-nav-bar/types";
-import { RiskPrivilege } from "./privileges";
 
 // Risk Hub sidebar section. Owned by the Risk module — add Risk nav items
 // here without touching the shared SideBar component.
+//
+// Deliberately no requiredPrivilege on any item: every Risk Hub tab is always
+// visible, regardless of what the caller holds. Each route is still fully
+// gated on its own — see routes.tsx's PrivilegeGuard on every one of these
+// paths — so someone lacking the privilege gets a clear 403 page on click,
+// rather than the tab silently vanishing with no explanation of why a
+// section isn't available to them.
 export const riskNav: NavSection = {
   id: "risk",
   label: "Risk Hub",
@@ -30,28 +36,24 @@ export const riskNav: NavSection = {
       label: "Dashboard",
       path: "/risk/dashboard",
       icon: LayoutDashboard,
-      requiredPrivilege: RiskPrivilege.ViewRiskDashboard,
     },
     {
       id: "risk-registers",
       label: "Risk Registers",
       path: "/risk/registers",
       icon: ClipboardList,
-      requiredPrivilege: RiskPrivilege.ViewRisks,
     },
     {
       id: "risk-add",
       label: "Add Risk",
       path: "/risk/add",
       icon: PlusCircle,
-      requiredPrivilege: RiskPrivilege.CreateRisk,
     },
     {
       id: "risk-analytics",
       label: "Analytics",
       path: "/risk/analytics",
       icon: BarChart2,
-      requiredPrivilege: RiskPrivilege.ViewAnalytics,
     },
   ],
 };

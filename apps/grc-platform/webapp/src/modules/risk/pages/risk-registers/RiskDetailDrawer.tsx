@@ -331,7 +331,7 @@ function EvidenceList({
               {f.file_name}
             </Typography>
             <Typography variant="caption" color="text.secondary" noWrap>
-              Submitted {formatDate(f.created_at)}{f.created_by ? ` · ${f.created_by}` : ""}
+              Submitted {formatDate(f.created_at)}{f.created_by ? ` · ${f.created_by_email || f.created_by}` : ""}
             </Typography>
           </Stack>
           <IconButton

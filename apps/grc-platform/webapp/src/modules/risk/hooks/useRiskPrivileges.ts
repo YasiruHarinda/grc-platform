@@ -18,8 +18,6 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
 
-const isMockAuth = window.config?.GRC_PLATFORM_MOCK_AUTH === true;
-
 // Shared across all hook instances so only one fetch ever fires per session.
 let _promise: Promise<Set<string> | null> | null = null;
 
@@ -31,28 +29,24 @@ export interface RiskPrivilegeState {
 // Fetches the current user's resolved privilege list from GET /api/v1/me/privileges
 // once per session. All hook instances (SideBar, PrivilegeGuard, page components)
 // share the same promise — no duplicate requests.
-// In mock-auth mode all privileges are granted immediately without an API call.
 //
-// ⚠ THIS IS THE UNION ACROSS EVERY REGISTER THE CALLER HAS A GRANT IN.
-//
-// Use it for NAV AND ROUTE GATING ONLY — "should this tab exist at all". It is
-// the wrong answer for any decision about a specific risk: a user who is Risk
-// Owner in one register and read-only in another holds RISK_OWNER_APPROVE here,
-// so gating an Approve button on it would show that button on risks the server
-// then refuses with a 403.
-//
-// For per-risk decisions use the risk's own `effective_privileges`, which the
-// server resolves in that risk's source register — see RiskDetailDrawer.
-//
-// Roles now live in this platform's database (user_role_grant), not in
-// Asgardeo; this endpoint's response shape is unchanged by that move.
+// Always calls the real endpoint, mock-auth mode included. This used to
+// short-circuit to "every privilege granted" whenever GRC_PLATFORM_MOCK_AUTH
+// was true — correct back when mock auth meant no backend identity existed to
+// check at all, wrong now that mock auth carries a forged token whose sub the
+// backend resolves real grants for (see the GRC_PLATFORM_MOCK_AUTH_TOKEN
+// wiring in useAuthApiClient). With the old shortcut, revoking every grant
+// locally still left every nav tab and route visible — nothing to test
+// against, since the frontend never even asked. The endpoint itself still
+// reports `allowAll: true` in true local-dev (no privilege store configured
+// on the backend), so this stays correct in that mode too — nothing here
+// assumes the backend is in any particular mode.
 export function useRiskPrivileges(): RiskPrivilegeState {
   const authFetch = useAuthApiClient();
   const [privileges, setPrivileges] = useState<Set<string> | null>(new Set());
-  const [loading, setLoading] = useState(!isMockAuth);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (isMockAuth) return;
     if (!_promise) {
       _promise = authFetch(`${BACKEND_BASE_URL}/api/v1/me/privileges`)
         .then((res) => res.json() as Promise<{ privileges?: string[]; allowAll?: boolean }>)
@@ -73,7 +67,7 @@ export function useRiskPrivileges(): RiskPrivilegeState {
   }, []); // intentionally empty — _promise deduplicates across instances and renders
 
   const can = useCallback(
-    (priv: string) => isMockAuth || privileges === null || privileges.has(priv),
+    (priv: string) => privileges === null || privileges.has(priv),
     [privileges],
   );
 

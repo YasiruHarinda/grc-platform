@@ -39,7 +39,7 @@ import (
 // risk that's already moved on (e.g. someone just closed it, or the job beat
 // this click to it) returns a clear 4xx rather than being escalated wrongly.
 func (d *Deps) handleEscalateRisk(w http.ResponseWriter, r *http.Request) {
-	by, ok := requireUserEmail(w, r)
+	by, ok := requireCallerUUID(w, r)
 	if !ok {
 		return
 	}
@@ -107,7 +107,7 @@ func (d *Deps) handleListEscalations(w http.ResponseWriter, r *http.Request) {
 // answered: a comment alone returns the risk to its assigner. The assigner may
 // then add further action plans, but nothing forces them to.
 //
-// Deliberately not gated on any privilege — requireUserEmail below still
+// Deliberately not gated on any privilege — requireCallerUUID below still
 // requires a valid authenticated session, but nothing more. For a medium/low
 // risk the entitled commenter is a line manager, who holds no risk role by
 // virtue of managing someone, and per authorizeComment's own comment need not
@@ -117,7 +117,7 @@ func (d *Deps) handleListEscalations(w http.ResponseWriter, r *http.Request) {
 // risk's Management Approver (HIGH) or the leads frozen on the escalation row
 // (MEDIUM/LOW), by email.
 func (d *Deps) handleEscalationComment(w http.ResponseWriter, r *http.Request) {
-	by, ok := requireUserEmail(w, r)
+	by, ok := requireCallerUUID(w, r)
 	if !ok {
 		return
 	}
@@ -167,16 +167,15 @@ func (d *Deps) handleEscalationComment(w http.ResponseWriter, r *http.Request) {
 //   - MEDIUM / LOW:  the assigner, action owner(s) and risk owner. Management
 //     is not troubled by a lower-level slip.
 //
-// Three intended recipients are deliberately NOT mailed yet — the compliance
-// admin role, and the assigner's and action owner's line managers. The role
-// would fan out to everyone holding it, and the leads were explicitly deferred;
-// both are logged so the trigger point stays observable. The lead emails are
-// already frozen on the escalation row, so enabling them later is a recipient
-// list change here, not a data change.
+// One intended recipient is deliberately NOT mailed yet — the assigner's and
+// action owner's line managers. The leads were explicitly deferred, and it is
+// logged so the trigger point stays observable. Their emails are already
+// frozen on the escalation row, so enabling them later is a recipient list
+// change here, not a data change.
 //
-// TODO: notify the compliance admin role, and the two leads recorded on the
-// escalation row (assigner_lead_email / action_owner_lead_email), once it is
-// decided who should be on those lists.
+// TODO: notify the two leads recorded on the escalation row
+// (assigner_lead_email / action_owner_lead_email), once it is decided that
+// leads should be emailed.
 //
 // Exported because the daily escalation job calls it too (via
 // NotifyEscalationSync below) — automatic and manual escalations must notify
@@ -188,13 +187,13 @@ func (d *Deps) handleEscalationComment(w http.ResponseWriter, r *http.Request) {
 // can see it worked. The daily job cannot make that assumption; see
 // NotifyEscalationSync.
 func (d *Deps) NotifyEscalation(ctx context.Context, riskID int, by string) {
-	recipients, err := d.escalationRecipients(ctx, riskID)
+	recipients, registerID, err := d.escalationRecipients(ctx, riskID)
 	if err != nil {
 		slog.Warn("escalation notification: failed to load risk", "riskId", riskID, "err", err)
 		return
 	}
 	d.notifyRiskEvent(emailer.EventEscalated, riskID, recipients, by, "")
-	notifyComplianceAdmins(emailer.EventEscalated, riskID)
+	d.notifyComplianceAdmins(emailer.EventEscalated, riskID, registerID, by, "")
 	notifyEscalationLeads(riskID)
 }
 
@@ -207,12 +206,12 @@ func (d *Deps) NotifyEscalation(ctx context.Context, riskID int, by string) {
 // since Escalate's status flip already made every one of those risks
 // ineligible for the job's query on the next run.
 func (d *Deps) NotifyEscalationSync(ctx context.Context, riskID int, by string) error {
-	recipients, err := d.escalationRecipients(ctx, riskID)
+	recipients, registerID, err := d.escalationRecipients(ctx, riskID)
 	if err != nil {
 		return fmt.Errorf("load risk for notification: %w", err)
 	}
 	sendErr := d.sendRiskEventSync(ctx, emailer.EventEscalated, riskID, recipients, by, "")
-	notifyComplianceAdmins(emailer.EventEscalated, riskID)
+	d.notifyComplianceAdmins(emailer.EventEscalated, riskID, registerID, by, "")
 	notifyEscalationLeads(riskID)
 	return sendErr
 }
@@ -221,13 +220,17 @@ func (d *Deps) NotifyEscalationSync(ctx context.Context, riskID int, by string) 
 // assigner, owner, and action owner(s) always, plus the Management Approver
 // when the risk is HIGH. Shared by NotifyEscalation and NotifyEscalationSync
 // so the two can never resolve a different recipient list for the same risk.
-func (d *Deps) escalationRecipients(ctx context.Context, riskID int) ([]int, error) {
+//
+// Also returns the risk's source register, which the caller needs to notify
+// compliance admins for the same risk — loading detail twice for one
+// notification would be wasted work.
+func (d *Deps) escalationRecipients(ctx context.Context, riskID int) (recipients []int, registerID int, err error) {
 	detail, err := d.Risk.GetByID(ctx, riskID)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	recipients := []int{detail.AssignerID, detail.OwnerID}
+	recipients = []int{detail.AssignerID, detail.OwnerID}
 	if plans, err := d.ActionPlan.List(ctx, riskID); err == nil {
 		for _, p := range plans {
 			if p.ActionOwnerID != nil {
@@ -250,5 +253,5 @@ func (d *Deps) escalationRecipients(ctx context.Context, riskID int) ([]int, err
 		recipients = append(recipients, detail.ManagementApproverID)
 	}
 
-	return recipients, nil
+	return recipients, detail.SourceRegisterID, nil
 }

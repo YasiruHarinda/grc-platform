@@ -52,7 +52,7 @@ const maxRiskEvidenceUploadBytes = 25 << 20 // 25 MiB
 //     the action owner, before "Complete Action Plan" — identity-only, no
 //     privilege check, the same gate handleCompleteActionPlan uses.
 func (d *Deps) handleUploadRiskEvidence(w http.ResponseWriter, r *http.Request) {
-	by, ok := requireUserEmail(w, r)
+	by, ok := requireCallerUUID(w, r)
 	if !ok {
 		return
 	}
@@ -140,6 +140,7 @@ func (d *Deps) handleUploadRiskEvidence(w http.ResponseWriter, r *http.Request) 
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.enrichEvidence(r.Context(), []*model.RiskEvidence{ev})
 	response.WriteJSONValue(w, http.StatusCreated, ev)
 }
 
@@ -169,6 +170,7 @@ func (d *Deps) handleListRiskEvidence(w http.ResponseWriter, r *http.Request) {
 	if evidence == nil {
 		evidence = []*model.RiskEvidence{}
 	}
+	d.enrichEvidence(r.Context(), evidence)
 	response.WriteJSONValue(w, http.StatusOK, evidence)
 }
 
@@ -176,7 +178,7 @@ func (d *Deps) handleListRiskEvidence(w http.ResponseWriter, r *http.Request) {
 // The caller must be the file's original uploader or hold the compliance-admin
 // override. The blob in Azure is not deleted — only the DB record is removed.
 func (d *Deps) handleDeleteRiskEvidence(w http.ResponseWriter, r *http.Request) {
-	actor, ok := requireUserEmail(w, r)
+	actor, ok := requireCallerUUID(w, r)
 	if !ok {
 		return
 	}

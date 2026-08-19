@@ -153,21 +153,28 @@ type ListRisksFilter struct {
 	// own, it would otherwise keep re-appearing on page one of every run
 	// forever — crowding out genuinely new overdue risks behind it.
 	ExcludeOpenEscalation bool
-	// EscalationLeadEmail widens rather than narrows: a risk whose open
-	// escalation names this email as a lead is included even when the scope lists
-	// would exclude it. Set automatically from the caller — never
+	// EscalationLeadUUID widens rather than narrows: a risk whose open
+	// escalation names this uuid as a lead is included even when the scope
+	// lists would exclude it. Set automatically from the caller — never
 	// client-supplied, or anyone could read any escalated risk.
-	EscalationLeadEmail string
+	EscalationLeadUUID string
 	// ActionOwnerID restricts to risks with an action plan owned by this user.
 	// Set automatically by the handler for callers who only hold
 	// COMPLETE_ACTION_STEPS_RISK (Action Owners) — never client-supplied.
 	ActionOwnerID *int
 	// ScopeSourceRegisterIDs and ScopeAssignmentTeamIDs scope the caller to the
-	// risks they may see. ORed together, but each matches a DIFFERENT column,
-	// because different roles are about different dimensions of a risk:
+	// risks they may see, ORed together against DIFFERENT columns:
 	//
 	//	ScopeSourceRegisterIDs → source_register_id (where it was raised)
 	//	ScopeAssignmentTeamIDs → assignment_team_id (where work was routed)
+	//
+	// Visibility is team-membership based: handleListRisks fills both from the
+	// SAME list — every team the caller holds any grant on — so belonging to a
+	// team is enough to see a risk raised there or routed there, regardless of
+	// which dimension the caller's own grant scopes by. The two fields stay
+	// distinct because a caller could in principle be scoped differently per
+	// dimension (a by-id visibility check or a future caller might); today's
+	// only caller does not exercise that.
 	//
 	// Both empty means unrestricted, so a caller who needs scoping must never
 	// end up with two empty lists — see handleListRisks, which returns an empty
@@ -197,6 +204,11 @@ type RiskListItem struct {
 	RiskLevelColor     string  `json:"risk_level_color"`
 	OwnerName          string  `json:"owner_name"`
 	AssignerName       string  `json:"assigner_name"`
+	// *UUID identify each person for name resolution against the identity
+	// directory. Not rendered by the client; they exist so the backend can
+	// enrich *Name after the data layer stops joining a display_name.
+	OwnerUUID          string  `json:"-"`
+	AssignerUUID       string  `json:"-"`
 	WorkflowStatus     string  `json:"workflow_status"`
 	RiskType           string  `json:"risk_type"`
 	ImplementationDate *string `json:"implementation_date"`
@@ -247,6 +259,10 @@ type RiskDetail struct {
 	AssignerName           string  `json:"assigner_name"`
 	ManagementApproverName string  `json:"management_approver_name"`
 	ComplianceApproverName *string `json:"compliance_approver_name"`
+	// See RiskListItem: identity for directory resolution, not for the client.
+	OwnerUUID              string `json:"-"`
+	AssignerUUID           string `json:"-"`
+	ManagementApproverUUID string `json:"-"`
 
 	// Gross score (from risk_score join) — the original rating assigned at
 	// creation, immutable once a risk owner has approved the risk. Used by

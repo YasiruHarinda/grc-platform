@@ -69,6 +69,17 @@ func (s *userService) GetUserByEmail(ctx context.Context, email string) (domain.
 	return *u, nil
 }
 
+func (s *userService) GetUserByUUID(ctx context.Context, uuid string) (domain.User, error) {
+	if strings.TrimSpace(uuid) == "" {
+		return domain.User{}, &apierror.ValidationError{Msg: "uuid is required"}
+	}
+	u, err := s.repo.GetUserByUUID(ctx, uuid)
+	if err != nil {
+		return domain.User{}, err
+	}
+	return *u, nil
+}
+
 func (s *userService) CreateUser(ctx context.Context, req domain.CreateUserRequest) (domain.User, error) {
 	if req.Email == "" {
 		return domain.User{}, &apierror.ValidationError{Msg: "email is required"}

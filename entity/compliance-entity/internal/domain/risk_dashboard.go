@@ -129,6 +129,7 @@ type HighRiskItem struct {
 	RiskTitle          string  `json:"riskTitle"`
 	RegisterName       string  `json:"registerName"`
 	OwnerName          string  `json:"ownerName"`
+	OwnerUUID          string  `json:"ownerUuid"`
 	IdentifiedDate     *string `json:"identifiedDate"`
 	TreatmentStrategy  *string `json:"treatmentStrategy"`
 	ImplementationDate *string `json:"implementationDate"`

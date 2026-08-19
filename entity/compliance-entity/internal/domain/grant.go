@@ -129,7 +129,14 @@ type ListRolesResponse struct {
 // context. Deliberately carries only what a picker needs to render an option:
 // no team memberships, no timestamps.
 type GrantCandidate struct {
-	ID          int    `json:"id"`
+	ID int `json:"id"`
+	// UUID is the candidate's Asgardeo id, for callers resolving their name from
+	// the identity directory rather than from this database. Empty when the row
+	// has not been backfilled yet.
+	UUID string `json:"uuid"`
+	// Email and DisplayName are on their way out — the platform is moving to
+	// storing neither. They remain for as long as the columns do, so a caller
+	// that cannot yet resolve names by uuid still has something to display.
 	Email       string `json:"email"`
 	DisplayName string `json:"displayName"`
 }

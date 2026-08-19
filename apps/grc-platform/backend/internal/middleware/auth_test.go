@@ -301,10 +301,15 @@ type stubGrants struct {
 	grants []grant.Grant
 	err    error
 	calls  int
+	// gotKey records the value the lookup was keyed on, so a test can assert
+	// WHICH identity the middleware authorised against — not merely that it
+	// authorised something.
+	gotKey string
 }
 
-func (s *stubGrants) ForEmail(_ context.Context, _ string) (int, []grant.Grant, error) {
+func (s *stubGrants) ForUUID(_ context.Context, uuid string) (int, []grant.Grant, error) {
 	s.calls++
+	s.gotKey = uuid
 	return s.userID, s.grants, s.err
 }
 
@@ -315,8 +320,8 @@ func (s *stubGrants) Candidates(_ context.Context, _ string, _ []int) ([]grant.C
 // failingGrants fails the test if it is ever consulted.
 type failingGrants struct{ t *testing.T }
 
-func (f *failingGrants) ForEmail(_ context.Context, email string) (int, []grant.Grant, error) {
-	f.t.Errorf("grants must not be loaded for this caller (email %q)", email)
+func (f *failingGrants) ForUUID(_ context.Context, uuid string) (int, []grant.Grant, error) {
+	f.t.Errorf("grants must not be loaded for this caller (uuid %q)", uuid)
 	return 0, nil, nil
 }
 
@@ -519,5 +524,63 @@ func TestAuth_GrantsLoadedEveryRequest(t *testing.T) {
 
 	if grants.calls != 3 {
 		t.Errorf("grants loaded %d times across 3 requests, want 3 — grants must never be cached", grants.calls)
+	}
+}
+
+// TestAuth_GrantsKeyedOnSubjectNotEmail pins WHICH claim authorisation is keyed
+// on.
+//
+// The platform is moving off storing user emails, so grants resolve by the
+// Asgardeo id in `sub`. The token still carries an email claim (other things
+// read it), which makes "keyed on sub" and "keyed on email" indistinguishable
+// in every other test here — both would pass. A token whose sub and email are
+// deliberately different is the only shape that tells them apart.
+//
+// This matters beyond tidiness: if the lookup silently fell back to email, the
+// migration would appear to work right up until the email column was dropped,
+// and then every caller would lose every privilege at once.
+func TestAuth_GrantsKeyedOnSubjectNotEmail(t *testing.T) {
+	const issuer = "https://idp.example.com"
+	const sub = "885aeeb0-2086-4ca4-83c9-b2a62b299967"
+	const email = "someone@example.com"
+
+	store := privilege.NewForTest(map[string]map[string]bool{})
+	grants := &stubGrants{userID: 5}
+
+	h := middleware.Auth(grantCfg(issuer, store, grants))(okHandler())
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/risks", nil)
+	req.Header.Set("Authorization", "Bearer "+signedToken(issuer, "api", sub, email, nil))
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if grants.gotKey != sub {
+		t.Errorf("grants keyed on %q, want the sub claim %q", grants.gotKey, sub)
+	}
+	if grants.gotKey == email {
+		t.Error("grants were keyed on the email claim — authorisation must use the Asgardeo id")
+	}
+}
+
+// TestAuth_NoSubjectClaimIsRejected verifies a token with no `sub` never
+// reaches grant resolution.
+//
+// Now that `sub` alone decides who the caller is, an empty one would ask the
+// entity for grants belonging to "" — so this has to fail during token
+// extraction, before any lookup happens.
+func TestAuth_NoSubjectClaimIsRejected(t *testing.T) {
+	const issuer = "https://idp.example.com"
+	store := privilege.NewForTest(map[string]map[string]bool{})
+	grants := &stubGrants{userID: 5}
+
+	h := middleware.Auth(grantCfg(issuer, store, grants))(okHandler())
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/risks", nil)
+	req.Header.Set("Authorization", "Bearer "+signedToken(issuer, "api", "", "e@example.com", nil))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusOK {
+		t.Error("a token with no sub claim must not be authorised")
+	}
+	if grants.calls != 0 {
+		t.Errorf("grants were loaded %d times for a subject-less token, want 0", grants.calls)
 	}
 }

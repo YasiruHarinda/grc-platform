@@ -169,6 +169,8 @@ func (s *riskEscalationService) EscalateRisk(ctx context.Context, riskID int, re
 		CreatedBy:            req.CreatedBy,
 		AssignerLeadEmail:    req.AssignerLeadEmail,
 		ActionOwnerLeadEmail: req.ActionOwnerLeadEmail,
+		AssignerLeadUUID:     req.AssignerLeadUUID,
+		ActionOwnerLeadUUID:  req.ActionOwnerLeadUUID,
 	})
 	if err != nil {
 		return domain.RiskEscalation{}, err

@@ -342,13 +342,22 @@ CREATE TABLE IF NOT EXISTS risk_escalation (
   action_plan_id         INT          NULL,
   decision               TEXT         NULL COMMENT 'Management/lead comment that returns the risk to the assigner',
   -- Line managers of the risk assigner and the action plan owner, resolved
-  -- from the HR entity once at escalation time and frozen here. Stored as
-  -- emails rather than user ids because a lead need not be a platform user:
-  -- they are matched against the caller's JWT email, so the comment gate and
-  -- the visibility carve-out both work without provisioning them first.
-  -- NULL when HR has no manager on file for that person.
+  -- from the HR entity once at escalation time and frozen here. A lead need
+  -- not be a platform user: they are matched against the caller's identity
+  -- directly, so the comment gate and the visibility carve-out both work
+  -- without provisioning them first. NULL when HR has no manager on file for
+  -- that person, or (uuid columns only) when the manager's email couldn't be
+  -- resolved to an Asgardeo account.
+  --
+  -- Email is being phased out — the *_uuid columns are the identity actually
+  -- compared against a caller now (see EscalationService.authorizeComment).
+  -- Email stays for as long as the column exists, since resolveLeads records
+  -- it regardless and it costs nothing to keep as a human-readable trace of
+  -- who was resolved.
   assigner_lead_email     VARCHAR(255) NULL,
   action_owner_lead_email VARCHAR(255) NULL,
+  assigner_lead_uuid      CHAR(36)     NULL,
+  action_owner_lead_uuid  CHAR(36)     NULL,
   status                 ENUM('OPEN','RESOLVED') NOT NULL DEFAULT 'OPEN',
   created_at             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by             VARCHAR(255) NULL,
@@ -359,6 +368,22 @@ CREATE TABLE IF NOT EXISTS risk_escalation (
   CONSTRAINT fk_escalation_risk         FOREIGN KEY (risk_id)        REFERENCES risk(id)             ON DELETE CASCADE,
   CONSTRAINT fk_escalation_action_plan  FOREIGN KEY (action_plan_id) REFERENCES risk_action_plan(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- assigner_lead_uuid / action_owner_lead_uuid: added by the identity
+-- migration. Guarded the same way shared.sql guards user.uuid, so re-running
+-- this file against an existing database is a no-op past the first run.
+SET @esc_has_lead_uuid = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'risk_escalation' AND COLUMN_NAME = 'assigner_lead_uuid'
+);
+SET @add_esc_lead_uuid_sql = IF(@esc_has_lead_uuid = 0,
+  'ALTER TABLE risk_escalation '
+  'ADD COLUMN assigner_lead_uuid CHAR(36) NULL AFTER action_owner_lead_email, '
+  'ADD COLUMN action_owner_lead_uuid CHAR(36) NULL AFTER assigner_lead_uuid',
+  'SELECT 1');
+PREPARE add_esc_lead_uuid_stmt FROM @add_esc_lead_uuid_sql;
+EXECUTE add_esc_lead_uuid_stmt;
+DEALLOCATE PREPARE add_esc_lead_uuid_stmt;
 
 
 -- -----------------------------------------------------------------------------

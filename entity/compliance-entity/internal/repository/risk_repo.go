@@ -46,9 +46,13 @@ const riskSelectCols = `
   r.id, r.risk_code, r.risk_year, r.risk_quarter, r.risk_title, r.risk_description,
   r.source_register_id,  src.name  AS source_register_name,
   r.assignment_team_id,  asgn.name AS assignment_team_name,
-  r.assigner_id,         u_asgn.display_name AS assigner_name,
-  r.owner_id,            u_own.display_name  AS owner_name,
-  r.management_approver_id, u_mgmt.display_name AS management_approver_name,
+  -- Each person is projected twice on purpose while the identity migration is
+  -- in progress: the stored display_name, which is going away, and the uuid the
+  -- caller will resolve a current name with instead. COALESCE because uuid is
+  -- nullable until every row is backfilled.
+  r.assigner_id,         u_asgn.display_name AS assigner_name, COALESCE(u_asgn.uuid,'') AS assigner_uuid,
+  r.owner_id,            u_own.display_name  AS owner_name,    COALESCE(u_own.uuid,'')  AS owner_uuid,
+  r.management_approver_id, u_mgmt.display_name AS management_approver_name, COALESCE(u_mgmt.uuid,'') AS management_approver_uuid,
   r.workflow_status, r.treatment_strategy,
   r.gross_score_id, rs.risk_level AS gross_risk_level,
   DATE_FORMAT(r.implementation_date, '%Y-%m-%d'),
@@ -170,13 +174,25 @@ func (r *riskRepo) SearchRisks(ctx context.Context, req domain.SearchRisksReques
 	if scopeClause, scopeArgs := scopeFilter("r", req.ScopeSourceRegisterIDs, req.ScopeAssignmentTeamIDs); scopeClause != "" {
 		// A lead named on an open escalation is granted access to that one risk
 		// regardless of team scoping, so the two are OR-ed rather than AND-ed.
-		// Matching is on email because a lead may have no platform user row.
-		if req.EscalationLeadEmail != "" {
+		// Matching is on identity, not user id, because a lead may have no
+		// platform user row — email and uuid are both accepted (see
+		// EscalationLeadEmail's field comment for why both still exist).
+		if req.EscalationLeadEmail != "" || req.EscalationLeadUUID != "" {
+			var conds []string
+			var leadArgs []any
+			if req.EscalationLeadEmail != "" {
+				conds = append(conds, "e.assigner_lead_email = ? OR e.action_owner_lead_email = ?")
+				leadArgs = append(leadArgs, req.EscalationLeadEmail, req.EscalationLeadEmail)
+			}
+			if req.EscalationLeadUUID != "" {
+				conds = append(conds, "e.assigner_lead_uuid = ? OR e.action_owner_lead_uuid = ?")
+				leadArgs = append(leadArgs, req.EscalationLeadUUID, req.EscalationLeadUUID)
+			}
 			where += " AND ((1=1" + scopeClause + ") OR EXISTS (SELECT 1 FROM risk_escalation e" +
 				" WHERE e.risk_id = r.id AND e.status = 'OPEN'" +
-				" AND (e.assigner_lead_email = ? OR e.action_owner_lead_email = ?)))"
+				" AND (" + strings.Join(conds, " OR ") + ")))"
 			args = append(args, scopeArgs...)
-			args = append(args, req.EscalationLeadEmail, req.EscalationLeadEmail)
+			args = append(args, leadArgs...)
 		} else {
 			where += scopeClause
 			args = append(args, scopeArgs...)
@@ -716,9 +732,9 @@ func scanRiskWithExtras(s scanner, extras ...any) (*domain.Risk, error) {
 		&r.ID, &r.RiskCode, &r.RiskYear, &r.RiskQuarter, &r.RiskTitle, &desc,
 		&r.SourceRegisterID, &r.SourceRegisterName,
 		&r.AssignmentTeamID, &r.AssignmentTeamName,
-		&r.AssignerID, &r.AssignerName,
-		&r.OwnerID, &r.OwnerName,
-		&r.ManagementApproverID, &r.ManagementApproverName,
+		&r.AssignerID, &r.AssignerName, &r.AssignerUUID,
+		&r.OwnerID, &r.OwnerName, &r.OwnerUUID,
+		&r.ManagementApproverID, &r.ManagementApproverName, &r.ManagementApproverUUID,
 		&r.WorkflowStatus, &treatment,
 		&grossScoreID, &grossLevel,
 		&implDate, &reassDate,

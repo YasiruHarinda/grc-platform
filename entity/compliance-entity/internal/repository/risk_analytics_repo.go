@@ -425,7 +425,11 @@ func (a *riskAnalyticsRepo) AgingRisks(ctx context.Context, registerID *int, reg
 
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT r.id, r.risk_code, r.risk_title, st.name,
-		       COALESCE(owner.display_name, ''), rs.risk_level, rs.color_code,
+		       -- Stored name plus uuid, same pairing as risk_repo.go: the caller
+		       -- prefers a directory-resolved name and falls back to this column
+		       -- while it still exists.
+		       COALESCE(owner.display_name, ''), COALESCE(owner.uuid, ''),
+		       rs.risk_level, rs.color_code,
 		       r.risk_identified_date, DATEDIFF(CURDATE(), r.risk_identified_date)
 		FROM risk r
 		JOIN risk_team st ON st.id = r.source_register_id`+dashboardScoreJoin+`
@@ -446,7 +450,7 @@ func (a *riskAnalyticsRepo) AgingRisks(ctx context.Context, registerID *int, reg
 		var it domain.AgingRiskItem
 		if err := rows.Scan(
 			&it.ID, &it.RiskCode, &it.RiskTitle, &it.RegisterName,
-			&it.OwnerName, &it.RiskLevel, &it.ColorCode,
+			&it.OwnerName, &it.OwnerUUID, &it.RiskLevel, &it.ColorCode,
 			&it.IdentifiedDate, &it.AgeDays,
 		); err != nil {
 			return nil, fmt.Errorf("scan aging risk row: %w", err)

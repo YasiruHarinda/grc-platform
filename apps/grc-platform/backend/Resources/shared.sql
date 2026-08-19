@@ -76,6 +76,7 @@ SET FOREIGN_KEY_CHECKS = 0;
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `user` (
   id            INT          NOT NULL AUTO_INCREMENT,
+  uuid          CHAR(36)     NULL,
   email         VARCHAR(255) NOT NULL,
   display_name  VARCHAR(255) NOT NULL,
   user_type     ENUM('INTERNAL','EXTERNAL') NOT NULL DEFAULT 'INTERNAL',
@@ -85,8 +86,38 @@ CREATE TABLE IF NOT EXISTS `user` (
   updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   updated_by    VARCHAR(255) NULL,
   PRIMARY KEY (id),
-  UNIQUE KEY uq_user_email (email)
+  UNIQUE KEY uq_user_email (email),
+  UNIQUE KEY uq_user_uuid (uuid)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- uuid is the Asgardeo `sub` claim, and is this table's real identity going
+-- forward: a security review required that the platform stop storing user
+-- emails and display names. Those two columns are still here only because
+-- removing them is staged — every consumer has to resolve names through the
+-- identity directory first, and the Audit Hub's queries still join
+-- display_name. They are dead to new code in the meantime.
+--
+-- NULLable during that staging period, deliberately. Existing rows are
+-- backfilled best-effort by cmd/backfill-uuids, which resolves each email
+-- against Asgardeo; a row whose email has no Asgardeo account (an
+-- ex-employee provisioned as an Action Owner, say) resolves to nothing and
+-- keeps working off email until the column is tightened to NOT NULL. Making
+-- it NOT NULL now would mean either blocking the migration on a clean
+-- backfill or inventing a placeholder uuid that every resolution path would
+-- then have to recognise and skip.
+--
+-- Guarded the same way as role.module/scope_basis below, so re-running this
+-- file against an existing database is a no-op past the first run.
+SET @user_has_uuid = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user' AND COLUMN_NAME = 'uuid'
+);
+SET @add_uuid_sql = IF(@user_has_uuid = 0,
+  'ALTER TABLE `user` ADD COLUMN uuid CHAR(36) NULL AFTER id, ADD UNIQUE KEY uq_user_uuid (uuid)',
+  'SELECT 1');
+PREPARE add_uuid_stmt FROM @add_uuid_sql;
+EXECUTE add_uuid_stmt;
+DEALLOCATE PREPARE add_uuid_stmt;
 
 
 -- -----------------------------------------------------------------------------

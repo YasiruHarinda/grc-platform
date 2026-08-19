@@ -183,6 +183,17 @@ const (
 	EventRejected            RiskEvent = "REJECTED"
 	EventEscalated           RiskEvent = "ESCALATED"
 	EventEscalationCommented RiskEvent = "ESCALATION_COMMENTED"
+	// EventPendingComplianceReview and EventPendingComplianceClosure notify
+	// the Compliance Admin role — not a named individual, see
+	// notifyComplianceAdmins — that a risk has cleared owner/management
+	// approval and is now sitting in PENDING_COMPLIANCE_REVIEW or
+	// PENDING_COMPLIANCE_CLOSURE waiting on them. Distinct from
+	// EventPendingMgmtApproval/EventPendingMgmtClosure, whose "Who needs to
+	// act" block hardcodes the Management Approver: sending those to
+	// compliance admins instead named the wrong role and the wrong person in
+	// the email body, even though the recipient list was correct.
+	EventPendingComplianceReview  RiskEvent = "PENDING_COMPLIANCE_REVIEW"
+	EventPendingComplianceClosure RiskEvent = "PENDING_COMPLIANCE_CLOSURE"
 )
 
 // RiskEventInfo carries everything any template might render. Fields not
@@ -325,6 +336,24 @@ var eventTemplates = map[RiskEvent]eventTemplate{
 		actions: []roleInstruction{
 			{RoleManagementApprover, "Review the completed remediation and approve or reject the closure."},
 		},
+	},
+	EventPendingComplianceReview: {
+		subject: func(i RiskEventInfo) string {
+			return fmt.Sprintf("Compliance Review Required: %s - %s", i.RiskCode, i.RiskTitle)
+		},
+		lead:       "This risk has cleared owner/management approval and now needs compliance review before remediation can begin.",
+		actorLabel: "Approved by",
+		// No actions: compliance approval is role-wide, not a named
+		// individual (see canOverrideAssigneeIn) — there is nobody to list
+		// under "Who needs to act", and every recipient already knows why
+		// they received this.
+	},
+	EventPendingComplianceClosure: {
+		subject: func(i RiskEventInfo) string {
+			return fmt.Sprintf("Compliance Closure Required: %s - %s", i.RiskCode, i.RiskTitle)
+		},
+		lead:       "This risk's completed remediation has cleared owner/management sign-off and now needs compliance closure.",
+		actorLabel: "Approved by",
 	},
 	EventRejected: {
 		subject: func(i RiskEventInfo) string {

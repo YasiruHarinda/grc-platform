@@ -91,7 +91,7 @@ import type {
   UserOption,
 } from "../api/riskApi";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
-import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
+import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { darkCardSx } from "./cardStyles";
 import RiskDetailDrawer from "./risk-registers/RiskDetailDrawer";
 import type { ActionPlanWithSteps } from "./risk-registers/RiskDetailDrawer";
@@ -396,13 +396,22 @@ export default function RiskRegisters(): JSX.Element {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [historyError, setHistoryError] = useState("");
 
-  // Resolves "am I this plan's action_owner_id" for the Action Plan section's
-  // step-completion controls — the users list is already fetched for the
-  // owner/assigner column filters, so this just matches the signed-in email
-  // against it rather than adding a new identity-resolution round trip.
-  const idTokenClaims = useIdTokenClaims();
-  const currentUserEmail = typeof idTokenClaims?.email === "string" ? idTokenClaims.email : "";
-  const currentUserId = users.find((u) => u.email === currentUserEmail)?.id ?? null;
+  // Resolves "who am I" as this platform's internal user id — for isRiskOwner
+  // /isRiskAssigner/isManagementApprover and "am I this plan's
+  // action_owner_id" in the drawer below. From GET /me/profile, resolved
+  // server-side by uuid (the same resolution grants use), not by decoding the
+  // ID token and matching its email against the fetched users list: that
+  // match silently fails whenever the platform's stored email is stale, absent
+  // (this identity is moving to uuid-only), or simply doesn't exist — mock-auth
+  // mode has no real Asgardeo session to decode a token from at all. See
+  // BasicInformationStep.tsx's identical fetch for the Add Risk flow.
+  const [currentUserId, setCurrentUserId] = useState<number | null>(null);
+  useEffect(() => {
+    authFetch(`${BACKEND_BASE_URL}/api/v1/me/profile`)
+      .then((res) => (res.ok ? (res.json() as Promise<{ user_id?: number }>) : null))
+      .then((profile) => setCurrentUserId(profile?.user_id ?? null))
+      .catch(() => setCurrentUserId(null));
+  }, [authFetch]);
   // id → display_name, passed to the drawer so it can resolve action-owner
   // names at render time — reactive to `users` loading, unlike baking the name
   // into fetched plan state (which froze "Unassigned" on a pre-load open).

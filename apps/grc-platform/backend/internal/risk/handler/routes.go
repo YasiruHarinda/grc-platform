@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	riskservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/service"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
@@ -51,6 +52,13 @@ type Deps struct {
 	// (see candidates.go). nil in local dev, when no privilege store is
 	// configured — handlers must go through auth.AllowAll before using it.
 	Grants grant.Repository
+	// Directory resolves a user's uuid to their current name and email, which
+	// this platform is in the process of no longer storing. Notifications need
+	// both: a name to address someone by, and an address to deliver to.
+	//
+	// nil is tolerated — the stored columns are still populated during the
+	// migration, so an unconfigured directory changes nothing visible.
+	Directory *directory.Service
 	// Email sends the risk-owner notification fired synchronously right
 	// after a risk is created. A delivery failure is logged but never fails
 	// risk creation itself — see handleCreateRisk.
@@ -76,11 +84,16 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	// Risk categories
 	mux.HandleFunc("GET /api/v1/risk-categories", d.handleListRiskCategories)
 
-	// Role-filtered user pickers, sourced live from Asgardeo group membership
-	// via the SCIM Operations Service (this platform keeps no user<->role
-	// table of its own)
+	// Role-gated user pickers: everyone who holds the grant the corresponding
+	// action requires, GLOBAL or scoped to the given teamId(s) — see
+	// candidates.go. Stale note this replaces: these used to read Asgardeo
+	// group membership live via SCIM, intersected client-side against
+	// user_risk_team; that source could disagree with user_role_grant, the
+	// table the action itself checks, so a candidate offered here could 403 on
+	// first use. All three now query user_role_grant directly instead.
 	mux.HandleFunc("GET /api/v1/management-approvers", d.handleListManagementApprovers)
 	mux.HandleFunc("GET /api/v1/risk-owner-candidates", d.handleListRiskOwnerCandidates)
+	mux.HandleFunc("GET /api/v1/risk-assigner-candidates", d.handleListRiskAssignerCandidates)
 
 	// Employees (HR entity)
 	mux.HandleFunc("GET /api/v1/employees/search", d.handleSearchEmployees)

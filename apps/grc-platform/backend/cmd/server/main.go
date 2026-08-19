@@ -29,10 +29,12 @@ import (
 
 	audithandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/handler"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/middleware"
 	riskhandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/handler"
 	riskjob "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/job"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/file"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
@@ -84,13 +86,64 @@ func main() {
 		// role→privilege changes only on a deploy (hence privStore's 15-minute
 		// refresh above), but a revoked grant must take effect immediately.
 		grantRepo = grant.NewRepository(entityCli)
+	} else {
+		// LOCAL-TESTING-ONLY — remove this else branch before committing.
+		//
+		// auth.AllowAll (privilege.FromContext(ctx) == nil) is the ONE root
+		// check every allow-all special case in the codebase is really asking
+		// — HasPrivilegeIn, seesEveryRisk, handleListTeams' ?mine/?privilege
+		// narrowing, the dashboard/analytics register scoping, candidates.go —
+		// none of them check TokenValidatorEnabled directly, they all key off
+		// whether a privilege store loaded. So loading one here, even with
+		// signature verification off, makes every one of those sites resolve
+		// against your REAL local grants (from cmd/backfill-uuids +
+		// user_role_grant) instead of allowing everything — which is what lets
+		// mock-auth's forged token actually exercise privilege-scoped behavior
+		// locally, not just "is someone logged in".
+		//
+		// Best-effort: if the entity isn't reachable, fall back to the
+		// original allow-all behavior rather than fail startup — running the
+		// backend without the entity up is still a legitimate way to work
+		// locally on anything that doesn't need real privilege data.
+		if s, err := privilege.New(ctx, entityCli); err != nil {
+			slog.Warn("LOCAL-TESTING-ONLY: privilege store load failed, falling back to allow-all", "err", err)
+		} else {
+			privStore = s
+			grantRepo = grant.NewRepository(entityCli)
+			slog.Warn("LOCAL-TESTING-ONLY: privilege store loaded with TokenValidatorEnabled=false — " +
+				"every privilege check now resolves against real local grants, not allow-all")
+		}
 	}
 
 	hrClient := hrentity.NewClient(cfg.HREntity.GraphQLURL, cfg.HREntity.TokenURL, cfg.HREntity.ClientID, cfg.HREntity.ClientSecret)
 
+	// The identity directory. Left nil when unconfigured, which the client
+	// tolerates by answering "no such user" — see scim.Client.LookupByEmail.
+	// Local development without credentials for this internal service then
+	// provisions users without a uuid instead of failing.
+	var scimClient *scim.Client
+	if cfg.SCIM.Configured() {
+		scimClient = scim.NewClient(cfg.SCIM.BaseURL, cfg.SCIM.TokenURL,
+			cfg.SCIM.ClientID, cfg.SCIM.ClientSecret, cfg.SCIM.Scopes)
+	} else {
+		slog.Warn("SCIM is not configured; users will be provisioned without an Asgardeo uuid")
+	}
+
+	// One directory for the whole process, so its cache is shared across every
+	// request rather than rebuilt per call site.
+	dirSvc := directory.New(scimClient, directory.DefaultTTL)
+	if scimClient != nil && cfg.SCIM.UserDomain != "" {
+		// Warms a bulk snapshot of everyone in the domain so Lookup/LookupAll
+		// serve them without a per-uuid SCIM call, refreshing it every 12h.
+		// Anyone outside the domain (or if this hasn't refreshed yet) still
+		// resolves through the per-uuid TTL cache below.
+		dirSvc.StartBulkRefresh(ctx, cfg.SCIM.UserDomain, directory.DefaultBulkRefreshInterval)
+	}
+
 	userDeps := userhandler.Deps{
 		Users:    userentity.NewRepository(entityCli),
 		HREntity: hrClient,
+		SCIM:     scimClient,
 	}
 
 	mux := http.NewServeMux()
@@ -100,7 +153,7 @@ func main() {
 	})
 
 	userhandler.RegisterRoutes(mux, userDeps)
-	riskDeps := buildRiskDeps(entityCli, fileSvc, hrClient, grantRepo, cfg.Email)
+	riskDeps := buildRiskDeps(entityCli, fileSvc, hrClient, grantRepo, dirSvc, scimClient, cfg.Email)
 	riskhandler.RegisterRoutes(mux, riskDeps)
 	audithandler.RegisterRoutes(mux, buildAuditDeps(fileSvc, entityCli, cfg.AIValidation))
 

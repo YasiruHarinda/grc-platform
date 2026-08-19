@@ -125,6 +125,9 @@ type HighRiskItem struct {
 	RiskTitle          string  `json:"risk_title"`
 	RegisterName       string  `json:"register_name"`
 	OwnerName          string  `json:"owner_name"`
+	// OwnerUUID identifies the owner for directory name resolution — not
+	// rendered by the client, see enrichDashboard.
+	OwnerUUID          string  `json:"-"`
 	IdentifiedDate     *string `json:"identified_date"`
 	TreatmentStrategy  *string `json:"treatment_strategy"`
 	ImplementationDate *string `json:"implementation_date"`

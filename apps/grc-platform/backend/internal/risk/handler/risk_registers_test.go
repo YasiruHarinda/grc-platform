@@ -45,7 +45,7 @@ func contextForGrants(t *testing.T, global map[string]bool, byTeam map[int]map[s
 	grantCount += len(byTeam)
 
 	set := grant.NewForTest(global, byTeam, grantCount)
-	ctx := middleware.WithUserInfo(context.Background(), &middleware.UserInfo{Email: "test@wso2.com"})
+	ctx := middleware.WithUserInfo(context.Background(), &middleware.UserInfo{Subject: "test-caller-uuid"})
 	ctx = grant.WithContext(ctx, set)
 	return privilege.WithContext(ctx, set.PrivilegeMap())
 }
@@ -208,26 +208,29 @@ func TestRolesDoNotMergeAcrossRegisters(t *testing.T) {
 	}
 }
 
-// fakeUserRepo resolves exactly one email to one id, so requireRiskActor can be
-// exercised without the Compliance Entity. Every other method is unused here.
+// fakeUserRepo resolves exactly one uuid to one id, so requireRiskActor and
+// describeActor can be exercised without the Compliance Entity. Every other
+// method is unused here.
 type fakeUserRepo struct {
-	email       string
+	uuid        string
 	id          int
+	email       string
 	displayName string
 	err         error
 }
 
-func (f fakeUserRepo) GetByEmail(_ context.Context, email string) (*user.User, error) {
+func (f fakeUserRepo) GetByUUID(_ context.Context, uuid string) (*user.User, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
-	if email != f.email {
+	if uuid != f.uuid {
 		return nil, nil // "not found" is a domain condition, not an error
 	}
-	return &user.User{ID: f.id, Email: email, DisplayName: f.displayName}, nil
+	return &user.User{ID: f.id, Email: f.email, DisplayName: f.displayName}, nil
 }
-func (f fakeUserRepo) GetByID(context.Context, int) (*user.User, error) { return nil, nil }
-func (f fakeUserRepo) Upsert(context.Context, string, string, string) (*user.User, error) {
+func (f fakeUserRepo) GetByID(context.Context, int) (*user.User, error)       { return nil, nil }
+func (f fakeUserRepo) GetByEmail(context.Context, string) (*user.User, error) { return nil, nil }
+func (f fakeUserRepo) Upsert(context.Context, string, string, string, string) (*user.User, error) {
 	return nil, nil
 }
 func (f fakeUserRepo) List(context.Context) ([]*user.User, error) { return nil, nil }
@@ -237,11 +240,11 @@ func (f fakeUserRepo) List(context.Context) ([]*user.User, error) { return nil, 
 // matters: not "which role may override" but "override WHERE".
 
 func TestRequireRiskActor(t *testing.T) {
-	const callerEmail = "test@wso2.com" // the email contextForGrants puts on the request
+	const callerUUID = "test-caller-uuid" // the uuid contextForGrants puts on the request
 	cases := []struct {
 		name       string
 		byTeam     map[int]map[string]bool
-		callerID   int // id the caller's email resolves to; 0 = no platform user row
+		callerID   int // id the caller's uuid resolves to; 0 = no platform user row
 		wantUserID int // the id named on the risk
 		wantOK     bool
 		wantStatus int
@@ -260,9 +263,9 @@ func TestRequireRiskActor(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			repo := fakeUserRepo{email: callerEmail, id: c.callerID}
+			repo := fakeUserRepo{uuid: callerUUID, id: c.callerID}
 			if c.callerID == 0 {
-				repo.email = "someone-else@wso2.com" // caller's email resolves to nothing
+				repo.uuid = "someone-elses-uuid" // caller's uuid resolves to nothing
 			}
 			d := &Deps{Users: repo}
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/risks/1/owner-approve", nil).
@@ -286,8 +289,12 @@ func TestRequireRiskActor(t *testing.T) {
 
 // describeActor decides how the person who triggered a notification appears in
 // the email. Every failure path must still yield something sendable — a
-// cosmetic lookup is never worth losing a notification over.
+// cosmetic lookup is never worth losing a notification over. d.Directory is
+// nil in every case here (unconfigured), so nameAndEmail falls straight
+// through to the stored columns — that fallback path is what these actually
+// exercise; internal/directory's own tests cover the directory-first path.
 func TestDescribeActor(t *testing.T) {
+	const actorUUID = "actor-uuid"
 	cases := []struct {
 		name string
 		repo fakeUserRepo
@@ -296,27 +303,30 @@ func TestDescribeActor(t *testing.T) {
 	}{
 		{
 			"name and email when resolvable",
-			fakeUserRepo{email: "w@wso2.com", id: 1, displayName: "Wethmi Ranasinghe"},
-			"w@wso2.com",
-			"Wethmi Ranasinghe (w@wso2.com)",
+			fakeUserRepo{uuid: actorUUID, id: 1, email: "ruwan@wso2.com", displayName: "Ruwan Silva"},
+			actorUUID,
+			"Ruwan Silva (ruwan@wso2.com)",
 		},
 		{
-			"bare email when the user has no platform row",
-			fakeUserRepo{email: "someone-else@wso2.com", id: 1, displayName: "Other"},
-			"w@wso2.com",
-			"w@wso2.com",
+			// Resolution failed (no row for this uuid): the raw uuid is the
+			// fallback, not blank — the daily escalation job's "system"
+			// sentinel actor depends on exactly this (see escalation_job.go).
+			"raw uuid when the caller has no platform row",
+			fakeUserRepo{uuid: "someone-elses-uuid", id: 1, displayName: "Other"},
+			actorUUID,
+			actorUUID,
 		},
 		{
 			"bare email when the row has no display name",
-			fakeUserRepo{email: "w@wso2.com", id: 1, displayName: "   "},
-			"w@wso2.com",
-			"w@wso2.com",
+			fakeUserRepo{uuid: actorUUID, id: 1, email: "ruwan@wso2.com", displayName: "   "},
+			actorUUID,
+			"ruwan@wso2.com",
 		},
 		{
-			"bare email when the lookup fails",
+			"raw uuid when the lookup fails",
 			fakeUserRepo{err: errStub},
-			"w@wso2.com",
-			"w@wso2.com",
+			actorUUID,
+			actorUUID,
 		},
 		{"empty in, empty out", fakeUserRepo{}, "", ""},
 		{"whitespace is trimmed", fakeUserRepo{}, "  ", ""},
