@@ -40,6 +40,7 @@ const (
 	// control's and its population's owner in the same request gets exactly
 	// one email, not two.
 	AuditEventOwnerAssigned      AuditEvent = "AUDIT_OWNER_ASSIGNED"
+	AuditEventAuditorAssigned    AuditEvent = "AUDIT_AUDITOR_ASSIGNED"
 	AuditEventReminderDue10      AuditEvent = "AUDIT_REMINDER_DUE_10"
 	AuditEventReminderDue5       AuditEvent = "AUDIT_REMINDER_DUE_5"
 	AuditEventReminderOverdue    AuditEvent = "AUDIT_REMINDER_OVERDUE"
@@ -138,6 +139,11 @@ var auditEventTemplates = map[AuditEvent]auditEventTemplate{
 	AuditEventOwnerAssigned: {
 		subject:    controlThreadSubject,
 		lead:       "You have been assigned as owner on the following item(s).",
+		actorLabel: "Assigned by",
+	},
+	AuditEventAuditorAssigned: {
+		subject:    controlThreadSubject,
+		lead:       "You have been assigned as the auditor POC on the following item(s).",
 		actorLabel: "Assigned by",
 	},
 	AuditEventReminderDue10: {

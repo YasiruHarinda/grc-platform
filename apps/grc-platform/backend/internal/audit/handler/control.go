@@ -187,14 +187,67 @@ func (h *controlHandler) updateControl(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// notifyOwnerAssignments builds one map[ownerID][]emailer.AuditEventItem
-// across every control's control-owner AND population-owner in reqs, then
-// fires one AuditEventOwnerAssigned email per distinct owner — so a person
-// who is both a control's and its population's owner in the same request
-// gets exactly one email, not two (see emailer.AuditEventOwnerAssigned).
-// controls is matched to reqs by ControlNumber (unique per audit) rather
-// than index, since bulkAddControls's response is sorted by control number,
-// not request order.
+// recipientBatch accumulates one AuditEventItem batch per recipient user ID
+// for one AuditEvent, alongside which control(s) that recipient's batch
+// touches (for the deep-link decision, see singleControlID) and the
+// audit_notification log rows to write per recipient. Shared shape between
+// the owner and auditor batches notifyOwnerAssignments/notifyReassignments
+// build — same event kind (someone assigned to a control), different role.
+type recipientBatch struct {
+	items      map[int][]emailer.AuditEventItem
+	logs       map[int][]notificationLogItem
+	controlIDs map[int]map[int]bool
+}
+
+func newRecipientBatch() *recipientBatch {
+	return &recipientBatch{
+		items:      map[int][]emailer.AuditEventItem{},
+		logs:       map[int][]notificationLogItem{},
+		controlIDs: map[int]map[int]bool{},
+	}
+}
+
+func (b *recipientBatch) add(recipientID, controlID int, item emailer.AuditEventItem, logItem notificationLogItem) {
+	b.items[recipientID] = append(b.items[recipientID], item)
+	b.logs[recipientID] = append(b.logs[recipientID], logItem)
+	if b.controlIDs[recipientID] == nil {
+		b.controlIDs[recipientID] = map[int]bool{}
+	}
+	b.controlIDs[recipientID][controlID] = true
+}
+
+// sendBatched fires ev once per recipient in batch — one email per person,
+// covering every item batched for them. Deep-links straight to a control
+// when the recipient's batch is about only one; falls back to the audit's
+// control list when they picked up more than one control in the same
+// submission (see singleControlID).
+func (h *controlHandler) sendBatched(ctx context.Context, ev emailer.AuditEvent, auditID int, auditName, actor string, batch *recipientBatch) {
+	for recipientID, items := range batch.items {
+		detailURL := h.notify.detailURL(auditID)
+		if controlID, ok := singleControlID(batch.controlIDs[recipientID]); ok {
+			detailURL = h.notify.controlDetailURL(auditID, controlID)
+		}
+		info := emailer.AuditEventInfo{
+			AuditName: auditName,
+			Actor:     h.notify.describeActor(ctx, actor),
+			DetailURL: detailURL,
+			Items:     items,
+		}
+		h.notify.notifyAuditEvent(ev, recipientID, info, batch.logs[recipientID])
+	}
+}
+
+// notifyOwnerAssignments batches every control's control-owner AND
+// population-owner in reqs into one AuditEventOwnerAssigned email per
+// distinct owner — so a person who is both a control's and its population's
+// owner in the same request gets exactly one email, not two (see
+// emailer.AuditEventOwnerAssigned) — and separately batches every assigned
+// auditor into one AuditEventAuditorAssigned email per distinct auditor.
+// Owner and auditor are deliberately separate emails even when the same
+// person holds both roles across the batch: they're different kinds of
+// assignment. controls is matched to reqs by ControlNumber (unique per
+// audit) rather than index, since bulkAddControls's response is sorted by
+// control number, not request order.
 func (h *controlHandler) notifyOwnerAssignments(ctx context.Context, auditID int, reqs []model.AddControlRequest, controls []*model.AuditControl, actor string) {
 	byNumber := make(map[string]*model.AuditControl, len(controls))
 	for _, c := range controls {
@@ -203,21 +256,8 @@ func (h *controlHandler) notifyOwnerAssignments(ctx context.Context, auditID int
 		}
 	}
 
-	byOwner := map[int][]emailer.AuditEventItem{}
-	logsByOwner := map[int][]notificationLogItem{}
-	// ownerControlIDs tracks which control(s) each owner's batch touches, so
-	// the email can deep-link straight to a control when the batch is about
-	// only one — the common case — and fall back to the audit's control list
-	// when an owner picked up more than one control in the same submission.
-	ownerControlIDs := map[int]map[int]bool{}
-	add := func(ownerID, controlID int, item emailer.AuditEventItem, logItem notificationLogItem) {
-		byOwner[ownerID] = append(byOwner[ownerID], item)
-		logsByOwner[ownerID] = append(logsByOwner[ownerID], logItem)
-		if ownerControlIDs[ownerID] == nil {
-			ownerControlIDs[ownerID] = map[int]bool{}
-		}
-		ownerControlIDs[ownerID][controlID] = true
-	}
+	owners := newRecipientBatch()
+	auditors := newRecipientBatch()
 
 	for _, req := range reqs {
 		c, ok := byNumber[req.ControlNumber]
@@ -225,7 +265,7 @@ func (h *controlHandler) notifyOwnerAssignments(ctx context.Context, auditID int
 			continue
 		}
 		if req.OwnerID != nil {
-			add(*req.OwnerID, c.ID, emailer.AuditEventItem{
+			owners.add(*req.OwnerID, c.ID, emailer.AuditEventItem{
 				ControlNumber:   c.ControlNumber,
 				Description:     c.Description,
 				DueDate:         derefString(c.DueDate),
@@ -237,7 +277,7 @@ func (h *controlHandler) notifyOwnerAssignments(ctx context.Context, auditID int
 			})
 		}
 		if req.Population != nil && req.Population.OwnerID != nil {
-			add(*req.Population.OwnerID, c.ID, emailer.AuditEventItem{
+			owners.add(*req.Population.OwnerID, c.ID, emailer.AuditEventItem{
 				ControlNumber:   c.ControlNumber,
 				Description:     c.Description,
 				DueDate:         derefString(req.Population.DueDate),
@@ -248,32 +288,33 @@ func (h *controlHandler) notifyOwnerAssignments(ctx context.Context, auditID int
 				PopulationID: c.PopulationID,
 			})
 		}
+		if req.AuditorID != nil {
+			auditors.add(*req.AuditorID, c.ID, emailer.AuditEventItem{
+				ControlNumber:   c.ControlNumber,
+				Description:     c.Description,
+				DueDate:         derefString(c.DueDate),
+				RequirementType: "Evidence Requirement",
+			}, notificationLogItem{
+				AuditID:   &auditID,
+				Type:      "AUDITOR_ASSIGNED_CONTROL",
+				ControlID: &c.ID,
+			})
+		}
 	}
 
 	name := h.notify.auditName(ctx, auditID)
-	for ownerID, items := range byOwner {
-		detailURL := h.notify.detailURL(auditID)
-		if controlID, ok := singleControlID(ownerControlIDs[ownerID]); ok {
-			detailURL = h.notify.controlDetailURL(auditID, controlID)
-		}
-		info := emailer.AuditEventInfo{
-			AuditName: name,
-			Actor:     h.notify.describeActor(ctx, actor),
-			DetailURL: detailURL,
-			Items:     items,
-		}
-		h.notify.notifyAuditEvent(emailer.AuditEventOwnerAssigned, ownerID, info, logsByOwner[ownerID])
-	}
+	h.sendBatched(ctx, emailer.AuditEventOwnerAssigned, auditID, name, actor, owners)
+	h.sendBatched(ctx, emailer.AuditEventAuditorAssigned, auditID, name, actor, auditors)
 }
 
-// notifyReassignments fires the owner-assigned event for updateControl's (at
-// most two) reassignments — new control owner and/or new population owner —
-// coalesced into one email if they're the same person, same as
-// notifyOwnerAssignments. Update doesn't return the updated control (only
-// what changed), so this re-fetches it once, only when there's actually a
-// reassignment to notify about.
+// notifyReassignments fires the owner/auditor-assigned events for
+// updateControl's reassignments — new control owner, new population owner,
+// and/or new auditor — coalesced into one owner-assigned email if the first
+// two land on the same person, same as notifyOwnerAssignments. Update
+// doesn't return the updated control (only what changed), so this re-fetches
+// it once, only when there's actually a reassignment to notify about.
 func (h *controlHandler) notifyReassignments(ctx context.Context, auditID, controlID int, result service.ControlUpdateResult, actor string) {
-	if !result.ControlOwnerChanged && !result.PopulationOwnerChanged {
+	if !result.ControlOwnerChanged && !result.PopulationOwnerChanged && !result.AuditorChanged {
 		return
 	}
 	c, err := h.svc.GetByID(ctx, auditID, controlID)
@@ -281,47 +322,48 @@ func (h *controlHandler) notifyReassignments(ctx context.Context, auditID, contr
 		return
 	}
 
-	byOwner := map[int][]emailer.AuditEventItem{}
-	logsByOwner := map[int][]notificationLogItem{}
+	owners := newRecipientBatch()
+	auditors := newRecipientBatch()
 	if result.ControlOwnerChanged && result.NewControlOwnerID != nil {
-		owner := *result.NewControlOwnerID
-		byOwner[owner] = append(byOwner[owner], emailer.AuditEventItem{
+		owners.add(*result.NewControlOwnerID, c.ID, emailer.AuditEventItem{
 			ControlNumber:   c.ControlNumber,
 			Description:     c.Description,
 			DueDate:         derefString(c.DueDate),
 			RequirementType: "Evidence Requirement",
-		})
-		logsByOwner[owner] = append(logsByOwner[owner], notificationLogItem{
+		}, notificationLogItem{
 			AuditID:   &auditID,
 			Type:      "OWNER_ASSIGNED_CONTROL",
 			ControlID: &c.ID,
 		})
 	}
 	if result.PopulationOwnerChanged && result.NewPopulationOwnerID != nil {
-		owner := *result.NewPopulationOwnerID
-		byOwner[owner] = append(byOwner[owner], emailer.AuditEventItem{
+		owners.add(*result.NewPopulationOwnerID, c.ID, emailer.AuditEventItem{
 			ControlNumber:   c.ControlNumber,
 			Description:     c.Description,
 			DueDate:         derefString(c.PopulationDueDate),
 			RequirementType: "Population Requirement",
-		})
-		logsByOwner[owner] = append(logsByOwner[owner], notificationLogItem{
+		}, notificationLogItem{
 			AuditID:      &auditID,
 			Type:         "OWNER_ASSIGNED_POPULATION",
 			PopulationID: c.PopulationID,
 		})
 	}
+	if result.AuditorChanged && result.NewAuditorID != nil {
+		auditors.add(*result.NewAuditorID, c.ID, emailer.AuditEventItem{
+			ControlNumber:   c.ControlNumber,
+			Description:     c.Description,
+			DueDate:         derefString(c.DueDate),
+			RequirementType: "Evidence Requirement",
+		}, notificationLogItem{
+			AuditID:   &auditID,
+			Type:      "AUDITOR_ASSIGNED_CONTROL",
+			ControlID: &c.ID,
+		})
+	}
 
 	name := h.notify.auditName(ctx, auditID)
-	for owner, items := range byOwner {
-		info := emailer.AuditEventInfo{
-			AuditName: name,
-			Actor:     h.notify.describeActor(ctx, actor),
-			DetailURL: h.notify.controlDetailURL(auditID, c.ID),
-			Items:     items,
-		}
-		h.notify.notifyAuditEvent(emailer.AuditEventOwnerAssigned, owner, info, logsByOwner[owner])
-	}
+	h.sendBatched(ctx, emailer.AuditEventOwnerAssigned, auditID, name, actor, owners)
+	h.sendBatched(ctx, emailer.AuditEventAuditorAssigned, auditID, name, actor, auditors)
 }
 
 // derefString returns "" for a nil pointer instead of dereferencing it.

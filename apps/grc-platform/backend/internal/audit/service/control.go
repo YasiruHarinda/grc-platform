@@ -223,8 +223,10 @@ func (s *controlService) BulkAdd(ctx context.Context, auditID int, reqs []model.
 type ControlUpdateResult struct {
 	ControlOwnerChanged    bool
 	PopulationOwnerChanged bool
+	AuditorChanged         bool
 	NewControlOwnerID      *int
 	NewPopulationOwnerID   *int
+	NewAuditorID           *int
 }
 
 func (s *controlService) Update(ctx context.Context, auditID, controlID int, req model.UpdateControlRequest, updatedBy string) (ControlUpdateResult, error) {
@@ -266,6 +268,10 @@ func (s *controlService) Update(ctx context.Context, auditID, controlID int, req
 	if req.OwnerID != nil && (c.OwnerID == nil || *req.OwnerID != *c.OwnerID) {
 		result.ControlOwnerChanged = true
 		result.NewControlOwnerID = req.OwnerID
+	}
+	if req.AuditorID != nil && (c.AuditorID == nil || *req.AuditorID != *c.AuditorID) {
+		result.AuditorChanged = true
+		result.NewAuditorID = req.AuditorID
 	}
 
 	if err := s.repo.Update(ctx, auditID, controlID, req, updatedBy); err != nil {
