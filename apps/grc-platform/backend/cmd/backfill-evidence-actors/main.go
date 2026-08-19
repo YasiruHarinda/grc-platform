@@ -30,11 +30,12 @@
 // # THE MATCH IS NARROWER THAN cmd/backfill-uuids
 //
 // It only rewrites rows whose created_by is a known-resolvable email — one
-// that appears as a member of -groups. A row whose uploader has since left, or
-// was never in a searched group, is left untouched and reported: its original
-// uploader permanently loses self-delete on it (falls back to the admin
-// override), which is the same fate an un-backfilled `user` row has under the
-// wider migration.
+// that matches a directory entry under -domain (see scim.Client.
+// ListUsersByDomain). A row whose uploader has since left, or falls outside
+// the searched domain, is left untouched and reported: its original uploader
+// permanently loses self-delete on it (falls back to the admin override),
+// which is the same fate an un-backfilled `user` row has under the wider
+// migration.
 //
 // # IT WRITES NOTHING
 //
@@ -45,7 +46,7 @@
 //
 // Usage:
 //
-//	backfill-evidence-actors [-groups wso2-everyone] [-out evidence_actors.sql] [-report evidence_actors_report.txt]
+//	backfill-evidence-actors [-domain wso2.com] [-out evidence_actors.sql] [-report evidence_actors_report.txt]
 //
 // Requires the same environment as the server: COMPLIANCE_ENTITY_BASE_URL is
 // NOT used — this talks to MySQL directly via DB_DSN, since risk_evidence has
@@ -69,17 +70,16 @@ import (
 )
 
 func main() {
-	groupsFlag := flag.String("groups", "wso2-everyone",
-		"comma-separated Asgardeo group names to source (email, uuid) pairs from")
+	domain := flag.String("domain", "wso2.com",
+		"email-domain suffix to search the Asgardeo directory for (e.g. wso2.com, not @wso2.com)")
 	outPath := flag.String("out", "backfill_evidence_actors.sql", "file to write the UPDATE statements to")
 	reportPath := flag.String("report", "backfill_evidence_actors_report.txt", "file to write the anomaly report to")
 	scimTimeout := flag.Duration("scim-timeout", 90*time.Second,
 		"per-request timeout for SCIM calls; the service cold starts, so allow well over an interactive budget")
 	flag.Parse()
 
-	groups := splitGroups(*groupsFlag)
-	if len(groups) == 0 {
-		fatal("-groups must name at least one Asgardeo group")
+	if strings.TrimSpace(*domain) == "" {
+		fatal("-domain must not be empty")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -101,19 +101,18 @@ func main() {
 	scimCli.SetHTTPTimeout(*scimTimeout)
 
 	// ── Load the directory ──────────────────────────────────────────────────
+	directoryUsers, err := scimCli.ListUsersByDomain(ctx, *domain)
+	if err != nil {
+		fatal("SCIM search for domain %q: %v", *domain, err)
+	}
+	fmt.Printf("directory search under %q returned %d user(s)\n", *domain, len(directoryUsers))
+
 	uuidByEmail := make(map[string]string)
-	for _, g := range groups {
-		members, err := scimCli.ListGroupMembers(ctx, g)
-		if err != nil {
-			fatal("SCIM group search for %q: %v", g, err)
+	for _, du := range directoryUsers {
+		key := strings.ToLower(strings.TrimSpace(du.Email))
+		if key != "" && du.UUID != "" {
+			uuidByEmail[key] = du.UUID
 		}
-		for _, m := range members {
-			key := strings.ToLower(strings.TrimSpace(m.Email))
-			if key != "" && m.UUID != "" {
-				uuidByEmail[key] = m.UUID
-			}
-		}
-		fmt.Printf("  %-42s %d member(s)\n", g, len(members))
 	}
 	fmt.Printf("directory holds %d distinct email(s)\n", len(uuidByEmail))
 
@@ -146,10 +145,10 @@ func main() {
 	}
 
 	// ── Write ────────────────────────────────────────────────────────────────
-	if err := os.WriteFile(*outPath, []byte(renderSQL(toRewrite, groups)), 0o600); err != nil {
+	if err := os.WriteFile(*outPath, []byte(renderSQL(toRewrite, *domain)), 0o600); err != nil {
 		fatal("write %s: %v", *outPath, err)
 	}
-	report := renderReport(unresolved, len(toRewrite), len(actors))
+	report := renderReport(unresolved, len(toRewrite), len(actors), *domain)
 	if err := os.WriteFile(*reportPath, []byte(report), 0o600); err != nil {
 		fatal("write %s: %v", *reportPath, err)
 	}
@@ -168,17 +167,7 @@ func main() {
 // rewrite is one created_by value resolved from email to uuid.
 type rewrite struct{ email, uuid string }
 
-func splitGroups(s string) []string {
-	var out []string
-	for _, g := range strings.Split(s, ",") {
-		if g = strings.TrimSpace(g); g != "" {
-			out = append(out, g)
-		}
-	}
-	return out
-}
-
-func renderSQL(rows []rewrite, groups []string) string {
+func renderSQL(rows []rewrite, domain string) string {
 	sort.Slice(rows, func(i, j int) bool { return rows[i].email < rows[j].email })
 
 	var b strings.Builder
@@ -201,7 +190,7 @@ func renderSQL(rows []rewrite, groups []string) string {
 
 USE grc_platform;
 
-`, sqlComment(strings.Join(groups, ", ")))
+`, sqlComment(domain))
 
 	if len(rows) == 0 {
 		b.WriteString("-- No rewrites. Either nothing to backfill, or nothing resolved; check the report.\n")
@@ -224,15 +213,16 @@ var commentLineBreaks = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ")
 
 func sqlComment(s string) string { return commentLineBreaks.Replace(s) }
 
-func renderReport(unresolved []string, rewritten, total int) string {
+func renderReport(unresolved []string, rewritten, total int, domain string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "EVIDENCE ACTOR BACKFILL REPORT — %s\n\n", time.Now().Format(time.RFC3339))
 	fmt.Fprintf(&b, "%d of %d distinct created_by value(s) resolved to a uuid.\n\n", rewritten, total)
 
-	fmt.Fprintf(&b, "── NOT IN ANY SEARCHED GROUP (%d) ──\n", len(unresolved))
+	fmt.Fprintf(&b, "── NOT FOUND IN DIRECTORY (%d) ──\n", len(unresolved))
 	fmt.Fprintf(&b, "  No uuid could be resolved, so created_by stays an email for these rows.\n"+
 		"  The original uploader loses self-delete on them (admin override still\n"+
-		"  works). Fix: widen -groups, or accept it.\n")
+		"  works). Fix: confirm they have an Asgardeo account under %q, widen\n"+
+		"  -domain, or accept it.\n", domain)
 	if len(unresolved) == 0 {
 		b.WriteString("  (none)\n")
 		return b.String()

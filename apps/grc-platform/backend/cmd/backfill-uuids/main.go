@@ -25,21 +25,14 @@
 // on email. Until each row carries the uuid its owner will actually
 // authenticate with, the new identity path can resolve nobody.
 //
-// # IT USES GROUP SEARCH, NOT USER SEARCH — DELIBERATELY
+// # RESOLUTION SOURCE
 //
-// Resolving a uuid to a display name requires the SCIM Operations Service's
-// Users-search endpoint and its own scope (org_internal:users:read). Mapping an
-// email to a uuid does not: a group's member list already pairs each member's
-// userName (an email) with their uuid, and reading groups needs only
-// org_internal:groups:read — the scope this platform already holds.
-//
-// So this backfill can run today, before the Users-search scope is granted.
-// That is why it enumerates groups rather than searching users, even though
-// searching users would be the more direct question to ask.
-//
-// The consequence: a user is only resolvable if they are a member of one of the
-// groups given by -groups. Anyone outside them lands in the report with no uuid
-// rather than being silently skipped.
+// Email → uuid pairs come from the SCIM Operations Service's Users-search
+// endpoint, scoped to a single domain suffix (scim.Client.ListUsersByDomain —
+// the same bulk call this platform's identity directory refreshes itself
+// from). A user is only resolvable if their email falls under -domain; anyone
+// outside it lands in the report with no uuid rather than being silently
+// skipped.
 //
 // # IT WRITES NOTHING
 //
@@ -50,7 +43,7 @@
 //
 // Usage:
 //
-//	backfill-uuids [-groups wso2-everyone] [-out uuids.sql] [-report report.txt]
+//	backfill-uuids [-domain wso2.com] [-out uuids.sql] [-report report.txt]
 //
 // Requires the same environment as the server: COMPLIANCE_ENTITY_BASE_URL and
 // the SCIM_* variables.
@@ -80,32 +73,31 @@ type uuidRow struct {
 // where the directory itself is inconsistent. These are the point of running a
 // program rather than writing UPDATEs by hand.
 type findings struct {
-	// unresolved: a platform user whose email appears in none of the searched
-	// groups. Their uuid stays NULL — they keep working off email for now, but
-	// they cannot sign in under the new identity path, so each one is either a
-	// group to add them to or a row to deactivate.
+	// unresolved: a platform user whose email matched no directory entry under
+	// -domain. Their uuid stays NULL — they keep working off email for now, but
+	// they cannot sign in under the new identity path, so each one is either an
+	// email/domain mismatch to investigate or a row to deactivate.
 	unresolved []string
 	// collisions: two platform users resolving to the SAME uuid. uq_user_uuid
 	// would reject the second UPDATE, so no rows are emitted for either — this
 	// needs a human to decide which email is the real account.
 	collisions []string
-	// blankUUID: the group listed them, but with an empty uuid. Nothing to
-	// write, and it means the directory returned a member entry without an id.
+	// blankUUID: the directory listed them, but with an empty id. Nothing to
+	// write, and it means the search returned an entry without one.
 	blankUUID []string
 }
 
 func main() {
-	groupsFlag := flag.String("groups", "wso2-everyone",
-		"comma-separated Asgardeo group names to source (email, uuid) pairs from")
+	domain := flag.String("domain", "wso2.com",
+		"email-domain suffix to search the Asgardeo directory for (e.g. wso2.com, not @wso2.com)")
 	outPath := flag.String("out", "backfill_uuids.sql", "file to write the UPDATE statements to")
 	reportPath := flag.String("report", "backfill_uuids_report.txt", "file to write the anomaly report to")
 	scimTimeout := flag.Duration("scim-timeout", 90*time.Second,
 		"per-request timeout for SCIM calls; the service cold starts, so allow well over an interactive budget")
 	flag.Parse()
 
-	groups := splitGroups(*groupsFlag)
-	if len(groups) == 0 {
-		fatal("-groups must name at least one Asgardeo group")
+	if strings.TrimSpace(*domain) == "" {
+		fatal("-domain must not be empty")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -132,34 +124,29 @@ func main() {
 
 	var found findings
 
-	// uuidByEmail is the directory, unioned across every searched group. Later
-	// groups cannot change an email's uuid — a person has one Asgardeo id, and
-	// two groups disagreeing about it would mean the directory is inconsistent,
-	// not that the last group read wins.
+	directoryUsers, err := scimCli.ListUsersByDomain(ctx, *domain)
+	if err != nil {
+		fatal("SCIM search for domain %q: %v", *domain, err)
+	}
+	fmt.Printf("directory search under %q returned %d user(s)\n", *domain, len(directoryUsers))
+
 	uuidByEmail := make(map[string]string)
-	for _, g := range groups {
-		members, err := scimCli.ListGroupMembers(ctx, g)
-		if err != nil {
-			fatal("SCIM group search for %q: %v", g, err)
+	for _, du := range directoryUsers {
+		key := strings.ToLower(strings.TrimSpace(du.Email))
+		if key == "" {
+			continue
 		}
-		for _, m := range members {
-			key := strings.ToLower(strings.TrimSpace(m.Email))
-			if key == "" {
-				continue
-			}
-			if m.UUID == "" {
-				found.blankUUID = append(found.blankUUID,
-					fmt.Sprintf("%s (in group %s) — member entry carried no id", m.Email, g))
-				continue
-			}
-			if prev, ok := uuidByEmail[key]; ok && prev != m.UUID {
-				found.collisions = append(found.collisions,
-					fmt.Sprintf("%s — group %s says %s, an earlier group said %s", m.Email, g, m.UUID, prev))
-				continue
-			}
-			uuidByEmail[key] = m.UUID
+		if du.UUID == "" {
+			found.blankUUID = append(found.blankUUID,
+				fmt.Sprintf("%s — directory entry carried no id", du.Email))
+			continue
 		}
-		fmt.Printf("  %-42s %d member(s)\n", g, len(members))
+		if prev, ok := uuidByEmail[key]; ok && prev != du.UUID {
+			found.collisions = append(found.collisions,
+				fmt.Sprintf("%s — directory returned two different ids: %s and %s", du.Email, du.UUID, prev))
+			continue
+		}
+		uuidByEmail[key] = du.UUID
 	}
 	fmt.Printf("directory holds %d distinct email(s)\n", len(uuidByEmail))
 
@@ -175,7 +162,7 @@ func main() {
 		uuid, ok := uuidByEmail[key]
 		if !ok {
 			found.unresolved = append(found.unresolved,
-				fmt.Sprintf("%s (status %s) — in none of the searched group(s)", u.Email, u.Status))
+				fmt.Sprintf("%s (status %s) — no matching directory entry under %q", u.Email, u.Status, *domain))
 			continue
 		}
 		emailsByUUID[uuid] = append(emailsByUUID[uuid], u.Email)
@@ -197,10 +184,10 @@ func main() {
 	// ── Write ────────────────────────────────────────────────────────────────
 	// 0o600, not 0o644: every line pairs someone's email with their stable
 	// directory id. World-readable would leak that to any other local account.
-	if err := os.WriteFile(*outPath, []byte(renderSQL(rows, groups)), 0o600); err != nil {
+	if err := os.WriteFile(*outPath, []byte(renderSQL(rows, *domain)), 0o600); err != nil {
 		fatal("write %s: %v", *outPath, err)
 	}
-	report := renderReport(found, len(rows), len(users))
+	report := renderReport(found, len(rows), len(users), *domain)
 	if err := os.WriteFile(*reportPath, []byte(report), 0o600); err != nil {
 		fatal("write %s: %v", *reportPath, err)
 	}
@@ -216,16 +203,6 @@ func main() {
 		os.Exit(2)
 	}
 	fmt.Println("no findings; every platform user resolved to a uuid.")
-}
-
-func splitGroups(s string) []string {
-	var out []string
-	for _, g := range strings.Split(s, ",") {
-		if g = strings.TrimSpace(g); g != "" {
-			out = append(out, g)
-		}
-	}
-	return out
 }
 
 func filterOutUUID(rows []uuidRow, uuid string) []uuidRow {
@@ -245,7 +222,7 @@ func (f findings) total() int {
 // renderSQL emits UPDATEs keyed on email — the only key that exists on both
 // sides before this runs — each guarded so it can never overwrite a uuid that
 // is already there.
-func renderSQL(rows []uuidRow, groups []string) string {
+func renderSQL(rows []uuidRow, domain string) string {
 	sort.Slice(rows, func(i, j int) bool { return rows[i].email < rows[j].email })
 
 	var b strings.Builder
@@ -253,7 +230,7 @@ func renderSQL(rows []uuidRow, groups []string) string {
 -- user.uuid backfill — GENERATED, review before running.
 --
 -- Produced by cmd/backfill-uuids. Each row's uuid is that person's Asgardeo
--- user id, read from the member list of: %s
+-- user id, read from a directory search scoped to: %s
 --
 -- Every statement is guarded with "uuid IS NULL", so this file:
 --   * never overwrites a uuid that is already set, and
@@ -270,7 +247,7 @@ func renderSQL(rows []uuidRow, groups []string) string {
 
 USE grc_platform;
 
-`, sqlComment(strings.Join(groups, ", ")))
+`, sqlComment(domain))
 
 	if len(rows) == 0 {
 		b.WriteString("-- No uuids resolved. That is almost certainly wrong; check the report.\n")
@@ -310,7 +287,7 @@ var commentLineBreaks = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ")
 
 func sqlComment(s string) string { return commentLineBreaks.Replace(s) }
 
-func renderReport(f findings, rowCount, userCount int) string {
+func renderReport(f findings, rowCount, userCount int, domain string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "UUID BACKFILL REPORT — %s\n\n", time.Now().Format(time.RFC3339))
 	fmt.Fprintf(&b, "%d of %d platform user(s) resolved to a uuid.\n\n", rowCount, userCount)
@@ -328,12 +305,13 @@ func renderReport(f findings, rowCount, userCount int) string {
 		b.WriteString("\n")
 	}
 
-	section("NOT IN ANY SEARCHED GROUP",
-		"  No uuid could be resolved, so their row keeps a NULL one. They still\n"+
+	section("NOT FOUND IN DIRECTORY",
+		fmt.Sprintf("  No uuid could be resolved, so their row keeps a NULL one. They still\n"+
 			"  work off email today, but cannot be resolved through the new identity\n"+
 			"  path — and will fail outright once uuid becomes NOT NULL.\n"+
-			"  Fix: add them to a searched group (or pass a wider -groups), or\n"+
-			"  deactivate the row if the person has left.",
+			"  Fix: confirm they have an Asgardeo account whose email falls under\n"+
+			"  %q (or pass a wider -domain), or deactivate the row if the person has\n"+
+			"  left.", domain),
 		f.unresolved)
 
 	section("TWO USER ROWS, ONE UUID",
@@ -343,9 +321,9 @@ func renderReport(f findings, rowCount, userCount int) string {
 			"  Fix: merge or deactivate the duplicate row, then re-run.",
 		f.collisions)
 
-	section("GROUP MEMBER WITH NO ID",
-		"  The directory returned a member entry carrying an email but no uuid, so\n"+
-			"  there was nothing to write. Worth checking the group in Asgardeo.",
+	section("DIRECTORY ENTRY WITH NO ID",
+		"  The directory search returned an entry carrying an email but no uuid,\n"+
+			"  so there was nothing to write. Worth checking that account in Asgardeo.",
 		f.blankUUID)
 
 	return b.String()

@@ -15,13 +15,11 @@
 // under the License.
 
 // Package scim is a client for the internal SCIM Operations Service
-// (digiops-infra/operations/scim-operations-service), used to answer "which
-// users belong to Asgardeo group X" — a question this platform's own data
-// cannot answer, since role assignment lives only in Asgardeo, never in the
-// `user` table (see shared.sql). This client never modifies the SCIM
-// Operations Service or Asgardeo itself; it only calls the service's existing
-// generic group-search endpoint, reading each matched group's embedded
-// member list.
+// (digiops-infra/operations/scim-operations-service), used to resolve
+// identity between a person's email and their Asgardeo user id (uuid) — the
+// only identifier the `user` table stores (see shared.sql). This client never
+// modifies the SCIM Operations Service or Asgardeo itself; it only calls the
+// service's existing Users-search endpoint.
 package scim
 
 import (
@@ -44,14 +42,12 @@ type Client struct {
 	tokenURL     string
 	clientID     string
 	clientSecret string
-	// scopes is a space-separated OAuth2 scope string requested on every
-	// token exchange — only "org_internal:groups:read" is needed, since
-	// ListGroupMemberEmails reads group membership via the groups-search
-	// resource, not a users-search one. Asgardeo silently omits any scope the
-	// application isn't authorized for from the issued token rather than
-	// erroring, so an empty/wrong value here surfaces later as a 403
-	// "Scope validation failed" from the SCIM Operations Service's gateway,
-	// not as a token-request failure.
+	// scopes is a space-separated OAuth2 scope string requested on every token
+	// exchange — every method on this client needs org_internal:users:read.
+	// Asgardeo silently omits any scope the application isn't authorized for
+	// from the issued token rather than erroring, so an empty/wrong value here
+	// surfaces later as a 403 "Scope validation failed" from the SCIM
+	// Operations Service's gateway, not as a token-request failure.
 	scopes     string
 	httpClient *http.Client
 
@@ -141,125 +137,12 @@ func (c *Client) accessToken(ctx context.Context) (string, error) {
 	return c.cachedToken, nil
 }
 
-type groupSearchInput struct {
-	Filter string `json:"filter"`
-}
-
-// scimGroupMember is one entry in a Group's embedded "members" list. Display
-// comes back domain-prefixed (e.g. "DEFAULT/jane@wso2.com" for this org's
-// default userstore) — stripGroupDomain removes that prefix to get a plain
-// email.
-type scimGroupMember struct {
-	Display string `json:"display"`
-	Value   string `json:"value"`
-}
-
-type scimGroup struct {
-	ID          string            `json:"id"`
-	DisplayName string            `json:"displayName"`
-	Members     []scimGroupMember `json:"members"`
-}
-
-type groupSearchResult struct {
-	Resources []scimGroup `json:"Resources"`
-}
-
-// GroupMember is one member of an Asgardeo group: their email and their
-// Asgardeo user id.
-//
-// UUID is the same value the OIDC `sub` claim carries for that person, which is
-// what makes group-search usable as an email→uuid directory without the
-// Users-search scope. It comes from the SCIM member entry's "value" field —
-// SCIM's identifier for the referenced resource.
-type GroupMember struct {
-	Email string
-	UUID  string
-}
-
-// ListGroupMemberEmails returns the email of every member of the given
-// Asgardeo group. See ListGroupMembers, which this wraps — callers that also
-// need each member's uuid should use that instead.
-func (c *Client) ListGroupMemberEmails(ctx context.Context, groupName string) ([]string, error) {
-	members, err := c.ListGroupMembers(ctx, groupName)
-	if err != nil {
-		return nil, err
-	}
-	emails := make([]string, 0, len(members))
-	for _, m := range members {
-		emails = append(emails, m.Email)
-	}
-	return emails, nil
-}
-
-// ListGroupMembers returns every member of the given Asgardeo group as an
-// (email, uuid) pair, via the SCIM Operations Service's generic internal-org
-// group search endpoint (POST /organizations/internal/groups/search),
-// reading the matched group's embedded "members" list directly — this
-// service's Users-search endpoint requires a separate, more narrowly-granted
-// scope (org_internal:users:read) that Groups-search does not.
-//
-// Note what this can and cannot answer. Each member entry carries the uuid and
-// the userName (an email), so this is enough to map email↔uuid for anyone in a
-// group — but a member's "display" is only ever that userName, never the
-// person's actual name. Resolving a uuid to a display name needs Users-search
-// and its separate scope; no amount of group searching substitutes for it.
-func (c *Client) ListGroupMembers(ctx context.Context, groupName string) ([]GroupMember, error) {
-	token, err := c.accessToken(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("get scim access token: %w", err)
-	}
-
-	body, err := json.Marshal(groupSearchInput{
-		Filter: fmt.Sprintf(`displayName eq %q`, groupName),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("marshal scim group search request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.baseURL+"/organizations/internal/groups/search", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("build scim group search request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("call scim group search: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// This SCIM Operations Service returns 201 (not 200) for a successful
-	// search POST, confirmed empirically against the live service — accept
-	// both rather than assume standard REST conventions apply here.
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("scim group search returned status %d", resp.StatusCode)
-	}
-
-	var result groupSearchResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode scim group search response: %w", err)
-	}
-
-	var members []GroupMember
-	for _, g := range result.Resources {
-		for _, m := range g.Members {
-			// A member with no resolvable email is skipped rather than
-			// returned with an empty one: every caller keys on the email, so an
-			// empty key would collide with every other malformed entry.
-			if email := stripGroupDomain(m.Display); email != "" {
-				members = append(members, GroupMember{Email: email, UUID: m.Value})
-			}
-		}
-	}
-	return members, nil
-}
-
-// stripGroupDomain removes the userstore domain prefix SCIM group members
-// come back with (e.g. "DEFAULT/jane@wso2.com" -> "jane@wso2.com"). Falls
-// back to the raw value if there's no "/", rather than dropping it, so an
-// unexpected format degrades to "probably wrong" instead of "silently gone."
+// stripGroupDomain removes the userstore domain prefix SCIM entries can come
+// back with (e.g. "DEFAULT/jane@wso2.com" -> "jane@wso2.com"). Falls back to
+// the raw value if there's no "/", rather than dropping it, so an unexpected
+// format degrades to "probably wrong" instead of "silently gone." Named for
+// its original use against group member entries; searchUsersPage applies it
+// to userName too, on the same belt-and-suspenders basis.
 func stripGroupDomain(display string) string {
 	if i := strings.LastIndex(display, "/"); i != -1 {
 		return display[i+1:]
