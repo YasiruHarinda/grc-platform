@@ -88,6 +88,15 @@ interface ControlFormState {
   owner: AuditUser | null;
   team: AuditTeam | null;
   auditor: AuditUser | null;
+  // True only when the user explicitly cleared the field via the
+  // Autocomplete's own clear control — never inferred from owner/team/auditor
+  // being null, since controlToForm also produces null for an assignment
+  // that's simply not in the active-only users/teams list (see its comment).
+  // Without this distinction, saving any unrelated edit on a control whose
+  // owner/team/auditor is inactive would silently unassign them.
+  ownerCleared: boolean;
+  teamCleared: boolean;
+  auditorCleared: boolean;
   populationDescription: string;
   populationDueDate: string;
   populationComments: string;
@@ -106,6 +115,9 @@ const EMPTY_FORM: ControlFormState = {
   owner: null,
   team: null,
   auditor: null,
+  ownerCleared: false,
+  teamCleared: false,
+  auditorCleared: false,
   populationDescription: "",
   populationDueDate: "",
   populationComments: "",
@@ -125,6 +137,9 @@ function controlToForm(c: AuditControl, users: AuditUser[], teams: AuditTeam[]):
     owner: users.find((u) => u.id === c.ownerId) ?? null,
     team: teams.find((t) => t.id === c.teamId) ?? null,
     auditor: users.find((u) => u.id === c.auditorId) ?? null,
+    ownerCleared: false,
+    teamCleared: false,
+    auditorCleared: false,
     populationDescription: c.populationDescription ?? "",
     populationDueDate: c.populationDueDate ?? "",
     populationComments: c.populationComments ?? "",
@@ -269,7 +284,10 @@ function ControlFormDialog({
               options={users.filter((u) => u.userType === "INTERNAL")}
               getOptionLabel={(u) => u.displayName}
               value={form.owner}
-              onChange={(_e, val) => set("owner", val)}
+              onChange={(_e, val) => {
+                set("owner", val);
+                set("ownerCleared", val === null);
+              }}
               size="small"
               sx={{ flex: 1 }}
               renderInput={(params) => <TextField {...params} label="Process Owner" />}
@@ -282,7 +300,10 @@ function ControlFormDialog({
               groupBy={(u) => u.userType === "EXTERNAL" ? "External Auditors" : "Internal"}
               getOptionLabel={(u) => u.displayName}
               value={form.auditor}
-              onChange={(_e, val) => set("auditor", val)}
+              onChange={(_e, val) => {
+                set("auditor", val);
+                set("auditorCleared", val === null);
+              }}
               size="small"
               sx={{ flex: 1 }}
               renderInput={(params) => <TextField {...params} label="Auditor" />}
@@ -293,7 +314,10 @@ function ControlFormDialog({
             options={teams}
             getOptionLabel={(t) => t.name}
             value={form.team}
-            onChange={(_e, val) => set("team", val)}
+            onChange={(_e, val) => {
+              set("team", val);
+              set("teamCleared", val === null);
+            }}
             size="small"
             fullWidth
             renderInput={(params) => <TextField {...params} label="Team" />}
@@ -542,11 +566,11 @@ export default function ControlSettingsPanel({
       evidenceRequirement: form.evidenceRequirement.trim() || null,
       dueDate: form.dueDate || null,
       ownerId: form.owner?.id ?? null,
-      clearOwner: form.owner === null,
+      clearOwner: form.ownerCleared,
       teamId: form.team?.id ?? null,
-      clearTeam: form.team === null,
+      clearTeam: form.teamCleared,
       auditorId: form.auditor?.id ?? null,
-      clearAuditor: form.auditor === null,
+      clearAuditor: form.auditorCleared,
       population,
     };
     updateMutation.mutate(
