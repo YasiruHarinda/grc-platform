@@ -18,7 +18,9 @@ package handler
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
+	"sync/atomic"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
@@ -30,15 +32,27 @@ import (
 // the job can be tested/re-run without waiting for its fixed daily time or
 // restarting the server.
 type reminderJobHandler struct {
-	// trigger runs the job's full sweep synchronously. A plain function
-	// (not a job.ReminderJob field) so this package never imports
-	// internal/audit/job, which would import back into handler and cycle —
-	// same reasoning as risk's job.notify function field. Nil (job wiring
-	// not configured) answers 503.
+	// trigger runs the job's full sweep. A plain function (not a
+	// job.ReminderJob field) so this package never imports internal/audit/job,
+	// which would import back into handler and cycle — same reasoning as
+	// risk's job.notify function field. Nil (job wiring not configured)
+	// answers 503.
 	trigger func(ctx context.Context) error
+	// running guards against a second manual trigger starting a sweep while
+	// one is already in flight — the sweep itself (job.runOnce) has no such
+	// guard, and one sweep can take up to 30 minutes (job.runTimeout).
+	running atomic.Bool
 }
 
 // run handles POST /api/v1/audits/reminders/run.
+//
+// The sweep runs detached in a goroutine rather than inline: the server's
+// WriteTimeout is 30s, but a sweep is allowed up to 30 minutes
+// (job.runTimeout), so running it inline could fail the response — or get
+// cut off mid-run — long before the sweep itself finishes. The handler
+// instead kicks the sweep off and answers 202 immediately; running guards
+// against a retry (from that same timeout-driven failure) starting an
+// overlapping second sweep.
 func (h *reminderJobHandler) run(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageControls) {
 		return
@@ -47,9 +61,20 @@ func (h *reminderJobHandler) run(w http.ResponseWriter, r *http.Request) {
 		response.WriteError(w, http.StatusServiceUnavailable, "reminder job is not configured")
 		return
 	}
-	if err := h.trigger(r.Context()); err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+	if !h.running.CompareAndSwap(false, true) {
+		response.WriteError(w, http.StatusConflict, "reminder job is already running")
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	go func() {
+		defer h.running.Store(false)
+		defer func() {
+			if p := recover(); p != nil {
+				slog.Error("reminder job: manual trigger panic", "panic", p)
+			}
+		}()
+		if err := h.trigger(context.Background()); err != nil {
+			slog.Error("reminder job: manual trigger failed", "err", err)
+		}
+	}()
+	w.WriteHeader(http.StatusAccepted)
 }

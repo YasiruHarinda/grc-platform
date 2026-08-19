@@ -490,9 +490,11 @@ func (d *Deps) notifyCommentAdded(reqCtx context.Context, control *model.AuditCo
 		// to see it; a lookup failure fails closed to an empty set rather
 		// than risking a leak.
 		var internalViewers map[int]bool
-		if comment.IsInternal && d.Grants != nil {
+		if comment.IsInternal {
 			internalViewers = map[int]bool{}
-			if candidates, err := d.Grants.Candidates(ctx, privilege.ViewInternalComments, nil); err == nil {
+			if d.Grants == nil {
+				slog.Warn("audit notification: no privilege store, skipping internal-comment owner recipients")
+			} else if candidates, err := d.Grants.Candidates(ctx, privilege.ViewInternalComments, nil); err == nil {
 				for _, c := range candidates {
 					internalViewers[c.ID] = true
 				}
