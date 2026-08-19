@@ -173,8 +173,8 @@ func (h *evidenceHandler) submitPopulation(w http.ResponseWriter, r *http.Reques
 }
 
 // canViewPopulation allows: the team (SubmitEvidence), an internal reviewer
-// (ReviewEvidence), an org-wide reader (ViewAllAudits, e.g. management — see
-// ADR-0002), the control's assigned auditor (by email), or ManageControls.
+// (ReviewEvidence), an org-wide reader (ViewAllAudits, e.g. management),
+// the control's assigned auditor (by email), or ManageControls.
 // Unlike the write routes there is no team-assignment (IDOR) check here — this
 // mirrors listEvidence/downloadEvidenceFile, which are privilege-gated only.
 // Each privilege is checked against control's own team (HasPrivilegeIn), since

@@ -31,8 +31,8 @@ type AuditRepository interface {
 	List(ctx context.Context) ([]*model.Audit, error)
 	// ListScoped returns only audits with at least one control within scope —
 	// audits have no team/owner/auditor of their own (only their controls do),
-	// so scope is evaluated per ADR-0002 at the control level and an audit
-	// qualifies if any of its controls do. Used by the Audits tab (listAudits).
+	// so scope is evaluated at the control level and an audit qualifies if any
+	// of its controls do. Used by the Audits tab (listAudits).
 	ListScoped(ctx context.Context, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.Audit, error)
 	GetByID(ctx context.Context, id int) (*model.Audit, error)
 	// InScope reports whether id is within scope for userEmail — used by
@@ -54,8 +54,8 @@ type FrameworkControlRepository interface {
 type FrameworkRepository interface {
 	// List returns frameworks with at least one audit in scope — a framework
 	// has no team/owner/auditor of its own (only its audits' controls do), so
-	// scope is evaluated per ADR-0002 at the control level, one level deeper
-	// than ListScoped does for audits.
+	// scope is evaluated at the control level, one level deeper than
+	// ListScoped does for audits.
 	List(ctx context.Context, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.AuditFramework, error)
 	// GetByID is intentionally unscoped — used internally to validate a
 	// frameworkId reference (e.g. audit creation), which must succeed
@@ -79,7 +79,7 @@ type ControlRepository interface {
 	// see ListScoped.
 	List(ctx context.Context, auditID int) ([]*model.AuditControl, error)
 	// ListScoped returns auditID's controls visible to userEmail at scope —
-	// used by the Audits tab (listControls); see ADR-0002.
+	// used by the Audits tab (listControls).
 	ListScoped(ctx context.Context, auditID int, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.AuditControl, error)
 	GetByID(ctx context.Context, auditID, controlID int) (*model.AuditControl, error)
 	// InScope reports whether controlID is within scope for userEmail — used

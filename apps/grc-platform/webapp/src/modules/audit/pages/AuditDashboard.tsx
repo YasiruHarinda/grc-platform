@@ -89,7 +89,7 @@ export default function AuditDashboard(): JSX.Element {
 
   // The Frameworks tab is an org-wide readiness view — shown only to org-wide
   // readers (admin, compliance team, management). Internal team and external
-  // auditors, who lack AUDIT_VIEW_ALL_AUDITS, never see it. See ADR-0002.
+  // auditors, who lack AUDIT_VIEW_ALL_AUDITS, never see it.
   const canViewAll = can(AuditPrivilege.ViewAllAudits);
 
   // Tab state lives in the URL (?tab=frameworks) so a status email can link

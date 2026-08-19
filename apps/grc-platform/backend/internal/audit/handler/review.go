@@ -34,7 +34,7 @@ import (
 //
 // requiredPriv is the auditor privilege for the action — AUDIT_VALIDATE_EVIDENCE
 // for the validate endpoints, AUDIT_SELECT_SAMPLE for the sample endpoints. It
-// layers on top of the assigned-auditor scope (ADR-0002): the caller must both
+// layers on top of the assigned-auditor scope: the caller must both
 // hold the privilege AND be the control's assigned auditor. Requiring the
 // specific privilege (stronger than the old baseline ViewAudits check) also
 // stops a token with zero auditor grants from acting by an auditor_id coincidence.

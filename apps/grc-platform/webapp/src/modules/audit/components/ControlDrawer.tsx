@@ -496,10 +496,12 @@ function SubmittedPopulationFiles({
   auditId,
   controlId,
   rejectionReason,
+  canDelete,
 }: {
   auditId: number;
   controlId: number;
   rejectionReason?: string | null;
+  canDelete: boolean;
 }): JSX.Element {
   const population = useGetPopulation(auditId, controlId, true);
   const files = population.data?.populationFiles ?? [];
@@ -532,16 +534,13 @@ function SubmittedPopulationFiles({
   // A round submitted with a note instead of (or alongside) files — same
   // "Completed without files" treatment as SubmittedEvidenceList's fileless
   // rounds, just for the one persistent population round instead of a list.
-  // canDelete unconditional, same as this component's PopulationFileList call
-  // below — this card is only reached from a team-editable status, and the
-  // backend's own privilege+assignment gate is the actual enforcement.
   const attestationNote = attestation && (
     <AttestationNote
       auditId={auditId}
       controlId={controlId}
       attestation={attestation}
       filesEmpty={files.length === 0}
-      canDelete
+      canDelete={canDelete}
     />
   );
 
@@ -563,7 +562,7 @@ function SubmittedPopulationFiles({
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
       {resubmissionNote}
       {attestationNote}
-      <PopulationFileList files={files} emptyText="" auditId={auditId} controlId={controlId} canDelete />
+      <PopulationFileList files={files} emptyText="" auditId={auditId} controlId={controlId} canDelete={canDelete} />
     </Box>
   );
 }
@@ -1057,7 +1056,7 @@ function OEEvidenceSection({
                 title={control.comments ? "Resubmit Population" : "Submit Population"}
                 flexContent
               >
-                <SubmittedPopulationFiles auditId={control.auditId} controlId={control.id} rejectionReason={control.comments ?? null} />
+                <SubmittedPopulationFiles auditId={control.auditId} controlId={control.id} rejectionReason={control.comments ?? null} canDelete={canDeletePopulationRecord} />
                 <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
                   <EvidenceUploadBox
                     auditId={control.auditId}
@@ -1141,7 +1140,7 @@ function OEEvidenceSection({
           {control.status === "POPULATION_NEED_CLARIFICATION" && (
             <>
               <SectionCard icon={<FileUp size={16} />} iconBg="transparent" title="Resubmit Population" flexContent>
-                <SubmittedPopulationFiles auditId={control.auditId} controlId={control.id} />
+                <SubmittedPopulationFiles auditId={control.auditId} controlId={control.id} canDelete={canDeletePopulationRecord} />
                 <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
                   <EvidenceUploadBox
                     auditId={control.auditId}

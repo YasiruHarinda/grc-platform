@@ -129,7 +129,7 @@ type evidenceHandler struct {
 // derived audit id and ok=false after writing the response on failure.
 //
 // Users who hold ManageControls (compliance admin) or ViewAllAudits (org-wide
-// read, e.g. compliance team — see ADR-0002) bypass the owner-assignment check —
+// read, e.g. compliance team) bypass the owner-assignment check —
 // they already have full or org-wide read/write over audit data, so the IDOR
 // restriction is redundant and would block legitimate submissions. Both
 // privileges can be granted scoped to a single team, though (module=AUDIT), so
