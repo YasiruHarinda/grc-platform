@@ -131,6 +131,9 @@ func main() {
 		actors = append(actors, a)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		fatal("iterate risk_evidence.created_by: %v", err)
+	}
 	fmt.Printf("%d distinct email-shaped created_by value(s) on risk_evidence\n", len(actors))
 
 	// ── Resolve ──────────────────────────────────────────────────────────────
