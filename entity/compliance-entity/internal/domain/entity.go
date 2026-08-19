@@ -1382,8 +1382,11 @@ type ListAuditTrailResponse struct {
 
 // AuditNotification is one logged email send.
 type AuditNotification struct {
-	ID              int64     `json:"id"`
-	RecipientID     int       `json:"recipientId"`
+	ID int64 `json:"id"`
+	// RecipientID is nullable: the FK is ON DELETE SET NULL (see audit_schema.sql)
+	// so a delivery record outlives the recipient user being deleted, rather
+	// than being cascade-deleted along with them.
+	RecipientID     *int      `json:"recipientId"`
 	AuditID         *int      `json:"auditId"`
 	ControlID       *int      `json:"controlId"`
 	PopulationID    *int      `json:"populationId"`

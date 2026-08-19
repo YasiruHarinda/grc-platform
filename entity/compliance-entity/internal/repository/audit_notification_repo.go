@@ -100,14 +100,18 @@ func (r *auditNotificationRepo) AuditNotificationExists(ctx context.Context, req
 
 func scanAuditNotification(s scanner) (*domain.AuditNotification, error) {
 	var n domain.AuditNotification
-	var auditID, controlID, populationID sql.NullInt64
+	var recipientID, auditID, controlID, populationID sql.NullInt64
 	var dueDateSnapshot, message, createdBy sql.NullString
 	err := s.Scan(
-		&n.ID, &n.RecipientID, &auditID, &controlID, &populationID, &n.Type,
+		&n.ID, &recipientID, &auditID, &controlID, &populationID, &n.Type,
 		&n.Channel, &dueDateSnapshot, &message, &createdBy, &n.CreatedOn,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if recipientID.Valid {
+		v := int(recipientID.Int64)
+		n.RecipientID = &v
 	}
 	if auditID.Valid {
 		v := int(auditID.Int64)

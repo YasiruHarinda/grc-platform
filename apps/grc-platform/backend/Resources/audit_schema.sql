@@ -505,7 +505,7 @@ DEALLOCATE PREPARE add_trail_overridden_stmt;
 
 CREATE TABLE IF NOT EXISTS audit_notification (
   id                BIGINT       NOT NULL AUTO_INCREMENT,
-  recipient_id      INT          NOT NULL,
+  recipient_id      INT          NULL,
   audit_id          INT          NULL,
   control_id        INT          NULL,
   population_id     INT          NULL,
@@ -525,7 +525,7 @@ CREATE TABLE IF NOT EXISTS audit_notification (
   created_by        VARCHAR(255) NULL,
   PRIMARY KEY (id),
   KEY idx_notif_dedup (recipient_id, type, control_id, population_id, due_date_snapshot),
-  CONSTRAINT fk_notif_recipient  FOREIGN KEY (recipient_id)  REFERENCES `user`(id)           ON DELETE CASCADE,
+  CONSTRAINT fk_notif_recipient  FOREIGN KEY (recipient_id)  REFERENCES `user`(id)           ON DELETE SET NULL,
   CONSTRAINT fk_notif_audit      FOREIGN KEY (audit_id)      REFERENCES audit(id)            ON DELETE SET NULL,
   CONSTRAINT fk_notif_control    FOREIGN KEY (control_id)    REFERENCES audit_control(id)    ON DELETE SET NULL,
   CONSTRAINT fk_notif_population FOREIGN KEY (population_id) REFERENCES audit_population(id) ON DELETE SET NULL
