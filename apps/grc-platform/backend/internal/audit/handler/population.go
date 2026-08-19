@@ -136,6 +136,9 @@ func (h *evidenceHandler) submitPopulation(w http.ResponseWriter, r *http.Reques
 	if !h.requireAssignment(w, r, auditID, controlID) {
 		return
 	}
+	if h.requireControlNotComplete(w, r, auditID, controlID) == nil {
+		return
+	}
 	populationID, ok := h.activePopulationID(w, r, controlID)
 	if !ok {
 		return
