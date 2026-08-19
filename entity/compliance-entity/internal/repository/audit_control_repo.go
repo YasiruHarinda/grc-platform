@@ -715,7 +715,7 @@ func demoteEvidenceRound(ctx context.Context, tx *sql.Tx, controlID int, target 
 	var id int
 	var status string
 	err := tx.QueryRowContext(ctx,
-		`SELECT id, status FROM audit_evidence WHERE control_id = ? ORDER BY created_at DESC LIMIT 1`, controlID,
+		`SELECT id, status FROM audit_evidence WHERE control_id = ? ORDER BY id DESC LIMIT 1`, controlID,
 	).Scan(&id, &status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
