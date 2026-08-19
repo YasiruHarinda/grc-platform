@@ -95,7 +95,7 @@ func TestAuthorizeComment(t *testing.T) {
 			// correctly a different identity, not the same one spelled
 			// differently.
 			"MEDIUM: uuid matching is exact, not fuzzy",
-			medium, &model.Escalation{AssignerLeadUUID: strp("7782633A-25B3-42FA-A78E-F05C577090BD")}, stubUsers{caller, 7}, false, true,
+			medium, &model.Escalation{AssignerLeadUUID: strp("885AEEB0-2086-4CA4-83C9-B2A62B299967")}, stubUsers{caller, 7}, false, true,
 		},
 		{
 			"MEDIUM: the management approver is not a lead",

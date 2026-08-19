@@ -99,7 +99,9 @@ func main() {
 		scimClient = scim.NewClient(cfg.SCIM.BaseURL, cfg.SCIM.TokenURL,
 			cfg.SCIM.ClientID, cfg.SCIM.ClientSecret, cfg.SCIM.Scopes)
 	} else {
-		slog.Warn("SCIM is not configured; users will be provisioned without an Asgardeo uuid")
+		slog.Warn("SCIM is not configured; users will be provisioned without an Asgardeo uuid, " +
+			"risk notifications will have no deliverable recipients, and the Risk Owner / " +
+			"Management Approver pickers will return no candidates")
 	}
 
 	// One directory for the whole process, so its cache is shared across every
@@ -110,7 +112,12 @@ func main() {
 		// serve them without a per-uuid SCIM call, refreshing it every 12h.
 		// Anyone outside the domain (or if this hasn't refreshed yet) still
 		// resolves through the per-uuid TTL cache below.
-		dirSvc.StartBulkRefresh(ctx, cfg.SCIM.UserDomain, directory.DefaultBulkRefreshInterval)
+		//
+		// Off the startup path: StartBulkRefresh's first fetch is synchronous,
+		// and this directory is remote and can cold-start slowly. Blocking
+		// here would delay binding the listener (and /health) on an external
+		// dependency the caller already tolerates being unready for.
+		go dirSvc.StartBulkRefresh(ctx, cfg.SCIM.UserDomain, directory.DefaultBulkRefreshInterval)
 	}
 
 	userDeps := userhandler.Deps{

@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
@@ -80,7 +81,10 @@ func (d *Deps) handleListCandidates(w http.ResponseWriter, r *http.Request, priv
 
 	// Local dev (no privilege store configured): there are no grants to query,
 	// and every check elsewhere in this mode allows everything — so every
-	// platform user is offered, rather than silently returning zero candidates.
+	// platform user is offered, rather than silently returning zero
+	// candidates. keepUnresolved=true carries that same intent through
+	// resolveCandidates: local dev without SCIM configured resolves nobody,
+	// so the normal drop-unresolved rule would otherwise empty this list too.
 	if auth.AllowAll(r.Context()) {
 		all, err := d.Users.List(r.Context())
 		if err != nil {
@@ -91,7 +95,7 @@ func (d *Deps) handleListCandidates(w http.ResponseWriter, r *http.Request, priv
 		for _, u := range all {
 			ids = append(ids, idUUID{id: u.ID, uuid: u.UUID})
 		}
-		response.WriteJSONValue(w, http.StatusOK, d.resolveCandidates(r.Context(), ids))
+		response.WriteJSONValue(w, http.StatusOK, d.resolveCandidates(r.Context(), ids, true))
 		return
 	}
 
@@ -104,7 +108,7 @@ func (d *Deps) handleListCandidates(w http.ResponseWriter, r *http.Request, priv
 	for _, c := range candidates {
 		ids = append(ids, idUUID{id: c.ID, uuid: c.UUID})
 	}
-	response.WriteJSONValue(w, http.StatusOK, d.resolveCandidates(r.Context(), ids))
+	response.WriteJSONValue(w, http.StatusOK, d.resolveCandidates(r.Context(), ids, false))
 }
 
 // idUUID is a candidate's platform id paired with the uuid to resolve their
@@ -117,27 +121,33 @@ type idUUID struct {
 }
 
 // resolveCandidates batch-resolves every candidate's name and email through
-// the identity directory and drops anyone who doesn't resolve — a candidate
-// with no resolvable identity should not be offered as a pickable option at
-// all, matching resolve.go's Action Owner rule: if the directory can't name
-// someone, they should not be assignable to a risk in any capacity.
+// the identity directory. By default it drops anyone who doesn't resolve — a
+// candidate with no resolvable identity should not be offered as a pickable
+// option at all, matching resolve.go's Action Owner rule: if the directory
+// can't name someone, they should not be assignable to a risk in any
+// capacity.
 //
-// LookupAll's stale-serve behaviour is what keeps this resilient: a
-// candidate only vanishes from a picker if their uuid has never once
+// keepUnresolved overrides that for handleListCandidates's local-dev path,
+// where a nil/unconfigured directory would otherwise resolve nobody and
+// silently empty the list that branch explicitly promises to keep full — an
+// unresolved candidate there is still returned, with blank Email/DisplayName.
+//
+// LookupAll's stale-serve behaviour is what keeps the default path resilient:
+// a candidate only vanishes from a picker if their uuid has never once
 // resolved, not merely because the directory hiccuped on this one request.
-func (d *Deps) resolveCandidates(ctx context.Context, candidates []idUUID) []*userentity.User {
+func (d *Deps) resolveCandidates(ctx context.Context, candidates []idUUID, keepUnresolved bool) []*userentity.User {
 	out := make([]*userentity.User, 0, len(candidates))
-	if d.Directory == nil {
-		return out
+	people := map[string]directory.Person{}
+	if d.Directory != nil {
+		uuids := make([]string, 0, len(candidates))
+		for _, c := range candidates {
+			uuids = append(uuids, c.uuid)
+		}
+		people = d.Directory.LookupAll(ctx, uuids)
 	}
-	uuids := make([]string, 0, len(candidates))
-	for _, c := range candidates {
-		uuids = append(uuids, c.uuid)
-	}
-	people := d.Directory.LookupAll(ctx, uuids)
 	for _, c := range candidates {
 		p, ok := people[c.uuid]
-		if !ok {
+		if !ok && !keepUnresolved {
 			continue
 		}
 		// RiskTeamIDs is set to an empty (never nil) slice: team membership no

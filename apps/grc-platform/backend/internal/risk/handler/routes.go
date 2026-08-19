@@ -52,12 +52,16 @@ type Deps struct {
 	// (see candidates.go). nil in local dev, when no privilege store is
 	// configured — handlers must go through auth.AllowAll before using it.
 	Grants grant.Repository
-	// Directory resolves a user's uuid to their current name and email, which
-	// this platform is in the process of no longer storing. Notifications need
-	// both: a name to address someone by, and an address to deliver to.
+	// Directory resolves a user's uuid to their current name and email — the
+	// only source for both now that the platform stores neither. Notifications
+	// need both: a name to address someone by, and an address to deliver to.
 	//
-	// nil is tolerated — the stored columns are still populated during the
-	// migration, so an unconfigured directory changes nothing visible.
+	// nil is tolerated without panicking, but is not harmless: every
+	// notification recipient fails to resolve an address and is silently
+	// dropped (see resolvePerson/sendRiskEvent in notify.go), and every
+	// Risk Owner / Management Approver candidate fails to resolve and is
+	// silently dropped too (see resolveCandidates in candidates.go). A real
+	// deployment must configure SCIM.
 	Directory *directory.Service
 	// Email sends the risk-owner notification fired synchronously right
 	// after a risk is created. A delivery failure is logged but never fails
