@@ -301,6 +301,7 @@ func isHex(s string) bool {
 
 func (s *evidenceService) Submit(ctx context.Context, auditID, controlID int, files []model.EvidenceFileRef, attestation string, isAdmin bool, submittedBy string) (*model.AuditEvidence, error) {
 	fileless := len(files) == 0
+	attestation = strings.TrimSpace(attestation)
 	if fileless && !(isAdmin && attestation != "") {
 		return nil, &apierror.Error{
 			StatusCode: http.StatusUnprocessableEntity,
