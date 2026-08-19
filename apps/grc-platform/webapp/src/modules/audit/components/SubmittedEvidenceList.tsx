@@ -169,7 +169,14 @@ export default function SubmittedEvidenceList({
   const submissions = allRounds.filter((s, i) => {
     const hasContent = (s.files?.length ?? 0) > 0 || Boolean(s.attestation);
     if (!hasContent) return false;
-    if (REJECTED_STATUSES.has(s.status) && i !== 0) return false;
+    // "Superseded" means a newer round actually has content — not just a
+    // lower array index, since a resubmission's files can later be deleted
+    // and leave a newer, empty round in front of this one (see hasContent
+    // above, and the comment block up top).
+    const hasNewerContent = allRounds
+      .slice(0, i)
+      .some((round) => (round.files?.length ?? 0) > 0 || Boolean(round.attestation));
+    if (REJECTED_STATUSES.has(s.status) && hasNewerContent) return false;
     return true;
   });
 
