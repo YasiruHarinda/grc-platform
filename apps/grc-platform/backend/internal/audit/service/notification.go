@@ -29,11 +29,18 @@ import (
 // repository.NotificationRepository. See model.NotificationLogEntry and
 // audit_schema.sql's audit_notification comment for the full design.
 type NotificationService interface {
-	// Create logs one sent email. Called only after a successful send.
+	// Create logs one sent email. Called only after a successful send — used
+	// by every notification type except the reminder tiers, which use
+	// Claim/ReleaseClaim instead.
 	Create(ctx context.Context, n model.NotificationLogEntry) error
-	// Exists reports whether a matching (recipient, type, control/population,
-	// due date) row already exists — the reminder job's de-dup check.
-	Exists(ctx context.Context, recipientID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (bool, error)
+	// Claim atomically reserves a reminder item — see
+	// docs/new/Reminder-Notification-Atomic-Claim-Design.md. claimed=false
+	// means another caller already claimed it; not an error.
+	Claim(ctx context.Context, recipientID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (claimed bool, notificationID int64, err error)
+	// ReleaseClaim deletes a claim row so its item is retryable on a future
+	// run — called only when the owner's digest failed to send after the
+	// claim succeeded.
+	ReleaseClaim(ctx context.Context, notificationID int64) error
 }
 
 type notificationService struct {
@@ -48,6 +55,10 @@ func (s *notificationService) Create(ctx context.Context, n model.NotificationLo
 	return s.repo.Create(ctx, n)
 }
 
-func (s *notificationService) Exists(ctx context.Context, recipientID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (bool, error) {
-	return s.repo.Exists(ctx, recipientID, notifType, controlID, populationID, dueDateSnapshot)
+func (s *notificationService) Claim(ctx context.Context, recipientID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (bool, int64, error) {
+	return s.repo.Claim(ctx, recipientID, notifType, controlID, populationID, dueDateSnapshot)
+}
+
+func (s *notificationService) ReleaseClaim(ctx context.Context, notificationID int64) error {
+	return s.repo.ReleaseClaim(ctx, notificationID)
 }

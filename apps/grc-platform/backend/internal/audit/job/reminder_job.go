@@ -43,11 +43,15 @@ type controlLister interface {
 	ListAllForReminders(ctx context.Context) ([]*model.AuditControl, error)
 }
 
-// dedupChecker is the reminder job's own de-dup gate — structurally satisfied
-// by auditservice.NotificationService.Exists without this package importing
-// that package.
-type dedupChecker interface {
-	Exists(ctx context.Context, recipientID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (bool, error)
+// claimer is the reminder job's own de-dup gate — structurally satisfied by
+// auditservice.NotificationService.Claim/ReleaseClaim without this package
+// importing that package. The insert Claim triggers is the atomic de-dup
+// decision (see docs/new/Reminder-Notification-Atomic-Claim-Design.md);
+// ReleaseClaim undoes it when the owner's digest then fails to send, so the
+// item is retried on a future run instead of staying claimed forever.
+type claimer interface {
+	Claim(ctx context.Context, recipientID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (claimed bool, notificationID int64, err error)
+	ReleaseClaim(ctx context.Context, notificationID int64) error
 }
 
 const (
@@ -64,23 +68,22 @@ const (
 type ReminderJob struct {
 	audits   auditLister
 	controls controlLister
-	dedup    dedupChecker
-	// notify delivers one owner's full daily digest synchronously and logs
-	// its own audit_notification rows on success. A plain function (not a
-	// handler dependency) so this package doesn't import internal/audit/handler
-	// (which imports service → would cycle) — wired to
+	claim    claimer
+	// notify delivers one owner's full daily digest synchronously. A plain
+	// function (not a handler dependency) so this package doesn't import
+	// internal/audit/handler (which imports service → would cycle) — wired to
 	// handler.Deps.SendReminderDigestSync at startup, exactly as
-	// internal/risk/job.EscalationJob is wired to NotifyEscalationSync.
+	// internal/risk/job.EscalationJob is wired to NotifyEscalationSync. Unlike
+	// every other notify path, this one does NOT log audit_notification rows
+	// on success — the claim already did, before the send was even attempted
+	// (see claimer's doc comment).
 	notify func(ctx context.Context, ownerUserID int, items []model.ReminderItem) error
 	// running serializes runOnce against itself: Start's daily ticker and the
 	// manual-trigger endpoint (handler.reminderJobHandler.run) both end up
-	// calling runOnce on this same instance, and the per-item dedup check
-	// (dedupChecker.Exists) is a plain read-then-log with no DB uniqueness
-	// backing it (see audit_schema.sql's audit_notification comment) — two
-	// overlapping sweeps could each pass Exists for the same item before
-	// either logs it, double-sending. This only guards one process; running
-	// more than one replica of this server would still need a durable,
-	// cross-process lock, which is out of scope here.
+	// calling runOnce on this same instance. This guards a same-process
+	// overlap cheaply; claimer's DB-level unique constraint is what makes the
+	// de-dup correct across processes/replicas too — see
+	// docs/new/Reminder-Notification-Atomic-Claim-Design.md.
 	running atomic.Bool
 }
 
@@ -88,10 +91,10 @@ type ReminderJob struct {
 func NewReminderJob(
 	audits auditLister,
 	controls controlLister,
-	dedup dedupChecker,
+	claim claimer,
 	notify func(ctx context.Context, ownerUserID int, items []model.ReminderItem) error,
 ) *ReminderJob {
-	return &ReminderJob{audits: audits, controls: controls, dedup: dedup, notify: notify}
+	return &ReminderJob{audits: audits, controls: controls, claim: claim, notify: notify}
 }
 
 // Start waits until the next occurrence of reminderHourUTC, runs the sweep,
@@ -210,16 +213,50 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 	today := time.Now().UTC()
 	todayStr := today.Format("2006-01-02")
 	byOwner := map[int][]model.ReminderItem{}
-	queued, skippedDup := 0, 0
+	queued, skippedDup, skippedErr := 0, 0, 0
+
+	// Release every still-pending claim before letting a panic reach the
+	// top-level recover above — otherwise those items would stay claimed
+	// forever with nothing sent, the same stuck-claim outcome the ordinary
+	// release-on-failed-send path (below) exists to avoid. Registered here
+	// (after byOwner exists, so it can reference it) rather than with the
+	// top-level recover: defers run LIFO, so this one fires first and can
+	// still re-panic for the top-level recover to log and convert to an
+	// error, same as any other panic. The send loop below deletes each
+	// owner's entry from byOwner as it's resolved (success or ordinary
+	// failure), so whatever remains here is exactly the unresolved set.
+	defer func() {
+		if r := recover(); r != nil {
+			for ownerID, items := range byOwner {
+				for _, it := range items {
+					if relErr := j.claim.ReleaseClaim(ctx, it.NotificationID); relErr != nil {
+						slog.Error("reminder job: failed to release claim after a panic — item will NOT retry until this is fixed",
+							"notificationId", it.NotificationID, "ownerId", ownerID, "type", it.Type, "err", relErr)
+					}
+				}
+			}
+			panic(r)
+		}
+	}()
 
 	queue := func(ownerID int, item model.ReminderItem, controlID, populationID *int) {
-		exists, err := j.dedup.Exists(ctx, ownerID, item.Type, controlID, populationID, &item.DedupSnapshot)
+		claimed, notificationID, err := j.claim.Claim(ctx, ownerID, item.Type, controlID, populationID, &item.DedupSnapshot)
 		if err != nil {
-			slog.Warn("reminder job: dedup check failed, sending anyway", "ownerId", ownerID, "type", item.Type, "err", err)
-		} else if exists {
+			// Fail CLOSED, unlike the old Exists-based check's fail-open
+			// ("sending anyway"): once a claim call itself errors, this run
+			// can't tell whether it actually holds the claim or not, so
+			// sending anyway risks exactly the unguarded duplicate this
+			// mechanism exists to prevent. Skipping costs one day's delay —
+			// tomorrow's run retries it.
+			slog.Warn("reminder job: claim failed, skipping this run (fail closed)", "ownerId", ownerID, "type", item.Type, "err", err)
+			skippedErr++
+			return
+		}
+		if !claimed {
 			skippedDup++
 			return
 		}
+		item.NotificationID = notificationID
 		byOwner[ownerID] = append(byOwner[ownerID], item)
 		queued++
 	}
@@ -272,12 +309,27 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 	for ownerID, items := range byOwner {
 		if err := j.notify(ctx, ownerID, items); err != nil {
 			slog.Warn("reminder job: notification failed", "ownerId", ownerID, "items", len(items), "err", err)
+			// The digest didn't go out, so every item it would have covered
+			// must give up its claim — otherwise they'd stay claimed forever
+			// with nothing ever sent, silently starving that owner of
+			// reminders. If the release itself fails, the claim IS stuck: log
+			// loud (Error, not Warn) since this is the one failure mode this
+			// mechanism doesn't self-heal from — see
+			// docs/new/Reminder-Notification-Atomic-Claim-Design.md §4.
+			for _, it := range items {
+				if relErr := j.claim.ReleaseClaim(ctx, it.NotificationID); relErr != nil {
+					slog.Error("reminder job: failed to release claim after failed send — item will NOT retry until this is fixed",
+						"notificationId", it.NotificationID, "ownerId", ownerID, "type", it.Type, "err", relErr)
+				}
+			}
 			notifyFailed++
+			delete(byOwner, ownerID) // resolved (failed+released) — the panic-recovery defer above must not also release it
 			continue
 		}
 		sent++
+		delete(byOwner, ownerID) // resolved (sent) — must never be released, even if a later owner's notify panics
 	}
 	slog.Info("reminder job: run complete",
-		"owners", sent, "notifyFailed", notifyFailed, "itemsQueued", queued, "itemsSkippedDup", skippedDup)
+		"owners", sent, "notifyFailed", notifyFailed, "itemsQueued", queued, "itemsSkippedDup", skippedDup, "itemsSkippedErr", skippedErr)
 	return nil
 }

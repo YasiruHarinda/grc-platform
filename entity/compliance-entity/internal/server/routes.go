@@ -232,7 +232,8 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	// Audit notifications (send-log for every audit-module email; also the
 	// reminder job's de-dup mechanism)
 	mux.HandleFunc("POST /audit/notifications", auditNotificationH.CreateAuditNotification)
-	mux.HandleFunc("POST /audit/notifications/exists", auditNotificationH.CheckAuditNotificationExists)
+	mux.HandleFunc("POST /audit/notifications/claim", auditNotificationH.ClaimAuditNotification)
+	mux.HandleFunc("DELETE /audit/notifications/{id}/claim", auditNotificationH.ReleaseAuditNotificationClaim)
 
 	// Controls (cross-audit search; nested CRUD under audits)
 	mux.HandleFunc("POST /audit/dashboard/search", dashboardH.GetDashboard)

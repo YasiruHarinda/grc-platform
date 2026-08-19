@@ -28,11 +28,14 @@ import (
 // AuditNotificationRepository defines persistence for audit_notification.
 type AuditNotificationRepository interface {
 	CreateAuditNotification(ctx context.Context, req domain.CreateAuditNotificationRequest) (*domain.AuditNotification, error)
-	// AuditNotificationExists is the reminder job's de-dup check — see
-	// audit_schema.sql's audit_notification comment for why this is an
-	// application-level NULL-safe existence check rather than a DB unique
-	// constraint.
-	AuditNotificationExists(ctx context.Context, req domain.AuditNotificationExistsRequest) (bool, error)
+	// ClaimAuditNotification is the reminder job's atomic de-dup claim — see
+	// audit_schema.sql's audit_notification comment and
+	// docs/new/Reminder-Notification-Atomic-Claim-Design.md.
+	ClaimAuditNotification(ctx context.Context, req domain.ClaimAuditNotificationRequest) (*domain.AuditNotification, bool, error)
+	// ReleaseAuditNotificationClaim deletes a claim row so its item becomes
+	// retryable on a future run — used only when the owner's digest failed to
+	// send after the claim succeeded.
+	ReleaseAuditNotificationClaim(ctx context.Context, id int64) error
 }
 
 type auditNotificationRepo struct{ db *sql.DB }
@@ -76,26 +79,52 @@ func (r *auditNotificationRepo) getAuditNotificationByID(ctx context.Context, id
 		 FROM audit_notification WHERE id = ?`, id))
 }
 
-// AuditNotificationExists uses NULL-safe equality (<=>) on control_id/
-// population_id/due_date_snapshot so the check works correctly regardless of
-// which of control_id/population_id is set for this notification type.
-func (r *auditNotificationRepo) AuditNotificationExists(ctx context.Context, req domain.AuditNotificationExistsRequest) (bool, error) {
-	var exists int
-	err := r.db.QueryRowContext(ctx,
-		`SELECT 1 FROM audit_notification
-		 WHERE recipient_id = ? AND type = ?
-		   AND control_id <=> ? AND population_id <=> ? AND due_date_snapshot <=> ?
-		 LIMIT 1`,
-		req.RecipientID, req.Type,
-		nullableInt(req.ControlID), nullableInt(req.PopulationID), nullableString(req.DueDateSnapshot),
-	).Scan(&exists)
-	if err == sql.ErrNoRows {
-		return false, nil
-	}
+// ClaimAuditNotification atomically inserts an audit_notification row for a
+// reminder item, iff no row with the same reminder_dedup_key exists yet (see
+// uq_notif_reminder_dedup and audit_schema.sql's audit_notification comment).
+// The insert IS the claim: a caller that wins it is the sole owner of
+// sending this item for this due_date_snapshot. Losing the race (someone else
+// already claimed it) is reported as claimed=false, not an error.
+func (r *auditNotificationRepo) ClaimAuditNotification(ctx context.Context, req domain.ClaimAuditNotificationRequest) (*domain.AuditNotification, bool, error) {
+	res, err := r.db.ExecContext(ctx,
+		`INSERT INTO audit_notification
+		 (recipient_id, audit_id, control_id, population_id, type, due_date_snapshot, created_by)
+		 VALUES (?, ?, ?, ?, ?, ?, 'system')`,
+		req.RecipientID, nullableInt(req.AuditID), nullableInt(req.ControlID),
+		nullableInt(req.PopulationID), req.Type, nullableString(req.DueDateSnapshot),
+	)
 	if err != nil {
-		return false, fmt.Errorf("audit_notification.Exists: %w", err)
+		if isDuplicateKey(err) {
+			return nil, false, nil
+		}
+		if isFKViolation(err) {
+			return nil, false, &apierror.NotFoundError{Msg: fmt.Sprintf("recipient %d not found", req.RecipientID)}
+		}
+		return nil, false, fmt.Errorf("audit_notification.Claim: %w", err)
 	}
-	return true, nil
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, false, fmt.Errorf("audit_notification.Claim last insert id: %w", err)
+	}
+	n, err := r.getAuditNotificationByID(ctx, id)
+	if err != nil {
+		return nil, false, err
+	}
+	return n, true, nil
+}
+
+// ReleaseAuditNotificationClaim deletes a claim row so its item becomes
+// retryable — used only when the owner's digest failed to send after the
+// claim succeeded. Scoped to the three REMINDER_* types so this can never be
+// pointed at a delivered, non-reminder log row.
+func (r *auditNotificationRepo) ReleaseAuditNotificationClaim(ctx context.Context, id int64) error {
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM audit_notification
+		 WHERE id = ? AND type IN ('REMINDER_DUE_10', 'REMINDER_DUE_5', 'REMINDER_OVERDUE')`, id)
+	if err != nil {
+		return fmt.Errorf("audit_notification.ReleaseClaim: %w", err)
+	}
+	return nil
 }
 
 func scanAuditNotification(s scanner) (*domain.AuditNotification, error) {

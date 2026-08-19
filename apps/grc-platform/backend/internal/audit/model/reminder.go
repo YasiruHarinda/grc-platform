@@ -48,4 +48,11 @@ type ReminderItem struct {
 	// sent, so — unlike the other two tiers — an overdue item logs a new row,
 	// and therefore re-sends, every day it stays overdue.
 	DedupSnapshot string
+	// NotificationID is the audit_notification row ID this item's claim
+	// reserved — set by internal/audit/job.ReminderJob's queue closure once
+	// job.claimer.Claim succeeds, and used only by that same job to release
+	// the claim (delete the row) if the owner's digest send then fails, so
+	// the item is retried on a future run instead of staying claimed forever
+	// with nothing sent. See docs/new/Reminder-Notification-Atomic-Claim-Design.md.
+	NotificationID int64
 }

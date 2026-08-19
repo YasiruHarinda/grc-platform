@@ -90,8 +90,8 @@ func TestReminderTierBoundaries(t *testing.T) {
 	}
 }
 
-// fakeAudits/fakeControls/fakeDedup are minimal stand-ins for the job's three
-// read dependencies.
+// fakeAudits/fakeControls/fakeClaimer are minimal stand-ins for the job's
+// three read/claim dependencies.
 type fakeAudits struct {
 	audits []*model.Audit
 }
@@ -108,10 +108,23 @@ func (f *fakeControls) ListAllForReminders(context.Context) ([]*model.AuditContr
 	return f.controls, nil
 }
 
-// fakeDedup reports true for any (recipient, type, controlId/populationId,
-// dueDateSnapshot) tuple already in seen.
-type fakeDedup struct {
-	seen map[string]bool
+// fakeClaimer is an in-memory stand-in for the entity's atomic claim: Claim
+// on an unseen key marks it claimed and hands back a fresh notificationID;
+// Claim on an already-claimed key reports claimed=false (no error) — the
+// normal "lost the race" outcome. ReleaseClaim un-claims a key by its
+// notificationID, so a released item can be re-claimed by a later call,
+// mirroring the real DELETE-based release.
+type fakeClaimer struct {
+	mu      sync.Mutex
+	claimed map[string]bool  // dedup key -> already claimed
+	idToKey map[int64]string // notificationID -> dedup key, for release
+	nextID  int64
+	// released records every notificationID ReleaseClaim was called with —
+	// tests assert against this to verify release-on-failed-send.
+	released map[int64]bool
+	// claimErr, if set, makes every Claim call fail with this error instead
+	// of claiming anything — simulates the entity/network being unreachable.
+	claimErr error
 }
 
 func dedupKey(recipientID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) string {
@@ -128,8 +141,40 @@ func dedupKey(recipientID int, notifType string, controlID, populationID *int, d
 	return key
 }
 
-func (f *fakeDedup) Exists(_ context.Context, recipientID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (bool, error) {
-	return f.seen[dedupKey(recipientID, notifType, controlID, populationID, dueDateSnapshot)], nil
+func (f *fakeClaimer) Claim(_ context.Context, recipientID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (bool, int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.claimErr != nil {
+		return false, 0, f.claimErr
+	}
+	key := dedupKey(recipientID, notifType, controlID, populationID, dueDateSnapshot)
+	if f.claimed[key] {
+		return false, 0, nil
+	}
+	if f.claimed == nil {
+		f.claimed = map[string]bool{}
+	}
+	f.claimed[key] = true
+	f.nextID++
+	id := f.nextID
+	if f.idToKey == nil {
+		f.idToKey = map[int64]string{}
+	}
+	f.idToKey[id] = key
+	return true, id, nil
+}
+
+func (f *fakeClaimer) ReleaseClaim(_ context.Context, notificationID int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if key, ok := f.idToKey[notificationID]; ok {
+		delete(f.claimed, key)
+	}
+	if f.released == nil {
+		f.released = map[int64]bool{}
+	}
+	f.released[notificationID] = true
+	return nil
 }
 
 func intPtr(v int) *int       { return &v }
@@ -151,7 +196,7 @@ func TestRunOnceSkipsCompletedAndRemovedAudits(t *testing.T) {
 		{ID: 3, AuditID: 3, OwnerID: intPtr(103), Status: "EVIDENCE_PENDING", DueDate: strPtr(dueSoon), ControlNumber: "C-3"},
 		{ID: 4, AuditID: 4, OwnerID: intPtr(104), Status: "EVIDENCE_PENDING", DueDate: strPtr(dueSoon), ControlNumber: "C-4"},
 	}}
-	dedup := &fakeDedup{seen: map[string]bool{}}
+	dedup := &fakeClaimer{claimed: map[string]bool{}}
 	notified := map[int]int{} // ownerID -> item count
 
 	j := NewReminderJob(audits, controls, dedup, func(_ context.Context, ownerID int, items []model.ReminderItem) error {
@@ -184,7 +229,7 @@ func TestRunOnceSkipsNilOwner(t *testing.T) {
 	controls := &fakeControls{controls: []*model.AuditControl{
 		{ID: 1, AuditID: 1, OwnerID: nil, Status: "EVIDENCE_PENDING", DueDate: strPtr(dueSoon), ControlNumber: "C-1"},
 	}}
-	dedup := &fakeDedup{seen: map[string]bool{}}
+	dedup := &fakeClaimer{claimed: map[string]bool{}}
 	called := false
 
 	j := NewReminderJob(audits, controls, dedup, func(context.Context, int, []model.ReminderItem) error {
@@ -207,7 +252,7 @@ func TestRunOnceSkipsAlreadyLoggedReminder(t *testing.T) {
 	controls := &fakeControls{controls: []*model.AuditControl{
 		{ID: 7, AuditID: 1, OwnerID: intPtr(200), Status: "EVIDENCE_PENDING", DueDate: strPtr(dueDate), ControlNumber: "C-7"},
 	}}
-	dedup := &fakeDedup{seen: map[string]bool{
+	dedup := &fakeClaimer{claimed: map[string]bool{
 		dedupKey(200, "REMINDER_DUE_10", intPtr(7), nil, &dueDate): true,
 	}}
 	called := false
@@ -237,7 +282,7 @@ func TestRunOnceBatchesControlAndPopulationIntoOneDigestPerOwner(t *testing.T) {
 			PopulationID: intPtr(900), PopulationOwnerID: intPtr(300), PopulationStatus: strPtr("PENDING"), PopulationDueDate: strPtr(overdue),
 		},
 	}}
-	dedup := &fakeDedup{seen: map[string]bool{}}
+	dedup := &fakeClaimer{claimed: map[string]bool{}}
 	var gotItems []model.ReminderItem
 	calls := 0
 
@@ -283,7 +328,7 @@ func TestRunOnceOverdueDedupSnapshotIsToday(t *testing.T) {
 	// Pretend the overdue reminder for the ORIGINAL due date was already
 	// logged (e.g. a prior day's send) — this must NOT suppress today's send,
 	// since the dedup key for OVERDUE is today's date, not the due date.
-	dedup := &fakeDedup{seen: map[string]bool{
+	dedup := &fakeClaimer{claimed: map[string]bool{
 		dedupKey(400, "REMINDER_OVERDUE", intPtr(5), nil, &overdue): true,
 	}}
 	called := false
@@ -301,7 +346,7 @@ func TestRunOnceOverdueDedupSnapshotIsToday(t *testing.T) {
 
 	// Now mark TODAY's snapshot as already logged (simulating this same test
 	// having already run once today) — this time it must be skipped.
-	dedup.seen[dedupKey(400, "REMINDER_OVERDUE", intPtr(5), nil, &todayStr)] = true
+	dedup.claimed[dedupKey(400, "REMINDER_OVERDUE", intPtr(5), nil, &todayStr)] = true
 	called = false
 	if err := j.runOnce(context.Background()); err != nil {
 		t.Fatalf("runOnce: %v", err)
@@ -329,7 +374,7 @@ func TestRunOnceOverdueItemHasCorrectFields(t *testing.T) {
 			PopulationID: intPtr(950), PopulationOwnerID: intPtr(501), PopulationStatus: strPtr("PENDING"), PopulationDueDate: strPtr(popOverdue),
 		},
 	}}
-	dedup := &fakeDedup{seen: map[string]bool{}}
+	dedup := &fakeClaimer{claimed: map[string]bool{}}
 	digests := map[int][]model.ReminderItem{}
 
 	j := NewReminderJob(audits, controls, dedup, func(_ context.Context, ownerID int, items []model.ReminderItem) error {
@@ -385,7 +430,7 @@ func TestRunOnceOverdueSkipsCompleteControlAndApprovedPopulation(t *testing.T) {
 			PopulationID: intPtr(960), PopulationOwnerID: intPtr(601), PopulationStatus: strPtr("APPROVED"), PopulationDueDate: strPtr(overdue),
 		},
 	}}
-	dedup := &fakeDedup{seen: map[string]bool{}}
+	dedup := &fakeClaimer{claimed: map[string]bool{}}
 	called := false
 
 	j := NewReminderJob(audits, controls, dedup, func(context.Context, int, []model.ReminderItem) error {
@@ -411,7 +456,7 @@ func TestRunOnceRejectsOverlappingRun(t *testing.T) {
 	controls := &fakeControls{controls: []*model.AuditControl{
 		{ID: 1, AuditID: 1, OwnerID: intPtr(1), Status: "EVIDENCE_PENDING", DueDate: strPtr(dueSoon), ControlNumber: "C-1"},
 	}}
-	dedup := &fakeDedup{seen: map[string]bool{}}
+	dedup := &fakeClaimer{claimed: map[string]bool{}}
 
 	inNotify := make(chan struct{}, 1)
 	releaseNotify := make(chan struct{})
@@ -451,7 +496,14 @@ func TestRunOnceRejectsOverlappingRun(t *testing.T) {
 	}
 
 	// The guard must release after completion, so a later, non-overlapping
-	// run is still allowed to proceed.
+	// run is still allowed to proceed. Reset the claim state first: the first
+	// run's item is now legitimately, permanently claimed (it sent
+	// successfully), so without this the second run would correctly skip it
+	// as an already-sent duplicate — that's real dedup behavior, not what
+	// this assertion is testing.
+	dedup.mu.Lock()
+	dedup.claimed = map[string]bool{}
+	dedup.mu.Unlock()
 	notifyCalls.Store(0)
 	releaseNotify = make(chan struct{})
 	close(releaseNotify)
@@ -463,6 +515,70 @@ func TestRunOnceRejectsOverlappingRun(t *testing.T) {
 	}
 }
 
+func TestRunOnceReleasesClaimOnFailedSend(t *testing.T) {
+	// A claimed item whose digest send then fails must give up its claim, so
+	// a later run can retry it instead of it staying claimed forever with
+	// nothing ever sent — see
+	// docs/new/Reminder-Notification-Atomic-Claim-Design.md §3-4.
+	today := time.Now().UTC()
+	dueSoon := today.AddDate(0, 0, 10).Format("2006-01-02")
+
+	audits := &fakeAudits{audits: []*model.Audit{{ID: 1, Status: "ACTIVE"}}}
+	controls := &fakeControls{controls: []*model.AuditControl{
+		{ID: 1, AuditID: 1, OwnerID: intPtr(1), Status: "EVIDENCE_PENDING", DueDate: strPtr(dueSoon), ControlNumber: "C-1"},
+	}}
+	claim := &fakeClaimer{claimed: map[string]bool{}}
+
+	j := NewReminderJob(audits, controls, claim, func(context.Context, int, []model.ReminderItem) error {
+		return fmt.Errorf("email service down")
+	})
+	if err := j.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce: %v", err)
+	}
+
+	key := dedupKey(1, "REMINDER_DUE_10", intPtr(1), nil, &dueSoon)
+	if claim.claimed[key] {
+		t.Error("a claim whose send failed must be released, not left claimed")
+	}
+	if len(claim.released) != 1 {
+		t.Errorf("released = %v, want exactly one release call", claim.released)
+	}
+
+	// The item must now be re-claimable by a later run.
+	claimed, _, err := claim.Claim(context.Background(), 1, "REMINDER_DUE_10", intPtr(1), nil, &dueSoon)
+	if err != nil || !claimed {
+		t.Errorf("Claim after release = (%v, %v), want (true, nil)", claimed, err)
+	}
+}
+
+func TestRunOnceSkipsItemOnClaimErrorFailClosed(t *testing.T) {
+	// A Claim call that errors (e.g. the entity is unreachable) must skip the
+	// item for this run rather than sending anyway — a deliberate change from
+	// the old Exists-based check's fail-open behavior, since a failed claim
+	// call can't tell the run whether it actually holds the claim. See
+	// docs/new/Reminder-Notification-Atomic-Claim-Design.md §5.
+	today := time.Now().UTC()
+	dueSoon := today.AddDate(0, 0, 5).Format("2006-01-02")
+
+	audits := &fakeAudits{audits: []*model.Audit{{ID: 1, Status: "ACTIVE"}}}
+	controls := &fakeControls{controls: []*model.AuditControl{
+		{ID: 1, AuditID: 1, OwnerID: intPtr(1), Status: "EVIDENCE_PENDING", DueDate: strPtr(dueSoon), ControlNumber: "C-1"},
+	}}
+	claim := &fakeClaimer{claimed: map[string]bool{}, claimErr: fmt.Errorf("entity unreachable")}
+	called := false
+
+	j := NewReminderJob(audits, controls, claim, func(context.Context, int, []model.ReminderItem) error {
+		called = true
+		return nil
+	})
+	if err := j.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce: %v", err)
+	}
+	if called {
+		t.Error("an item whose claim call errored must not be sent this run (fail closed)")
+	}
+}
+
 func TestRunOnceRecoversFromPanic(t *testing.T) {
 	today := time.Now().UTC()
 	dueSoon := today.AddDate(0, 0, 10).Format("2006-01-02")
@@ -471,7 +587,7 @@ func TestRunOnceRecoversFromPanic(t *testing.T) {
 	controls := &fakeControls{controls: []*model.AuditControl{
 		{ID: 1, AuditID: 1, OwnerID: intPtr(1), Status: "EVIDENCE_PENDING", DueDate: strPtr(dueSoon), ControlNumber: "C-1"},
 	}}
-	dedup := &fakeDedup{seen: map[string]bool{}}
+	dedup := &fakeClaimer{claimed: map[string]bool{}}
 
 	j := NewReminderJob(audits, controls, dedup, func(context.Context, int, []model.ReminderItem) error {
 		panic("boom")
@@ -480,5 +596,13 @@ func TestRunOnceRecoversFromPanic(t *testing.T) {
 	err := j.runOnce(context.Background())
 	if err == nil {
 		t.Fatal("runOnce should return an error when the job goroutine panics, not propagate the panic")
+	}
+
+	key := dedupKey(1, "REMINDER_DUE_10", intPtr(1), nil, &dueSoon)
+	if dedup.claimed[key] {
+		t.Error("a claim whose send panicked must be released, not left claimed — see reminder_job.go's panic-recovery defer")
+	}
+	if len(dedup.released) != 1 {
+		t.Errorf("released = %v, want exactly one release call", dedup.released)
 	}
 }

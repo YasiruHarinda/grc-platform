@@ -1410,21 +1410,28 @@ type CreateAuditNotificationRequest struct {
 	CreatedBy       *string `json:"createdBy"`
 }
 
-// AuditNotificationExistsRequest is the payload for POST
-// /audit/notifications/exists — the reminder job's de-dup check. ControlID/
-// PopulationID/DueDateSnapshot are compared NULL-safely (a nil field matches
-// only a NULL column, not "any value").
-type AuditNotificationExistsRequest struct {
+// ClaimAuditNotificationRequest is the payload for POST
+// /audit/notifications/claim — the reminder job's atomic de-dup claim. The
+// insert this triggers either succeeds (caller now owns sending this item) or
+// collides on uq_notif_reminder_dedup (someone else already claimed it) — see
+// docs/new/Reminder-Notification-Atomic-Claim-Design.md. Type must be one of
+// the three REMINDER_* values; this is not a general-purpose insert.
+type ClaimAuditNotificationRequest struct {
 	RecipientID     int     `json:"recipientId"`
+	AuditID         *int    `json:"auditId"`
 	Type            string  `json:"type"`
 	ControlID       *int    `json:"controlId"`
 	PopulationID    *int    `json:"populationId"`
 	DueDateSnapshot *string `json:"dueDateSnapshot"`
 }
 
-// AuditNotificationExistsResponse is returned by POST /audit/notifications/exists.
-type AuditNotificationExistsResponse struct {
-	Exists bool `json:"exists"`
+// ClaimAuditNotificationResponse is returned by POST /audit/notifications/claim.
+// Claimed is false (with ID unset) when the item was already claimed by
+// another caller — a normal, expected outcome of two runs racing, not an
+// error.
+type ClaimAuditNotificationResponse struct {
+	Claimed bool  `json:"claimed"`
+	ID      int64 `json:"id,omitempty"`
 }
 
 // =============================================================================

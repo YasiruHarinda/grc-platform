@@ -44,6 +44,16 @@ var validNotificationTypes = map[string]bool{
 	"SAMPLE_SUBMITTED":          true,
 }
 
+// validReminderTypes is the subset of validNotificationTypes that claim/
+// release apply to — the other five types are single-event triggers with no
+// overlapping-run problem to guard against (see
+// docs/new/Reminder-Notification-Atomic-Claim-Design.md §1).
+var validReminderTypes = map[string]bool{
+	"REMINDER_DUE_10":  true,
+	"REMINDER_DUE_5":   true,
+	"REMINDER_OVERDUE": true,
+}
+
 func (s *auditNotificationService) CreateAuditNotification(ctx context.Context, req domain.CreateAuditNotificationRequest) (domain.AuditNotification, error) {
 	if req.RecipientID <= 0 {
 		return domain.AuditNotification{}, &apierror.ValidationError{Msg: "recipientId must be a positive integer"}
@@ -61,15 +71,26 @@ func (s *auditNotificationService) CreateAuditNotification(ctx context.Context, 
 	return *n, nil
 }
 
-func (s *auditNotificationService) AuditNotificationExists(ctx context.Context, req domain.AuditNotificationExistsRequest) (bool, error) {
+func (s *auditNotificationService) ClaimAuditNotification(ctx context.Context, req domain.ClaimAuditNotificationRequest) (bool, int64, error) {
 	if req.RecipientID <= 0 {
-		return false, &apierror.ValidationError{Msg: "recipientId must be a positive integer"}
+		return false, 0, &apierror.ValidationError{Msg: "recipientId must be a positive integer"}
 	}
-	if !validNotificationTypes[req.Type] {
-		return false, &apierror.ValidationError{Msg: "invalid type: " + req.Type}
+	if !validReminderTypes[req.Type] {
+		return false, 0, &apierror.ValidationError{Msg: "invalid type for a reminder claim: " + req.Type}
 	}
 	if (req.ControlID == nil) == (req.PopulationID == nil) {
-		return false, &apierror.ValidationError{Msg: "exactly one of controlId or populationId is required"}
+		return false, 0, &apierror.ValidationError{Msg: "exactly one of controlId or populationId is required"}
 	}
-	return s.repo.AuditNotificationExists(ctx, req)
+	n, claimed, err := s.repo.ClaimAuditNotification(ctx, req)
+	if err != nil || !claimed {
+		return false, 0, err
+	}
+	return true, n.ID, nil
+}
+
+func (s *auditNotificationService) ReleaseAuditNotificationClaim(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return &apierror.ValidationError{Msg: "id must be a positive integer"}
+	}
+	return s.repo.ReleaseAuditNotificationClaim(ctx, id)
 }

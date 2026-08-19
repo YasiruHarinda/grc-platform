@@ -18,6 +18,7 @@ package entity
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/repository"
@@ -45,9 +46,10 @@ func (r *notificationRepo) Create(ctx context.Context, n model.NotificationLogEn
 	return r.c.Post(ctx, "/audit/notifications", body, nil)
 }
 
-func (r *notificationRepo) Exists(ctx context.Context, recipientID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (bool, error) {
+func (r *notificationRepo) Claim(ctx context.Context, recipientID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (bool, int64, error) {
 	var resp struct {
-		Exists bool `json:"exists"`
+		Claimed bool  `json:"claimed"`
+		ID      int64 `json:"id"`
 	}
 	body := map[string]any{
 		"recipientId":     recipientID,
@@ -56,8 +58,12 @@ func (r *notificationRepo) Exists(ctx context.Context, recipientID int, notifTyp
 		"populationId":    populationID,
 		"dueDateSnapshot": dueDateSnapshot,
 	}
-	if err := r.c.Post(ctx, "/audit/notifications/exists", body, &resp); err != nil {
-		return false, err
+	if err := r.c.Post(ctx, "/audit/notifications/claim", body, &resp); err != nil {
+		return false, 0, err
 	}
-	return resp.Exists, nil
+	return resp.Claimed, resp.ID, nil
+}
+
+func (r *notificationRepo) ReleaseClaim(ctx context.Context, notificationID int64) error {
+	return r.c.Delete(ctx, fmt.Sprintf("/audit/notifications/%d/claim", notificationID))
 }

@@ -81,7 +81,7 @@ func (d *Deps) notifyAuditEvent(ev emailer.AuditEvent, ownerUserID int, info ema
 		defer func() { <-notifySem }()
 		ctx, cancel := context.WithTimeout(context.Background(), notifyTimeout)
 		defer cancel()
-		_ = d.sendAuditEvent(ctx, ev, ownerUserID, info, logItems)
+		_ = d.sendAuditEvent(ctx, ev, ownerUserID, info, logItems, false)
 	}()
 }
 
@@ -89,7 +89,13 @@ func (d *Deps) notifyAuditEvent(ev emailer.AuditEvent, ownerUserID int, info ema
 // by the daily reminder job (internal/audit/job): the job needs to know
 // per-recipient success to count run-level failures, and a fire-and-forget
 // send there could silently under-deliver a whole day's digest run.
-func (d *Deps) sendAuditEventSync(ctx context.Context, ev emailer.AuditEvent, ownerUserID int, info emailer.AuditEventInfo, logItems []notificationLogItem) (err error) {
+//
+// skipLog is true only for the reminder job's own call
+// (SendReminderDigestSync): its items are already logged by the job's own
+// Claim, before the send was even attempted (see
+// docs/new/Reminder-Notification-Atomic-Claim-Design.md) — logging again here
+// would insert a second row and collide with uq_notif_reminder_dedup.
+func (d *Deps) sendAuditEventSync(ctx context.Context, ev emailer.AuditEvent, ownerUserID int, info emailer.AuditEventInfo, logItems []notificationLogItem, skipLog bool) (err error) {
 	select {
 	case notifySem <- struct{}{}:
 	case <-ctx.Done():
@@ -104,14 +110,14 @@ func (d *Deps) sendAuditEventSync(ctx context.Context, ev emailer.AuditEvent, ow
 	}()
 	ctx, cancel := context.WithTimeout(ctx, notifyTimeout)
 	defer cancel()
-	return d.sendAuditEvent(ctx, ev, ownerUserID, info, logItems)
+	return d.sendAuditEvent(ctx, ev, ownerUserID, info, logItems, skipLog)
 }
 
 // sendAuditEvent resolves ownerUserID (skipping — not an error — if they're
 // not found, have no email, or are not ACTIVE, per the cross-cutting
-// active-users-only rule), sends, and best-effort logs one audit_notification
-// row per logItems entry.
-func (d *Deps) sendAuditEvent(ctx context.Context, ev emailer.AuditEvent, ownerUserID int, info emailer.AuditEventInfo, logItems []notificationLogItem) error {
+// active-users-only rule), sends, and — unless skipLog — best-effort logs one
+// audit_notification row per logItems entry.
+func (d *Deps) sendAuditEvent(ctx context.Context, ev emailer.AuditEvent, ownerUserID int, info emailer.AuditEventInfo, logItems []notificationLogItem, skipLog bool) error {
 	if ownerUserID <= 0 {
 		return nil
 	}
@@ -135,7 +141,9 @@ func (d *Deps) sendAuditEvent(ctx context.Context, ev emailer.AuditEvent, ownerU
 	}
 	slog.Info("audit notification sent", "event", ev, "ownerId", ownerUserID, "items", len(info.Items))
 
-	d.logSends(ctx, ownerUserID, logItems)
+	if !skipLog {
+		d.logSends(ctx, ownerUserID, logItems)
+	}
 	return nil
 }
 
@@ -240,17 +248,22 @@ func (d *Deps) auditName(ctx context.Context, auditID int) string {
 
 // SendReminderDigestSync sends one owner's full daily due-date reminder
 // digest — one combined email covering every control/population item due
-// across all three tiers — and logs one audit_notification row per item on
-// success. Used only by the reminder job (internal/audit/job), which needs
-// to know per-recipient success to count a run's totals; wired to
-// job.ReminderJob at startup exactly as risk's NotifyEscalationSync is
-// wired to its escalation job (see cmd/server/main.go).
+// across all three tiers. Used only by the reminder job (internal/audit/job),
+// which needs to know per-recipient success to count a run's totals, and to
+// know whether to release each item's claim on failure; wired to
+// job.ReminderJob at startup exactly as risk's NotifyEscalationSync is wired
+// to its escalation job (see cmd/server/main.go).
+//
+// Unlike every other notify path, this does NOT write audit_notification rows
+// on success — each item was already logged by the job's own atomic Claim,
+// before this function was even called (see
+// docs/new/Reminder-Notification-Atomic-Claim-Design.md). Logging again here
+// would insert a second row per item and collide with uq_notif_reminder_dedup.
 func (d *Deps) SendReminderDigestSync(ctx context.Context, ownerUserID int, items []model.ReminderItem) error {
 	if len(items) == 0 {
 		return nil
 	}
 	emailItems := make([]emailer.AuditEventItem, 0, len(items))
-	logItems := make([]notificationLogItem, 0, len(items))
 	for _, it := range items {
 		emailItems = append(emailItems, emailer.AuditEventItem{
 			ControlNumber:   it.ControlNumber,
@@ -258,14 +271,6 @@ func (d *Deps) SendReminderDigestSync(ctx context.Context, ownerUserID int, item
 			DueDate:         it.DueDate,
 			Tier:            it.Tier,
 			RequirementType: it.RequirementType,
-		})
-		auditID, dedupSnapshot := it.AuditID, it.DedupSnapshot
-		logItems = append(logItems, notificationLogItem{
-			AuditID:         &auditID,
-			Type:            it.Type,
-			ControlID:       it.ControlID,
-			PopulationID:    it.PopulationID,
-			DueDateSnapshot: &dedupSnapshot,
 		})
 	}
 
@@ -291,7 +296,7 @@ func (d *Deps) SendReminderDigestSync(ctx context.Context, ownerUserID int, item
 		DetailURL: d.FrontendBaseURL + "/audit/dashboard",
 		Items:     emailItems,
 	}
-	return d.sendAuditEventSync(ctx, ev, ownerUserID, info, logItems)
+	return d.sendAuditEventSync(ctx, ev, ownerUserID, info, nil, true)
 }
 
 // notifyResubmission handles the resubmission-needed event for all four

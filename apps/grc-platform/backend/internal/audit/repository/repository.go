@@ -208,13 +208,19 @@ type AssignmentRepository interface{}
 // the send-log written after every audit-module email, and the daily
 // reminder job's de-dup mechanism.
 type NotificationRepository interface {
-	// Create logs one sent email. Called only after a successful send — a
-	// logged-but-unsent row would defeat Exists as a de-dup check.
+	// Create logs one sent email. Called only after a successful send — used
+	// by every notification type except the reminder tiers, which use
+	// Claim/ReleaseClaim instead (see docs/new/Reminder-Notification-Atomic-Claim-Design.md).
 	Create(ctx context.Context, n model.NotificationLogEntry) error
-	// Exists reports whether a matching (recipient, type, control/population,
-	// due date) row already exists — the reminder job's de-dup check before
-	// sending a given tier for a given control/population item.
-	Exists(ctx context.Context, recipientID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (bool, error)
+	// Claim atomically reserves a (recipient, type, control/population, due
+	// date) reminder item — the insert succeeding IS the de-dup decision.
+	// claimed=false means another caller already claimed this item; not an
+	// error.
+	Claim(ctx context.Context, recipientID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (claimed bool, notificationID int64, err error)
+	// ReleaseClaim deletes a claim row so its item is retryable on a future
+	// run — called only when the owner's digest failed to send after the
+	// claim succeeded.
+	ReleaseClaim(ctx context.Context, notificationID int64) error
 }
 
 // TrailRepository appends to and reads the append-only audit_trail (via the entity).
