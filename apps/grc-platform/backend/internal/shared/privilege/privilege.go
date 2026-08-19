@@ -152,8 +152,7 @@ const (
 // Audit Hub privilege names. All prefixed AUDIT_ so they group together apart
 // from the Risk Hub block above and stay collision-free in the shared privilege
 // table. Coarse booleans only — row scope ("owned", "assigned") is DERIVED
-// from these privileges at request time, never encoded here. See
-// docs/adr/0001-audit-rbac-scope-model.md and docs/adr/0002-privilege-derived-scope.md.
+// from these privileges at request time, never encoded here.
 const (
 	ViewAudits = "AUDIT_VIEW_AUDITS"
 	// ViewAllAudits is the org-wide-read signal: holders get `all` row scope,

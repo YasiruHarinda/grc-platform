@@ -57,7 +57,7 @@ export default function FrameworkReadinessTab({ audits }: FrameworkReadinessTabP
   const [selectedAuditId, setSelectedAuditId] = useState<number | null>(null);
   const [showAll, setShowAll] = useState(false);
 
-  // Rail-level rollups need no per-audit fetch (§6) — only Audit.controlCounts.
+  // Rail-level rollups need no per-audit fetch — only Audit.controlCounts.
   const railRollups = useMemo(() => computeFrameworkRollups(audits), [audits]);
 
   const effectiveFrameworkId = selectedFrameworkId ?? railRollups[0]?.id ?? null;
@@ -68,7 +68,7 @@ export default function FrameworkReadinessTab({ audits }: FrameworkReadinessTabP
   );
 
   // Detail (exact phase/blocker/team breakdown) is fetched only for the
-  // selected framework's audits — the rail above never waits on this (§6).
+  // selected framework's audits — the rail above never waits on this.
   const controlQueries = useQueries({
     queries: selectedAuditIds.map((auditId) => ({
       queryKey: controlsQueryKey(auditId),

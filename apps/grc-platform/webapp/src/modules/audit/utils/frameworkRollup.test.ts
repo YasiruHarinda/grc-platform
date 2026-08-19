@@ -241,7 +241,7 @@ describe("computeFrameworkRollups with controls", () => {
     const [rollup] = computeFrameworkRollups([audit], { 1: controls }, TODAY);
     expect(rollup.blockers.map((b) => b.controlNumber)).toEqual(["OVERDUE", "BLOCKED", "DUE-SOON"]);
     expect(rollup.blockers.map((b) => b.reason)).toEqual(["overdue", "needsClarification", "dueSoon"]);
-    // §5: due-soon is summed as its own framework figure alongside overdue.
+    // due-soon is summed as its own framework figure alongside overdue.
     expect(rollup.dueSoonCount).toBe(1);
   });
 

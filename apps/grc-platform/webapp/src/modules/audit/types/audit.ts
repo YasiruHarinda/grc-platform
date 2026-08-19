@@ -169,8 +169,7 @@ export interface PopulationDetails {
 // framework-linked shape. pushToFramework optionally also writes the control
 // into the framework's catalog as a side effect: a first version when
 // sourceFrameworkControlId is unset, or a new version of that existing
-// catalog control when it's set (edited-existing-control push-back). See
-// docs/new/Audit-Control-Framework-Optional-Design.md §6.
+// catalog control when it's set (edited-existing-control push-back).
 export interface AddControlRequest {
   controlNumber: string;
   description: string;

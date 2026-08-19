@@ -677,7 +677,7 @@ func (d *Deps) handleApproveRisk(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Compliance approval is deliberately not identity-gated (§3: it is a
+	// Compliance approval is deliberately not identity-gated (it is a
 	// role-wide action), so the scoped privilege check is the ONLY thing
 	// standing between a compliance approver in one register and a risk in
 	// another. It cannot be left unscoped.

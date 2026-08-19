@@ -30,8 +30,7 @@
 // together, so on its own it would let someone act, as owner or lead, on a
 // register or team where they hold no such authority. It exists for endpoints
 // with no object in hand, and to keep existing call sites working unchanged
-// during the grant migration (see docs/new/Audit-Role-Grant-Migration-Design.md
-// §1).
+// during the grant migration.
 //
 // Rule of thumb: if a handler has a risk or team id, it must use the scoped
 // form. An unscoped check in such a handler needs a comment saying why no

@@ -285,7 +285,7 @@ CREATE TABLE IF NOT EXISTS role_privilege (
 -- rights. Those follow the SOURCE register. Otherwise assigning a risk to a
 -- team — an ordinary business field any assigner can set — would hand that
 -- team's role-holders authority over it. On the audit side the analogous rule
--- is enforced in code, not schema: see Audit-Role-Grant-Migration-Design.md §5.
+-- is enforced in code, not schema.
 --
 -- Grants are NOT the only source of access. Being personally named on a risk
 -- (owner_id, assigner_id, management_approver_id, an action plan's

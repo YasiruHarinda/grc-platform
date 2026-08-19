@@ -25,17 +25,10 @@
 // The problem this package exists to solve is that a user no longer has one
 // privilege set. Someone may be Risk Owner in one register and Risk Assigner in
 // another; flattening those into a single set would let them approve, as owner,
-// a risk belonging to the register where they are merely an assigner. So a Set
-// answers two different questions, and callers must be deliberate about which
-// one they are asking:
-//
-//	Has(priv)             — "may this user do X anywhere?"      (union)
-//	HasIn(priv, teamID)   — "may this user do X on THIS thing?" (scoped)
-//
-// Has is the weaker of the two and is not an authorisation decision on its own.
-// It exists for endpoints with no object in hand, and to keep the Audit Hub
-// working unchanged until its own migration. Anywhere a team id is available,
-// HasIn is the check that counts.
+// a risk belonging to the register where they are merely an assigner. HasIn
+// answers the question that matters — "may this user do X on THIS thing?" —
+// scoped to the team whose authority governs the action. PrivilegeMap exposes
+// the flattened union for the handful of call sites with no object in hand.
 package grant
 
 import (
@@ -156,17 +149,6 @@ func Resolve(grants []Grant, r PrivilegeResolver) *Set {
 	return s
 }
 
-// Has reports whether the caller holds priv in ANY scope.
-//
-// Not an authorisation decision by itself: it answers "could this user do X
-// somewhere", not "may they do it here". Use HasIn wherever a team id exists.
-func (s *Set) Has(priv string) bool {
-	if s == nil {
-		return false
-	}
-	return s.union[priv]
-}
-
 // HasIn reports whether the caller holds priv in the given team's scope,
 // either through a GLOBAL grant or a grant on that specific team.
 //
@@ -183,19 +165,6 @@ func (s *Set) HasIn(priv string, teamID int) bool {
 		return true
 	}
 	return s.byTeam[teamID][priv]
-}
-
-// IsGlobal reports whether the caller holds ANY GLOBAL grant.
-//
-// Rarely the right question. Use HasGlobal(priv) for visibility decisions: a
-// platform admin holding only MANAGE_USERS globally satisfies IsGlobal but has
-// no business seeing every risk, and treating them as unrestricted would let a
-// second, narrow grant carry them past the route gate into an unscoped list.
-func (s *Set) IsGlobal() bool {
-	if s == nil {
-		return false
-	}
-	return len(s.global) > 0
 }
 
 // HasGlobal reports whether the caller holds priv at GLOBAL scope — i.e. they
@@ -355,14 +324,6 @@ func (s *Set) PrivilegesIn(teamID int) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// Grants returns the caller's raw grants.
-func (s *Set) Grants() []Grant {
-	if s == nil {
-		return nil
-	}
-	return s.grants
 }
 
 // PrivilegeMap returns the union as a map, the shape the privilege package's

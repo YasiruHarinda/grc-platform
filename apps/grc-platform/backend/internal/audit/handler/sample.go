@@ -192,9 +192,8 @@ func (h *evidenceHandler) submitSample(w http.ResponseWriter, r *http.Request) {
 // POST /api/v1/audits/{id}/controls/{controlId}/sample/request-time.
 //
 // Lets the auditor signal they need more time before selecting a sample:
-// POPULATION_COMPLETE → AWAITING_SAMPLE. A plain status flip, no note field
-// (design doc §8) — the team sees a generic "auditor is preparing the sample"
-// message.
+// POPULATION_COMPLETE → AWAITING_SAMPLE. A plain status flip, no note field —
+// the team sees a generic "auditor is preparing the sample" message.
 func (h *evidenceHandler) requestSampleTime(w http.ResponseWriter, r *http.Request) {
 	auditID, ok := parseIntParam(w, r, "id")
 	if !ok {

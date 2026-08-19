@@ -55,14 +55,14 @@ export interface TeamRollup {
 /**
  * Shared shape rendered by the three detail panels. A FrameworkRollup and each
  * entry in its `audits` both satisfy this, so "All audits" and a single
- * selected audit chip feed the same panel components (§3.2/3.3).
+ * selected audit chip feed the same panel components.
  */
 export interface ScopeRollup {
   total: number;
   complete: number;
   completionPercent: number;
   overdueCount: number;
-  /** Due within DUE_SOON_DAYS and not already overdue (§5 aggregation table). */
+  /** Due within DUE_SOON_DAYS and not already overdue. */
   dueSoonCount: number;
   /** YYYY-MM-DD of the binding deadline (nearest audit end date in scope). */
   deadline: string;
@@ -87,7 +87,7 @@ export interface FrameworkRollup extends ScopeRollup {
   id: number;
   name: string;
   auditCount: number;
-  /** Drives rail sort order only (§4.3) — never rendered. */
+  /** Drives rail sort order only — never rendered. */
   pace: number;
   audits: AuditRollup[];
 }

@@ -111,7 +111,7 @@ type evidenceHandler struct {
 }
 
 // requireAssignment enforces resource-level authorization for the web-app evidence
-// routes (design §F/§G): the caller must be assigned to controlID for an actionable
+// routes: the caller must be assigned to controlID for an actionable
 // status (else 403), and the route's audit id must equal the server-derived audit
 // id (else 404 — a client cannot aim at another audit's control). It returns the
 // derived audit id and ok=false after writing the response on failure.

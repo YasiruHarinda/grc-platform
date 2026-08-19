@@ -34,7 +34,7 @@ const PHASE_COUNT_KEY: Record<ControlPhase, keyof PhaseCounts> = {
   COMPLETE: "complete",
 };
 
-// Shared by the rail card and the team breakdown (§3.1/§3.3). Segment order
+// Shared by the rail card and the team breakdown. Segment order
 // and color follow the same PHASE_ORDER/PHASE_COLORS contract PhaseDonut uses,
 // so a phase reads as the same color everywhere on the dashboard. completeColor
 // is the one deliberate override: callers pass primary.main while an audit is

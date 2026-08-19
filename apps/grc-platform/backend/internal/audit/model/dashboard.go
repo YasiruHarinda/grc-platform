@@ -121,7 +121,7 @@ type WorkQueuePage struct {
 
 // Scope is the row-visibility class the Compliance Entity applies. It is derived
 // from the actor's privileges in the handler (never from a role or group name)
-// and sent to the entity explicitly. See docs/adr/0002-privilege-derived-scope.md.
+// and sent to the entity explicitly.
 type Scope string
 
 const (
@@ -134,8 +134,7 @@ const (
 	ScopeAssigned Scope = "assigned"
 	// ScopeTeam sees controls in the team(s) the actor manages (holds
 	// AUDIT_VIEW_ALL_AUDITS at AUDIT_TEAM scope), plus — additively, never
-	// subtractively — anything they personally own or audit. See
-	// docs/new/Audit-Role-Grant-Migration-Design.md §5.
+	// subtractively — anything they personally own or audit.
 	ScopeTeam Scope = "team"
 	// ScopeNone sees nothing.
 	ScopeNone Scope = "none"

@@ -31,7 +31,7 @@ import (
 // requireAssignedAuditor authorizes population-validation, sample-selection, and
 // evidence-validation actions to the control's assigned auditor POC only —
 // matched by email against control.AuditorEmail — since those are external-
-// auditor decisions, not internal-reviewer ones (design doc §2, §5.4).
+// auditor decisions, not internal-reviewer ones.
 //
 // requiredPriv is the auditor privilege for the action — AUDIT_VALIDATE_EVIDENCE
 // for the validate endpoints, AUDIT_SELECT_SAMPLE for the sample endpoints. It

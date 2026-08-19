@@ -203,7 +203,7 @@ func (s *controlService) BulkCreateControls(ctx context.Context, auditID int, re
 	return domain.BulkCreateControlsResponse{Controls: controls, Created: len(controls)}, nil
 }
 
-// applyFrameworkPushBacks performs the optional §6 framework-catalog side
+// applyFrameworkPushBacks performs the optional framework-catalog side
 // effect for each control in a bulk create that requested it
 // (PushToFramework=true). Runs after the audit_control rows are committed:
 // pushControlToFramework writes directly to the catalog (its own commit,

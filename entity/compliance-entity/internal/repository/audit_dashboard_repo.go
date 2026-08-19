@@ -75,8 +75,7 @@ func (r *dashboardRepo) scopeWhere(ctx context.Context, scope domain.Scope, user
 // teamScopeWhere is the additive ScopeTeam predicate: the caller's team's work
 // OR anything they personally own OR anything they audit — never a plain
 // "AND c.team_id IN (...)", which would take away a lead's identity-based
-// access to controls outside their own team. See
-// docs/new/Audit-Role-Grant-Migration-Design.md §5.4.
+// access to controls outside their own team.
 //
 // scopeTeamIDs is empty only when the caller manages no team (should not
 // normally reach ScopeTeam at all — the backend only returns ScopeTeam when

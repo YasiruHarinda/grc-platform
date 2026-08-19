@@ -145,8 +145,7 @@ type SearchAuditFrameworksResponse struct {
 // `audit_framework_control` reference catalog. A control number's current row
 // (is_current=TRUE) can be edited in place (Create) or superseded with a new
 // version (NewVersion). audit_control never references this table by foreign
-// key — it's an independent, optional catalog (see
-// docs/new/Audit-Control-Framework-Optional-Design.md).
+// key — it's an independent, optional catalog.
 type AuditFrameworkControl struct {
 	ID                  int       `json:"id"`
 	FrameworkID         int       `json:"frameworkId"`
@@ -757,8 +756,7 @@ type InlinePopulationRequest struct {
 // there is no framework-linked shape. PushToFramework optionally also writes
 // this control into the framework's catalog (audit_framework_control) as a
 // side effect: a first version if SourceFrameworkControlID is nil, or a new
-// version of that existing catalog control if it's set. See
-// docs/new/Audit-Control-Framework-Optional-Design.md §6.
+// version of that existing catalog control if it's set.
 type CreateControlRequest struct {
 	ControlSource       string                   `json:"controlSource"` // MANUAL | COPIED | CSV; defaults to MANUAL
 	ControlNumber       string                   `json:"controlNumber"`

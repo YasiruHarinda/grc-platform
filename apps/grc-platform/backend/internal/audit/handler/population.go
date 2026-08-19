@@ -208,7 +208,7 @@ func withReadURLs(files []*model.PopulationFile) []*model.PopulationFile {
 // Returns the control's current population round plus its files split into
 // population[] (team-submitted) and sample[] (auditor-selected), and the
 // auditor's sample note. A control normally has exactly one round for its whole
-// lifecycle (see design doc §3.2/§8), so "current" and "latest" are the same.
+// lifecycle, so "current" and "latest" are the same.
 func (h *evidenceHandler) listPopulation(w http.ResponseWriter, r *http.Request) {
 	auditID, ok := parseIntParam(w, r, "id")
 	if !ok {
@@ -414,7 +414,7 @@ func (h *evidenceHandler) deletePopulationFile(w http.ResponseWriter, r *http.Re
 //
 // Internal reviewer decision on a submitted population: approve advances it to
 // auditor validation; reject sends it back to the team on the same round
-// (see design doc §3.2/§8 — both rejection paths reuse the round).
+// (both rejection paths reuse the round).
 func (h *evidenceHandler) reviewPopulation(w http.ResponseWriter, r *http.Request) {
 	h.decideRound(w, r, decideRoundParams{
 		preGate: func(w http.ResponseWriter, r *http.Request) bool {

@@ -18,7 +18,7 @@ package domain
 
 // Scope is the row-visibility class the caller (the grc-platform backend) derives
 // from the actor's privileges and sends explicitly. The entity applies it without
-// knowing any GRC role or group. See the backend's docs/adr/0002.
+// knowing any GRC role or group.
 type Scope string
 
 const (
@@ -29,8 +29,7 @@ const (
 	// ScopeAssigned sees only controls the actor audits (auditor_id = actor).
 	ScopeAssigned Scope = "assigned"
 	// ScopeTeam sees controls in the team(s) the actor manages, plus (additive,
-	// never subtractive) anything they personally own or audit — see
-	// docs/new/Audit-Role-Grant-Migration-Design.md §5.4. The team list is
+	// never subtractive) anything they personally own or audit. The team list is
 	// server-derived (ScopeTeamIDs), never the client-supplied TeamIDs filter.
 	ScopeTeam Scope = "team"
 	// ScopeNone sees nothing.

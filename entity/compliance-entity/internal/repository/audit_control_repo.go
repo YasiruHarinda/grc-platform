@@ -235,8 +235,7 @@ func controlScopeWhere(scope domain.Scope, userEmail string, scopeTeamIDs []int)
 // Never a plain "alias.team_id IN (...)" on its own: that would take away a
 // team lead's identity-based access to a record outside their own team. Never
 // a bare "IN ()" when scopeTeamIDs is empty, and the caller must never receive
-// an empty (no-filter) string in its place — see
-// docs/new/Audit-Role-Grant-Migration-Design.md §5.4-§5.5.
+// an empty (no-filter) string in its place.
 func teamScopePredicate(alias string, scopeTeamIDs []int, userEmail string) (string, []any) {
 	terms := make([]string, 0, 3)
 	args := make([]any, 0, len(scopeTeamIDs)+2)

@@ -43,8 +43,8 @@ async function errText(res: Response, action: string): Promise<string> {
  *
  * File bytes go browser -> backend -> Azure. No SAS is handed to the client; the
  * backend authenticates to Azure with its own account key and enforces size/type.
- * There is no folder re-listing (see Human-Readable-Evidence-Blob-Paths design
- * §3.3) — the client must accumulate each upload's blobName itself.
+ * There is no folder re-listing — the client must accumulate each upload's
+ * blobName itself.
  */
 export function useSubmitEvidence() {
   const authFetch = useAuthApiClient();

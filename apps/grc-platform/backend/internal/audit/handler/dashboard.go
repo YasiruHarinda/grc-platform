@@ -35,8 +35,7 @@ type dashboardHandler struct {
 }
 
 // deriveScopes computes the actor's view and work-queue row scopes from their
-// grants — no role name is consulted. See
-// docs/new/Audit-Role-Grant-Migration-Design.md §5.2.
+// grants — no role name is consulted.
 func deriveScopes(ctx context.Context) (view, workQueue model.Scope) {
 	if auth.AllowAll(ctx) { // local dev, MUST be first — auth.Grants(ctx) is nil here
 		return model.ScopeAll, model.ScopeAll

@@ -38,7 +38,7 @@ function startOfDay(date: Date): Date {
   return d;
 }
 
-// ── §4.2 Pace ──────────────────────────────────────────────────────────────
+// ── Pace ───────────────────────────────────────────────────────────────────
 
 export function computeElapsedPercent(periodStart: string, periodEnd: string, today: Date = new Date()): number {
   const start = new Date(`${periodStart}T00:00:00`).getTime();
@@ -141,7 +141,7 @@ interface TeamDraft {
 // rollup calls this with the *concatenation* of every audit's controls
 // rather than merging already-collapsed per-audit TeamRollups, since
 // collapsing to a single topAssignee per audit first would throw away the
-// per-assignee counts needed to find the true cross-audit top holder (§5).
+// per-assignee counts needed to find the true cross-audit top holder.
 function buildTeams(controls: AuditControl[], today: Date): TeamRollup[] {
   const byTeam = new Map<string, TeamDraft>();
   for (const control of controls) {
@@ -226,7 +226,7 @@ export function computeAuditRollup(audit: Audit, controls: AuditControl[] | unde
   };
 }
 
-// ── Framework rollup: sums audits, never stores figures separately (§5) ─────
+// ── Framework rollup: sums audits, never stores figures separately ─────────
 
 export function computeFrameworkRollups(
   audits: Audit[],
@@ -256,7 +256,7 @@ export function computeFrameworkRollups(
     const dueSoonCount = auditRollups.reduce((s, a) => s + a.dueSoonCount, 0);
     const completionPercent = total > 0 ? (complete / total) * 100 : 0;
 
-    // §5: elapsed% is weighted by control count so a 52-control audit moves
+    // elapsed% is weighted by control count so a 52-control audit moves
     // the framework's pace more than a 24-control one.
     const weightedElapsed = frameworkAudits.reduce(
       (s, audit) => s + computeElapsedPercent(audit.periodStart, audit.periodEnd, today) * audit.controlCounts.total,
@@ -295,7 +295,7 @@ export function computeFrameworkRollups(
     });
   }
 
-  // §4.3 Rail sort order: overdue desc, then pace asc.
+  // Rail sort order: overdue desc, then pace asc.
   return rollups.sort((a, b) => {
     if (b.overdueCount !== a.overdueCount) return b.overdueCount - a.overdueCount;
     return a.pace - b.pace;

@@ -32,8 +32,8 @@ interface StandPanelProps {
 }
 
 // "Where we stand" — completion ring, four-phase breakdown.
-// No audit-period-elapsed bar (removed at the client's request, §3.3); pace
-// still drives the status rule (§4.2), it just isn't drawn here.
+// No audit-period-elapsed bar (removed at the client's request); pace
+// still drives the status rule, it just isn't drawn here.
 export default function StandPanel({ scope }: StandPanelProps): JSX.Element {
   const total = scope.total;
 

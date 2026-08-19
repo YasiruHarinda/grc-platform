@@ -33,7 +33,7 @@ import (
 // EvidenceService defines business operations for audit evidence submissions.
 type EvidenceService interface {
 	// GetUploadLink returns the control's evidence folder path — a deterministic,
-	// human-readable prefix (not a per-session folder; see design doc §3).
+	// human-readable prefix (not a per-session folder).
 	GetUploadLink(ctx context.Context, auditID, controlID int) (*model.UploadLinkResponse, error)
 
 	// PopulationUploadLink returns the control's population folder path — flat,

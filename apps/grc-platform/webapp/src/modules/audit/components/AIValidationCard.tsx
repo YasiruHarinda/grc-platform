@@ -152,7 +152,7 @@ export default function AIValidationCard({ auditId, controlId, variant, phase = 
   );
 }
 
-// renderBody picks the visual for the current state (design §4.5.2 table).
+// renderBody picks the visual for the current state.
 function renderBody(
   latest: AIValidationLog | undefined,
   evidenceId: number | null,
