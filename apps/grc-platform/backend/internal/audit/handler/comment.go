@@ -88,6 +88,10 @@ func (h *commentHandler) addComment(w http.ResponseWriter, r *http.Request) {
 // DELETE /api/v1/audits/{id}/controls/{controlId}/comments/{commentId}.
 //
 // The caller must be the comment's original author or hold ManageControls.
+// isAdmin below is intentionally the unscoped HasPrivilege: ManageControls is
+// never granted scoped to a single team, so there is no team to check it
+// against (contrast evidence/population's HasPrivilegeIn bypass checks, which
+// exist because those privileges can be team-scoped).
 func (h *commentHandler) deleteComment(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.AddComment) {
 		return
