@@ -334,8 +334,10 @@ func (c *Client) searchUsersPage(ctx context.Context, filter string, startIndex,
 const usersPageSize = 100
 
 // ListUsersByDomain returns every directory user whose userName ends with
-// domain (pass e.g. "wso2.com", not "@wso2.com" — the filter already anchors
-// on the suffix), walking every page.
+// @domain (pass e.g. "wso2.com", not "@wso2.com" — the "@" is added here so
+// the filter anchors on an actual domain boundary; without it, "ew" is a
+// plain string suffix match and "wso2.com" would also match a userName like
+// person@notwso2.com), walking every page.
 //
 // This is the bulk-fetch this platform's identity cache refreshes itself
 // from — see internal/directory. It exists because the alternative, an
@@ -354,7 +356,7 @@ func (c *Client) ListUsersByDomain(ctx context.Context, domain string) ([]Direct
 	if domain == "" {
 		return nil, nil
 	}
-	filter := fmt.Sprintf(`userName ew %q`, domain)
+	filter := fmt.Sprintf(`userName ew %q`, "@"+domain)
 
 	var all []DirectoryUser
 	for startIndex := 1; ; startIndex += usersPageSize {

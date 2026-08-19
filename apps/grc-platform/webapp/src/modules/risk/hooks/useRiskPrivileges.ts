@@ -18,7 +18,12 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
 
-// Shared across all hook instances so only one fetch ever fires per session.
+// Shared across every hook instance mounted at once, so a burst of
+// simultaneous mounts (SideBar + every PrivilegeGuard on a page) still fires
+// only one request — but cleared as soon as it resolves, not kept for the
+// rest of the page's lifetime, so a later mount (a new route, or a
+// logout/login within the same SPA session without a full reload) fetches
+// fresh rather than reusing a stale/wrong-subject privilege set.
 let _promise: Promise<Set<string> | null> | null = null;
 
 export interface RiskPrivilegeState {
@@ -26,9 +31,11 @@ export interface RiskPrivilegeState {
   loading: boolean;
 }
 
-// Fetches the current user's resolved privilege list from GET /api/v1/me/privileges
-// once per session. All hook instances (SideBar, PrivilegeGuard, page components)
-// share the same promise — no duplicate requests.
+// Fetches the current user's resolved privilege list from GET /api/v1/me/privileges.
+// All hook instances mounted at the same time (SideBar, PrivilegeGuard, page
+// components) share one in-flight request — no duplicate requests for a
+// simultaneous mount burst — but each new mount after that fetches fresh; see
+// _promise's own comment for why.
 //
 // Always calls the real endpoint, mock-auth mode included. This used to
 // short-circuit to "every privilege granted" whenever GRC_PLATFORM_MOCK_AUTH
@@ -50,7 +57,10 @@ export function useRiskPrivileges(): RiskPrivilegeState {
     if (!_promise) {
       _promise = authFetch(`${BACKEND_BASE_URL}/api/v1/me/privileges`)
         .then((res) => res.json() as Promise<{ privileges?: string[]; allowAll?: boolean }>)
-        .then((data) => data.allowAll ? null : new Set<string>(data.privileges ?? []))
+        .then((data) => {
+          _promise = null;
+          return data.allowAll ? null : new Set<string>(data.privileges ?? []);
+        })
         .catch(() => { _promise = null; return new Set<string>(); });
     }
     let cancelled = false;

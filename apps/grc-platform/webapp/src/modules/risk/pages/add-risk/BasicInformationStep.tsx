@@ -144,23 +144,32 @@ export default function BasicInformationStep({
 
   // Seeds the picker with just the caller, so it has a name to show and a
   // valid default the instant the page loads — before any register is picked
-  // and before the real, possibly-larger candidate list has loaded. Once a
-  // register is chosen, the fetch below replaces this with the full eligible
-  // list (which always still includes the caller, per the guarantee above);
-  // this only ever runs again if `me` itself changes, which it won't within a
-  // single session.
+  // and before the real, possibly-larger candidate list has loaded. Guarded
+  // on assignerTeamIds being empty so this can never fire after a register is
+  // already chosen: the /me/profile fetch and the register-scoped fetch below
+  // are independent requests with no ordering guarantee, and without this
+  // guard a slow /me/profile response landing after the real list had already
+  // loaded would silently clobber it back down to just the caller.
   useEffect(() => {
     // email/risk_team_ids are unused by this picker (only display_name
     // renders) — empty placeholders, since this entry is only ever transient,
     // replaced the moment the real, register-scoped fetch below resolves.
-    if (me) setRiskAssignerCandidates([{ id: me.id, display_name: me.name, email: "", risk_team_ids: [] }]);
+    if (me && assignerTeamIds.length === 0) {
+      setRiskAssignerCandidates([{ id: me.id, display_name: me.name, email: "", risk_team_ids: [] }]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-seed when "me" resolves; assignerTeamIds is read for its value at that render, not a re-fire trigger — the fetch effect below owns re-fetching on register change
   }, [me]);
 
   useEffect(() => {
     if (assignerTeamIds.length === 0) return; // nothing chosen yet — keep the seeded self-entry
+    let cancelled = false;
     fetchRiskAssignerCandidates(authFetch, assignerTeamIds)
-      .then(setRiskAssignerCandidates)
-      .catch(() => setRiskAssignerCandidates([]));
+      .then((list) => { if (!cancelled) setRiskAssignerCandidates(list); })
+      .catch(() => { if (!cancelled) setRiskAssignerCandidates([]); });
+    // Cancelled on the next register change (or unmount), so an earlier,
+    // slower request can never land after a later one and overwrite its
+    // correct, more current candidate list with a stale one.
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-fetch when the source register changes
   }, [assignerTeamIds.join(","), authFetch]);
 

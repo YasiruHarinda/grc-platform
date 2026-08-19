@@ -18,11 +18,23 @@ package service
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/cache"
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/domain"
 )
+
+// emailCacheKey normalizes an email for use as a byEmail cache key, so a
+// lookup and a later invalidation always agree on the key regardless of how
+// the caller or the stored row happens to case/space the address. Without
+// this, a caller spelling was cached as a second, unrelated key (see
+// GetUserByEmail's old comment) that forget() had no way to find and evict,
+// so an alternate spelling could keep serving a stale (e.g. pre-uuid-backfill)
+// row for the rest of its TTL after a write.
+func emailCacheKey(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
 
 type cachedUserService struct {
 	inner   UserService
@@ -52,7 +64,7 @@ func NewCachedUserService(inner UserService) UserService {
 // empty-uuid lookup return whichever user was fetched last.
 func (s *cachedUserService) remember(u domain.User) {
 	s.byID.Set(u.ID, u)
-	s.byEmail.Set(u.Email, u)
+	s.byEmail.Set(emailCacheKey(u.Email), u)
 	if u.UUID != "" {
 		s.byUUID.Set(u.UUID, u)
 	}
@@ -62,7 +74,7 @@ func (s *cachedUserService) remember(u domain.User) {
 // that only *might* have changed the row.
 func (s *cachedUserService) forget(u domain.User) {
 	s.byID.Delete(u.ID)
-	s.byEmail.Delete(u.Email)
+	s.byEmail.Delete(emailCacheKey(u.Email))
 	if u.UUID != "" {
 		s.byUUID.Delete(u.UUID)
 	}
@@ -85,7 +97,7 @@ func (s *cachedUserService) GetUserByID(ctx context.Context, id int) (domain.Use
 }
 
 func (s *cachedUserService) GetUserByEmail(ctx context.Context, email string) (domain.User, error) {
-	if v, ok := s.byEmail.Get(email); ok {
+	if v, ok := s.byEmail.Get(emailCacheKey(email)); ok {
 		return v, nil
 	}
 	user, err := s.inner.GetUserByEmail(ctx, email)
@@ -93,10 +105,6 @@ func (s *cachedUserService) GetUserByEmail(ctx context.Context, email string) (d
 		return domain.User{}, err
 	}
 	s.remember(user)
-	// The caller's spelling of the email may differ from the stored one, and
-	// remember() only caches the latter — key it both ways so a repeat of this
-	// exact lookup hits.
-	s.byEmail.Set(email, user)
 	return user, nil
 }
 
@@ -122,7 +130,7 @@ func (s *cachedUserService) GetUserByUUID(ctx context.Context, uuid string) (dom
 // row may have been cached before it had a uuid — and only evicting the new one
 // would leave the stale entry reachable by its old key.
 func (s *cachedUserService) CreateUser(ctx context.Context, req domain.CreateUserRequest) (domain.User, error) {
-	if old, ok := s.byEmail.Get(req.Email); ok {
+	if old, ok := s.byEmail.Get(emailCacheKey(req.Email)); ok {
 		s.forget(old)
 	}
 
@@ -131,9 +139,6 @@ func (s *cachedUserService) CreateUser(ctx context.Context, req domain.CreateUse
 		return domain.User{}, err
 	}
 	s.forget(user)
-	// req.Email as the caller spelled it, in case it differs from the stored
-	// value and left a second entry behind.
-	s.byEmail.Delete(req.Email)
 	return user, nil
 }
 
