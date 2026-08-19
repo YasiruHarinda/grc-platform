@@ -19,6 +19,8 @@ package job
 import (
 	"context"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -395,6 +397,69 @@ func TestRunOnceOverdueSkipsCompleteControlAndApprovedPopulation(t *testing.T) {
 	}
 	if called {
 		t.Error("a COMPLETE control and an APPROVED population must not send an overdue reminder even when past due")
+	}
+}
+
+func TestRunOnceRejectsOverlappingRun(t *testing.T) {
+	// Two concurrent runOnce calls on the same instance must not both proceed
+	// to notify — the running guard should reject the second while the first
+	// is still in flight, and let the first complete normally.
+	today := time.Now().UTC()
+	dueSoon := today.AddDate(0, 0, 10).Format("2006-01-02")
+
+	audits := &fakeAudits{audits: []*model.Audit{{ID: 1, Status: "ACTIVE"}}}
+	controls := &fakeControls{controls: []*model.AuditControl{
+		{ID: 1, AuditID: 1, OwnerID: intPtr(1), Status: "EVIDENCE_PENDING", DueDate: strPtr(dueSoon), ControlNumber: "C-1"},
+	}}
+	dedup := &fakeDedup{seen: map[string]bool{}}
+
+	inNotify := make(chan struct{}, 1)
+	releaseNotify := make(chan struct{})
+	var notifyCalls atomic.Int32
+
+	j := NewReminderJob(audits, controls, dedup, func(context.Context, int, []model.ReminderItem) error {
+		notifyCalls.Add(1)
+		select {
+		case inNotify <- struct{}{}:
+		default:
+		}
+		<-releaseNotify
+		return nil
+	})
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		errs[0] = j.runOnce(context.Background())
+	}()
+
+	<-inNotify // wait until the first run is inside notify, mid-sweep
+	errs[1] = j.runOnce(context.Background())
+	close(releaseNotify)
+	wg.Wait()
+
+	if errs[1] == nil {
+		t.Error("second, overlapping runOnce should have returned an error instead of running")
+	}
+	if errs[0] != nil {
+		t.Errorf("first runOnce should have completed without error, got %v", errs[0])
+	}
+	if notifyCalls.Load() != 1 {
+		t.Errorf("notify called %d times, want exactly 1 (the overlapping run must not send a duplicate)", notifyCalls.Load())
+	}
+
+	// The guard must release after completion, so a later, non-overlapping
+	// run is still allowed to proceed.
+	notifyCalls.Store(0)
+	releaseNotify = make(chan struct{})
+	close(releaseNotify)
+	if err := j.runOnce(context.Background()); err != nil {
+		t.Errorf("runOnce after the guard was released should succeed, got %v", err)
+	}
+	if notifyCalls.Load() != 1 {
+		t.Errorf("notify called %d times after guard release, want 1", notifyCalls.Load())
 	}
 }
 

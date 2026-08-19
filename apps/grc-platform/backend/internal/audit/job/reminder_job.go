@@ -19,9 +19,11 @@ package job
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"sync/atomic"
 	"time"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
@@ -70,6 +72,16 @@ type ReminderJob struct {
 	// handler.Deps.SendReminderDigestSync at startup, exactly as
 	// internal/risk/job.EscalationJob is wired to NotifyEscalationSync.
 	notify func(ctx context.Context, ownerUserID int, items []model.ReminderItem) error
+	// running serializes runOnce against itself: Start's daily ticker and the
+	// manual-trigger endpoint (handler.reminderJobHandler.run) both end up
+	// calling runOnce on this same instance, and the per-item dedup check
+	// (dedupChecker.Exists) is a plain read-then-log with no DB uniqueness
+	// backing it (see audit_schema.sql's audit_notification comment) — two
+	// overlapping sweeps could each pass Exists for the same item before
+	// either logs it, double-sending. This only guards one process; running
+	// more than one replica of this server would still need a durable,
+	// cross-process lock, which is out of scope here.
+	running atomic.Bool
 }
 
 // NewReminderJob constructs a ReminderJob.
@@ -161,6 +173,10 @@ func tierLabel(tier string) string {
 }
 
 func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
+	if !j.running.CompareAndSwap(false, true) {
+		return errors.New("reminder job: a sweep is already running")
+	}
+	defer j.running.Store(false)
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("reminder job: recovered from panic", "panic", r, "stack", string(debug.Stack()))
