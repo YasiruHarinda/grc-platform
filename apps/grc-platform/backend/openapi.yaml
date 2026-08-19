@@ -3787,6 +3787,7 @@ components:
           - EXPORTED
           - UPDATED
           - DELETED
+          - OVERRIDDEN
         controlId:
           type: integer
           nullable: true
