@@ -295,6 +295,9 @@ func (h *evidenceHandler) submitEvidence(w http.ResponseWriter, r *http.Request)
 	if !h.requireAssignment(w, r, auditID, controlID) {
 		return
 	}
+	if h.requireControlNotComplete(w, r, auditID, controlID) == nil {
+		return
+	}
 
 	var req model.SubmitEvidenceRequest
 	if err := response.DecodeJSON(w, r, &req); err != nil {
@@ -357,6 +360,9 @@ func (h *evidenceHandler) addEvidenceFiles(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if !h.requireAssignment(w, r, auditID, controlID) {
+		return
+	}
+	if h.requireControlNotComplete(w, r, auditID, controlID) == nil {
 		return
 	}
 
