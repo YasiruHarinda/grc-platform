@@ -675,6 +675,39 @@ paths:
           $ref: '#/components/responses/UnprocessableEntity'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/status/override:
+    post:
+      tags:
+      - Audit Controls
+      summary: Backward-override a control's status
+      description: Target status is validated as a backward-only rank move by the entity, not the ordinary forward workflow transitions. ManageControls-gated.
+      operationId: overrideAuditControlStatus
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OverrideStatusRequest'
+      responses:
+        '204':
+          description: Status overridden
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /api/v1/audits/{id}/controls/{controlId}/trail:
     get:
       tags:
@@ -1059,6 +1092,40 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/evidence/{evidenceId}:
+    delete:
+      tags:
+      - Audit Evidence
+      summary: Delete a fileless evidence round
+      description: Removes a whole attestation-only evidence round. Caller must hold SubmitEvidence or ManageControls; control status is reconciled afterward.
+      operationId: deleteEvidenceRound
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      - name: evidenceId
+        in: path
+        required: true
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: Round deleted; control status reconciled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /api/v1/evidence/files/{fileId}/download:
     get:
       tags:
@@ -1352,6 +1419,31 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/population/attestation:
+    delete:
+      tags:
+      - Audit Population
+      summary: Clear the population submission note
+      description: Blanks the team's population-submission attestation without touching the round's files or status. Team-editable while the round is open for edits (or sent back); ManageControls can always clear it.
+      operationId: deletePopulationAttestation
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      responses:
+        '204':
+          description: Attestation cleared
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /api/v1/population/files/{fileId}/download:
     get:
       tags:
@@ -1577,6 +1669,34 @@ paths:
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/{id}/controls/{controlId}/comments/{commentId}:
+    delete:
+      tags:
+      - Audit Comments
+      summary: Delete a comment
+      description: Caller must be the comment's original author or hold ManageControls.
+      operationId: deleteControlComment
+      parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      - name: commentId
+        in: path
+        required: true
+        schema:
+          type: integer
+      responses:
+        '204':
+          description: Comment deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/evidence/{evidenceId}/ai-validations:
@@ -3263,6 +3383,14 @@ components:
         comment:
           type: string
           nullable: true
+    OverrideStatusRequest:
+      type: object
+      description: Unlike UpdateStatusRequest, the target status is validated as a backward-only rank move by the entity, not the ordinary forward workflow transitions.
+      required:
+      - status
+      properties:
+        status:
+          type: string
     AuditControl:
       type: object
       description: A control under evaluation within an audit. Owns its full definition text directly (never FK-linked to the framework catalog).
@@ -3321,6 +3449,16 @@ components:
           nullable: true
         status:
           type: string
+        statusOverridden:
+          type: boolean
+          description: Whether this control's current status was set by a backward status override rather than the ordinary workflow.
+        overriddenBy:
+          type: string
+          nullable: true
+        overriddenAt:
+          type: string
+          format: date-time
+          nullable: true
         sampleReference:
           type: string
           nullable: true
@@ -3418,6 +3556,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AuditEvidenceFile'
+        attestation:
+          type: string
+          description: Written justification for a round with no files. Empty for ordinary rounds.
         createdBy:
           type: string
         createdAt:
@@ -3447,11 +3588,17 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/EvidenceFileRef'
+        attestation:
+          type: string
+          description: Fileless-completion justification. Only honored when files is empty AND the caller holds ManageControls.
     PopulationSubmitRequest:
       type: object
       properties:
         folderPath:
           type: string
+        attestation:
+          type: string
+          description: Written note standing in for population files — required when the folder has none.
     AuditPopulation:
       type: object
       description: One population round for an OE control. A control normally has exactly one round for its whole lifecycle.
@@ -3482,6 +3629,10 @@ components:
         comments:
           type: string
           nullable: true
+        attestation:
+          type: string
+          nullable: true
+          description: Written note standing in for population files (a "completed without files" justification), alongside them, or both.
         createdAt:
           type: string
           format: date-time

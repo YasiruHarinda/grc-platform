@@ -1136,6 +1136,45 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /audits/{auditId}/controls/{controlId}/status-override:
+    post:
+      tags:
+      - Controls
+      summary: Backward-override a control's status
+      description: Unlike UpdateControlRequest's status field, the target here is validated by rank (backward-only) instead of the ordinary forward transitions, and the write also cascades dependent audit_population/audit_evidence rows and stamps the override marker on audit_control.
+      operationId: overrideControlStatus
+      parameters:
+      - name: auditId
+        in: path
+        required: true
+        schema:
+          type: integer
+      - name: controlId
+        in: path
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OverrideControlStatusRequest'
+      responses:
+        '200':
+          description: Status overridden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditControl'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /audit-controls/{controlId}/evidence-assignment:
     get:
       tags:
@@ -1310,6 +1349,27 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AuditEvidence'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+      - Evidence
+      summary: Delete a whole evidence round
+      description: Removes a whole round (used for the fileless/attestation-only completion, which has no files to delete individually) — its files and AI validation logs cascade via FK.
+      operationId: deleteEvidence
+      parameters:
+      - name: evidenceId
+        in: path
+        required: true
+        schema:
+          type: integer
+      responses:
+        '204':
+          description: No content
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -3203,6 +3263,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: The resource is not in a state that allows this action
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     InternalServerError:
       description: Internal server error
       content:
@@ -3836,6 +3902,16 @@ components:
           - EVIDENCE_UNDER_VALIDATION
           - EVIDENCE_NEED_CLARIFICATION
           - COMPLETE
+        statusOverridden:
+          type: boolean
+          description: Whether this control's current status was set by a backward status override rather than the ordinary workflow.
+        overriddenBy:
+          type: string
+          nullable: true
+        overriddenAt:
+          type: string
+          format: date-time
+          nullable: true
         isOverdue:
           type: boolean
         createdOn:
@@ -4034,6 +4110,17 @@ components:
           nullable: true
         updatedBy:
           type: string
+    OverrideControlStatusRequest:
+      type: object
+      description: Unlike UpdateControlRequest's status field, the target here is validated by rank (backward-only) instead of the ordinary forward transitions.
+      required:
+      - status
+      - updatedBy
+      properties:
+        status:
+          type: string
+        updatedBy:
+          type: string
     BulkCreateControlsRequest:
       type: object
       properties:
@@ -4074,6 +4161,10 @@ components:
         reusedFromEvidenceId:
           type: integer
           nullable: true
+        attestation:
+          type: string
+          nullable: true
+          description: Written justification for a round submitted with no files (fileless completion). Nil for ordinary rounds.
         createdOn:
           type: string
           format: date-time
@@ -4091,6 +4182,9 @@ components:
           nullable: true
         reusedFromEvidenceId:
           type: integer
+          nullable: true
+        attestation:
+          type: string
           nullable: true
         createdBy:
           type: string
@@ -4344,6 +4438,10 @@ components:
         comments:
           type: string
           nullable: true
+        attestation:
+          type: string
+          nullable: true
+          description: Written note standing in for population files (a round submitted with no files, or with a note alongside them). Nil otherwise.
         createdOn:
           type: string
           format: date-time
@@ -4399,6 +4497,9 @@ components:
           type: string
           nullable: true
         dueDate:
+          type: string
+          nullable: true
+        attestation:
           type: string
           nullable: true
         updatedBy:

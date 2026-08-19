@@ -747,7 +747,7 @@ func recomputeAuditStatus(ctx context.Context, tx *sql.Tx, auditID int) error {
 	}
 	var incomplete int
 	if err := tx.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM audit_control WHERE audit_id = ? AND status <> 'COMPLETE'", auditID,
+		"SELECT COUNT(*) FROM audit_control WHERE audit_id = ? AND status <> 'COMPLETE' FOR UPDATE", auditID,
 	).Scan(&incomplete); err != nil {
 		return fmt.Errorf("recomputeAuditStatus count(%d): %w", auditID, err)
 	}
