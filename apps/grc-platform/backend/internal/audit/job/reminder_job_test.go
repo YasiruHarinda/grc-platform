@@ -309,6 +309,95 @@ func TestRunOnceOverdueDedupSnapshotIsToday(t *testing.T) {
 	}
 }
 
+func TestRunOnceOverdueItemHasCorrectFields(t *testing.T) {
+	// Verifies the content of an overdue digest item, for both the control's
+	// own (evidence) due date and its population's due date — not just that
+	// something fires (TestRunOnceOverdueDedupSnapshotIsToday already covers
+	// the re-fire timing), but that the tier label and requirement type
+	// reaching the email are the right ones for each.
+	today := time.Now().UTC()
+	controlOverdue := today.AddDate(0, 0, -1).Format("2006-01-02")
+	popOverdue := today.AddDate(0, 0, -20).Format("2006-01-02")
+
+	audits := &fakeAudits{audits: []*model.Audit{{ID: 1, Status: "ACTIVE"}}}
+	controls := &fakeControls{controls: []*model.AuditControl{
+		{
+			ID: 11, AuditID: 1, ControlNumber: "C-11", Description: "Control desc",
+			OwnerID: intPtr(500), Status: "EVIDENCE_PENDING", DueDate: strPtr(controlOverdue),
+			PopulationID: intPtr(950), PopulationOwnerID: intPtr(501), PopulationStatus: strPtr("PENDING"), PopulationDueDate: strPtr(popOverdue),
+		},
+	}}
+	dedup := &fakeDedup{seen: map[string]bool{}}
+	digests := map[int][]model.ReminderItem{}
+
+	j := NewReminderJob(audits, controls, dedup, func(_ context.Context, ownerID int, items []model.ReminderItem) error {
+		digests[ownerID] = items
+		return nil
+	})
+	if err := j.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce: %v", err)
+	}
+
+	controlItems, ok := digests[500]
+	if !ok || len(controlItems) != 1 {
+		t.Fatalf("owner 500 digest = %v, want exactly 1 item", controlItems)
+	}
+	ci := controlItems[0]
+	if ci.Type != "REMINDER_OVERDUE" || ci.Tier != "Overdue" {
+		t.Errorf("control item Type/Tier = %q/%q, want REMINDER_OVERDUE/Overdue", ci.Type, ci.Tier)
+	}
+	if ci.RequirementType != "Evidence Requirement" {
+		t.Errorf("control item RequirementType = %q, want Evidence Requirement", ci.RequirementType)
+	}
+	if ci.DueDate != controlOverdue {
+		t.Errorf("control item DueDate = %q, want %q", ci.DueDate, controlOverdue)
+	}
+
+	popItems, ok := digests[501]
+	if !ok || len(popItems) != 1 {
+		t.Fatalf("owner 501 digest = %v, want exactly 1 item", popItems)
+	}
+	pi := popItems[0]
+	if pi.Type != "REMINDER_OVERDUE" || pi.Tier != "Overdue" {
+		t.Errorf("population item Type/Tier = %q/%q, want REMINDER_OVERDUE/Overdue", pi.Type, pi.Tier)
+	}
+	if pi.RequirementType != "Population Requirement" {
+		t.Errorf("population item RequirementType = %q, want Population Requirement", pi.RequirementType)
+	}
+	if pi.DueDate != popOverdue {
+		t.Errorf("population item DueDate = %q, want %q", pi.DueDate, popOverdue)
+	}
+}
+
+func TestRunOnceOverdueSkipsCompleteControlAndApprovedPopulation(t *testing.T) {
+	// An item overdue by date must still be excluded once it's done: a
+	// COMPLETE control, or a population already APPROVED.
+	today := time.Now().UTC()
+	overdue := today.AddDate(0, 0, -5).Format("2006-01-02")
+
+	audits := &fakeAudits{audits: []*model.Audit{{ID: 1, Status: "ACTIVE"}}}
+	controls := &fakeControls{controls: []*model.AuditControl{
+		{
+			ID: 20, AuditID: 1, ControlNumber: "C-20",
+			OwnerID: intPtr(600), Status: "COMPLETE", DueDate: strPtr(overdue),
+			PopulationID: intPtr(960), PopulationOwnerID: intPtr(601), PopulationStatus: strPtr("APPROVED"), PopulationDueDate: strPtr(overdue),
+		},
+	}}
+	dedup := &fakeDedup{seen: map[string]bool{}}
+	called := false
+
+	j := NewReminderJob(audits, controls, dedup, func(context.Context, int, []model.ReminderItem) error {
+		called = true
+		return nil
+	})
+	if err := j.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce: %v", err)
+	}
+	if called {
+		t.Error("a COMPLETE control and an APPROVED population must not send an overdue reminder even when past due")
+	}
+}
+
 func TestRunOnceRecoversFromPanic(t *testing.T) {
 	today := time.Now().UTC()
 	dueSoon := today.AddDate(0, 0, 10).Format("2006-01-02")

@@ -50,8 +50,8 @@ func (s *auditNotificationService) CreateAuditNotification(ctx context.Context, 
 	if !validNotificationTypes[req.Type] {
 		return domain.AuditNotification{}, &apierror.ValidationError{Msg: "invalid type: " + req.Type}
 	}
-	if req.ControlID == nil && req.PopulationID == nil {
-		return domain.AuditNotification{}, &apierror.ValidationError{Msg: "one of controlId or populationId is required"}
+	if (req.ControlID == nil) == (req.PopulationID == nil) {
+		return domain.AuditNotification{}, &apierror.ValidationError{Msg: "exactly one of controlId or populationId is required"}
 	}
 	n, err := s.repo.CreateAuditNotification(ctx, req)
 	if err != nil {
@@ -66,6 +66,9 @@ func (s *auditNotificationService) AuditNotificationExists(ctx context.Context, 
 	}
 	if !validNotificationTypes[req.Type] {
 		return false, &apierror.ValidationError{Msg: "invalid type: " + req.Type}
+	}
+	if (req.ControlID == nil) == (req.PopulationID == nil) {
+		return false, &apierror.ValidationError{Msg: "exactly one of controlId or populationId is required"}
 	}
 	return s.repo.AuditNotificationExists(ctx, req)
 }
