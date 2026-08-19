@@ -548,7 +548,7 @@ CREATE TABLE IF NOT EXISTS audit_notification (
   PRIMARY KEY (id),
   KEY idx_notif_dedup (recipient_id, type, control_id, population_id, due_date_snapshot),
   UNIQUE KEY uq_notif_reminder_dedup (reminder_dedup_key),
-  CONSTRAINT fk_notif_recipient  FOREIGN KEY (recipient_id)  REFERENCES `user`(id)           ON DELETE SET NULL,
+  CONSTRAINT fk_notif_recipient  FOREIGN KEY (recipient_id)  REFERENCES `user`(id)           ON DELETE RESTRICT,
   CONSTRAINT fk_notif_audit      FOREIGN KEY (audit_id)      REFERENCES audit(id)            ON DELETE SET NULL,
   CONSTRAINT fk_notif_control    FOREIGN KEY (control_id)    REFERENCES audit_control(id)    ON DELETE SET NULL,
   CONSTRAINT fk_notif_population FOREIGN KEY (population_id) REFERENCES audit_population(id) ON DELETE SET NULL

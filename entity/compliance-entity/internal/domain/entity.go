@@ -1383,9 +1383,12 @@ type ListAuditTrailResponse struct {
 // AuditNotification is one logged email send.
 type AuditNotification struct {
 	ID int64 `json:"id"`
-	// RecipientID is nullable: the FK is ON DELETE SET NULL (see audit_schema.sql)
-	// so a delivery record outlives the recipient user being deleted, rather
-	// than being cascade-deleted along with them.
+	// RecipientID's column is nullable, but the FK is ON DELETE RESTRICT (see
+	// audit_schema.sql): a user with notification history can't be deleted,
+	// so recipient_id is never actually NULL for a real row. RESTRICT (not
+	// SET NULL) specifically to keep reminder_dedup_key's uniqueness meaningful
+	// — SET NULL would let two different recipients' rows collide onto the
+	// same key once both users were deleted.
 	RecipientID     *int      `json:"recipientId"`
 	AuditID         *int      `json:"auditId"`
 	ControlID       *int      `json:"controlId"`
