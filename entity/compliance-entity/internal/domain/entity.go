@@ -119,7 +119,8 @@ type SearchAuditFrameworksRequest struct {
 	// Scope/UserEmail apply the same row-scoping rule as controls/audits (see
 	// audit_dashboard_repo.go's scopeWhere): a framework has no team of its own,
 	// so it matches when it has at least one audit with at least one control in
-	// scope. Empty Scope (or ScopeAll) applies no filter.
+	// scope. Omitted/empty Scope matches nothing; internal callers that want
+	// every row must send ScopeAll explicitly.
 	Scope     Scope  `json:"scope"`
 	UserEmail string `json:"userEmail"`
 	// ScopeTeamIDs is the team(s) the caller manages, server-derived by the GRC
@@ -258,9 +259,9 @@ type SearchAuditsRequest struct {
 	AuditIDs []int `json:"auditIds"`
 	// Scope/UserEmail apply the same row-scoping rule as the dashboard (see
 	// dashboard.go's Scope type and audit_dashboard_repo.go's scopeWhere): an
-	// audit matches only if it has at least one control within scope. Empty
-	// Scope (or ScopeAll) applies no filter, for backward compatibility with
-	// callers that don't scope (e.g. internal existence/uniqueness checks).
+	// audit matches only if it has at least one control within scope.
+	// Omitted/empty Scope matches nothing; internal callers that want every
+	// row (e.g. existence/uniqueness checks) must send ScopeAll explicitly.
 	Scope     Scope  `json:"scope"`
 	UserEmail string `json:"userEmail"`
 	// ScopeTeamIDs is the team(s) the caller manages, server-derived by the GRC
@@ -332,7 +333,8 @@ type SearchControlsRequest struct {
 	ControlIDs []int `json:"controlIds"`
 	// Scope/UserEmail apply the same row-scoping rule as the dashboard (see
 	// dashboard.go's Scope type and audit_dashboard_repo.go's scopeWhere).
-	// Empty Scope (or ScopeAll) applies no filter.
+	// Omitted/empty Scope matches nothing; internal callers that want every
+	// row must send ScopeAll explicitly.
 	Scope     Scope  `json:"scope"`
 	UserEmail string `json:"userEmail"`
 	// ScopeTeamIDs is the team(s) the caller manages, server-derived by the GRC

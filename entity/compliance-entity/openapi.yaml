@@ -286,65 +286,6 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /roles:
-    get:
-      tags:
-      - Role Grants
-      summary: List active roles
-      description: >-
-        The role catalogue, for populating a grant editor. Each role carries its
-        module, which determines the scope types it may be granted against:
-        RISK accepts GLOBAL or RISK_TEAM, AUDIT accepts GLOBAL or AUDIT_TEAM,
-        and SHARED accepts GLOBAL only.
-      operationId: listRoles
-      responses:
-        '200':
-          description: Active roles
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ListRolesResponse'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-  /grants/by-email/{email}:
-    get:
-      tags:
-      - Role Grants
-      summary: Get a user's role grants by email
-      description: >-
-        Resolves a user by email and returns their active grants in one round
-        trip. This is the hot path — the GRC backend calls it on every
-        authenticated request to build the caller's scoped privilege set.
-
-
-        Responses are never cached (Cache-Control: no-store) and must not be
-        cached by callers either. Revoking a grant has to take effect on the
-        caller's next request, which is why this data does not ride along on the
-        user payload, which is cached for five minutes.
-
-
-        A user who does not exist returns 404 rather than an empty grant list,
-        so callers can distinguish "holds no roles" from "not provisioned here".
-      operationId: getGrantsByEmail
-      parameters:
-      - name: email
-        in: path
-        required: true
-        schema:
-          type: string
-      responses:
-        '200':
-          description: The user's active grants
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserGrantsResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
   /audit/teams/search:
     post:
       tags:
@@ -3583,8 +3524,9 @@ components:
           enum: [all, owned, assigned, team, none]
           description: >-
             Row-scoping rule: a framework matches when it has at least one
-            audit with at least one control in scope. Empty (or "all") applies
-            no filter.
+            audit with at least one control in scope. Omitted/empty scope
+            matches nothing; internal callers that want every row must send
+            "all" explicitly.
         userEmail:
           type: string
         scopeTeamIds:
@@ -3756,8 +3698,8 @@ components:
           enum: [all, owned, assigned, team, none]
           description: >-
             Row-scoping rule: an audit matches only if it has at least one
-            control within scope. Empty (or "all") applies no filter, for
-            backward compatibility with callers that don't scope.
+            control within scope. Omitted/empty scope matches nothing;
+            internal callers that want every row must send "all" explicitly.
         userEmail:
           type: string
         scopeTeamIds:
@@ -3953,8 +3895,9 @@ components:
           type: string
           enum: [all, owned, assigned, team, none]
           description: >-
-            Row-scoping rule matching the dashboard's. Empty (or "all")
-            applies no filter.
+            Row-scoping rule matching the dashboard's. Omitted/empty scope
+            matches nothing; internal callers that want every row must send
+            "all" explicitly.
         userEmail:
           type: string
         scopeTeamIds:
