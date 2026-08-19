@@ -169,12 +169,13 @@ func (d *Deps) handleEscalationComment(w http.ResponseWriter, r *http.Request) {
 //
 // One intended recipient is deliberately NOT mailed yet — the assigner's and
 // action owner's line managers. The leads were explicitly deferred, and it is
-// logged so the trigger point stays observable. Their emails are already
-// frozen on the escalation row, so enabling them later is a recipient list
-// change here, not a data change.
+// logged so the trigger point stays observable. Their Asgardeo ids are
+// already frozen on the escalation row, so enabling them later is a
+// recipient list change here (resolve uuid -> email via the identity
+// directory), not a data change.
 //
 // TODO: notify the two leads recorded on the escalation row
-// (assigner_lead_email / action_owner_lead_email), once it is decided that
+// (assigner_lead_uuid / action_owner_lead_uuid), once it is decided that
 // leads should be emailed.
 //
 // Exported because the daily escalation job calls it too (via

@@ -341,21 +341,15 @@ CREATE TABLE IF NOT EXISTS risk_escalation (
   new_treatment_strategy VARCHAR(100) NULL,
   action_plan_id         INT          NULL,
   decision               TEXT         NULL COMMENT 'Management/lead comment that returns the risk to the assigner',
-  -- Line managers of the risk assigner and the action plan owner, resolved
-  -- from the HR entity once at escalation time and frozen here. A lead need
-  -- not be a platform user: they are matched against the caller's identity
-  -- directly, so the comment gate and the visibility carve-out both work
-  -- without provisioning them first. NULL when HR has no manager on file for
-  -- that person, or (uuid columns only) when the manager's email couldn't be
-  -- resolved to an Asgardeo account.
-  --
-  -- Email is being phased out — the *_uuid columns are the identity actually
-  -- compared against a caller now (see EscalationService.authorizeComment).
-  -- Email stays for as long as the column exists, since resolveLeads records
-  -- it regardless and it costs nothing to keep as a human-readable trace of
-  -- who was resolved.
-  assigner_lead_email     VARCHAR(255) NULL,
-  action_owner_lead_email VARCHAR(255) NULL,
+  -- Asgardeo ids of the line managers of the risk assigner and the action
+  -- plan owner, resolved from the HR entity (via SCIM email->uuid lookup)
+  -- once at escalation time and frozen here. A lead need not be a platform
+  -- user: they are matched against the caller's identity directly, so the
+  -- comment gate and the visibility carve-out both work without provisioning
+  -- them first. NULL when HR has no manager on file for that person, or when
+  -- the manager's email couldn't be resolved to an Asgardeo account. Leads
+  -- are expected to always be WSO2/Asgardeo-provisioned, so no email column
+  -- is kept alongside these — see EscalationService.managerOf.
   assigner_lead_uuid      CHAR(36)     NULL,
   action_owner_lead_uuid  CHAR(36)     NULL,
   status                 ENUM('OPEN','RESOLVED') NOT NULL DEFAULT 'OPEN',
@@ -378,12 +372,31 @@ SET @esc_has_lead_uuid = (
 );
 SET @add_esc_lead_uuid_sql = IF(@esc_has_lead_uuid = 0,
   'ALTER TABLE risk_escalation '
-  'ADD COLUMN assigner_lead_uuid CHAR(36) NULL AFTER action_owner_lead_email, '
+  'ADD COLUMN assigner_lead_uuid CHAR(36) NULL AFTER action_plan_id, '
   'ADD COLUMN action_owner_lead_uuid CHAR(36) NULL AFTER assigner_lead_uuid',
   'SELECT 1');
 PREPARE add_esc_lead_uuid_stmt FROM @add_esc_lead_uuid_sql;
 EXECUTE add_esc_lead_uuid_stmt;
 DEALLOCATE PREPARE add_esc_lead_uuid_stmt;
+
+-- assigner_lead_email / action_owner_lead_email: dropped once the *_uuid
+-- columns above exist on every row that needs them — leads are always
+-- Asgardeo-provisioned WSO2 employees, so uuid alone is sufficient. Guarded
+-- the same way the ADD above is, so this is a no-op on a fresh install
+-- (which never had the email columns) and on a database that already had
+-- them dropped by a previous run of this file.
+SET @esc_has_lead_email = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'risk_escalation' AND COLUMN_NAME = 'assigner_lead_email'
+);
+SET @drop_esc_lead_email_sql = IF(@esc_has_lead_email > 0,
+  'ALTER TABLE risk_escalation '
+  'DROP COLUMN assigner_lead_email, '
+  'DROP COLUMN action_owner_lead_email',
+  'SELECT 1');
+PREPARE drop_esc_lead_email_stmt FROM @drop_esc_lead_email_sql;
+EXECUTE drop_esc_lead_email_stmt;
+DEALLOCATE PREPARE drop_esc_lead_email_stmt;
 
 
 -- -----------------------------------------------------------------------------

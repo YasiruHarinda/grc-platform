@@ -86,33 +86,6 @@ func main() {
 		// role→privilege changes only on a deploy (hence privStore's 15-minute
 		// refresh above), but a revoked grant must take effect immediately.
 		grantRepo = grant.NewRepository(entityCli)
-	} else {
-		// LOCAL-TESTING-ONLY — remove this else branch before committing.
-		//
-		// auth.AllowAll (privilege.FromContext(ctx) == nil) is the ONE root
-		// check every allow-all special case in the codebase is really asking
-		// — HasPrivilegeIn, seesEveryRisk, handleListTeams' ?mine/?privilege
-		// narrowing, the dashboard/analytics register scoping, candidates.go —
-		// none of them check TokenValidatorEnabled directly, they all key off
-		// whether a privilege store loaded. So loading one here, even with
-		// signature verification off, makes every one of those sites resolve
-		// against your REAL local grants (from cmd/backfill-uuids +
-		// user_role_grant) instead of allowing everything — which is what lets
-		// mock-auth's forged token actually exercise privilege-scoped behavior
-		// locally, not just "is someone logged in".
-		//
-		// Best-effort: if the entity isn't reachable, fall back to the
-		// original allow-all behavior rather than fail startup — running the
-		// backend without the entity up is still a legitimate way to work
-		// locally on anything that doesn't need real privilege data.
-		if s, err := privilege.New(ctx, entityCli); err != nil {
-			slog.Warn("LOCAL-TESTING-ONLY: privilege store load failed, falling back to allow-all", "err", err)
-		} else {
-			privStore = s
-			grantRepo = grant.NewRepository(entityCli)
-			slog.Warn("LOCAL-TESTING-ONLY: privilege store loaded with TokenValidatorEnabled=false — " +
-				"every privilege check now resolves against real local grants, not allow-all")
-		}
 	}
 
 	hrClient := hrentity.NewClient(cfg.HREntity.GraphQLURL, cfg.HREntity.TokenURL, cfg.HREntity.ClientID, cfg.HREntity.ClientSecret)

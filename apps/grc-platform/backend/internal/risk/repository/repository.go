@@ -105,10 +105,10 @@ type EscalationRepository interface {
 	List(ctx context.Context, riskID int) ([]*model.Escalation, error)
 	// Escalate is the manual trigger — Compliance/Admin escalating an overdue
 	// IN_REMEDIATION risk on demand instead of waiting for the daily job.
-	// Escalate takes the assigner's and action owner's line-manager emails and
-	// (independently resolvable) Asgardeo ids, already resolved by the caller
-	// — the entity has no HR client or identity directory of its own.
-	Escalate(ctx context.Context, riskID int, createdBy string, assignerLeadEmail, actionOwnerLeadEmail, assignerLeadUUID, actionOwnerLeadUUID *string) (*model.Escalation, error)
+	// Escalate takes the assigner's and action owner's line-manager Asgardeo
+	// ids, already resolved by the caller — the entity has no HR client or
+	// identity directory of its own.
+	Escalate(ctx context.Context, riskID int, createdBy string, assignerLeadUUID, actionOwnerLeadUUID *string) (*model.Escalation, error)
 	// Comment records the management/lead comment on an escalation. Leaving the
 	// escalation OPEN is deliberate: it is what keeps the risk in the Overdue
 	// tab until the assigner submits for completion approval.

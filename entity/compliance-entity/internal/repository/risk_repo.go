@@ -174,25 +174,14 @@ func (r *riskRepo) SearchRisks(ctx context.Context, req domain.SearchRisksReques
 	if scopeClause, scopeArgs := scopeFilter("r", req.ScopeSourceRegisterIDs, req.ScopeAssignmentTeamIDs); scopeClause != "" {
 		// A lead named on an open escalation is granted access to that one risk
 		// regardless of team scoping, so the two are OR-ed rather than AND-ed.
-		// Matching is on identity, not user id, because a lead may have no
-		// platform user row — email and uuid are both accepted (see
-		// EscalationLeadEmail's field comment for why both still exist).
-		if req.EscalationLeadEmail != "" || req.EscalationLeadUUID != "" {
-			var conds []string
-			var leadArgs []any
-			if req.EscalationLeadEmail != "" {
-				conds = append(conds, "e.assigner_lead_email = ? OR e.action_owner_lead_email = ?")
-				leadArgs = append(leadArgs, req.EscalationLeadEmail, req.EscalationLeadEmail)
-			}
-			if req.EscalationLeadUUID != "" {
-				conds = append(conds, "e.assigner_lead_uuid = ? OR e.action_owner_lead_uuid = ?")
-				leadArgs = append(leadArgs, req.EscalationLeadUUID, req.EscalationLeadUUID)
-			}
+		// Matching is on uuid, not user id, because a lead may have no
+		// platform user row.
+		if req.EscalationLeadUUID != "" {
 			where += " AND ((1=1" + scopeClause + ") OR EXISTS (SELECT 1 FROM risk_escalation e" +
 				" WHERE e.risk_id = r.id AND e.status = 'OPEN'" +
-				" AND (" + strings.Join(conds, " OR ") + ")))"
+				" AND (e.assigner_lead_uuid = ? OR e.action_owner_lead_uuid = ?)))"
 			args = append(args, scopeArgs...)
-			args = append(args, leadArgs...)
+			args = append(args, req.EscalationLeadUUID, req.EscalationLeadUUID)
 		} else {
 			where += scopeClause
 			args = append(args, scopeArgs...)

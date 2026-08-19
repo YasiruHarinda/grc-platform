@@ -625,22 +625,12 @@ type SearchRisksRequest struct {
 	// to Escalate, which will only reject it again.
 	ExcludeOpenEscalation bool `json:"excludeOpenEscalation"`
 
-	// EscalationLeadEmail widens the result set rather than narrowing it: a
-	// risk with an open escalation naming this email as the assigner's or
-	// action owner's lead is included even when the scope lists would exclude it.
-	// Leads are frequently outside the risk's team and are not necessarily
-	// platform users at all, so without this they could never reach the risk
-	// they are being asked to comment on.
-	//
-	// Kept working even though the backend no longer sends it, for the same
-	// independent-deploy reason grants got a by-uuid route alongside by-email:
-	// an older backend instance still sends this field, and it must keep
-	// widening the result set exactly as before until every instance has
-	// redeployed onto EscalationLeadUUID.
-	EscalationLeadEmail string `json:"escalationLeadEmail"`
-	// EscalationLeadUUID is the same widening, matched against the escalation's
-	// resolved lead uuid instead of email — what a current backend sends. Both
-	// may be set; either match is enough to include the risk.
+	// EscalationLeadUUID widens the result set rather than narrowing it: a
+	// risk with an open escalation naming this uuid as the assigner's or
+	// action owner's lead is included even when the scope lists would exclude
+	// it. Leads are frequently outside the risk's team and are not
+	// necessarily platform users at all, so without this they could never
+	// reach the risk they are being asked to comment on.
 	EscalationLeadUUID string `json:"escalationLeadUuid"`
 
 	Pagination Pagination `json:"pagination"`
@@ -1458,20 +1448,16 @@ type RiskEscalation struct {
 	NewTreatmentStrategy *string `json:"newTreatmentStrategy"`
 	ActionPlanID         *int    `json:"actionPlanId"`
 	Decision             *string `json:"decision"`
-	// Line managers of the risk assigner and the action plan owner, resolved
-	// from the HR entity once when the risk escalated and frozen here. They
-	// drive who may comment on a medium/low escalation and who can see the
-	// risk, so they must not be re-resolved later — a reorg would otherwise
-	// silently change who has access to a historical escalation.
-	AssignerLeadEmail    *string `json:"assignerLeadEmail"`
-	ActionOwnerLeadEmail *string `json:"actionOwnerLeadEmail"`
-	// *UUID is the lead's Asgardeo id, resolved via the identity directory at
-	// the same time as the email above and frozen the same way. This is what
-	// EscalationService.authorizeComment actually compares a caller against —
-	// see the field comment on the email pair for why matching happens at all
-	// without the lead being a platform user. Nil when the manager's email
-	// couldn't be resolved to an Asgardeo account (or lookup failed) at
-	// escalation time.
+	// AssignerLeadUUID/ActionOwnerLeadUUID are the Asgardeo ids of the line
+	// managers of the risk assigner and the action plan owner, resolved from
+	// the HR entity (via SCIM email→uuid lookup) once when the risk escalated
+	// and frozen here. They drive who may comment on a medium/low escalation
+	// and who can see the risk, so they must not be re-resolved later — a
+	// reorg would otherwise silently change who has access to a historical
+	// escalation. A lead need not be a platform user: EscalationService.
+	// authorizeComment matches a caller against these directly, not against
+	// any row in `user`. Nil when the manager's email couldn't be resolved to
+	// an Asgardeo account, or when HR has no manager on file at all.
 	AssignerLeadUUID    *string   `json:"assignerLeadUuid"`
 	ActionOwnerLeadUUID *string   `json:"actionOwnerLeadUuid"`
 	Status              string    `json:"status"` // OPEN | RESOLVED
@@ -1486,11 +1472,9 @@ type CreateRiskEscalationRequest struct {
 	NewTreatmentStrategy *string `json:"newTreatmentStrategy"`
 	ActionPlanID         *int    `json:"actionPlanId"`
 	// Frozen at escalation time — see RiskEscalation's field comment.
-	AssignerLeadEmail    *string `json:"assignerLeadEmail"`
-	ActionOwnerLeadEmail *string `json:"actionOwnerLeadEmail"`
-	AssignerLeadUUID     *string `json:"assignerLeadUuid"`
-	ActionOwnerLeadUUID  *string `json:"actionOwnerLeadUuid"`
-	CreatedBy            string  `json:"createdBy"`
+	AssignerLeadUUID    *string `json:"assignerLeadUuid"`
+	ActionOwnerLeadUUID *string `json:"actionOwnerLeadUuid"`
+	CreatedBy           string  `json:"createdBy"`
 }
 
 // EscalateRiskRequest is the payload for POST /risks/{riskId}/escalate — the
@@ -1501,10 +1485,8 @@ type EscalateRiskRequest struct {
 	// Resolved by the caller (the GRC backend, which owns the HR client and the
 	// SCIM client) and passed in, so this service keeps its single outbound
 	// dependency: MySQL.
-	AssignerLeadEmail    *string `json:"assignerLeadEmail"`
-	ActionOwnerLeadEmail *string `json:"actionOwnerLeadEmail"`
-	AssignerLeadUUID     *string `json:"assignerLeadUuid"`
-	ActionOwnerLeadUUID  *string `json:"actionOwnerLeadUuid"`
+	AssignerLeadUUID    *string `json:"assignerLeadUuid"`
+	ActionOwnerLeadUUID *string `json:"actionOwnerLeadUuid"`
 }
 
 // UpdateRiskEscalationRequest is the payload for PATCH /risks/{riskId}/escalations/{escalationId}.

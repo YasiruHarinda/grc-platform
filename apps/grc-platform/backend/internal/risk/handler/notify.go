@@ -354,13 +354,14 @@ func (d *Deps) notifyComplianceAdmins(ev emailer.RiskEvent, riskID, registerID i
 // notifyComplianceAdmins: the recipients were explicitly deferred.
 //
 // The assigner's and action owner's line managers are already resolved from the
-// HR entity and frozen on the escalation row at escalation time, so the data is
-// there — only the send is withheld. That ordering is intentional: resolving
-// them later would risk a reorg changing who a historical escalation belonged
-// to.
+// HR entity and frozen on the escalation row (as Asgardeo ids) at escalation
+// time, so the data is there — only the send is withheld. That ordering is
+// intentional: resolving them later would risk a reorg changing who a
+// historical escalation belonged to.
 //
-// TODO: send to assigner_lead_email / action_owner_lead_email on the risk's
-// open escalation once it is decided that leads should be emailed.
+// TODO: send to assigner_lead_uuid / action_owner_lead_uuid (resolved to an
+// email via the identity directory) on the risk's open escalation once it is
+// decided that leads should be emailed.
 func notifyEscalationLeads(riskID int) {
 	slog.Info("escalation lead notification suppressed (not yet wired)", "riskId", riskID)
 }

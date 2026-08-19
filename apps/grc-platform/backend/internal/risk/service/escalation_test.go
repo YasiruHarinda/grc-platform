@@ -105,13 +105,6 @@ func TestAuthorizeComment(t *testing.T) {
 			"MEDIUM: no leads recorded means nobody but an admin",
 			medium, &model.Escalation{}, stubUsers{caller, 7}, false, true,
 		},
-		{
-			// A lead resolvable in HR entity but with no Asgardeo account: the
-			// email column would still be set (see managerOf), but the uuid
-			// column stays nil, and matching only ever happens on uuid now.
-			"MEDIUM: a lead resolved to email but not uuid grants nobody",
-			medium, &model.Escalation{AssignerLeadEmail: strp("lead@wso2.com")}, stubUsers{caller, 7}, false, true,
-		},
 		// The escape hatch: without it, an escalation whose named commenter has
 		// left the company would strand the risk permanently.
 		{
