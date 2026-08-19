@@ -509,6 +509,17 @@ function SubmittedPopulationFiles({
     return <Skeleton variant="rounded" height={44} />;
   }
 
+  if (population.isError) {
+    // Same reasoning as PopulationSubmissionCard: a failed fetch must read as
+    // an error, not silently fall through to "No population files on record
+    // yet." for a round that actually has files.
+    return (
+      <Alert severity="error" sx={{ fontSize: "0.8rem" }}>
+        {(population.error as Error)?.message ?? "Failed to load the submitted population."}
+      </Alert>
+    );
+  }
+
   const showResubmissionNote = rejectionReason !== undefined && (files.length > 0 || Boolean(rejectionReason));
   const resubmissionNote = showResubmissionNote && (
     <Box sx={{ display: "flex", alignItems: "flex-start", gap: 0.75 }}>
