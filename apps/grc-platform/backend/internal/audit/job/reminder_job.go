@@ -50,7 +50,7 @@ type controlLister interface {
 // ReleaseClaim undoes it when the owner's digest then fails to send, so the
 // item is retried on a future run instead of staying claimed forever.
 type claimer interface {
-	Claim(ctx context.Context, recipientID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (claimed bool, notificationID int64, err error)
+	Claim(ctx context.Context, recipientID, auditID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (claimed bool, notificationID int64, err error)
 	ReleaseClaim(ctx context.Context, notificationID int64) error
 }
 
@@ -240,7 +240,7 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 	}()
 
 	queue := func(ownerID int, item model.ReminderItem, controlID, populationID *int) {
-		claimed, notificationID, err := j.claim.Claim(ctx, ownerID, item.Type, controlID, populationID, &item.DedupSnapshot)
+		claimed, notificationID, err := j.claim.Claim(ctx, ownerID, item.AuditID, item.Type, controlID, populationID, &item.DedupSnapshot)
 		if err != nil {
 			// Fail CLOSED, unlike the old Exists-based check's fail-open
 			// ("sending anyway"): once a claim call itself errors, this run

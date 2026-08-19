@@ -141,7 +141,7 @@ func dedupKey(recipientID int, notifType string, controlID, populationID *int, d
 	return key
 }
 
-func (f *fakeClaimer) Claim(_ context.Context, recipientID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (bool, int64, error) {
+func (f *fakeClaimer) Claim(_ context.Context, recipientID, auditID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (bool, int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.claimErr != nil {
@@ -545,7 +545,7 @@ func TestRunOnceReleasesClaimOnFailedSend(t *testing.T) {
 	}
 
 	// The item must now be re-claimable by a later run.
-	claimed, _, err := claim.Claim(context.Background(), 1, "REMINDER_DUE_10", intPtr(1), nil, &dueSoon)
+	claimed, _, err := claim.Claim(context.Background(), 1, 1, "REMINDER_DUE_10", intPtr(1), nil, &dueSoon)
 	if err != nil || !claimed {
 		t.Errorf("Claim after release = (%v, %v), want (true, nil)", claimed, err)
 	}

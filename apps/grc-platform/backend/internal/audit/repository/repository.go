@@ -216,7 +216,7 @@ type NotificationRepository interface {
 	// date) reminder item — the insert succeeding IS the de-dup decision.
 	// claimed=false means another caller already claimed this item; not an
 	// error.
-	Claim(ctx context.Context, recipientID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (claimed bool, notificationID int64, err error)
+	Claim(ctx context.Context, recipientID, auditID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (claimed bool, notificationID int64, err error)
 	// ReleaseClaim deletes a claim row so its item is retryable on a future
 	// run — called only when the owner's digest failed to send after the
 	// claim succeeded.

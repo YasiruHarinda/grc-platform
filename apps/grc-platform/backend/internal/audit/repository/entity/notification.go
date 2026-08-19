@@ -46,13 +46,14 @@ func (r *notificationRepo) Create(ctx context.Context, n model.NotificationLogEn
 	return r.c.Post(ctx, "/audit/notifications", body, nil)
 }
 
-func (r *notificationRepo) Claim(ctx context.Context, recipientID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (bool, int64, error) {
+func (r *notificationRepo) Claim(ctx context.Context, recipientID, auditID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (bool, int64, error) {
 	var resp struct {
 		Claimed bool  `json:"claimed"`
 		ID      int64 `json:"id"`
 	}
 	body := map[string]any{
 		"recipientId":     recipientID,
+		"auditId":         auditID,
 		"type":            notifType,
 		"controlId":       controlID,
 		"populationId":    populationID,
