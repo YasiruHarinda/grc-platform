@@ -739,7 +739,7 @@ func demoteEvidenceRound(ctx context.Context, tx *sql.Tx, controlID int, target 
 // overridden) within the same transaction as that write.
 func recomputeAuditStatus(ctx context.Context, tx *sql.Tx, auditID int) error {
 	var current string
-	if err := tx.QueryRowContext(ctx, "SELECT status FROM audit WHERE id = ?", auditID).Scan(&current); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT status FROM audit WHERE id = ? FOR UPDATE", auditID).Scan(&current); err != nil {
 		return fmt.Errorf("recomputeAuditStatus get(%d): %w", auditID, err)
 	}
 	if current == "ARCHIVED" || current == "REMOVED" {
