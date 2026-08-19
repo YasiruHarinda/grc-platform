@@ -222,6 +222,7 @@ func (b *recipientBatch) add(recipientID, controlID int, item emailer.AuditEvent
 // control list when they picked up more than one control in the same
 // submission (see singleControlID).
 func (h *controlHandler) sendBatched(ctx context.Context, ev emailer.AuditEvent, auditID int, auditName, actor string, batch *recipientBatch) {
+	actorLabel := h.notify.describeActor(ctx, actor)
 	for recipientID, items := range batch.items {
 		detailURL := h.notify.detailURL(auditID)
 		if controlID, ok := singleControlID(batch.controlIDs[recipientID]); ok {
@@ -229,7 +230,7 @@ func (h *controlHandler) sendBatched(ctx context.Context, ev emailer.AuditEvent,
 		}
 		info := emailer.AuditEventInfo{
 			AuditName: auditName,
-			Actor:     h.notify.describeActor(ctx, actor),
+			Actor:     actorLabel,
 			DetailURL: detailURL,
 			Items:     items,
 		}
