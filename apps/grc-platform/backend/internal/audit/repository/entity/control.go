@@ -280,8 +280,7 @@ func (r *controlRepo) ListAllForReminders(ctx context.Context) ([]*model.AuditCo
 		var resp struct {
 			Controls []*model.AuditControl `json:"controls"`
 		}
-		body := map[string]any{"pagination": map[string]int{"limit": pageLimit, "offset": offset}}
-		if err := r.c.Post(ctx, "/controls/search", body, &resp); err != nil {
+		if err := r.c.Post(ctx, "/controls/search", pageBody(offset), &resp); err != nil {
 			return nil, err
 		}
 		all = append(all, resp.Controls...)
