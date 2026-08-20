@@ -17,11 +17,13 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/admin"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
@@ -55,7 +57,49 @@ func (d *Deps) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	if users == nil {
 		users = []admin.User{}
 	}
+	fillNamesFromDirectory(r.Context(), d.Directory, users)
 	response.WriteJSONValue(w, http.StatusOK, users)
+}
+
+// fillNamesFromDirectory resolves display name/email for rows the entity has
+// neither for — every user provisioned through this console going forward,
+// since Add User stores uuid only (see the uuid-identity migration). Reading
+// them back from the identity directory's cache at list time, rather than
+// storing them, is the whole point of that migration: the row stays uuid-only
+// in the database, and the name/email shown here are always current, not a
+// snapshot from whenever the person was added.
+//
+// A no-op per row whose entity data is already populated (pre-migration rows,
+// or anyone provisioned via the email-keyed Action Owner flow) — those are
+// left exactly as the entity returned them. d.Directory being nil (SCIM not
+// configured, local dev) degrades to today's blank display rather than
+// panicking.
+func fillNamesFromDirectory(ctx context.Context, dir *directory.Service, users []admin.User) {
+	if dir == nil {
+		return
+	}
+	var uuids []string
+	for _, u := range users {
+		if (u.DisplayName == "" || u.Email == "") && u.UUID != "" {
+			uuids = append(uuids, u.UUID)
+		}
+	}
+	if len(uuids) == 0 {
+		return
+	}
+	people := dir.LookupAll(ctx, uuids)
+	for i := range users {
+		p, ok := people[users[i].UUID]
+		if !ok {
+			continue
+		}
+		if users[i].DisplayName == "" {
+			users[i].DisplayName = p.DisplayName
+		}
+		if users[i].Email == "" {
+			users[i].Email = p.Email
+		}
+	}
 }
 
 type createUserRequest struct {
