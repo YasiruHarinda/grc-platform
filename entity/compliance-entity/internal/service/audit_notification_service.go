@@ -34,14 +34,21 @@ func NewAuditNotificationService(repo repository.AuditNotificationRepository) Au
 }
 
 var validNotificationTypes = map[string]bool{
-	"OWNER_ASSIGNED_CONTROL":    true,
-	"OWNER_ASSIGNED_POPULATION": true,
-	"AUDITOR_ASSIGNED_CONTROL":  true,
-	"REMINDER_DUE_10":           true,
-	"REMINDER_DUE_5":            true,
-	"REMINDER_OVERDUE":          true,
-	"RESUBMISSION_NEEDED":       true,
-	"SAMPLE_SUBMITTED":          true,
+	"OWNER_ASSIGNED_CONTROL":            true,
+	"OWNER_ASSIGNED_POPULATION":         true,
+	"AUDITOR_ASSIGNED_CONTROL":          true,
+	"REMINDER_DUE_10":                   true,
+	"REMINDER_DUE_5":                    true,
+	"REMINDER_OVERDUE":                  true,
+	"RESUBMISSION_NEEDED":               true,
+	"SAMPLE_SUBMITTED":                  true,
+	"EVIDENCE_INTERNAL_REVIEW":          true,
+	"POPULATION_INTERNAL_REVIEW":        true,
+	"EVIDENCE_UNDER_VALIDATION":         true,
+	"POPULATION_UNDER_VALIDATION":       true,
+	"POPULATION_COMPLETE_SAMPLE_NEEDED": true,
+	"CONTROL_COMPLETE":                  true,
+	"COMMENT_ADDED":                     true,
 }
 
 // validReminderTypes is the subset of validNotificationTypes that claim/

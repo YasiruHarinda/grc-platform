@@ -529,7 +529,14 @@ CREATE TABLE IF NOT EXISTS audit_notification (
                          'REMINDER_DUE_5',
                          'REMINDER_OVERDUE',
                          'RESUBMISSION_NEEDED',
-                         'SAMPLE_SUBMITTED'
+                         'SAMPLE_SUBMITTED',
+                         'EVIDENCE_INTERNAL_REVIEW',
+                         'POPULATION_INTERNAL_REVIEW',
+                         'EVIDENCE_UNDER_VALIDATION',
+                         'POPULATION_UNDER_VALIDATION',
+                         'POPULATION_COMPLETE_SAMPLE_NEEDED',
+                         'CONTROL_COMPLETE',
+                         'COMMENT_ADDED'
                        ) NOT NULL,
   channel            ENUM('EMAIL') NOT NULL DEFAULT 'EMAIL',
   due_date_snapshot  DATE         NULL,
@@ -553,6 +560,39 @@ CREATE TABLE IF NOT EXISTS audit_notification (
   CONSTRAINT fk_notif_control    FOREIGN KEY (control_id)    REFERENCES audit_control(id)    ON DELETE SET NULL,
   CONSTRAINT fk_notif_population FOREIGN KEY (population_id) REFERENCES audit_population(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Backfill the seven status-reached/comment-added type values onto an
+-- audit_notification table created before notifyControlStatusReached and
+-- notifyCommentAdded existed (handler/notify.go) — same information_schema-guard
+-- pattern as audit_trail's OVERRIDDEN backfill above. Without this, every log
+-- write for those seven types fails against an ENUM that doesn't contain them.
+SET @notif_has_comment_added_type = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_notification' AND COLUMN_NAME = 'type'
+    AND COLUMN_TYPE LIKE '%''COMMENT_ADDED''%'
+);
+SET @add_notif_status_types_sql = IF(@notif_has_comment_added_type = 0,
+  'ALTER TABLE audit_notification MODIFY COLUMN type ENUM(
+     ''OWNER_ASSIGNED_CONTROL'',
+     ''OWNER_ASSIGNED_POPULATION'',
+     ''AUDITOR_ASSIGNED_CONTROL'',
+     ''REMINDER_DUE_10'',
+     ''REMINDER_DUE_5'',
+     ''REMINDER_OVERDUE'',
+     ''RESUBMISSION_NEEDED'',
+     ''SAMPLE_SUBMITTED'',
+     ''EVIDENCE_INTERNAL_REVIEW'',
+     ''POPULATION_INTERNAL_REVIEW'',
+     ''EVIDENCE_UNDER_VALIDATION'',
+     ''POPULATION_UNDER_VALIDATION'',
+     ''POPULATION_COMPLETE_SAMPLE_NEEDED'',
+     ''CONTROL_COMPLETE'',
+     ''COMMENT_ADDED''
+   ) NOT NULL',
+  'SELECT 1');
+PREPARE add_notif_status_types_stmt FROM @add_notif_status_types_sql;
+EXECUTE add_notif_status_types_stmt;
+DEALLOCATE PREPARE add_notif_status_types_stmt;
 
 -- Backfill reminder_dedup_key (+ its unique index) onto an audit_notification
 -- table created before the atomic-claim de-dup mechanism existed — same
