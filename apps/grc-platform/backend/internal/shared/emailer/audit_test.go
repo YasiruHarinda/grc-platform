@@ -30,8 +30,11 @@ import (
 // at runtime, as a notification that silently never sends.
 func TestEveryAuditEventHasATemplate(t *testing.T) {
 	all := []AuditEvent{
-		AuditEventOwnerAssigned, AuditEventReminderDue10, AuditEventReminderDue5,
-		AuditEventReminderOverdue, AuditEventResubmissionNeeded, AuditEventSampleSubmitted,
+		AuditEventOwnerAssigned, AuditEventAuditorAssigned, AuditEventReminderDue10,
+		AuditEventReminderDue5, AuditEventReminderOverdue, AuditEventResubmissionNeeded,
+		AuditEventSampleSubmitted, AuditEventEvidenceInternalReview, AuditEventPopulationInternalReview,
+		AuditEventEvidenceUnderValidation, AuditEventPopulationUnderValidation,
+		AuditEventPopulationCompleteSampleNeeded, AuditEventControlComplete, AuditEventCommentAdded,
 	}
 	for _, ev := range all {
 		tpl, ok := auditEventTemplates[ev]
