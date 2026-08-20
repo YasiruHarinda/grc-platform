@@ -1867,6 +1867,34 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/risk-assigner-candidates:
+    get:
+      tags:
+      - Risk User Pickers
+      summary: List platform users who are Risk Assigner candidates
+      description: Every user who holds RISK_CREATE, GLOBAL or scoped to one of the given teamId query params (repeatable — Add Risk passes the chosen source register). A candidate returned here is guaranteed to hold a CreateRisk grant in that register, so assigning them a risk they raise there can never 403.
+      operationId: listRiskAssignerCandidates
+      parameters:
+      - name: teamId
+        in: query
+        required: false
+        schema:
+          type: array
+          items:
+            type: integer
+      responses:
+        '200':
+          description: List of candidate users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /api/v1/me/privileges:
     get:
       tags:
