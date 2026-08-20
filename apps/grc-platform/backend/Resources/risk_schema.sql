@@ -379,17 +379,39 @@ PREPARE add_esc_lead_uuid_stmt FROM @add_esc_lead_uuid_sql;
 EXECUTE add_esc_lead_uuid_stmt;
 DEALLOCATE PREPARE add_esc_lead_uuid_stmt;
 
--- assigner_lead_email / action_owner_lead_email: dropped once the *_uuid
--- columns above exist on every row that needs them — leads are always
--- Asgardeo-provisioned WSO2 employees, so uuid alone is sufficient. Guarded
--- the same way the ADD above is, so this is a no-op on a fresh install
--- (which never had the email columns) and on a database that already had
--- them dropped by a previous run of this file.
+-- assigner_lead_email / action_owner_lead_email: dropped only once every row
+-- that has one also has the matching uuid resolved — leads are always
+-- Asgardeo-provisioned WSO2 employees, so uuid alone is sufficient once that
+-- holds. A lead need not be a platform `user` row, so unlike
+-- user.email/display_name (kept around and staged the same way, see
+-- shared.sql) there is nowhere else to recover a frozen lead's identity from
+-- once these columns are gone — so this is deliberately NOT an unconditional
+-- drop the way it first shipped. Run cmd/backfill-escalation-leads and apply
+-- its output to populate the *_uuid columns for any pre-existing escalation;
+-- until that has happened for every row, this block leaves the email columns
+-- in place (dead to new code, exactly like user.email/display_name) rather
+-- than risk losing data. Re-run this file once the backfill is applied and
+-- the columns will drop on that pass.
 SET @esc_has_lead_email = (
   SELECT COUNT(*) FROM information_schema.COLUMNS
   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'risk_escalation' AND COLUMN_NAME = 'assigner_lead_email'
 );
-SET @drop_esc_lead_email_sql = IF(@esc_has_lead_email > 0,
+-- Counted via dynamic SQL, not a literal subquery: on a fresh install
+-- risk_escalation never had email columns at all (the CREATE TABLE above
+-- only defines the uuid ones), so a literal reference to assigner_lead_email
+-- would fail to resolve at parse time even though @esc_has_lead_email's IF()
+-- would have skipped it at runtime. Same reason the ADD/DROP below goes
+-- through PREPARE/EXECUTE instead of an inline ALTER.
+SET @esc_count_unbackfilled_sql = IF(@esc_has_lead_email > 0,
+  'SELECT COUNT(*) INTO @esc_unbackfilled_leads FROM risk_escalation '
+  'WHERE (assigner_lead_email IS NOT NULL AND assigner_lead_uuid IS NULL) '
+  'OR (action_owner_lead_email IS NOT NULL AND action_owner_lead_uuid IS NULL)',
+  'SELECT 0 INTO @esc_unbackfilled_leads');
+PREPARE esc_count_unbackfilled_stmt FROM @esc_count_unbackfilled_sql;
+EXECUTE esc_count_unbackfilled_stmt;
+DEALLOCATE PREPARE esc_count_unbackfilled_stmt;
+
+SET @drop_esc_lead_email_sql = IF(@esc_has_lead_email > 0 AND @esc_unbackfilled_leads = 0,
   'ALTER TABLE risk_escalation '
   'DROP COLUMN assigner_lead_email, '
   'DROP COLUMN action_owner_lead_email',
