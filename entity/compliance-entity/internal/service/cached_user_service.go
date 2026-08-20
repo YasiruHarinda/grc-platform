@@ -59,12 +59,17 @@ func NewCachedUserService(inner UserService) UserService {
 // remember caches a user under every key that identifies it, so a lookup by one
 // key warms the others.
 //
-// The uuid key is skipped when empty: a row that predates the identity
-// migration has no uuid, and caching it under "" would make the next
-// empty-uuid lookup return whichever user was fetched last.
+// Both the email and uuid keys are skipped when empty: a row that predates
+// the identity migration has no uuid, and an Admin-Console-provisioned row has
+// no email (see nullableEmail in user_repo.go) — caching either under ""
+// would make the next empty lookup return whichever user was cached last,
+// and (for CreateUser's pre-write eviction below) could evict an unrelated
+// user's cache entry.
 func (s *cachedUserService) remember(u domain.User) {
 	s.byID.Set(u.ID, u)
-	s.byEmail.Set(emailCacheKey(u.Email), u)
+	if u.Email != "" {
+		s.byEmail.Set(emailCacheKey(u.Email), u)
+	}
 	if u.UUID != "" {
 		s.byUUID.Set(u.UUID, u)
 	}
@@ -74,7 +79,9 @@ func (s *cachedUserService) remember(u domain.User) {
 // that only *might* have changed the row.
 func (s *cachedUserService) forget(u domain.User) {
 	s.byID.Delete(u.ID)
-	s.byEmail.Delete(emailCacheKey(u.Email))
+	if u.Email != "" {
+		s.byEmail.Delete(emailCacheKey(u.Email))
+	}
 	if u.UUID != "" {
 		s.byUUID.Delete(u.UUID)
 	}
@@ -130,8 +137,10 @@ func (s *cachedUserService) GetUserByUUID(ctx context.Context, uuid string) (dom
 // row may have been cached before it had a uuid — and only evicting the new one
 // would leave the stale entry reachable by its old key.
 func (s *cachedUserService) CreateUser(ctx context.Context, req domain.CreateUserRequest) (domain.User, error) {
-	if old, ok := s.byEmail.Get(emailCacheKey(req.Email)); ok {
-		s.forget(old)
+	if req.Email != "" {
+		if old, ok := s.byEmail.Get(emailCacheKey(req.Email)); ok {
+			s.forget(old)
+		}
 	}
 
 	user, err := s.inner.CreateUser(ctx, req)

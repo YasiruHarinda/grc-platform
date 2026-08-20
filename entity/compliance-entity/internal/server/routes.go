@@ -106,7 +106,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	riskAnalyticsSvc := service.NewRiskAnalyticsService(riskAnalyticsRepo)
 
 	// ── Handlers ─────────────────────────────────────────────────────────────
-	userH := handler.NewUserHandler(userSvc)
+	userH := handler.NewUserHandler(userSvc, grantSvc)
 	auditTeamH := handler.NewAuditTeamHandler(auditTeamSvc)
 	auditFrameworkH := handler.NewAuditFrameworkHandler(auditFrameworkSvc)
 	frameworkControlH := handler.NewFrameworkControlHandler(frameworkControlSvc)

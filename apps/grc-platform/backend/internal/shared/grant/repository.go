@@ -42,6 +42,26 @@ type Repository interface {
 	// the same privilege check at approval time, rather than a list sourced
 	// from somewhere else entirely. teamIDs may be empty.
 	Candidates(ctx context.Context, privilegeName string, teamIDs []int) ([]Candidate, error)
+	// CreateGrant grants a role in a scope to userID — the Admin Console's
+	// grant editor. Idempotent on the entity side: re-granting something
+	// already held reactivates it rather than failing.
+	//
+	// Deliberately uncached, same reasoning as ForUUID: a grant just created
+	// must be visible to that user's very next request, not after a TTL.
+	CreateGrant(ctx context.Context, userID int, req CreateGrantRequest) (Grant, error)
+	// RevokeGrant deactivates (never deletes) a specific grant row — same
+	// uncached reasoning as CreateGrant, in the opposite direction: a revoked
+	// grant must stop working on the holder's very next request.
+	RevokeGrant(ctx context.Context, userID, grantID int, revokedBy string) error
+}
+
+// CreateGrantRequest is the payload for granting a role in a scope.
+// ScopeID must be omitted (0) when ScopeType is GLOBAL.
+type CreateGrantRequest struct {
+	RoleID    int
+	ScopeType string
+	ScopeID   int
+	CreatedBy string
 }
 
 // Candidate is one user eligible for a role-gated picker field. Carries only
@@ -118,6 +138,34 @@ func (r *entityRepository) Candidates(ctx context.Context, privilegeName string,
 		return nil, fmt.Errorf("load candidates: %w", err)
 	}
 	return resp.Candidates, nil
+}
+
+// CreateGrant creates (or reactivates) a grant via the entity's
+// POST /grants/user/{id}. See CreateGrantRequest for the payload shape.
+func (r *entityRepository) CreateGrant(ctx context.Context, userID int, req CreateGrantRequest) (Grant, error) {
+	body := map[string]any{
+		"roleId":    req.RoleID,
+		"scopeType": req.ScopeType,
+		"scopeId":   req.ScopeID,
+		"createdBy": req.CreatedBy,
+	}
+	var g Grant
+	if err := r.c.Post(ctx, fmt.Sprintf("/grants/user/%d", userID), body, &g); err != nil {
+		return Grant{}, fmt.Errorf("create grant: %w", err)
+	}
+	return g, nil
+}
+
+// RevokeGrant deactivates a grant via the entity's
+// DELETE /grants/user/{id}/{grantId}?revokedBy=.
+func (r *entityRepository) RevokeGrant(ctx context.Context, userID, grantID int, revokedBy string) error {
+	q := url.Values{}
+	q.Set("revokedBy", revokedBy)
+	path := fmt.Sprintf("/grants/user/%d/%d?%s", userID, grantID, q.Encode())
+	if err := r.c.Delete(ctx, path); err != nil {
+		return fmt.Errorf("revoke grant: %w", err)
+	}
+	return nil
 }
 
 // isNotFound reports whether err is the entity's 404, mirroring

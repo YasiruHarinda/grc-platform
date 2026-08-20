@@ -27,6 +27,8 @@ import (
 	"syscall"
 	"time"
 
+	adminentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/admin/entity"
+	adminhandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/admin/handler"
 	audithandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/handler"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
@@ -137,6 +139,12 @@ func main() {
 	riskDeps := buildRiskDeps(entityCli, fileSvc, hrClient, grantRepo, dirSvc, scimClient, cfg.Email)
 	riskhandler.RegisterRoutes(mux, riskDeps)
 	audithandler.RegisterRoutes(mux, buildAuditDeps(fileSvc, entityCli, cfg.AIValidation))
+	adminhandler.RegisterRoutes(mux, adminhandler.Deps{
+		Admin:     adminentity.NewRepository(entityCli),
+		Users:     userDeps.Users,
+		Grants:    grantRepo,
+		Directory: dirSvc,
+	})
 
 	// Daily overdue-risk escalation. This lives here rather than in the
 	// compliance-entity because escalation now resolves line managers from the

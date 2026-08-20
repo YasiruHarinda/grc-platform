@@ -59,6 +59,12 @@ type User struct {
 	Status       string    `json:"status"`
 	CreatedOn    time.Time `json:"createdOn"`
 	UpdatedOn    time.Time `json:"updatedOn"`
+	// Grants is populated only when SearchUsersRequest.IncludeGrants was set —
+	// nil (omitted) on every other response involving User, including plain
+	// SearchUsers calls that don't ask for it. Keeps the common, hot-path reads
+	// (GetUserByID, the un-flagged List used elsewhere) from paying for a join
+	// they don't use.
+	Grants []UserGrant `json:"grants,omitempty"`
 }
 
 // SearchUsersRequest is the payload for POST /users/search.
@@ -66,6 +72,10 @@ type SearchUsersRequest struct {
 	SearchQuery string     `json:"searchQuery"`
 	StatusKey   string     `json:"statusKey"` // ACTIVE | INACTIVE | REMOVED | "" (all)
 	Pagination  Pagination `json:"pagination"`
+	// IncludeGrants embeds each returned user's active grants (see User.Grants)
+	// in this same response, batched in one extra query — for the Admin
+	// Console's user list, which needs both without an N+1 round trip per row.
+	IncludeGrants bool `json:"includeGrants"`
 }
 
 // SearchUsersResponse is returned by POST /users/search.
@@ -662,7 +672,12 @@ type CreateUserRequest struct {
 	// account) may leave it empty, and the row is created without one. Supplying
 	// it for an email that already exists fills in a uuid the row was missing,
 	// but never overwrites one it already has.
-	UUID         string `json:"uuid"`
+	UUID string `json:"uuid"`
+	// Email may be empty when UUID is supplied instead — the Admin Console's
+	// "Add User" flow provisions by uuid alone (see uuid-identity migration),
+	// storing neither email nor display name. Stored as SQL NULL, not "", so
+	// multiple uuid-only rows don't collide on uq_user_email (NULLs never
+	// conflict with each other under a unique index; empty strings would).
 	Email        string `json:"email"`
 	DisplayName  string `json:"displayName"`
 	UserType     string `json:"userType"` // INTERNAL | EXTERNAL; defaults to INTERNAL

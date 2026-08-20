@@ -182,8 +182,10 @@ const (
 // shared_seed_data.sql, so they may only be granted GLOBAL, never team-scoped
 // (see shared.sql's role.module table comment).
 const (
-	// ManageUsers gates the (not yet wired up) admin grant editor — see
-	// entity/compliance-entity/internal/server/routes.go's grant routes comment.
+	// ManageUsers gates the Admin Console: provisioning platform users and
+	// granting/revoking role grants (internal/admin/handler), plus — pending
+	// their own build-out — the Risk/Audit Hub reference-data screens behind
+	// MANAGE_RISK_HUB/MANAGE_AUDIT_HUB (see ADMIN_CONSOLE_DESIGN.md).
 	ManageUsers = "MANAGE_USERS"
 )
 

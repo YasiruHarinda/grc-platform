@@ -31,6 +31,7 @@ import (
 // user holds in which scope.
 type GrantRepository interface {
 	GrantsForUserID(ctx context.Context, userID int) ([]domain.UserGrant, error)
+	GrantsForUserIDs(ctx context.Context, userIDs []int) (map[int][]domain.UserGrant, error)
 	GrantsForUserEmail(ctx context.Context, email string) (int, []domain.UserGrant, error)
 	GrantsForUserUUID(ctx context.Context, uuid string) (int, []domain.UserGrant, error)
 	CreateGrant(ctx context.Context, userID int, req domain.CreateUserGrantRequest) (*domain.UserGrant, error)
@@ -66,7 +67,7 @@ func NewGrantRepository(db *sql.DB) GrantRepository { return &grantRepo{db: db} 
 // the 0 sentinel) and must not be swept up by a team-status condition that
 // does not apply to them.
 const grantSelect = `
-	SELECT g.id, g.role_id, r.role_name, r.module, COALESCE(r.scope_basis,'') AS scope_basis,
+	SELECT g.user_id, g.id, g.role_id, r.role_name, r.module, COALESCE(r.scope_basis,'') AS scope_basis,
 	       g.scope_type, g.scope_id,
 	       COALESCE(rt.name, at.name, '') AS scope_name,
 	       COALESCE(rt.team_type, IF(at.id IS NULL, '', 'AUDIT_TEAM')) AS scope_team_type,
@@ -81,12 +82,15 @@ const grantSelect = `
 	        OR (g.scope_type = 'RISK_TEAM'  AND rt.status = 'ACTIVE')
 	        OR (g.scope_type = 'AUDIT_TEAM' AND at.status = 'ACTIVE'))`
 
-// scanGrants materialises rows produced by grantSelect.
+// scanGrants materialises rows produced by grantSelect. The leading user_id
+// column is discarded here — every caller except GrantsForUserIDs already
+// knows which user it asked for.
 func scanGrants(rows *sql.Rows) ([]domain.UserGrant, error) {
 	out := []domain.UserGrant{}
 	for rows.Next() {
 		var g domain.UserGrant
-		if err := rows.Scan(&g.ID, &g.RoleID, &g.RoleName, &g.Module, &g.ScopeBasis,
+		var userID int
+		if err := rows.Scan(&userID, &g.ID, &g.RoleID, &g.RoleName, &g.Module, &g.ScopeBasis,
 			&g.ScopeType, &g.ScopeID, &g.ScopeName, &g.ScopeTeamType,
 			&g.CreatedOn, &g.CreatedBy); err != nil {
 			return nil, fmt.Errorf("grant scan: %w", err)
@@ -108,6 +112,44 @@ func (r *grantRepo) GrantsForUserID(ctx context.Context, userID int) ([]domain.U
 	}
 	defer rows.Close()
 	return scanGrants(rows)
+}
+
+// GrantsForUserIDs returns every active grant for each of the given users, in
+// one query — the Admin Console's user list needs every row's grants at once,
+// and a query per row would turn a page of N users into N+1 round trips.
+// Callers whose userIDs is empty get an empty map without querying.
+func (r *grantRepo) GrantsForUserIDs(ctx context.Context, userIDs []int) (map[int][]domain.UserGrant, error) {
+	out := map[int][]domain.UserGrant{}
+	if len(userIDs) == 0 {
+		return out, nil
+	}
+
+	placeholders := make([]string, len(userIDs))
+	args := make([]any, len(userIDs))
+	for i, id := range userIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	rows, err := r.db.QueryContext(ctx,
+		grantSelect+" AND g.user_id IN ("+strings.Join(placeholders, ",")+") ORDER BY g.user_id, r.role_name, g.scope_type, g.scope_id",
+		args...)
+	if err != nil {
+		return nil, fmt.Errorf("grant.GrantsForUserIDs: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var userID int
+		var g domain.UserGrant
+		if err := rows.Scan(&userID, &g.ID, &g.RoleID, &g.RoleName, &g.Module, &g.ScopeBasis,
+			&g.ScopeType, &g.ScopeID, &g.ScopeName, &g.ScopeTeamType,
+			&g.CreatedOn, &g.CreatedBy); err != nil {
+			return nil, fmt.Errorf("grant.GrantsForUserIDs scan: %w", err)
+		}
+		out[userID] = append(out[userID], g)
+	}
+	return out, rows.Err()
 }
 
 // GrantsForUserEmail resolves a user by email and returns their grants,

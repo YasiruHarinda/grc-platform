@@ -1,0 +1,162 @@
+// Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+import { BACKEND_BASE_URL } from "@config/apiConfig";
+
+// ── Response types (mirror internal/admin's Go models) ─────────────────────────
+
+export interface DirectoryPerson {
+  uuid: string;
+  email: string;
+  displayName: string;
+}
+
+export interface Grant {
+  id: number;
+  roleId: number;
+  roleName: string;
+  module: "RISK" | "AUDIT" | "SHARED";
+  scopeType: "GLOBAL" | "RISK_TEAM" | "AUDIT_TEAM";
+  scopeId: number;
+  scopeBasis?: string;
+  scopeTeamType?: string;
+  scopeName?: string;
+}
+
+export interface AdminUser {
+  id: number;
+  uuid: string;
+  displayName: string;
+  email: string;
+  status: "ACTIVE" | "INACTIVE" | "REMOVED";
+  createdOn: string;
+  grants: Grant[];
+}
+
+// Role, as offered by the grant editor's picker — RISK and SHARED modules
+// only. See the backend's admin.Repository.ListRoles doc comment for why
+// AUDIT roles are withheld from this console for now.
+export interface Role {
+  id: number;
+  roleName: string;
+  description?: string;
+  module: "RISK" | "SHARED";
+  scopeBasis?: "SOURCE_REGISTER" | "ASSIGNMENT_TEAM";
+  status: string;
+}
+
+type AuthFetch = (input: RequestInfo | URL, options?: RequestInit) => Promise<Response>;
+
+async function handleResponse<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = Object.assign(new Error(body.message ?? res.statusText), {
+      status: res.status,
+      data: body,
+    });
+    throw err;
+  }
+  if (res.status === 204) {
+    return undefined as T;
+  }
+  return res.json() as Promise<T>;
+}
+
+// searchDirectory looks up WSO2-org people by name/email substring, for the
+// "Add User" typeahead. query shorter than 2 characters is not sent — the
+// backend rejects it anyway, and there's no reason to round-trip a request
+// that always 400s.
+export async function searchDirectory(authFetch: AuthFetch, query: string): Promise<DirectoryPerson[]> {
+  if (query.trim().length < 2) {
+    return [];
+  }
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/admin/directory/search?q=${encodeURIComponent(query)}`);
+  return handleResponse<DirectoryPerson[]>(res);
+}
+
+// fetchUsers lists platform users with their grants embedded. query is an
+// optional name/email substring filter; omitted or empty returns everyone.
+export async function fetchAdminUsers(authFetch: AuthFetch, query?: string): Promise<AdminUser[]> {
+  const q = query?.trim() ? `?q=${encodeURIComponent(query.trim())}` : "";
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/admin/users${q}`);
+  return handleResponse<AdminUser[]>(res);
+}
+
+// createAdminUser provisions a platform user by uuid alone — see
+// ADMIN_CONSOLE_DESIGN.md and the uuid-identity migration for why no email or
+// display name is sent.
+export async function createAdminUser(
+  authFetch: AuthFetch,
+  uuid: string,
+): Promise<{ id: number; uuid: string; displayName: string; email: string }> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/admin/users`, {
+    method: "POST",
+    body: JSON.stringify({ uuid }),
+  });
+  return handleResponse(res);
+}
+
+// fetchRoles returns the grant editor's role picker options (RISK + SHARED
+// only, server-filtered).
+export async function fetchRoles(authFetch: AuthFetch): Promise<Role[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/admin/roles`);
+  return handleResponse<Role[]>(res);
+}
+
+export interface CreateGrantPayload {
+  roleId: number;
+  scopeType: "GLOBAL" | "RISK_TEAM" | "AUDIT_TEAM";
+  scopeId: number;
+}
+
+// createGrant grants a (role, scope) pair to a user. Idempotent on the
+// server: re-granting something already held reactivates it rather than
+// failing.
+export async function createGrant(authFetch: AuthFetch, userId: number, payload: CreateGrantPayload): Promise<void> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/admin/users/${userId}/grants`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  await handleResponse(res);
+}
+
+// revokeGrant deactivates a specific grant row (never deletes it).
+export async function revokeGrant(authFetch: AuthFetch, userId: number, grantId: number): Promise<void> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/admin/users/${userId}/grants/${grantId}`, {
+    method: "DELETE",
+  });
+  await handleResponse(res);
+}
+
+export interface ScopeTeam {
+  id: number;
+  name: string;
+}
+
+// fetchScopeTeams populates the grant editor's scope picker for a
+// SOURCE_REGISTER- or ASSIGNMENT_TEAM-scoped role. Calls the same
+// GET /api/v1/teams the Risk module's own pickers use directly (rather than
+// importing modules/risk/api/riskApi.ts's equivalent) — the two modules stay
+// independent of each other's internals even though they happen to read the
+// same backend route today (see useAdminPrivileges's doc comment for the same
+// tradeoff made the same way).
+export async function fetchScopeTeams(
+  authFetch: AuthFetch,
+  type: "SOURCE_REGISTER" | "ASSIGNMENT",
+): Promise<ScopeTeam[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/teams?type=${type}`);
+  return handleResponse<ScopeTeam[]>(res);
+}

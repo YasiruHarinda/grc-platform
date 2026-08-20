@@ -27,10 +27,21 @@ import (
 )
 
 // UserHandler handles /users routes.
-type UserHandler struct{ svc service.UserService }
+type UserHandler struct {
+	svc service.UserService
+	// grantSvc embeds grants into SearchUsers when IncludeGrants is set (the
+	// Admin Console's user list). Composed here rather than added as a
+	// UserService dependency: grants are deliberately never cached (see
+	// GrantService's doc comment), and userSvc IS cached — pulling grants
+	// through it would either break that guarantee or require punching a
+	// cache-bypass hole through it just for this one field.
+	grantSvc service.GrantService
+}
 
 // NewUserHandler constructs a UserHandler.
-func NewUserHandler(svc service.UserService) *UserHandler { return &UserHandler{svc: svc} }
+func NewUserHandler(svc service.UserService, grantSvc service.GrantService) *UserHandler {
+	return &UserHandler{svc: svc, grantSvc: grantSvc}
+}
 
 // SearchUsers handles POST /users/search.
 func (h *UserHandler) SearchUsers(w http.ResponseWriter, r *http.Request) {
@@ -42,6 +53,20 @@ func (h *UserHandler) SearchUsers(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeServiceError(w, r, err)
 		return
+	}
+	if req.IncludeGrants && len(resp.Users) > 0 {
+		ids := make([]int, len(resp.Users))
+		for i, u := range resp.Users {
+			ids[i] = u.ID
+		}
+		grantsByUser, err := h.grantSvc.GrantsForUserIDs(r.Context(), ids)
+		if err != nil {
+			writeServiceError(w, r, err)
+			return
+		}
+		for i := range resp.Users {
+			resp.Users[i].Grants = grantsByUser[resp.Users[i].ID]
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
