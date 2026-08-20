@@ -45,10 +45,11 @@ type ControlRepository interface {
 	OverrideControlStatus(ctx context.Context, auditID, controlID int, req domain.OverrideControlStatusRequest) (*domain.AuditControl, error)
 	DeleteControl(ctx context.Context, auditID, controlID int) error
 	// CountDeletionBlockers returns how many audit_evidence rows exist for the
-	// control and how many audit_population rows are still in progress (any
-	// status other than the terminal APPROVED). Used to block DeleteControl from
-	// silently cascading away real work (evidence/population records cascade-
-	// delete with the control at the DB level).
+	// control and how many audit_population rows count as active: any status
+	// other than PENDING (including the terminal APPROVED), plus any PENDING
+	// round that already holds uploaded evidence files. Used to block
+	// DeleteControl from silently cascading away real work (evidence/population
+	// records cascade-delete with the control at the DB level).
 	CountDeletionBlockers(ctx context.Context, controlID int) (evidenceCount int, activePopulationCount int, err error)
 	// GetEvidenceAssignment returns the control's audit id when userEmail is the
 	// control's owner and it is currently actionable, else sql.ErrNoRows.
