@@ -111,7 +111,7 @@ export default function CommentsSection({
             >
               <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
                 <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, flex: 1 }}>
-                  {c.createdBy || "Unknown"} · {formatTimestamp(c.createdAt)}
+                  {c.createdByName || c.createdBy || "Unknown"} · {formatTimestamp(c.createdAt)}
                 </Typography>
                 {c.isInternal && (
                   <Chip

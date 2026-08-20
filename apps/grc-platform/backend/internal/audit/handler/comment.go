@@ -17,10 +17,13 @@
 package handler
 
 import (
+	"context"
 	"net/http"
+	"strings"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
@@ -30,7 +33,53 @@ type commentHandler struct {
 	svc        service.CommentService
 	controlSvc service.ControlService
 	// notify sends the comment-added notification email — see notify.go.
-	notify *Deps
+	notify    *Deps
+	directory *directory.Service
+}
+
+// resolveCommentAuthor fills c.CreatedByName from c.CreatedBy (the
+// commenter's raw uuid) via a single directory lookup — see
+// AuditTrailEntry.CreatedByName for the same pattern batched across a list.
+func (h *commentHandler) resolveCommentAuthor(ctx context.Context, c *model.AuditComment) {
+	if c == nil || c.CreatedBy == "" {
+		return
+	}
+	p, found := h.directory.Lookup(ctx, c.CreatedBy)
+	switch {
+	case found && strings.TrimSpace(p.DisplayName) != "":
+		c.CreatedByName = strings.TrimSpace(p.DisplayName)
+	case found && p.Email != "":
+		c.CreatedByName = p.Email
+	default:
+		c.CreatedByName = c.CreatedBy
+	}
+}
+
+// resolveCommentAuthors batch-resolves CreatedByName for a list of comments —
+// see resolveCommentAuthor.
+func (h *commentHandler) resolveCommentAuthors(ctx context.Context, comments []*model.AuditComment) {
+	uuids := make([]string, 0, len(comments))
+	for _, c := range comments {
+		if c.CreatedBy != "" {
+			uuids = append(uuids, c.CreatedBy)
+		}
+	}
+	people := h.directory.LookupAll(ctx, uuids)
+	for _, c := range comments {
+		p, ok := people[c.CreatedBy]
+		if !ok {
+			c.CreatedByName = c.CreatedBy
+			continue
+		}
+		switch {
+		case strings.TrimSpace(p.DisplayName) != "":
+			c.CreatedByName = strings.TrimSpace(p.DisplayName)
+		case p.Email != "":
+			c.CreatedByName = p.Email
+		default:
+			c.CreatedByName = c.CreatedBy
+		}
+	}
 }
 
 // listComments handles GET /api/v1/audits/{id}/controls/{controlId}/comments.
@@ -58,6 +107,7 @@ func (h *commentHandler) listComments(w http.ResponseWriter, r *http.Request) {
 	if comments == nil {
 		comments = []*model.AuditComment{}
 	}
+	h.resolveCommentAuthors(r.Context(), comments)
 	response.WriteJSONValue(w, http.StatusOK, &model.CommentListResponse{Items: comments})
 }
 
@@ -88,6 +138,7 @@ func (h *commentHandler) addComment(w http.ResponseWriter, r *http.Request) {
 	if control, err := h.controlSvc.GetByID(r.Context(), auditID, controlID); err == nil && control != nil {
 		h.notify.notifyCommentAdded(r.Context(), control, c, actor, caller.UserID)
 	}
+	h.resolveCommentAuthor(r.Context(), c)
 	response.WriteJSONValue(w, http.StatusCreated, c)
 }
 

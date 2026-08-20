@@ -199,7 +199,7 @@ export default function AuditActivityLogPage(): JSX.Element {
                 return (
                   <ListingTable.Row key={e.id}>
                     <ListingTable.Cell sx={{ whiteSpace: "nowrap" }}>{formatTimestamp(e.createdAt)}</ListingTable.Cell>
-                    <ListingTable.Cell sx={{ whiteSpace: "nowrap" }}>{e.createdBy || "—"}</ListingTable.Cell>
+                    <ListingTable.Cell sx={{ whiteSpace: "nowrap" }}>{e.createdByName || e.createdBy || "—"}</ListingTable.Cell>
                     <ListingTable.Cell sx={{ whiteSpace: "nowrap" }}>{ACTION_LABELS[e.action] ?? e.action}</ListingTable.Cell>
                     <ListingTable.Cell sx={{ whiteSpace: "nowrap" }}>
                       {e.controlId != null ? (control?.controlNumber ?? `#${e.controlId}`) : "—"}

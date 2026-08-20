@@ -21,18 +21,21 @@ import (
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
 type userHandler struct {
-	svc service.UserService
+	svc       service.UserService
+	directory *directory.Service
 }
 
 // listUsers handles GET /api/v1/audit/users.
-// Returns all active users for owner/auditor assignment dropdowns.
-// When Asgardeo SCIM2 is integrated, this endpoint will proxy to Asgardeo instead of MySQL.
+// Returns all active users for owner/auditor assignment dropdowns. The user
+// table stores no display name or email (see model.UserRef.UUID), so those
+// are resolved in bulk via the identity directory before responding.
 func (h *userHandler) listUsers(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAudits) {
 		return
@@ -45,5 +48,20 @@ func (h *userHandler) listUsers(w http.ResponseWriter, r *http.Request) {
 	if users == nil {
 		users = []*model.UserRef{}
 	}
+
+	uuidTypes := make(map[string]string, len(users))
+	for _, u := range users {
+		if u.UUID != "" {
+			uuidTypes[u.UUID] = u.UserType
+		}
+	}
+	people := h.directory.LookupAllTyped(r.Context(), uuidTypes)
+	for _, u := range users {
+		if p, ok := people[u.UUID]; ok {
+			u.DisplayName = p.DisplayName
+			u.Email = p.Email
+		}
+	}
+
 	response.WriteJSONValue(w, http.StatusOK, users)
 }

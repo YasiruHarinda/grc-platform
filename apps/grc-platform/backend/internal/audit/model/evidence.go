@@ -53,9 +53,12 @@ type AuditEvidence struct {
 	Files      []*AuditEvidenceFile `json:"files"`
 	// Attestation is a written justification for a round with no files. Empty
 	// for ordinary rounds.
-	Attestation string    `json:"attestation,omitempty"`
-	CreatedBy   string    `json:"createdBy"`
-	CreatedAt   time.Time `json:"createdAt"`
+	Attestation string `json:"attestation,omitempty"`
+	CreatedBy   string `json:"createdBy"`
+	// CreatedByName is CreatedBy resolved through the identity directory, for
+	// display — see AuditTrailEntry.CreatedByName.
+	CreatedByName string    `json:"createdByName"`
+	CreatedAt     time.Time `json:"createdAt"`
 }
 
 // UploadLinkResponse is returned by GET .../evidence/upload-link.

@@ -24,11 +24,13 @@ import (
 	"mime"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/apierror"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/aiagent"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
@@ -121,7 +123,36 @@ type evidenceHandler struct {
 	aiClient *aiagent.Client
 	// notify sends resubmission-needed and sample-submitted notification
 	// emails from decideRound and submitSample — see notify.go.
-	notify *Deps
+	notify    *Deps
+	directory *directory.Service
+}
+
+// resolveEvidenceSubmitters batch-resolves each round's CreatedByName from
+// CreatedBy (the submitter's raw uuid) — see AuditTrailEntry.CreatedByName
+// for the same pattern.
+func (h *evidenceHandler) resolveEvidenceSubmitters(ctx context.Context, evidence []*model.AuditEvidence) {
+	uuids := make([]string, 0, len(evidence))
+	for _, e := range evidence {
+		if e.CreatedBy != "" {
+			uuids = append(uuids, e.CreatedBy)
+		}
+	}
+	people := h.directory.LookupAll(ctx, uuids)
+	for _, e := range evidence {
+		p, ok := people[e.CreatedBy]
+		if !ok {
+			e.CreatedByName = e.CreatedBy
+			continue
+		}
+		switch {
+		case strings.TrimSpace(p.DisplayName) != "":
+			e.CreatedByName = strings.TrimSpace(p.DisplayName)
+		case p.Email != "":
+			e.CreatedByName = p.Email
+		default:
+			e.CreatedByName = e.CreatedBy
+		}
+	}
 }
 
 // requireAssignment enforces resource-level authorization for the web-app evidence
@@ -856,5 +887,6 @@ func (h *evidenceHandler) listEvidence(w http.ResponseWriter, r *http.Request) {
 	if evidence == nil {
 		evidence = []*model.AuditEvidence{}
 	}
+	h.resolveEvidenceSubmitters(r.Context(), evidence)
 	response.WriteJSONValue(w, http.StatusOK, evidence)
 }

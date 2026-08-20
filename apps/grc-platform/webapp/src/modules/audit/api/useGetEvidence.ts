@@ -39,6 +39,7 @@ export interface EvidenceSubmission {
   // Empty for ordinary rounds.
   attestation?: string;
   createdBy: string;
+  createdByName: string;
   createdAt: string;
 }
 

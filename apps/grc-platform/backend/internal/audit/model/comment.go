@@ -23,13 +23,18 @@ import "time"
 // control, spanning both the population and evidence phases. IsInternal
 // hides the comment from external auditors.
 type AuditComment struct {
-	ID              int       `json:"id"`
-	ControlID       int       `json:"controlId"`
-	ParentCommentID *int      `json:"parentCommentId"`
-	Content         string    `json:"content"`
-	IsInternal      bool      `json:"isInternal"`
-	CreatedBy       string    `json:"createdBy"`
-	CreatedAt       time.Time `json:"createdAt"`
+	ID              int    `json:"id"`
+	ControlID       int    `json:"controlId"`
+	ParentCommentID *int   `json:"parentCommentId"`
+	Content         string `json:"content"`
+	IsInternal      bool   `json:"isInternal"`
+	CreatedBy       string `json:"createdBy"`
+	// CreatedByName is CreatedBy resolved through the identity directory, for
+	// display — see AuditTrailEntry.CreatedByName. CreatedBy stays the raw
+	// uuid; the frontend's "is this my comment" check compares against it,
+	// not the display name.
+	CreatedByName string    `json:"createdByName"`
+	CreatedAt     time.Time `json:"createdAt"`
 }
 
 // AddCommentRequest is the payload for POST /api/v1/audits/{id}/controls/{controlId}/comments.

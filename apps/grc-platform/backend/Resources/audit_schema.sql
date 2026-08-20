@@ -513,6 +513,12 @@ DEALLOCATE PREPARE add_trail_overridden_stmt;
 -- MySQL does not allow a CHECK constraint on columns used in an ON DELETE SET
 -- NULL FK action, so "exactly one of control_id/population_id is non-NULL" is
 -- enforced at the application layer, not here.
+--
+-- reminder_dedup_key is VIRTUAL, not STORED: InnoDB refuses to create an FK
+-- with ON DELETE SET NULL/CASCADE on a column that feeds a STORED generated
+-- column (control_id and population_id both do here). VIRTUAL sidesteps the
+-- restriction — it's still indexable via the UNIQUE KEY below — at the cost
+-- of recomputing the value on read instead of storing it.
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS audit_notification (
@@ -551,7 +557,7 @@ CREATE TABLE IF NOT EXISTS audit_notification (
                                   due_date_snapshot)
                            ELSE NULL
                          END
-                       ) STORED,
+                       ) VIRTUAL,
   PRIMARY KEY (id),
   KEY idx_notif_dedup (recipient_id, type, control_id, population_id, due_date_snapshot),
   UNIQUE KEY uq_notif_reminder_dedup (reminder_dedup_key),
@@ -613,7 +619,7 @@ SET @add_notif_dedup_key_sql = IF(@notif_has_dedup_key = 0,
                 due_date_snapshot)
          ELSE NULL
        END
-     ) STORED AFTER created_by,
+     ) VIRTUAL AFTER created_by,
      ADD UNIQUE KEY uq_notif_reminder_dedup (reminder_dedup_key)',
   'SELECT 1');
 PREPARE add_notif_dedup_key_stmt FROM @add_notif_dedup_key_sql;

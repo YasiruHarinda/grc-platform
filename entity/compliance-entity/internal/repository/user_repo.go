@@ -381,10 +381,17 @@ func scanUser(s scanner) (*domain.User, error) {
 	// as [] rather than null.
 	u.AuditTeamIDs = []int{}
 	u.RiskTeamIDs = []int{}
-	if err := s.Scan(&u.ID, &u.UUID, &u.UserType, &u.Status,
+	// uuid is scanned nullable even though the column is meant to be NOT
+	// NULL: a row created before its owner ever resolved through Asgardeo
+	// (or a database whose NOT NULL migration hasn't landed yet) can still
+	// carry a NULL here, and failing every other row's read over one
+	// unresolved user is worse than showing that one user as identity-less.
+	var uuid sql.NullString
+	if err := s.Scan(&u.ID, &uuid, &u.UserType, &u.Status,
 		&u.CreatedOn, &u.UpdatedOn); err != nil {
 		return nil, err
 	}
+	u.UUID = uuid.String
 	return &u, nil
 }
 

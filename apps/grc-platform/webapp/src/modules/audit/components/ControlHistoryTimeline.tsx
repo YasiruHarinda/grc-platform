@@ -103,7 +103,7 @@ function trailToEvent(e: TrailEntry, fileNamesByEvidenceId: Map<number, string[]
   const from = asStatus(d.from);
   const to = asStatus(d.to);
   const viaNote = typeof d.via === "string" && VIA_LABELS[d.via] ? `via ${VIA_LABELS[d.via]}` : undefined;
-  const base = { id: `t-${e.id}`, at: e.createdAt, actor: e.createdBy };
+  const base = { id: `t-${e.id}`, at: e.createdAt, actor: e.createdByName || e.createdBy };
 
   // New UPLOADED/RESUBMITTED entries carry file names directly (d.files);
   // older ones predate that and only have {via, issuer}, so fall back to
@@ -169,7 +169,7 @@ function commentToEvent(c: AuditComment): TimelineEvent {
     id: `c-${c.id}`,
     tone: "comment",
     at: c.createdAt,
-    actor: c.createdBy,
+    actor: c.createdByName || c.createdBy,
     title: c.isInternal ? "Internal note" : "Comment",
     body: c.content,
     badge: c.isInternal ? { label: "Internal", color: "#b45309" } : undefined,

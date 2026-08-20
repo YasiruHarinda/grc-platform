@@ -28,13 +28,18 @@ import (
 // {"from","to","via"}) for the client to render; it is passed through untouched.
 // ControlID is nil for audit-level events (audit CREATED/UPDATED/DELETED).
 type AuditTrailEntry struct {
-	ID         int64           `json:"id"`
-	Action     string          `json:"action"`
-	ControlID  *int            `json:"controlId"`
-	EvidenceID *int            `json:"evidenceId"`
-	CreatedBy  string          `json:"createdBy"`
-	CreatedAt  time.Time       `json:"createdAt"`
-	Details    json.RawMessage `json:"details,omitempty"`
+	ID         int64  `json:"id"`
+	Action     string `json:"action"`
+	ControlID  *int   `json:"controlId"`
+	EvidenceID *int   `json:"evidenceId"`
+	CreatedBy  string `json:"createdBy"`
+	// CreatedByName is CreatedBy resolved through the identity directory —
+	// display name, falling back to email, falling back to the bare uuid
+	// (see trailHandler.resolveTrailActors). CreatedBy itself is left as the
+	// raw uuid of record; only this field is for display.
+	CreatedByName string          `json:"createdByName"`
+	CreatedAt     time.Time       `json:"createdAt"`
+	Details       json.RawMessage `json:"details,omitempty"`
 }
 
 // TrailListResponse is the envelope for GET .../trail.

@@ -26,6 +26,7 @@ export interface AuditComment {
   content: string;
   isInternal: boolean;
   createdBy: string;
+  createdByName: string;
   createdAt: string;
 }
 
