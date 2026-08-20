@@ -161,11 +161,9 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 
 	// Users
 	mux.HandleFunc("POST /users/search", userH.SearchUsers)
-	mux.HandleFunc("GET /users/by-email/{email}", userH.GetUserByEmail)
-	// Literal second segment, for the same reason as by-email — see the note on
-	// the grant routes below. "/users/by-uuid/{uuid}" cannot collide with
-	// "/users/{id}" (different segment counts) or with by-email (different
-	// literal), so all three patterns stay unambiguous.
+	// Literal second segment, for the same reason as the grant routes below.
+	// "/users/by-uuid/{uuid}" cannot collide with "/users/{id}" (different
+	// segment counts), so both patterns stay unambiguous.
 	mux.HandleFunc("GET /users/by-uuid/{uuid}", userH.GetUserByUUID)
 	mux.HandleFunc("GET /users/{id}", userH.GetUserByID)
 	mux.HandleFunc("POST /users", userH.CreateUser)
@@ -174,22 +172,17 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	// Role grants — who holds which role, in which scope.
 	//
 	// Deliberately top-level rather than nested under /users/{id}/...: Go's mux
-	// cannot order "GET /users/{id}/grants" against the existing
-	// "GET /users/by-email/{email}", because "/users/by-email/grants" matches
-	// both and neither is more specific. That is a registration-time panic, not
-	// a 404, so it takes the whole service down. The literal second segment
-	// here ("by-email" vs "user") keeps every pattern unambiguous — carry it
-	// forward whenever the routes below are re-added.
+	// cannot order "GET /users/{id}/grants" against "GET /users/by-uuid/{uuid}",
+	// because "/users/by-uuid/grants" matches both and neither is more
+	// specific. That is a registration-time panic, not a 404, so it takes the
+	// whole service down. The literal second segment ("by-uuid" vs "user")
+	// keeps every pattern unambiguous — carry it forward whenever the routes
+	// below are re-added.
 	//
-	// The by-email read is the hot path: the GRC backend calls it on every
-	// authenticated request. Its responses are never cached, so revoking a
-	// grant takes effect on the caller's next request.
-	mux.HandleFunc("GET /grants/by-email/{email}", grantH.GrantsByEmail)
-	// The uuid-keyed replacement. Both are served during the identity migration:
-	// this service and the GRC backend deploy independently, so the new route has
-	// to exist before the backend can call it, and the old one has to survive
-	// until every backend has been redeployed. Removing by-email while an older
-	// backend is still live would 404 its every authenticated request.
+	// The hot path: the GRC backend calls this on every authenticated request,
+	// keyed on the Asgardeo id the caller's token already carries. Responses
+	// are never cached, so revoking a grant takes effect on the caller's next
+	// request.
 	mux.HandleFunc("GET /grants/by-uuid/{uuid}", grantH.GrantsByUUID)
 	mux.HandleFunc("GET /grants/candidates", grantH.Candidates)
 	// GrantsByUserID / CreateGrant / RevokeGrant: the Admin Console's grant

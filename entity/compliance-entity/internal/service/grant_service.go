@@ -44,7 +44,6 @@ type GrantService interface {
 	// one per row. Every id in userIDs is present in the result, even with an
 	// empty (never nil) slice.
 	GrantsForUserIDs(ctx context.Context, userIDs []int) (map[int][]domain.UserGrant, error)
-	GrantsForUserEmail(ctx context.Context, email string) (domain.UserGrantsResponse, error)
 	GrantsForUserUUID(ctx context.Context, uuid string) (domain.UserGrantsResponse, error)
 	CreateGrant(ctx context.Context, userID int, req domain.CreateUserGrantRequest) (domain.UserGrant, error)
 	RevokeGrant(ctx context.Context, userID, grantID int, revokedBy string) error
@@ -93,18 +92,6 @@ func (s *grantService) GrantsForUserIDs(ctx context.Context, userIDs []int) (map
 		out[id] = orEmpty(byUser[id])
 	}
 	return out, nil
-}
-
-func (s *grantService) GrantsForUserEmail(ctx context.Context, email string) (domain.UserGrantsResponse, error) {
-	email = strings.TrimSpace(email)
-	if email == "" {
-		return domain.UserGrantsResponse{}, &apierror.ValidationError{Msg: "email is required"}
-	}
-	userID, grants, err := s.repo.GrantsForUserEmail(ctx, email)
-	if err != nil {
-		return domain.UserGrantsResponse{}, err
-	}
-	return domain.UserGrantsResponse{UserID: userID, Grants: orEmpty(grants)}, nil
 }
 
 func (s *grantService) GrantsForUserUUID(ctx context.Context, uuid string) (domain.UserGrantsResponse, error) {

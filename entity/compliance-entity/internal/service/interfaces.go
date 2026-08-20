@@ -27,7 +27,6 @@ import (
 type UserService interface {
 	SearchUsers(ctx context.Context, req domain.SearchUsersRequest) (domain.SearchUsersResponse, error)
 	GetUserByID(ctx context.Context, id int) (domain.User, error)
-	GetUserByEmail(ctx context.Context, email string) (domain.User, error)
 	GetUserByUUID(ctx context.Context, uuid string) (domain.User, error)
 	CreateUser(ctx context.Context, req domain.CreateUserRequest) (domain.User, error)
 	UpdateUser(ctx context.Context, id int, req domain.UpdateUserRequest) (domain.User, error)

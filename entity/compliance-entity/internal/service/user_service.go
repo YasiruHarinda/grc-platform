@@ -58,17 +58,6 @@ func (s *userService) GetUserByID(ctx context.Context, id int) (domain.User, err
 	return *u, nil
 }
 
-func (s *userService) GetUserByEmail(ctx context.Context, email string) (domain.User, error) {
-	if email == "" {
-		return domain.User{}, &apierror.ValidationError{Msg: "email is required"}
-	}
-	u, err := s.repo.GetUserByEmail(ctx, email)
-	if err != nil {
-		return domain.User{}, err
-	}
-	return *u, nil
-}
-
 func (s *userService) GetUserByUUID(ctx context.Context, uuid string) (domain.User, error) {
 	if strings.TrimSpace(uuid) == "" {
 		return domain.User{}, &apierror.ValidationError{Msg: "uuid is required"}
@@ -81,18 +70,9 @@ func (s *userService) GetUserByUUID(ctx context.Context, uuid string) (domain.Us
 }
 
 func (s *userService) CreateUser(ctx context.Context, req domain.CreateUserRequest) (domain.User, error) {
-	// Either identity anchor is enough: an HR-resolved employee is keyed by
-	// email (uuid may still be unknown), while the admin console's "Add User"
-	// provisions by uuid alone (email is being phased out — see the comment on
-	// CreateUserRequest.Email). Refusing both-empty is the only thing this
-	// still guards against.
-	if strings.TrimSpace(req.Email) == "" && strings.TrimSpace(req.UUID) == "" {
-		return domain.User{}, &apierror.ValidationError{Msg: "email or uuid is required"}
+	if strings.TrimSpace(req.UUID) == "" {
+		return domain.User{}, &apierror.ValidationError{Msg: "uuid is required"}
 	}
-	// DisplayName is deliberately not required: callers are moving off storing
-	// one at all (see risk/handler's resolve.go, which now sends "" here on
-	// purpose) — requiring it would refuse the very provisioning flow that
-	// migration depends on.
 	if req.CreatedBy == "" {
 		return domain.User{}, &apierror.ValidationError{Msg: "createdBy is required"}
 	}

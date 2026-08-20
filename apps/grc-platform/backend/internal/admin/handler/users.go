@@ -154,7 +154,7 @@ func (d *Deps) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	createdBy := actor(r)
-	u, err := d.Users.Upsert(r.Context(), req.UUID, "", "", createdBy)
+	u, err := d.Users.Upsert(r.Context(), req.UUID, createdBy)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return

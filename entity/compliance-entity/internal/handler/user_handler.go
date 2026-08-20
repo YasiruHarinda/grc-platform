@@ -88,18 +88,6 @@ func (h *UserHandler) GetUserByID(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(user)
 }
 
-// GetUserByEmail handles GET /users/by-email/{email}.
-func (h *UserHandler) GetUserByEmail(w http.ResponseWriter, r *http.Request) {
-	email := r.PathValue("email")
-	user, err := h.svc.GetUserByEmail(r.Context(), email)
-	if err != nil {
-		writeServiceError(w, r, err)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(user)
-}
-
 // GetUserByUUID handles GET /users/by-uuid/{uuid}.
 func (h *UserHandler) GetUserByUUID(w http.ResponseWriter, r *http.Request) {
 	uuid := r.PathValue("uuid")

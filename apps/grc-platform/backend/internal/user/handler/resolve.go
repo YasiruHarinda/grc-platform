@@ -90,34 +90,29 @@ func handleResolveUser(repo userentity.Repository, hrClient *hrentity.Client, sc
 		// Resolve the employee's Asgardeo id, so the row is provisioned with the
 		// identity they will actually authenticate as — and, now that nothing
 		// stores a name, so the identity directory can name them anywhere they
-		// get displayed afterward (dropdowns, notifications). An employee who
-		// cannot be named cannot usefully be assigned, so this is a hard gate,
-		// narrower than it sounds:
+		// get displayed afterward (dropdowns, notifications).
 		//
-		//   - A CONFIRMED "no such person" (the directory answered, nobody by
-		//     this email has an Asgardeo account) refuses the assignment. This
-		//     is the "shouldn't be able to add them to the risk" rule: if the
-		//     directory can never name them, nothing downstream ever will
-		//     either.
-		//   - An UNREACHABLE directory (the call itself errored — a transient
-		//     gateway blip, a scope hiccup) does NOT refuse. Blocking a
-		//     legitimate hire's assignment because SCIM timed out for a few
-		//     seconds is a worse failure than letting the assignment through
-		//     with no uuid yet, to be backfilled by the offline tool or a
-		//     later resolve of the same person — same distinction the
-		//     directory package's own stale-serve behaviour draws elsewhere.
+		// Both a confirmed "no such person" and an unreachable directory now
+		// refuse the assignment — this changed from a soft degrade (provision
+		// without a uuid, backfill later) once user.uuid became NOT NULL: there
+		// is no longer a row to create without one. Blocking a legitimate
+		// hire's assignment because SCIM timed out for a few seconds is a real
+		// cost, but the alternative — Upsert rejecting an empty uuid outright —
+		// makes the soft-degrade path impossible to keep; failing closed here,
+		// with a message the caller can retry against, is the honest version of
+		// that same tradeoff now.
 		dirUser, dirErr := scimClient.LookupByEmail(r.Context(), req.Email)
 		if dirErr != nil {
-			slog.WarnContext(r.Context(), "resolve user: identity directory unreachable; provisioning without a uuid",
+			slog.WarnContext(r.Context(), "resolve user: identity directory unreachable, refusing to provision without a uuid",
 				"err", dirErr)
-		} else if dirUser == nil {
+			response.WriteError(w, http.StatusServiceUnavailable,
+				"could not verify this person's identity right now — please try again")
+			return
+		}
+		if dirUser == nil {
 			response.WriteError(w, http.StatusUnprocessableEntity,
 				"email does not have an Asgardeo account and cannot be assigned")
 			return
-		}
-		var uuid string
-		if dirUser != nil {
-			uuid = dirUser.UUID
 		}
 
 		// Attribution for the provisioned row: the Compliance Entity records
@@ -132,26 +127,16 @@ func handleResolveUser(repo userentity.Repository, hrClient *hrentity.Client, sc
 			actor = info.Subject
 		}
 
-		// No display name passed to Upsert — nothing stores one anymore. The
-		// email itself still goes, since it remains the entity's matching key
-		// for this row until that migrates too (a separate, later step).
-		u, err := repo.Upsert(r.Context(), uuid, req.Email, "", actor)
+		u, err := repo.Upsert(r.Context(), dirUser.UUID, actor)
 		if err != nil {
 			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 			return
 		}
 		// The response still needs a name — the caller just picked this person
-		// and expects to see who — even though nothing was stored. Prefer the
-		// identity directory's answer (dirUser, when the lookup succeeded);
-		// fall back to hr_entity's for this response only when the directory
-		// was unreachable, so a transient SCIM blip doesn't leave the caller
-		// staring at a blank name for someone they just resolved.
+		// and expects to see who — even though nothing was stored. Always the
+		// identity directory's answer: dirUser is never nil past this point.
 		u.Email = req.Email
-		if dirUser != nil {
-			u.DisplayName = dirUser.DisplayName
-		} else {
-			u.DisplayName = hrName
-		}
+		u.DisplayName = dirUser.DisplayName
 		response.WriteJSONValue(w, http.StatusOK, u)
 	}
 }

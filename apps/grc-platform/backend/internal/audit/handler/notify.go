@@ -184,9 +184,8 @@ func (d *Deps) logSends(ctx context.Context, recipientUserID int, logItems []not
 // Looked up via the internal-org directory path only (plain Lookup, not
 // LookupTyped): the actor's user_type isn't available here without a second
 // round trip to Users.GetByID, and no live external-auditor login path exists
-// yet to make that lookup worth its cost (see the migration design doc's
-// Design Decisions table). An external actor degrades to the bare uuid below,
-// same as any other unresolvable one.
+// yet to make that lookup worth its cost. An external actor degrades to the
+// bare uuid below, same as any other unresolvable one.
 //
 // Degrades to the bare uuid whenever the name can't be resolved: the actor
 // may have no Asgardeo account known to the directory, the lookup may fail,

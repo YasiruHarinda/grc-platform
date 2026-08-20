@@ -32,32 +32,17 @@ type GrantHandler struct{ svc service.GrantService }
 // NewGrantHandler constructs a GrantHandler.
 func NewGrantHandler(svc service.GrantService) *GrantHandler { return &GrantHandler{svc: svc} }
 
-// GrantsByEmail handles GET /grants/by-email/{email}.
+// GrantsByUUID handles GET /grants/by-uuid/{uuid}.
 //
-// The hot path: the GRC backend calls this on every authenticated request to
-// build the caller's scoped privilege set, so it resolves the user and their
-// grants in one round trip.
+// The hot path: the GRC backend calls this on every authenticated request,
+// keyed on the Asgardeo id the caller's token already carries, to build the
+// caller's scoped privilege set — resolving the user and their grants in one
+// round trip.
 //
 // Responses must not be cached — by this service, by the caller, or by anything
 // between them. A revoked grant has to take effect on the caller's very next
 // request; that is the entire reason this data does not ride along on the user
 // payload, which is cached for five minutes.
-func (h *GrantHandler) GrantsByEmail(w http.ResponseWriter, r *http.Request) {
-	resp, err := h.svc.GrantsForUserEmail(r.Context(), r.PathValue("email"))
-	if err != nil {
-		writeServiceError(w, r, err)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(resp)
-}
-
-// GrantsByUUID handles GET /grants/by-uuid/{uuid}.
-//
-// The replacement for GrantsByEmail, keyed on the Asgardeo id the caller's token
-// already carries. Same contract, same no-store requirement — see GrantsByEmail
-// for why a revoked grant must never be served from a cache.
 func (h *GrantHandler) GrantsByUUID(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.svc.GrantsForUserUUID(r.Context(), r.PathValue("uuid"))
 	if err != nil {

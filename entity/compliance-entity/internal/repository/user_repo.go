@@ -32,7 +32,6 @@ import (
 type UserRepository interface {
 	SearchUsers(ctx context.Context, req domain.SearchUsersRequest) ([]domain.User, int, error)
 	GetUserByID(ctx context.Context, id int) (*domain.User, error)
-	GetUserByEmail(ctx context.Context, email string) (*domain.User, error)
 	GetUserByUUID(ctx context.Context, uuid string) (*domain.User, error)
 	CreateUser(ctx context.Context, req domain.CreateUserRequest) (*domain.User, error)
 	UpdateUser(ctx context.Context, id int, req domain.UpdateUserRequest) (*domain.User, error)
@@ -46,17 +45,12 @@ func NewUserRepository(db *sql.DB) UserRepository { return &userRepo{db: db} }
 // userColumns is the select list every single-user read shares, so a new column
 // cannot be added to one path and forgotten in another — scanUser expects
 // exactly this order.
-const userColumns = "id, uuid, email, display_name, user_type, status, created_at, updated_at"
+const userColumns = "id, uuid, user_type, status, created_at, updated_at"
 
 func (r *userRepo) SearchUsers(ctx context.Context, req domain.SearchUsersRequest) ([]domain.User, int, error) {
 	args := []any{}
 	where := "WHERE 1=1"
 
-	if req.SearchQuery != "" {
-		where += " AND (email LIKE ? OR display_name LIKE ?)"
-		p := "%" + likeEscape(req.SearchQuery) + "%"
-		args = append(args, p, p)
-	}
 	if req.StatusKey != "" {
 		where += " AND status = ?"
 		args = append(args, req.StatusKey)
@@ -69,7 +63,7 @@ func (r *userRepo) SearchUsers(ctx context.Context, req domain.SearchUsersReques
 
 	dataArgs := append(append([]any{}, args...), req.Pagination.Limit, req.Pagination.Offset)
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT "+userColumns+" FROM `user` "+where+" ORDER BY display_name LIMIT ? OFFSET ?",
+		"SELECT "+userColumns+" FROM `user` "+where+" ORDER BY id LIMIT ? OFFSET ?",
 		dataArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("user.Search query: %w", err)
@@ -123,32 +117,13 @@ func (r *userRepo) GetUserByID(ctx context.Context, id int) (*domain.User, error
 	return u, nil
 }
 
-func (r *userRepo) GetUserByEmail(ctx context.Context, email string) (*domain.User, error) {
-	row := r.db.QueryRowContext(ctx, "SELECT "+userColumns+" FROM `user` WHERE email = ?", email)
-	u, err := scanUser(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, &apierror.NotFoundError{Msg: fmt.Sprintf("user with email %q not found", email)}
-	}
-	if err != nil {
-		return nil, fmt.Errorf("user.GetByEmail(%q): %w", email, err)
-	}
-	if u.RiskTeamIDs, err = r.loadRiskTeamIDs(ctx, u.ID); err != nil {
-		return nil, fmt.Errorf("user.GetByEmail(%q) risk teams: %w", email, err)
-	}
-	if u.AuditTeamIDs, err = r.loadAuditTeamIDs(ctx, u.ID); err != nil {
-		return nil, err
-	}
-	return u, nil
-}
-
 // GetUserByUUID resolves a user by their Asgardeo id — the identity a token
 // actually carries, and so the lookup the authenticated request path uses.
 //
-// An empty uuid is rejected rather than queried. The column is nullable during
-// the identity migration, so `WHERE uuid = ”` would match nothing while
-// `WHERE uuid IS NULL` would match every un-backfilled row at once; treating a
-// missing identity as NotFound keeps a caller that forgot to resolve one from
-// being handed an arbitrary user.
+// An empty uuid is rejected rather than queried, even now that the column is
+// NOT NULL: `WHERE uuid = ”` would simply match nothing, but refusing it here
+// keeps a caller that forgot to resolve a uuid from silently getting a 404
+// instead of an obviously-wrong request, and being handed an arbitrary user.
 func (r *userRepo) GetUserByUUID(ctx context.Context, uuid string) (*domain.User, error) {
 	if strings.TrimSpace(uuid) == "" {
 		return nil, &apierror.NotFoundError{Msg: "user with empty uuid not found"}
@@ -180,82 +155,37 @@ func (r *userRepo) CreateUser(ctx context.Context, req domain.CreateUserRequest)
 		userType = "INTERNAL"
 	}
 
+	if strings.TrimSpace(req.UUID) == "" {
+		return nil, &apierror.ValidationError{Msg: "uuid is required"}
+	}
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("user.Create begin: %w", err)
 	}
 	defer tx.Rollback()
 
-	// Upsert on uq_user_email: callers provisioning a user from an external
-	// directory (e.g. an HR employee picked as a risk's Action Owner) can't know
-	// whether the email is already known, so a duplicate refreshes the row
-	// instead of failing. Only updated_by/uuid are refreshed on a duplicate —
-	// team assignments and status stay under explicit UpdateUser control, so
-	// audit team rows below are only written when this was a genuine insert.
-	//
-	// display_name is NOT refreshed on a duplicate, deliberately: nothing
-	// upstream stores a name anymore (callers send "" — see
-	// user/handler/resolve.go), and VALUES(display_name) here would silently
-	// blank out an existing row's stored name on every re-provision of the
-	// same person. It is still written on a genuine INSERT, only to satisfy
-	// the column's NOT NULL constraint — empty string, never read back by
-	// anything, until the column itself is dropped.
+	// Upsert on uq_user_uuid, now the table's only unique key (uq_user_email
+	// is gone along with the column): a caller provisioning a user resolves
+	// their uuid first (e.g. against the identity directory) and this insert
+	// refreshes the existing row rather than failing if one already exists
+	// for it. Only updated_by is refreshed on a duplicate — team assignments
+	// and status stay under explicit UpdateUser control, so audit team rows
+	// below are only written when this was a genuine insert.
 	//
 	// id = LAST_INSERT_ID(id) is required: without it LastInsertId() returns 0
 	// when the duplicate-key branch fires, and the GetUserByID below would miss.
-	//
-	// uuid = COALESCE(VALUES(uuid), uuid), NOT VALUES(uuid): this upsert is how
-	// an existing row that predates the identity migration acquires its uuid, so
-	// the incoming value has to be able to fill a gap. But a caller who did not
-	// resolve one sends NULL, and plain VALUES(uuid) would then erase a uuid the
-	// row already had — silently unmaking the migration one provision at a time.
-	// COALESCE fills only when the row has nothing.
 	res, err := tx.ExecContext(ctx,
-		"INSERT INTO `user` (uuid, email, display_name, user_type, status, created_by, updated_by) "+
-			"VALUES (?, ?, ?, ?, ?, ?, ?) "+
+		"INSERT INTO `user` (uuid, user_type, status, created_by, updated_by) "+
+			"VALUES (?, ?, ?, ?, ?) "+
 			"ON DUPLICATE KEY UPDATE "+
-			"updated_by = VALUES(updated_by), uuid = COALESCE(VALUES(uuid), uuid), id = LAST_INSERT_ID(id)",
-		nullableUUID(req.UUID), nullableEmail(req.Email), req.DisplayName, userType, status, req.CreatedBy, req.CreatedBy)
+			"updated_by = VALUES(updated_by), id = LAST_INSERT_ID(id)",
+		req.UUID, userType, status, req.CreatedBy, req.CreatedBy)
 	if err != nil {
 		return nil, fmt.Errorf("user.Create: %w", err)
 	}
 	id64, _ := res.LastInsertId()
 	id := int(id64)
-
-	// Confirm the row we touched is the one identified by req.Email.
-	//
-	// There are two unique keys now, and ON DUPLICATE KEY UPDATE resolves a
-	// conflict on EITHER of them — it does not raise 1062 for the second key.
-	// So a request carrying someone else's uuid with a new email does not fail:
-	// it matches uq_user_uuid and rewrites THAT person's row instead, returning
-	// a success and an id belonging to a different human. A caller who then used
-	// the id — to set a risk's Action Owner, say — would attach the wrong person.
-	//
-	// Verified empirically: posting {uuid: <A's uuid>, email: <B's email>}
-	// renamed A rather than erroring.
-	//
-	// Reading the email back inside the transaction and comparing is what makes
-	// that unrepresentable: a mismatch means the uuid belongs to someone else, so
-	// the deferred Rollback undoes the write. EqualFold because uq_user_email is
-	// case-insensitive (utf8mb4_unicode_ci), so the stored spelling may differ
-	// from the requested one without being a different row.
-	//
-	// Skipped entirely when req.Email is empty (the admin console's uuid-only
-	// path): an empty email makes no claim about the row's real email to
-	// verify, and the row this upsert touched may well already have a real one
-	// from an earlier, email-keyed provision (e.g. via the Action Owner
-	// resolve flow) — that's a legitimate re-provision-by-uuid, not a hijack.
-	if req.Email != "" {
-		var storedEmail sql.NullString
-		if err = tx.QueryRowContext(ctx, "SELECT email FROM `user` WHERE id = ?", id).Scan(&storedEmail); err != nil {
-			return nil, fmt.Errorf("user.Create readback: %w", err)
-		}
-		if !strings.EqualFold(strings.TrimSpace(storedEmail.String), strings.TrimSpace(req.Email)) {
-			return nil, &apierror.ValidationError{
-				Msg: fmt.Sprintf("uuid %q is already assigned to a different user", req.UUID),
-			}
-		}
-	}
 
 	// RowsAffected is 1 for a fresh insert under ON DUPLICATE KEY UPDATE, and
 	// 0 or 2 when the duplicate-key branch fired instead — only a fresh insert
@@ -284,10 +214,6 @@ func (r *userRepo) UpdateUser(ctx context.Context, id int, req domain.UpdateUser
 	sets := []string{}
 	args := []any{}
 
-	if req.DisplayName != nil {
-		sets = append(sets, "display_name = ?")
-		args = append(args, *req.DisplayName)
-	}
 	if req.UserType != nil {
 		sets = append(sets, "user_type = ?")
 		args = append(args, *req.UserType)
@@ -455,43 +381,11 @@ func scanUser(s scanner) (*domain.User, error) {
 	// as [] rather than null.
 	u.AuditTeamIDs = []int{}
 	u.RiskTeamIDs = []int{}
-	// uuid is nullable while the identity migration is in progress — rows
-	// predating it, or whose email matched no Asgardeo account, have none.
-	// email is nullable too, for uuid-only rows provisioned via the Admin
-	// Console (see nullableEmail). Both flattened to "" so callers test one
-	// thing (empty) rather than two.
-	var uuid, email sql.NullString
-	if err := s.Scan(&u.ID, &uuid, &email, &u.DisplayName, &u.UserType, &u.Status,
+	if err := s.Scan(&u.ID, &u.UUID, &u.UserType, &u.Status,
 		&u.CreatedOn, &u.UpdatedOn); err != nil {
 		return nil, err
 	}
-	u.UUID = uuid.String
-	u.Email = email.String
 	return &u, nil
-}
-
-// nullableUUID maps an absent uuid to SQL NULL rather than the empty string.
-//
-// This is not cosmetic. uq_user_uuid permits any number of NULLs but only one
-// ”, so storing "" would let the first user without a uuid succeed and make
-// every subsequent one a duplicate-key failure.
-func nullableUUID(uuid string) any {
-	if strings.TrimSpace(uuid) == "" {
-		return nil
-	}
-	return uuid
-}
-
-// nullableEmail maps an absent email to SQL NULL rather than the empty
-// string — same reasoning as nullableUUID. uq_user_email permits any number
-// of NULLs but only one "", so storing "" would let the first uuid-only
-// (admin console) provision succeed and make every subsequent one a
-// duplicate-key failure.
-func nullableEmail(email string) any {
-	if strings.TrimSpace(email) == "" {
-		return nil
-	}
-	return email
 }
 
 // nullableInt converts *int to sql.NullInt64 for optional FK columns.

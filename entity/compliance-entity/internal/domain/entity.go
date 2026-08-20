@@ -47,12 +47,10 @@ type Pagination struct {
 type User struct {
 	ID int `json:"id"`
 	// UUID is the user's Asgardeo id — the same value their OIDC token carries
-	// as `sub`, and this platform's identity for them. Empty when the row
-	// predates the identity migration and no Asgardeo account could be matched
-	// to its email; such a user cannot be resolved by uuid yet.
+	// as `sub`, and this platform's sole identity for them (see shared.sql —
+	// the `user` table stores neither an email nor a display name; the GRC
+	// Backend resolves both from the identity directory by uuid instead).
 	UUID         string    `json:"uuid"`
-	Email        string    `json:"email"`
-	DisplayName  string    `json:"displayName"`
 	UserType     string    `json:"userType"` // INTERNAL | EXTERNAL
 	AuditTeamIDs []int     `json:"auditTeamIds"`
 	RiskTeamIDs  []int     `json:"riskTeamIds"`
@@ -68,10 +66,14 @@ type User struct {
 }
 
 // SearchUsersRequest is the payload for POST /users/search.
+//
+// No free-text search field: the `user` table carries nothing text-searchable
+// (no email, no display name — see User.UUID) once the identity migration
+// drops them. A caller wanting to search by name has to do it against the
+// identity directory instead, not this table.
 type SearchUsersRequest struct {
-	SearchQuery string     `json:"searchQuery"`
-	StatusKey   string     `json:"statusKey"` // ACTIVE | INACTIVE | REMOVED | "" (all)
-	Pagination  Pagination `json:"pagination"`
+	StatusKey  string     `json:"statusKey"` // ACTIVE | INACTIVE | REMOVED | "" (all)
+	Pagination Pagination `json:"pagination"`
 	// IncludeGrants embeds each returned user's active grants (see User.Grants)
 	// in this same response, batched in one extra query — for the Admin
 	// Console's user list, which needs both without an N+1 round trip per row.
@@ -699,19 +701,14 @@ type SearchRisksResponse struct {
 // unaffected — the Audit module has no equivalent grant migration yet, so its
 // membership is still genuinely written here.
 type CreateUserRequest struct {
-	// UUID is the Asgardeo id to record for this user. Optional: a caller that
-	// has not resolved one yet (or is provisioning someone with no Asgardeo
-	// account) may leave it empty, and the row is created without one. Supplying
-	// it for an email that already exists fills in a uuid the row was missing,
-	// but never overwrites one it already has.
-	UUID string `json:"uuid"`
-	// Email may be empty when UUID is supplied instead — the Admin Console's
-	// "Add User" flow provisions by uuid alone (see uuid-identity migration),
-	// storing neither email nor display name. Stored as SQL NULL, not "", so
-	// multiple uuid-only rows don't collide on uq_user_email (NULLs never
-	// conflict with each other under a unique index; empty strings would).
-	Email        string `json:"email"`
-	DisplayName  string `json:"displayName"`
+	// UUID is the Asgardeo id to record for this user — required, and the sole
+	// matching key: a request whose uuid already exists refreshes that row
+	// (an upsert) rather than creating a second one. Unlike before the
+	// identity migration, a caller cannot provision a user without first
+	// resolving one (e.g. against the identity directory) — there is no
+	// longer an email to fall back on as a matching key, and the column is
+	// NOT NULL.
+	UUID         string `json:"uuid"`
 	UserType     string `json:"userType"` // INTERNAL | EXTERNAL; defaults to INTERNAL
 	AuditTeamIDs []int  `json:"auditTeamIds"`
 	Status       string `json:"status"`
@@ -724,7 +721,6 @@ type CreateUserRequest struct {
 // memberships wholesale — the same nil-vs-empty convention used by
 // UpdateRiskRequest.ComplianceReferenceIDs.
 type UpdateUserRequest struct {
-	DisplayName  *string `json:"displayName"`
 	UserType     *string `json:"userType"` // INTERNAL | EXTERNAL
 	AuditTeamIDs []int   `json:"auditTeamIds"`
 	Status       *string `json:"status"`

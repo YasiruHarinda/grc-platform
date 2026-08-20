@@ -76,9 +76,7 @@ SET FOREIGN_KEY_CHECKS = 0;
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `user` (
   id            INT          NOT NULL AUTO_INCREMENT,
-  uuid          CHAR(36)     NULL,
-  email         VARCHAR(255) NULL,
-  display_name  VARCHAR(255) NOT NULL,
+  uuid          CHAR(36)     NOT NULL,
   user_type     ENUM('INTERNAL','EXTERNAL') NOT NULL DEFAULT 'INTERNAL',
   status        ENUM('ACTIVE','INACTIVE','REMOVED') NOT NULL DEFAULT 'ACTIVE',
   created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -86,25 +84,16 @@ CREATE TABLE IF NOT EXISTS `user` (
   updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   updated_by    VARCHAR(255) NULL,
   PRIMARY KEY (id),
-  UNIQUE KEY uq_user_email (email),
   UNIQUE KEY uq_user_uuid (uuid)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- uuid is the Asgardeo `sub` claim, and is this table's real identity going
--- forward: a security review required that the platform stop storing user
--- emails and display names. Those two columns are still here only because
--- removing them is staged — every consumer has to resolve names through the
--- identity directory first, and the Audit Hub's queries still join
--- display_name. They are dead to new code in the meantime.
---
--- NULLable during that staging period, deliberately. Existing rows are
--- backfilled best-effort by cmd/backfill-uuids, which resolves each email
--- against Asgardeo; a row whose email has no Asgardeo account (an
--- ex-employee provisioned as an Action Owner, say) resolves to nothing and
--- keeps working off email until the column is tightened to NOT NULL. Making
--- it NOT NULL now would mean either blocking the migration on a clean
--- backfill or inventing a placeholder uuid that every resolution path would
--- then have to recognise and skip.
+-- uuid is the Asgardeo `sub` claim, and this table's only identity: a
+-- security review required that the platform stop storing user emails and
+-- display names, and the Audit Hub module (the last consumer still reading
+-- email/display_name directly) has since been converted to resolve both
+-- through the identity directory instead. No real user rows existed at the
+-- time of that conversion, so no backfill was needed and the column drop
+-- below lands in the same push, not staged.
 --
 -- Guarded the same way as role.module/scope_basis below, so re-running this
 -- file against an existing database is a no-op past the first run.
@@ -119,7 +108,7 @@ PREPARE add_uuid_stmt FROM @add_uuid_sql;
 EXECUTE add_uuid_stmt;
 DEALLOCATE PREPARE add_uuid_stmt;
 
--- email becomes NULLable here too: the Admin Console's "Add User" (see
+-- email becomes NULLable here first: the Admin Console's "Add User" (see
 -- ADMIN_CONSOLE_DESIGN.md) provisions a platform user by uuid alone — nothing
 -- else about them is known or wanted, per the same security review noted
 -- above — and uq_user_email cannot take a second "" once the first uuid-only
@@ -141,6 +130,24 @@ SET @make_email_nullable_sql = IF(@user_email_nullable = 0,
 PREPARE make_email_nullable_stmt FROM @make_email_nullable_sql;
 EXECUTE make_email_nullable_stmt;
 DEALLOCATE PREPARE make_email_nullable_stmt;
+
+-- Then drops email/display_name and tightens uuid to NOT NULL, taking a
+-- database in either the pre-nullable shape above or the just-staged
+-- nullable-email shape the rest of the way to the final one this file's
+-- CREATE TABLE now produces on a fresh database. Guarded on email's
+-- existence, so it's a no-op once already applied. `uq_user_email` is
+-- dropped first: MySQL refuses to drop a column a unique key still
+-- references.
+SET @user_has_email = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user' AND COLUMN_NAME = 'email'
+);
+SET @drop_email_sql = IF(@user_has_email > 0,
+  'ALTER TABLE `user` DROP INDEX uq_user_email, DROP COLUMN email, DROP COLUMN display_name, MODIFY COLUMN uuid CHAR(36) NOT NULL',
+  'SELECT 1');
+PREPARE drop_email_stmt FROM @drop_email_sql;
+EXECUTE drop_email_stmt;
+DEALLOCATE PREPARE drop_email_stmt;
 
 
 -- -----------------------------------------------------------------------------
@@ -307,9 +314,9 @@ CREATE TABLE IF NOT EXISTS role_privilege (
 -- register by CODE rather than hardcoding an id, which differs per environment:
 --
 --   INSERT INTO user_role_grant (user_id, role_id, scope_type, scope_id, created_by)
---   SELECT u.id, r.id, 'RISK_TEAM', t.id, 'admin@wso2.com'
+--   SELECT u.id, r.id, 'RISK_TEAM', t.id, '<actor-uuid>'
 --   FROM   `user` u, `role` r, risk_team t
---   WHERE  u.email = 'someone@wso2.com'
+--   WHERE  u.uuid = '<someone's-asgardeo-uuid>'
 --     AND  r.role_name = 'grc-platform-risk-assigner'
 --     AND  t.code = 'ASG';          -- ← t.id lands in scope_id: THIS is the register
 --
