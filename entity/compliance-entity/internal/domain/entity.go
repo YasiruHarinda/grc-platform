@@ -462,6 +462,20 @@ type ListRiskCategoriesResponse struct {
 	Categories []RiskCategory `json:"categories"`
 }
 
+// CreateRiskCategoryRequest is the payload for POST /risk/categories.
+type CreateRiskCategoryRequest struct {
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+	CreatedBy   string  `json:"createdBy"`
+}
+
+// UpdateRiskCategoryRequest is the payload for PATCH /risk/categories/{id}.
+type UpdateRiskCategoryRequest struct {
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+	UpdatedBy   string  `json:"updatedBy"`
+}
+
 // =============================================================================
 // Risk Compliance Reference
 // =============================================================================

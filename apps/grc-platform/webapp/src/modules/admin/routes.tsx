@@ -15,14 +15,14 @@
 // under the License.
 
 import { Navigate, Route } from "react-router";
+import ManageAuditHubPage from "@modules/admin/pages/ManageAuditHubPage";
+import ManageRiskHubPage from "@modules/admin/pages/ManageRiskHubPage";
 import UsersPage from "@modules/admin/pages/UsersPage";
 import PrivilegeGuard from "./components/PrivilegeGuard";
 import { AdminPrivilege } from "./privileges";
 
 // Admin Console routes, mounted under /admin by App.tsx. Owned by the Admin
 // module — add Admin pages here without touching the shared App.tsx.
-//
-// Only "users" exists this phase — see nav.ts.
 export const adminRoutes = (
   <Route path="admin">
     <Route index element={<Navigate to="users" replace />} />
@@ -31,6 +31,22 @@ export const adminRoutes = (
       element={
         <PrivilegeGuard privilege={AdminPrivilege.ManageUsers}>
           <UsersPage />
+        </PrivilegeGuard>
+      }
+    />
+    <Route
+      path="risk-hub"
+      element={
+        <PrivilegeGuard privilege={AdminPrivilege.ManageRiskHub}>
+          <ManageRiskHubPage />
+        </PrivilegeGuard>
+      }
+    />
+    <Route
+      path="audit-hub"
+      element={
+        <PrivilegeGuard privilege={AdminPrivilege.ManageAuditHub}>
+          <ManageAuditHubPage />
         </PrivilegeGuard>
       }
     />

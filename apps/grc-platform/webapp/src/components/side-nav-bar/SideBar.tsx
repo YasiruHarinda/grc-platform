@@ -156,7 +156,7 @@ export default function SideBar({
               // No privilege resolver registered, or still loading: fail
               // closed and hide the section rather than flash it briefly.
               if (!privs || privs.loading) return false;
-              return privs.can(section.hideSectionWithoutPrivilege);
+              return section.hideSectionWithoutPrivilege.some((p) => privs.can(p));
             }).map((section, idx) => {
               const privs = sectionPrivs[section.id];
               const visibleItems = section.items.filter((item) => {

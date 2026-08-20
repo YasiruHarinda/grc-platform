@@ -79,3 +79,44 @@ func (r *complianceReferenceRepository) List(ctx context.Context) ([]*model.Comp
 		}
 	}
 }
+
+// Create adds a new compliance reference via the entity's
+// POST /risk/compliance-references.
+func (r *complianceReferenceRepository) Create(ctx context.Context, req model.CreateComplianceRefRequest, createdBy string) (*model.ComplianceReference, error) {
+	body := map[string]any{
+		"name":        req.Name,
+		"description": req.Description,
+		"createdBy":   createdBy,
+	}
+	var ref entComplianceReference
+	if err := r.c.Post(ctx, "/risk/compliance-references", body, &ref); err != nil {
+		return nil, fmt.Errorf("create compliance reference: %w", err)
+	}
+	return &model.ComplianceReference{ID: ref.ID, Name: ref.Name, Description: ref.Description}, nil
+}
+
+// Update edits a compliance reference via the entity's
+// PATCH /risk/compliance-references/{id}.
+func (r *complianceReferenceRepository) Update(ctx context.Context, id int, req model.UpdateComplianceRefRequest, updatedBy string) (*model.ComplianceReference, error) {
+	body := map[string]any{
+		"name":        req.Name,
+		"description": req.Description,
+		"updatedBy":   updatedBy,
+	}
+	var ref entComplianceReference
+	if err := r.c.Patch(ctx, fmt.Sprintf("/risk/compliance-references/%d", id), body, &ref); err != nil {
+		return nil, fmt.Errorf("update compliance reference %d: %w", id, err)
+	}
+	return &model.ComplianceReference{ID: ref.ID, Name: ref.Name, Description: ref.Description}, nil
+}
+
+// Delete removes a compliance reference via the entity's
+// DELETE /risk/compliance-references/{id}. The entity itself refuses (409)
+// when the reference is still tagged on a risk — see its
+// DeleteRiskReference doc comment.
+func (r *complianceReferenceRepository) Delete(ctx context.Context, id int) error {
+	if err := r.c.Delete(ctx, fmt.Sprintf("/risk/compliance-references/%d", id)); err != nil {
+		return fmt.Errorf("delete compliance reference %d: %w", id, err)
+	}
+	return nil
+}

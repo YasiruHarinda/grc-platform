@@ -139,6 +139,9 @@ type RiskScoreService interface {
 // RiskCategoryService defines operations on risk_category.
 type RiskCategoryService interface {
 	ListRiskCategories(ctx context.Context) (domain.ListRiskCategoriesResponse, error)
+	CreateRiskCategory(ctx context.Context, req domain.CreateRiskCategoryRequest) (domain.RiskCategory, error)
+	UpdateRiskCategory(ctx context.Context, id int, req domain.UpdateRiskCategoryRequest) (domain.RiskCategory, error)
+	DeleteRiskCategory(ctx context.Context, id int) error
 }
 
 // RiskReferenceService defines operations on risk_security_compliance_reference.
@@ -147,6 +150,7 @@ type RiskReferenceService interface {
 	GetRiskReferenceByID(ctx context.Context, id int) (domain.RiskComplianceReference, error)
 	CreateRiskReference(ctx context.Context, req domain.CreateRiskReferenceRequest) (domain.RiskComplianceReference, error)
 	UpdateRiskReference(ctx context.Context, id int, req domain.UpdateRiskReferenceRequest) (domain.RiskComplianceReference, error)
+	DeleteRiskReference(ctx context.Context, id int) error
 }
 
 // RiskService defines operations on the risk entity.

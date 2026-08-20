@@ -29,3 +29,9 @@ type CreateComplianceRefRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }
+
+// UpdateComplianceRefRequest is the payload for PUT /api/v1/compliance-references/{id}.
+type UpdateComplianceRefRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}

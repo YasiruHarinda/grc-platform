@@ -33,6 +33,7 @@ type RiskReferenceRepository interface {
 	GetRiskReferenceByID(ctx context.Context, id int) (*domain.RiskComplianceReference, error)
 	CreateRiskReference(ctx context.Context, req domain.CreateRiskReferenceRequest) (*domain.RiskComplianceReference, error)
 	UpdateRiskReference(ctx context.Context, id int, req domain.UpdateRiskReferenceRequest) (*domain.RiskComplianceReference, error)
+	DeleteRiskReference(ctx context.Context, id int) error
 }
 
 type riskReferenceRepo struct{ db *sql.DB }
@@ -123,6 +124,33 @@ func (r *riskReferenceRepo) UpdateRiskReference(ctx context.Context, id int, req
 		return nil, fmt.Errorf("risk_reference.Update(%d): %w", id, err)
 	}
 	return r.GetRiskReferenceByID(ctx, id)
+}
+
+// DeleteRiskReference removes a compliance reference outright — no status
+// column here either (same as risk_category — see its DeleteRiskCategory for
+// the fuller reasoning). risk_compliance_reference.reference_id has ON DELETE
+// CASCADE back to this table, so the in-use count is checked explicitly
+// before the DELETE rather than relying on a constraint error that MySQL will
+// never raise.
+func (r *riskReferenceRepo) DeleteRiskReference(ctx context.Context, id int) error {
+	var inUse int
+	if err := r.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM risk_compliance_reference WHERE reference_id = ?", id).Scan(&inUse); err != nil {
+		return fmt.Errorf("risk_reference.Delete(%d) in-use check: %w", id, err)
+	}
+	if inUse > 0 {
+		return &apierror.ConflictError{
+			Msg: fmt.Sprintf("compliance reference is used by %d risk(s) and cannot be deleted", inUse)}
+	}
+
+	res, err := r.db.ExecContext(ctx, "DELETE FROM risk_security_compliance_reference WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("risk_reference.Delete(%d): %w", id, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return &apierror.NotFoundError{Msg: fmt.Sprintf("compliance reference %d not found", id)}
+	}
+	return nil
 }
 
 func scanRiskReference(s scanner) (*domain.RiskComplianceReference, error) {

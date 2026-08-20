@@ -160,3 +160,167 @@ export async function fetchScopeTeams(
   const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/teams?type=${type}`);
   return handleResponse<ScopeTeam[]>(res);
 }
+
+// ── Manage Risk Hub — Risk Teams ────────────────────────────────────────────────
+
+export interface AdminTeam {
+  id: number;
+  name: string;
+  code: string | null;
+  description: string | null;
+  team_type: "SOURCE_REGISTER" | "ASSIGNMENT" | "BOTH";
+  status: "ACTIVE" | "INACTIVE" | "REMOVED";
+}
+
+export interface TeamPayload {
+  name: string;
+  code: string | null;
+  description: string;
+  // "BOTH" | "ASSIGNMENT" only — see teamTypeOptions in RiskTeamsPage.tsx for
+  // why SOURCE_REGISTER is never sent from this console.
+  team_type: "BOTH" | "ASSIGNMENT";
+  status: "ACTIVE" | "INACTIVE";
+}
+
+// fetchAllTeams lists every team regardless of type (no ?type= filter) or
+// status (?includeInactive=true), unlike fetchScopeTeams, which the grant
+// picker uses for a single semantic type and implicitly ACTIVE only. The Risk
+// Teams admin table needs to show every row — including ASSIGNMENT-only teams
+// a scope picker would never offer, and inactive ones so they can be
+// reactivated rather than disappearing the moment they're deactivated.
+export async function fetchAllTeams(authFetch: AuthFetch): Promise<AdminTeam[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/teams?includeInactive=true`);
+  return handleResponse<AdminTeam[]>(res);
+}
+
+export async function createTeam(authFetch: AuthFetch, payload: TeamPayload): Promise<AdminTeam> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/teams`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<AdminTeam>(res);
+}
+
+export async function updateTeam(authFetch: AuthFetch, id: number, payload: TeamPayload): Promise<void> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/teams/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+  await handleResponse(res);
+}
+
+// ── Manage Risk Hub — Risk Categories ───────────────────────────────────────────
+
+export interface AdminRiskCategory {
+  id: number;
+  name: string;
+  description: string | null;
+}
+
+export interface RiskCategoryPayload {
+  name: string;
+  description: string;
+}
+
+export async function fetchRiskCategories(authFetch: AuthFetch): Promise<AdminRiskCategory[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk-categories`);
+  return handleResponse<AdminRiskCategory[]>(res);
+}
+
+export async function createRiskCategory(
+  authFetch: AuthFetch,
+  payload: RiskCategoryPayload,
+): Promise<AdminRiskCategory> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk-categories`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<AdminRiskCategory>(res);
+}
+
+export async function updateRiskCategory(
+  authFetch: AuthFetch,
+  id: number,
+  payload: RiskCategoryPayload,
+): Promise<void> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk-categories/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+  await handleResponse(res);
+}
+
+// Refused (409) server-side when the category is still tagged on any risk —
+// see the entity's DeleteRiskCategory doc comment for why that can't just be
+// a DB constraint error. The caller shows whatever message comes back.
+export async function deleteRiskCategory(authFetch: AuthFetch, id: number): Promise<void> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk-categories/${id}`, { method: "DELETE" });
+  await handleResponse(res);
+}
+
+// ── Manage Risk Hub — Compliance References ─────────────────────────────────────
+
+export interface AdminComplianceReference {
+  id: number;
+  name: string;
+  description: string | null;
+}
+
+export interface ComplianceReferencePayload {
+  name: string;
+  description: string;
+}
+
+export async function fetchComplianceReferences(authFetch: AuthFetch): Promise<AdminComplianceReference[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/compliance-references`);
+  return handleResponse<AdminComplianceReference[]>(res);
+}
+
+export async function createComplianceReference(
+  authFetch: AuthFetch,
+  payload: ComplianceReferencePayload,
+): Promise<AdminComplianceReference> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/compliance-references`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<AdminComplianceReference>(res);
+}
+
+export async function updateComplianceReference(
+  authFetch: AuthFetch,
+  id: number,
+  payload: ComplianceReferencePayload,
+): Promise<void> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/compliance-references/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+  await handleResponse(res);
+}
+
+// Refused (409) server-side when the reference is still tagged on any risk —
+// same reasoning as deleteRiskCategory.
+export async function deleteComplianceReference(authFetch: AuthFetch, id: number): Promise<void> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/compliance-references/${id}`, { method: "DELETE" });
+  await handleResponse(res);
+}
+
+// ── Manage Risk Hub — Risk Scores (read-only) ───────────────────────────────────
+
+export interface RiskScore {
+  id: number;
+  likelihood: number;
+  impact: number;
+  risk_rating: number;
+  risk_level: "LOW" | "MEDIUM" | "HIGH";
+  color_code: string;
+}
+
+// No add/edit UI at all, not even for color — a locked decision (the 3x3
+// matrix is a fixed set of load-bearing constants; see ADMIN_CONSOLE_DESIGN.md
+// §8.1). This console only ever reads it.
+export async function fetchRiskScores(authFetch: AuthFetch): Promise<RiskScore[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk-scores`);
+  return handleResponse<RiskScore[]>(res);
+}

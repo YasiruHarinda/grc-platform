@@ -18,15 +18,21 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
 // handleListTeams serves GET /api/v1/teams.
 // Optional ?type=SOURCE_REGISTER or ?type=ASSIGNMENT — semantic filter, BOTH teams
 // appear in both result sets.
+//
+// Optional ?includeInactive=true returns every status, not just ACTIVE — the
+// Admin Console's Risk Teams table is the only caller that sets this; every
+// picker leaves it off.
 //
 // Optional ?mine=true restricts the list to the caller's own risk teams — how
 // the Dashboard/Analytics/Registers-list register filters avoid offering a
@@ -39,7 +45,8 @@ import (
 // legitimate action this scoping was never meant to restrict.
 func (d *Deps) handleListTeams(w http.ResponseWriter, r *http.Request) {
 	filter := model.ListTeamsFilter{
-		Type: r.URL.Query().Get("type"),
+		Type:            r.URL.Query().Get("type"),
+		IncludeInactive: r.URL.Query().Get("includeInactive") == "true",
 	}
 
 	teams, err := d.Team.List(r.Context(), filter)
@@ -94,4 +101,68 @@ func (d *Deps) handleListTeams(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.WriteJSONValue(w, http.StatusOK, teams)
+}
+
+// handleCreateTeam serves POST /api/v1/teams — the Admin Console's Risk
+// Teams "Add Team" dialog. Gated on MANAGE_RISK_HUB, not MANAGE_USERS: this
+// is reference-data management, a separate authorisation boundary from user
+// provisioning even though only grc-platform-admin holds either today.
+func (d *Deps) handleCreateTeam(w http.ResponseWriter, r *http.Request) {
+	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageRiskHub) {
+		return
+	}
+
+	var req model.CreateTeamRequest
+	if err := response.DecodeJSON(w, r, &req); err != nil {
+		return
+	}
+	if req.Name == "" {
+		response.WriteError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if req.TeamType == "" {
+		response.WriteError(w, http.StatusBadRequest, "team_type is required")
+		return
+	}
+
+	createdBy := ""
+	if user := auth.FromContext(r.Context()); user != nil {
+		createdBy = user.Subject
+	}
+
+	t, err := d.Team.Create(r.Context(), req, createdBy)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	response.WriteJSONValue(w, http.StatusCreated, t)
+}
+
+// handleUpdateTeam serves PUT /api/v1/teams/{id}.
+func (d *Deps) handleUpdateTeam(w http.ResponseWriter, r *http.Request) {
+	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageRiskHub) {
+		return
+	}
+
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || id <= 0 {
+		response.WriteError(w, http.StatusBadRequest, "id must be a positive integer")
+		return
+	}
+
+	var req model.UpdateTeamRequest
+	if err := response.DecodeJSON(w, r, &req); err != nil {
+		return
+	}
+
+	updatedBy := ""
+	if user := auth.FromContext(r.Context()); user != nil {
+		updatedBy = user.Subject
+	}
+
+	if err := d.Team.Update(r.Context(), id, req, updatedBy); err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

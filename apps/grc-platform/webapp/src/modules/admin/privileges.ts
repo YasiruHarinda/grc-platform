@@ -24,10 +24,10 @@
 // it exists only in the Go privilege package). Declared fresh here instead.
 export const AdminPrivilege = {
   ManageUsers: "MANAGE_USERS",
-  // Not used by anything built in this phase (Risk Teams/Categories/
-  // Compliance References/Risk Scores are a later phase; the Manage Audit
-  // Hub tab is a stub with no gated content of its own yet) — declared now
-  // so the later phases don't have to touch this file again.
+  // Gates /admin/risk-hub — Risk Teams/Categories/Compliance References/Risk
+  // Scores (see ManageRiskHubPage.tsx).
   ManageRiskHub: "MANAGE_RISK_HUB",
+  // Gates /admin/audit-hub. The route/nav item are real; the page behind it
+  // is a stub — real Audit Hub reference-data screens are a later phase.
   ManageAuditHub: "MANAGE_AUDIT_HUB",
 } as const;

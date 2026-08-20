@@ -83,3 +83,10 @@ func (s *riskReferenceService) UpdateRiskReference(ctx context.Context, id int, 
 	}
 	return *r, nil
 }
+
+func (s *riskReferenceService) DeleteRiskReference(ctx context.Context, id int) error {
+	if id <= 0 {
+		return &apierror.ValidationError{Msg: "reference id must be a positive integer"}
+	}
+	return s.repo.DeleteRiskReference(ctx, id)
+}

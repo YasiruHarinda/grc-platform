@@ -32,6 +32,13 @@ type Team struct {
 // Empty Type returns all ACTIVE teams.
 type ListTeamsFilter struct {
 	Type string
+	// IncludeInactive returns every status, not just ACTIVE. Every existing
+	// caller of this endpoint is a picker (Add Risk's register dropdown, the
+	// grant editor's scope picker, ...) that must never offer an inactive
+	// team, so this defaults to false and only the Admin Console's Risk Teams
+	// management table — which needs to show and let someone reactivate an
+	// inactive team, not just hide it — sets it true.
+	IncludeInactive bool
 }
 
 // CreateTeamRequest is the payload for POST /api/v1/teams.
@@ -47,5 +54,6 @@ type UpdateTeamRequest struct {
 	Name        string  `json:"name"`
 	Code        *string `json:"code"`
 	Description string  `json:"description"`
+	TeamType    string  `json:"team_type"`
 	Status      string  `json:"status"`
 }

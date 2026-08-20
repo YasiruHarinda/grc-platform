@@ -78,15 +78,25 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 
 	// Teams
 	mux.HandleFunc("GET /api/v1/teams", d.handleListTeams)
+	mux.HandleFunc("POST /api/v1/teams", d.handleCreateTeam)
+	mux.HandleFunc("PUT /api/v1/teams/{id}", d.handleUpdateTeam)
 
-	// Risk scores
+	// Risk scores — read-only by design (see ADMIN_CONSOLE_DESIGN.md §8.1):
+	// the 3x3 likelihood x impact matrix is a fixed set of load-bearing
+	// constants, not a freely editable table. No write route exists.
 	mux.HandleFunc("GET /api/v1/risk-scores", d.handleListRiskScores)
 
 	// Compliance references
 	mux.HandleFunc("GET /api/v1/compliance-references", d.handleListComplianceReferences)
+	mux.HandleFunc("POST /api/v1/compliance-references", d.handleCreateComplianceReference)
+	mux.HandleFunc("PUT /api/v1/compliance-references/{id}", d.handleUpdateComplianceReference)
+	mux.HandleFunc("DELETE /api/v1/compliance-references/{id}", d.handleDeleteComplianceReference)
 
 	// Risk categories
 	mux.HandleFunc("GET /api/v1/risk-categories", d.handleListRiskCategories)
+	mux.HandleFunc("POST /api/v1/risk-categories", d.handleCreateRiskCategory)
+	mux.HandleFunc("PUT /api/v1/risk-categories/{id}", d.handleUpdateRiskCategory)
+	mux.HandleFunc("DELETE /api/v1/risk-categories/{id}", d.handleDeleteRiskCategory)
 
 	// Role-gated user pickers: everyone who holds the grant the corresponding
 	// action requires, GLOBAL or scoped to the given teamId(s) — see
@@ -157,11 +167,6 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/v1/risks/{id}/evidence", d.handleListRiskEvidence)
 	mux.HandleFunc("DELETE /api/v1/risks/{id}/evidence/{fileId}", d.handleDeleteRiskEvidence)
 	mux.HandleFunc("GET /api/v1/risks/{id}/evidence/{fileId}/download", d.handleDownloadRiskEvidence)
-
-	// TODO: remaining routes
-	// POST/PUT /api/v1/teams
-	// POST/PUT /api/v1/risk-scores
-	// POST   /api/v1/compliance-references
 }
 
 // errorf is a convenience wrapper used by validation helpers.
