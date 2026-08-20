@@ -64,7 +64,8 @@ export default function GrantPicker({ roles, onAdd }: GrantPickerProps): JSX.Ele
   const handleAdd = () => {
     if (!selectedRole || roleId === "") return;
     const scopeType: PendingGrant["scopeType"] = scopeId === "GLOBAL" ? "GLOBAL" : "RISK_TEAM";
-    const scopeName = scopeId === "GLOBAL" ? "Global" : teams.find((t) => t.id === scopeId)?.name ?? "Global";
+    const scopeName =
+      scopeId === "GLOBAL" ? "Global (ALL)" : teams.find((t) => t.id === scopeId)?.name ?? "Global (ALL)";
     onAdd(
       { roleId: selectedRole.id, scopeType, scopeId: scopeId === "GLOBAL" ? 0 : scopeId },
       `${selectedRole.roleName} @ ${scopeName}`,
@@ -72,53 +73,66 @@ export default function GrantPicker({ roles, onAdd }: GrantPickerProps): JSX.Ele
   };
 
   const scopeLocked = !selectedRole || selectedRole.module === "SHARED";
+  const scopeHint = scopeLocked
+    ? "This role always applies platform-wide."
+    : selectedRole?.scopeBasis === "SOURCE_REGISTER"
+      ? "Global (ALL) applies to every register, or pick one register to limit it to."
+      : "Global (ALL) applies to every team, or pick one team to limit it to.";
 
   return (
-    <Stack direction="row" spacing={1.5} alignItems="flex-end" sx={{ mt: 1.5 }}>
-      <FormControl size="small" sx={{ flex: 1, minWidth: 160 }}>
-        <InputLabel id="grant-role-label">Role</InputLabel>
-        <Select
-          labelId="grant-role-label"
-          label="Role"
-          value={roleId}
-          onChange={(e) => setRoleId(Number(e.target.value))}
-        >
-          {roles.map((r) => (
-            <MenuItem key={r.id} value={r.id}>
-              {r.roleName}
-            </MenuItem>
-          ))}
-        </Select>
-      </FormControl>
-
-      <FormControl size="small" sx={{ flex: 1, minWidth: 160 }}>
-        <InputLabel id="grant-scope-label">Scope</InputLabel>
-        {scopeLocked ? (
-          <Select labelId="grant-scope-label" label="Scope" value="GLOBAL" disabled>
-            <MenuItem value="GLOBAL">Global</MenuItem>
-          </Select>
-        ) : (
+    <Box sx={{ mt: 1.5 }}>
+      <Stack direction="row" spacing={1.5} alignItems="flex-start">
+        <FormControl size="small" sx={{ flex: 1, minWidth: 160 }}>
+          <InputLabel id="grant-role-label">Role</InputLabel>
           <Select
-            labelId="grant-scope-label"
-            label="Scope"
-            value={scopeId}
-            disabled={teamsLoading}
-            onChange={(e) => setScopeId(e.target.value === "GLOBAL" ? "GLOBAL" : Number(e.target.value))}
+            labelId="grant-role-label"
+            label="Role"
+            value={roleId}
+            onChange={(e) => setRoleId(Number(e.target.value))}
           >
-            <MenuItem value="GLOBAL">Global</MenuItem>
-            {teams.map((t) => (
-              <MenuItem key={t.id} value={t.id}>
-                {t.name}
+            {roles.map((r) => (
+              <MenuItem key={r.id} value={r.id}>
+                {r.roleName}
               </MenuItem>
             ))}
           </Select>
-        )}
-      </FormControl>
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, ml: 0.5 }}>
+            What this person is allowed to do.
+          </Typography>
+        </FormControl>
 
-      <Button variant="contained" onClick={handleAdd} disabled={roleId === ""}>
-        Add
-      </Button>
-    </Stack>
+        <FormControl size="small" sx={{ flex: 1, minWidth: 160 }}>
+          <InputLabel id="grant-scope-label">Scope</InputLabel>
+          {scopeLocked ? (
+            <Select labelId="grant-scope-label" label="Scope" value="GLOBAL" disabled>
+              <MenuItem value="GLOBAL">Global (ALL)</MenuItem>
+            </Select>
+          ) : (
+            <Select
+              labelId="grant-scope-label"
+              label="Scope"
+              value={scopeId}
+              disabled={teamsLoading}
+              onChange={(e) => setScopeId(e.target.value === "GLOBAL" ? "GLOBAL" : Number(e.target.value))}
+            >
+              <MenuItem value="GLOBAL">Global (ALL)</MenuItem>
+              {teams.map((t) => (
+                <MenuItem key={t.id} value={t.id}>
+                  {t.name}
+                </MenuItem>
+              ))}
+            </Select>
+          )}
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, ml: 0.5 }}>
+            {scopeHint}
+          </Typography>
+        </FormControl>
+
+        <Button variant="contained" onClick={handleAdd} disabled={roleId === ""} sx={{ mt: 0.25 }}>
+          Add
+        </Button>
+      </Stack>
+    </Box>
   );
 }
 

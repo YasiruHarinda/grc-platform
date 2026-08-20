@@ -31,6 +31,7 @@ import { X } from "@wso2/oxygen-ui-icons-react";
 import { type JSX, useState } from "react";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { createGrant, revokeGrant, type AdminUser, type Role } from "../api/adminApi";
+import { dialogPaperSx } from "../cardStyles";
 import GrantPicker, { type PendingGrant } from "../components/GrantPicker";
 
 interface GrantEditorDialogProps {
@@ -78,7 +79,7 @@ export default function GrantEditorDialog({ open, user, roles, onClose, onChange
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth PaperProps={{ sx: dialogPaperSx }}>
       <DialogTitle>
         Manage Grants
         <Typography variant="body2" color="text.secondary">
@@ -112,7 +113,7 @@ export default function GrantEditorDialog({ open, user, roles, onClose, onChange
               >
                 <Chip
                   size="small"
-                  label={`${g.roleName} @ ${g.scopeType === "GLOBAL" ? "Global" : g.scopeName || g.scopeType}`}
+                  label={`${g.roleName} @ ${g.scopeType === "GLOBAL" ? "Global (ALL)" : g.scopeName || g.scopeType}`}
                   color={g.module === "SHARED" ? "default" : "primary"}
                   variant="outlined"
                 />

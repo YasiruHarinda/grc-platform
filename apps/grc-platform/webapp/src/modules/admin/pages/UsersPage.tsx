@@ -20,6 +20,7 @@ import {
   Button,
   Chip,
   CircularProgress,
+  IconButton,
   Paper,
   Stack,
   Table,
@@ -31,7 +32,7 @@ import {
   TextField,
   Typography,
 } from "@wso2/oxygen-ui";
-import { Plus, Search } from "@wso2/oxygen-ui-icons-react";
+import { Pencil, Plus, Search } from "@wso2/oxygen-ui-icons-react";
 import { type JSX, useEffect, useMemo, useState } from "react";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { fetchAdminUsers, fetchRoles, type AdminUser, type Role } from "../api/adminApi";
@@ -87,7 +88,9 @@ export default function UsersPage(): JSX.Element {
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="flex-end" sx={{ mb: 2 }}>
         <Box>
-          <Typography variant="h6">Users</Typography>
+          <Typography variant="h4" fontWeight={700} sx={{ mb: 0.5 }}>
+            Users
+          </Typography>
           <Typography variant="body2" color="text.secondary">
             People provisioned into the platform with at least one role grant, plus their current (role @ scope)
             pairs.
@@ -120,7 +123,7 @@ export default function UsersPage(): JSX.Element {
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell sx={{ fontWeight: 700 }}>Name</TableCell>
+              <TableCell sx={{ fontWeight: 700, width: 220 }}>Name</TableCell>
               <TableCell sx={{ fontWeight: 700 }}>Email</TableCell>
               <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
               <TableCell sx={{ fontWeight: 700 }}>Date Added</TableCell>
@@ -173,16 +176,16 @@ export default function UsersPage(): JSX.Element {
                             size="small"
                             variant="outlined"
                             color={g.module === "SHARED" ? "default" : "primary"}
-                            label={`${g.roleName} @ ${g.scopeType === "GLOBAL" ? "Global" : g.scopeName || g.scopeType}`}
+                            label={`${g.roleName} @ ${g.scopeType === "GLOBAL" ? "Global (ALL)" : g.scopeName || g.scopeType}`}
                           />
                         ))}
                       </Stack>
                     )}
                   </TableCell>
                   <TableCell align="right">
-                    <Button size="small" onClick={() => setGrantEditorUser(u)}>
-                      Manage Grants
-                    </Button>
+                    <IconButton size="small" onClick={() => setGrantEditorUser(u)} aria-label="Manage grants">
+                      <Pencil size={15} />
+                    </IconButton>
                   </TableCell>
                 </TableRow>
               ))}
@@ -190,7 +193,13 @@ export default function UsersPage(): JSX.Element {
         </Table>
       </TableContainer>
 
-      <AddUserDialog open={addOpen} roles={roles} onClose={() => setAddOpen(false)} onCreated={load} />
+      <AddUserDialog
+        open={addOpen}
+        roles={roles}
+        existingUsers={users}
+        onClose={() => setAddOpen(false)}
+        onCreated={load}
+      />
       <GrantEditorDialog
         open={!!grantEditorUser}
         user={grantEditorUser}
