@@ -23,6 +23,7 @@ import (
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/repository"
 	auditservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/aiagent"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
@@ -52,11 +53,17 @@ type Deps struct {
 	// Email sends every audit-module notification (owner assigned, reminder
 	// digest, resubmission needed, sample submitted) — see notify.go.
 	Email *emailer.Client
-	// Users resolves an owner_id/actor email to a deliverable address and
-	// display name for notify.go. Distinct from the User service (which
-	// backs the owner/auditor dropdown UI) — this is the same repository,
-	// used for direct lookups instead of listing.
+	// Users resolves an owner_id to a UserRef (uuid/user_type/status) for
+	// notify.go. Distinct from the User service (which backs the
+	// owner/auditor dropdown UI) — this is the same repository, used for
+	// direct lookups instead of listing.
 	Users repository.UserRepository
+	// Directory resolves a uuid to a deliverable email/display name — the
+	// `user` table stores neither (see shared.sql), so every notification
+	// recipient address and actor display name is resolved through here.
+	// Shared with the Risk module's own directory instance (see
+	// cmd/server/main.go), never constructed per-module.
+	Directory *directory.Service
 	// Grants answers "which active users hold AUDIT_MANAGE_CONTROLS" — the
 	// admin recipient set for notify.go's notifyControlStatusReached. Same
 	// repository the Risk Hub already uses for its role-gated pickers

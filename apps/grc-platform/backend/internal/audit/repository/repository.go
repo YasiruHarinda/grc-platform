@@ -33,12 +33,12 @@ type AuditRepository interface {
 	// audits have no team/owner/auditor of their own (only their controls do),
 	// so scope is evaluated at the control level and an audit qualifies if any
 	// of its controls do. Used by the Audits tab (listAudits).
-	ListScoped(ctx context.Context, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.Audit, error)
+	ListScoped(ctx context.Context, scope model.Scope, userID int, scopeTeamIDs []int) ([]*model.Audit, error)
 	GetByID(ctx context.Context, id int) (*model.Audit, error)
-	// InScope reports whether id is within scope for userEmail — used by
+	// InScope reports whether id is within scope for userID — used by
 	// getAudit to reject out-of-scope direct links (a control-guessing IDOR)
 	// without fetching every audit just to check membership.
-	InScope(ctx context.Context, id int, scope model.Scope, userEmail string, scopeTeamIDs []int) (bool, error)
+	InScope(ctx context.Context, id int, scope model.Scope, userID int, scopeTeamIDs []int) (bool, error)
 	Create(ctx context.Context, req model.CreateAuditRequest, createdBy string) (*model.Audit, error)
 	Update(ctx context.Context, id int, req model.UpdateAuditRequest, updatedBy string) error
 	Delete(ctx context.Context, id int, deletedBy string) error
@@ -56,7 +56,7 @@ type FrameworkRepository interface {
 	// has no team/owner/auditor of its own (only its audits' controls do), so
 	// scope is evaluated at the control level, one level deeper than
 	// ListScoped does for audits.
-	List(ctx context.Context, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.AuditFramework, error)
+	List(ctx context.Context, scope model.Scope, userID int, scopeTeamIDs []int) ([]*model.AuditFramework, error)
 	// GetByID is intentionally unscoped — used internally to validate a
 	// frameworkId reference (e.g. audit creation), which must succeed
 	// regardless of the caller's row scope.
@@ -78,14 +78,14 @@ type ControlRepository interface {
 	// control-number-uniqueness checks). The Audits tab must NOT use this;
 	// see ListScoped.
 	List(ctx context.Context, auditID int) ([]*model.AuditControl, error)
-	// ListScoped returns auditID's controls visible to userEmail at scope —
+	// ListScoped returns auditID's controls visible to userID at scope —
 	// used by the Audits tab (listControls).
-	ListScoped(ctx context.Context, auditID int, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.AuditControl, error)
+	ListScoped(ctx context.Context, auditID int, scope model.Scope, userID int, scopeTeamIDs []int) ([]*model.AuditControl, error)
 	GetByID(ctx context.Context, auditID, controlID int) (*model.AuditControl, error)
-	// InScope reports whether controlID is within scope for userEmail — used
+	// InScope reports whether controlID is within scope for userID — used
 	// by getControl to reject out-of-scope direct links (an IDOR via guessed
 	// control ids) without listing every control in the audit to check.
-	InScope(ctx context.Context, auditID, controlID int, scope model.Scope, userEmail string, scopeTeamIDs []int) (bool, error)
+	InScope(ctx context.Context, auditID, controlID int, scope model.Scope, userID int, scopeTeamIDs []int) (bool, error)
 	Create(ctx context.Context, auditID int, req model.AddControlRequest, createdBy string) (*model.AuditControl, error)
 	BulkCreate(ctx context.Context, auditID int, reqs []model.AddControlRequest, createdBy string) ([]*model.AuditControl, error)
 	Update(ctx context.Context, auditID, controlID int, req model.UpdateControlRequest, updatedBy string) error
@@ -99,10 +99,10 @@ type ControlRepository interface {
 	// distinct from UpdateStatus, which drives the ordinary forward workflow.
 	OverrideStatus(ctx context.Context, auditID, controlID int, status string, updatedBy string) error
 	Delete(ctx context.Context, auditID, controlID int) error
-	// AssignedAuditID reports whether userEmail is the owner of controlID for
+	// AssignedAuditID reports whether userID is the owner of controlID for
 	// an actionable status, and returns the control's audit id (for server-side
 	// folder-path derivation). found=false means not assigned (403).
-	AssignedAuditID(ctx context.Context, userEmail string, controlID int) (auditID int, found bool, err error)
+	AssignedAuditID(ctx context.Context, userID int, controlID int) (auditID int, found bool, err error)
 	// ActivePopulationID returns the active population round for an OE control.
 	// found=false means no active population (e.g. a DESIGN control).
 	ActivePopulationID(ctx context.Context, controlID int) (populationID int, found bool, err error)
@@ -119,13 +119,10 @@ type ControlRepository interface {
 type UserRepository interface {
 	List(ctx context.Context) ([]*model.UserRef, error)
 	// GetByID resolves a single user by ID — used by the notification
-	// dispatcher to turn an owner_id into a deliverable email address.
-	// Returns (nil, nil) if no such user exists.
+	// dispatcher to turn an owner_id into a deliverable email address (via the
+	// identity directory) and an active/inactive status. Returns (nil, nil)
+	// if no such user exists.
 	GetByID(ctx context.Context, id int) (*model.UserRef, error)
-	// GetByEmail resolves a single user by email — used by the notification
-	// dispatcher to render the actor who triggered an event as
-	// "Display Name (email)". Returns (nil, nil) if no such user exists.
-	GetByEmail(ctx context.Context, email string) (*model.UserRef, error)
 }
 
 // TeamRepository is the data-access contract for the audit team list.

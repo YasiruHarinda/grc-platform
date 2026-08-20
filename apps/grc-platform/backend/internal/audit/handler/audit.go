@@ -40,11 +40,11 @@ func (h *auditHandler) listAudits(w http.ResponseWriter, r *http.Request) {
 	scope, _ := deriveScopes(ctx)
 	scopeTeamIDs := managedTeamIDs(auth.Grants(ctx))
 	user := auth.FromContext(ctx)
-	var email string
+	var userID int
 	if user != nil {
-		email = user.Email
+		userID = user.UserID
 	}
-	audits, err := h.svc.ListScoped(ctx, scope, email, scopeTeamIDs)
+	audits, err := h.svc.ListScoped(ctx, scope, userID, scopeTeamIDs)
 	if err != nil {
 		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
 		return
@@ -71,11 +71,11 @@ func (h *auditHandler) getAudit(w http.ResponseWriter, r *http.Request) {
 	scope, _ := deriveScopes(ctx)
 	if scope != model.ScopeAll {
 		user := auth.FromContext(ctx)
-		var email string
+		var userID int
 		if user != nil {
-			email = user.Email
+			userID = user.UserID
 		}
-		ok, err := h.svc.InScope(ctx, id, scope, email, managedTeamIDs(auth.Grants(ctx)))
+		ok, err := h.svc.InScope(ctx, id, scope, userID, managedTeamIDs(auth.Grants(ctx)))
 		if err != nil {
 			response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
 			return
@@ -102,7 +102,7 @@ func (h *auditHandler) createAudit(w http.ResponseWriter, r *http.Request) {
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
-	actor := auth.FromContext(r.Context()).Email
+	actor := auth.FromContext(r.Context()).Subject
 	audit, err := h.svc.Create(r.Context(), req, actor)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
@@ -124,7 +124,7 @@ func (h *auditHandler) updateAudit(w http.ResponseWriter, r *http.Request) {
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
-	actor := auth.FromContext(r.Context()).Email
+	actor := auth.FromContext(r.Context()).Subject
 	if err := h.svc.Update(r.Context(), id, req, actor); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
@@ -141,7 +141,7 @@ func (h *auditHandler) deleteAudit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	actor := auth.FromContext(r.Context()).Email
+	actor := auth.FromContext(r.Context()).Subject
 	if err := h.svc.Delete(r.Context(), id, actor); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return

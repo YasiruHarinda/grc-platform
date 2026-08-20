@@ -40,7 +40,9 @@ func validJSONField(name string, v *string) error {
 	return nil
 }
 
-type auditTrailService struct{ repo repository.AuditTrailRepository }
+type auditTrailService struct {
+	repo repository.AuditTrailRepository
+}
 
 // NewAuditTrailService constructs a AuditTrailService.
 func NewAuditTrailService(repo repository.AuditTrailRepository) AuditTrailService {

@@ -19,6 +19,7 @@ package directory_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -30,6 +31,7 @@ import (
 )
 
 const testUUID = "885aeeb0-2086-4ca4-83c9-b2a62b299967"
+const testExternalUUID = "f30c1c9a-6c1e-4c7c-9d9a-6a5f8e6a2222"
 
 // fakeDirectory stands in for the SCIM Operations Service. Serving it over real
 // HTTP keeps the scim.Client's own request building, status handling and JSON
@@ -37,13 +39,21 @@ const testUUID = "885aeeb0-2086-4ca4-83c9-b2a62b299967"
 // likely to be wrong.
 type fakeDirectory struct {
 	srv *httptest.Server
-	// calls counts user searches, so a test can prove the cache prevented one.
+	// calls counts internal-org user searches, so a test can prove the cache
+	// prevented one.
 	calls atomic.Int32
 	// down makes every call fail, simulating an unreachable directory.
 	down atomic.Bool
-	// known is whether the user search finds anybody.
+	// known is whether the internal-org user search finds anybody.
 	known atomic.Bool
 	name  atomic.Value // string
+
+	// externalCalls/externalKnown are the external-org equivalents of
+	// calls/known — the two orgs are genuinely separate identity spaces (see
+	// LookupTyped), so each gets its own knowledge of who exists.
+	externalCalls atomic.Int32
+	externalKnown atomic.Bool
+	externalName  atomic.Value // string
 }
 
 func newFakeDirectory(t *testing.T) *fakeDirectory {
@@ -51,6 +61,8 @@ func newFakeDirectory(t *testing.T) *fakeDirectory {
 	f := &fakeDirectory{}
 	f.known.Store(true)
 	f.name.Store("Nimali Perera")
+	f.externalKnown.Store(true)
+	f.externalName.Store("Alex External")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /oauth2/token", func(w http.ResponseWriter, r *http.Request) {
@@ -66,11 +78,38 @@ func newFakeDirectory(t *testing.T) *fakeDirectory {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
+		var in struct {
+			Filter string `json:"filter"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&in)
 		resources := []map[string]any{}
-		if f.known.Load() {
+		// Only matches testUUID's own filter — a query for any other uuid
+		// (including one that's real in the external org) finds nobody here,
+		// same as a real Asgardeo org search would for an id it doesn't hold.
+		if f.known.Load() && in.Filter == fmt.Sprintf("id eq %q", testUUID) {
 			parts := map[string]any{"givenName": f.name.Load().(string), "familyName": ""}
 			resources = append(resources, map[string]any{
 				"id": testUUID, "userName": "nimali.re@wso2.com", "name": parts,
+			})
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"Resources": resources})
+	})
+	mux.HandleFunc("POST /organizations/external/users/search", func(w http.ResponseWriter, r *http.Request) {
+		f.externalCalls.Add(1)
+		if f.down.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		var in struct {
+			Filter string `json:"filter"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		resources := []map[string]any{}
+		if f.externalKnown.Load() && in.Filter == fmt.Sprintf("id eq %q", testExternalUUID) {
+			parts := map[string]any{"givenName": f.externalName.Load().(string), "familyName": ""}
+			resources = append(resources, map[string]any{
+				"id": testExternalUUID, "userName": "alex.external@partner.example", "name": parts,
 			})
 		}
 		w.WriteHeader(http.StatusCreated)
@@ -85,6 +124,14 @@ func newFakeDirectory(t *testing.T) *fakeDirectory {
 func (f *fakeDirectory) service(ttl time.Duration) *directory.Service {
 	c := scim.NewClient(f.srv.URL, f.srv.URL+"/oauth2/token", "id", "secret", "scope")
 	return directory.New(c, ttl)
+}
+
+// serviceWithExternal is service plus an external-org client pointed at the
+// same fake server's external-org path, for LookupTyped/LookupAllTyped tests.
+func (f *fakeDirectory) serviceWithExternal(ttl time.Duration) *directory.Service {
+	c := scim.NewClient(f.srv.URL, f.srv.URL+"/oauth2/token", "id", "secret", "scope")
+	ec := scim.NewExternalClient(f.srv.URL, f.srv.URL+"/oauth2/token", "id", "secret", "scope")
+	return directory.NewWithExternal(c, ec, ttl)
 }
 
 func TestLookup_ResolvesAndCaches(t *testing.T) {
@@ -206,5 +253,92 @@ func TestLookupAll_DeduplicatesAndOmitsUnknown(t *testing.T) {
 	f.known.Store(false)
 	if out := svc.LookupAll(context.Background(), []string{"nobody-at-all"}); len(out) != 0 {
 		t.Errorf("unknown uuids must be omitted, got %+v", out)
+	}
+}
+
+// TestLookupTyped_RoutesInternalThroughExistingPath confirms an INTERNAL
+// user_type resolves exactly as plain Lookup does (bulk/per-uuid internal
+// path), never touching the external-org endpoint.
+func TestLookupTyped_RoutesInternalThroughExistingPath(t *testing.T) {
+	f := newFakeDirectory(t)
+	svc := f.serviceWithExternal(time.Hour)
+
+	p, ok := svc.LookupTyped(context.Background(), testUUID, "INTERNAL")
+	if !ok || p.DisplayName != "Nimali Perera" {
+		t.Fatalf("got (%+v, %v), want the internal-org user resolved", p, ok)
+	}
+	if got := f.externalCalls.Load(); got != 0 {
+		t.Errorf("external-org endpoint called %d times for an INTERNAL lookup, want 0", got)
+	}
+}
+
+// TestLookupTyped_RoutesExternalThroughExternalClient confirms an EXTERNAL
+// user_type is resolved via the external-org client, cached the same way the
+// internal per-uuid fallback is.
+func TestLookupTyped_RoutesExternalThroughExternalClient(t *testing.T) {
+	f := newFakeDirectory(t)
+	svc := f.serviceWithExternal(time.Hour)
+
+	for i := 0; i < 3; i++ {
+		p, ok := svc.LookupTyped(context.Background(), testExternalUUID, "EXTERNAL")
+		if !ok || p.DisplayName != "Alex External" {
+			t.Fatalf("lookup %d: got (%+v, %v), want the external-org user resolved", i, p, ok)
+		}
+	}
+	if got := f.externalCalls.Load(); got != 1 {
+		t.Errorf("external-org endpoint called %d times for 3 lookups, want 1 — the cache did not hold", got)
+	}
+	if got := f.calls.Load(); got != 0 {
+		t.Errorf("internal-org endpoint called %d times for an EXTERNAL lookup, want 0", got)
+	}
+}
+
+// TestLookupTyped_CrossOrgUUIDFailsRatherThanResolving is the design doc's
+// (§8) explicit assertion: the two SCIM orgs are separate identity spaces, so
+// asking for a known-internal uuid as EXTERNAL (or vice versa) must fail the
+// lookup, not silently resolve — cross-wiring a user_type would otherwise be
+// invisible.
+func TestLookupTyped_CrossOrgUUIDFailsRatherThanResolving(t *testing.T) {
+	f := newFakeDirectory(t)
+	svc := f.serviceWithExternal(time.Hour)
+
+	if _, ok := svc.LookupTyped(context.Background(), testUUID, "EXTERNAL"); ok {
+		t.Error("an internal-only uuid looked up as EXTERNAL must not resolve")
+	}
+	if _, ok := svc.LookupTyped(context.Background(), testExternalUUID, "INTERNAL"); ok {
+		t.Error("an external-only uuid looked up as INTERNAL must not resolve")
+	}
+}
+
+// TestLookupTyped_NilExternalClientIsUnresolvedNotAPanic mirrors
+// TestLookup_NilClientIsUnresolvedNotAPanic for the external path — local
+// development without external-org credentials must degrade, not crash.
+func TestLookupTyped_NilExternalClientIsUnresolvedNotAPanic(t *testing.T) {
+	svc := directory.NewWithExternal(nil, nil, time.Hour)
+	if _, ok := svc.LookupTyped(context.Background(), testExternalUUID, "EXTERNAL"); ok {
+		t.Error("a nil external client must not resolve anybody")
+	}
+}
+
+// TestLookupAllTyped_RoutesEachUUIDByItsOwnType confirms LookupAllTyped
+// dispatches each uuid through LookupTyped individually rather than assuming
+// one type for the whole batch.
+func TestLookupAllTyped_RoutesEachUUIDByItsOwnType(t *testing.T) {
+	f := newFakeDirectory(t)
+	svc := f.serviceWithExternal(time.Hour)
+
+	got := svc.LookupAllTyped(context.Background(), map[string]string{
+		testUUID:         "INTERNAL",
+		testExternalUUID: "EXTERNAL",
+		"":               "EXTERNAL",
+	})
+	if len(got) != 2 {
+		t.Fatalf("got %d people, want 2: %+v", len(got), got)
+	}
+	if got[testUUID].DisplayName != "Nimali Perera" {
+		t.Errorf("wrong internal person: %+v", got[testUUID])
+	}
+	if got[testExternalUUID].DisplayName != "Alex External" {
+		t.Errorf("wrong external person: %+v", got[testExternalUUID])
 	}
 }

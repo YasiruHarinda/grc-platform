@@ -153,7 +153,7 @@ func (h *evidenceHandler) submitPopulation(w http.ResponseWriter, r *http.Reques
 	}
 
 	user := auth.FromContext(r.Context())
-	actor := user.Email
+	actor := user.Subject
 
 	result, err := h.popSvc.SubmitPopulation(r.Context(), controlID, populationID, req.FolderPath, req.Attestation, actor)
 	if err != nil {
@@ -177,7 +177,7 @@ func (h *evidenceHandler) submitPopulation(w http.ResponseWriter, r *http.Reques
 
 // canViewPopulation allows: the team (SubmitEvidence), an internal reviewer
 // (ReviewEvidence), an org-wide reader (ViewAllAudits, e.g. management),
-// the control's assigned auditor (by email), or ManageControls.
+// the control's assigned auditor (by user id), or ManageControls.
 // Unlike the write routes there is no team-assignment (IDOR) check here — this
 // mirrors listEvidence/downloadEvidenceFile, which are privilege-gated only.
 // Each privilege is checked against control's own team (HasPrivilegeIn), since
@@ -197,7 +197,7 @@ func canViewPopulation(r *http.Request, control *model.AuditControl) bool {
 		return true
 	}
 	actor := auth.FromContext(ctx)
-	return control.AuditorEmail != nil && strings.EqualFold(*control.AuditorEmail, actor.Email)
+	return control.AuditorID != nil && *control.AuditorID == actor.UserID
 }
 
 // withReadURLs computes the backend proxy download URL for each population file.
@@ -482,7 +482,7 @@ func (h *evidenceHandler) deletePopulationAttestation(w http.ResponseWriter, r *
 		return
 	}
 
-	actor := auth.FromContext(r.Context()).Email
+	actor := auth.FromContext(r.Context()).Subject
 	if err := h.popSvc.ClearAttestation(r.Context(), round.ID, actor); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return

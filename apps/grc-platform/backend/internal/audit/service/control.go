@@ -26,6 +26,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/apierror"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/repository"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 )
 
 // validStatuses is the set of allowed control status transitions the API accepts
@@ -53,9 +54,9 @@ var validStatuses = map[string]bool{
 // ControlService defines business operations for audit controls.
 type ControlService interface {
 	List(ctx context.Context, auditID int) ([]*model.AuditControl, error)
-	ListScoped(ctx context.Context, auditID int, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.AuditControl, error)
+	ListScoped(ctx context.Context, auditID int, scope model.Scope, userID int, scopeTeamIDs []int) ([]*model.AuditControl, error)
 	GetByID(ctx context.Context, auditID, controlID int) (*model.AuditControl, error)
-	InScope(ctx context.Context, auditID, controlID int, scope model.Scope, userEmail string, scopeTeamIDs []int) (bool, error)
+	InScope(ctx context.Context, auditID, controlID int, scope model.Scope, userID int, scopeTeamIDs []int) (bool, error)
 	Add(ctx context.Context, auditID int, req model.AddControlRequest, createdBy string) (*model.AuditControl, error)
 	BulkAdd(ctx context.Context, auditID int, reqs []model.AddControlRequest, createdBy string) ([]*model.AuditControl, error)
 	// Update edits a control (and optionally its population round) and
@@ -70,9 +71,9 @@ type ControlService interface {
 	// atomically — used when the auditor submits the sample.
 	UpdateStatusWithSample(ctx context.Context, auditID, controlID int, status, sampleReference, updatedBy string) error
 	Delete(ctx context.Context, auditID, controlID int, deletedBy string) error
-	// AssignedAuditID returns the audit id for controlID when userEmail is the
+	// AssignedAuditID returns the audit id for controlID when userID is the
 	// control's owner and the control is actionable; found=false means not assigned.
-	AssignedAuditID(ctx context.Context, userEmail string, controlID int) (auditID int, found bool, err error)
+	AssignedAuditID(ctx context.Context, userID int, controlID int) (auditID int, found bool, err error)
 	// ActivePopulationID returns the active population round id for an OE control;
 	// found=false means no active population (e.g. a DESIGN control).
 	ActivePopulationID(ctx context.Context, controlID int) (populationID int, found bool, err error)
@@ -91,10 +92,61 @@ type controlService struct {
 	// trail records lifecycle events (created, status transitions) to the
 	// append-only audit trail. Best-effort; may be nil (recording is then skipped).
 	trail TrailService
+	// directory resolves OwnerUUID/AuditorUUID/PopulationOwnerUUID to display
+	// names (see enrichNames) — the `user` table stores none itself. Nil is
+	// tolerated (local dev without SCIM configured): names simply stay unset.
+	directory *directory.Service
 }
 
-func NewControlService(repo repository.ControlRepository, population repository.PopulationRepository, trail TrailService) ControlService {
-	return &controlService{repo: repo, population: population, trail: trail}
+func NewControlService(repo repository.ControlRepository, population repository.PopulationRepository, trail TrailService, dir *directory.Service) ControlService {
+	return &controlService{repo: repo, population: population, trail: trail, directory: dir}
+}
+
+// enrichNames batch-resolves OwnerUUID/AuditorUUID/PopulationOwnerUUID on
+// every control to a display name via the identity directory — one batched
+// lookup for the whole slice, not one per control. Best-effort: a uuid the
+// directory doesn't know (or an absent owner/auditor) simply leaves the
+// corresponding *Name field nil, the same way an unassigned control already
+// carries a nil OwnerName.
+func (s *controlService) enrichNames(ctx context.Context, controls []*model.AuditControl) {
+	if s.directory == nil {
+		return
+	}
+	uuidTypes := map[string]string{}
+	addRef := func(uuid, userType *string) {
+		if uuid == nil || *uuid == "" {
+			return
+		}
+		ut := ""
+		if userType != nil {
+			ut = *userType
+		}
+		uuidTypes[*uuid] = ut
+	}
+	for _, c := range controls {
+		addRef(c.OwnerUUID, c.OwnerUserType)
+		addRef(c.AuditorUUID, c.AuditorUserType)
+		addRef(c.PopulationOwnerUUID, c.PopulationOwnerUserType)
+	}
+	if len(uuidTypes) == 0 {
+		return
+	}
+	people := s.directory.LookupAllTyped(ctx, uuidTypes)
+	nameFor := func(uuid *string) *string {
+		if uuid == nil || *uuid == "" {
+			return nil
+		}
+		if p, ok := people[*uuid]; ok && p.DisplayName != "" {
+			name := p.DisplayName
+			return &name
+		}
+		return nil
+	}
+	for _, c := range controls {
+		c.OwnerName = nameFor(c.OwnerUUID)
+		c.AuditorName = nameFor(c.AuditorUUID)
+		c.PopulationOwnerName = nameFor(c.PopulationOwnerUUID)
+	}
 }
 
 // recordTrail appends a best-effort lifecycle entry. A failure here must never
@@ -121,16 +173,23 @@ func statusChangeAction(to string) string {
 	}
 }
 
+// List is unscoped and used internally (e.g. sanitizedControlNumbers) — its
+// result is never shown to a user, so it skips name enrichment.
 func (s *controlService) List(ctx context.Context, auditID int) ([]*model.AuditControl, error) {
 	return s.repo.List(ctx, auditID)
 }
 
-func (s *controlService) ListScoped(ctx context.Context, auditID int, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.AuditControl, error) {
-	return s.repo.ListScoped(ctx, auditID, scope, userEmail, scopeTeamIDs)
+func (s *controlService) ListScoped(ctx context.Context, auditID int, scope model.Scope, userID int, scopeTeamIDs []int) ([]*model.AuditControl, error) {
+	controls, err := s.repo.ListScoped(ctx, auditID, scope, userID, scopeTeamIDs)
+	if err != nil {
+		return nil, err
+	}
+	s.enrichNames(ctx, controls)
+	return controls, nil
 }
 
-func (s *controlService) InScope(ctx context.Context, auditID, controlID int, scope model.Scope, userEmail string, scopeTeamIDs []int) (bool, error) {
-	return s.repo.InScope(ctx, auditID, controlID, scope, userEmail, scopeTeamIDs)
+func (s *controlService) InScope(ctx context.Context, auditID, controlID int, scope model.Scope, userID int, scopeTeamIDs []int) (bool, error) {
+	return s.repo.InScope(ctx, auditID, controlID, scope, userID, scopeTeamIDs)
 }
 
 func (s *controlService) GetByID(ctx context.Context, auditID, controlID int) (*model.AuditControl, error) {
@@ -141,6 +200,7 @@ func (s *controlService) GetByID(ctx context.Context, auditID, controlID int) (*
 	if c == nil {
 		return nil, &apierror.Error{StatusCode: http.StatusNotFound, Body: "control not found"}
 	}
+	s.enrichNames(ctx, []*model.AuditControl{c})
 	return c, nil
 }
 
@@ -181,6 +241,7 @@ func (s *controlService) Add(ctx context.Context, auditID int, req model.AddCont
 	s.recordTrail(ctx, auditID, c.ID, "CREATED", createdBy, map[string]any{
 		"controlNumber": c.ControlNumber,
 	})
+	s.enrichNames(ctx, []*model.AuditControl{c})
 	return c, nil
 }
 
@@ -211,7 +272,12 @@ func (s *controlService) BulkAdd(ctx context.Context, auditID int, reqs []model.
 		}
 		index[key] = req.ControlNumber
 	}
-	return s.repo.BulkCreate(ctx, auditID, reqs, createdBy)
+	created, err := s.repo.BulkCreate(ctx, auditID, reqs, createdBy)
+	if err != nil {
+		return nil, err
+	}
+	s.enrichNames(ctx, created)
+	return created, nil
 }
 
 // ControlUpdateResult reports what Update changed, so the caller (the
@@ -402,8 +468,8 @@ func (s *controlService) Delete(ctx context.Context, auditID, controlID int, del
 	return s.repo.Delete(ctx, auditID, controlID)
 }
 
-func (s *controlService) AssignedAuditID(ctx context.Context, userEmail string, controlID int) (int, bool, error) {
-	return s.repo.AssignedAuditID(ctx, userEmail, controlID)
+func (s *controlService) AssignedAuditID(ctx context.Context, userID int, controlID int) (int, bool, error) {
+	return s.repo.AssignedAuditID(ctx, userID, controlID)
 }
 
 func (s *controlService) ActivePopulationID(ctx context.Context, controlID int) (int, bool, error) {

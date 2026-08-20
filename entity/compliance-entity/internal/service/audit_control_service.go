@@ -416,14 +416,14 @@ func (s *controlService) CreateControl(ctx context.Context, auditID int, req dom
 	return *c, nil
 }
 
-func (s *controlService) GetEvidenceAssignment(ctx context.Context, userEmail string, controlID int) (domain.EvidenceAssignmentResponse, error) {
-	if userEmail == "" {
-		return domain.EvidenceAssignmentResponse{}, &apierror.ValidationError{Msg: "email is required"}
+func (s *controlService) GetEvidenceAssignment(ctx context.Context, userID int, controlID int) (domain.EvidenceAssignmentResponse, error) {
+	if userID <= 0 {
+		return domain.EvidenceAssignmentResponse{}, &apierror.ValidationError{Msg: "userId is required"}
 	}
 	if controlID <= 0 {
 		return domain.EvidenceAssignmentResponse{}, &apierror.ValidationError{Msg: "controlId must be a positive integer"}
 	}
-	auditID, err := s.repo.GetEvidenceAssignment(ctx, userEmail, controlID)
+	auditID, err := s.repo.GetEvidenceAssignment(ctx, userID, controlID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.EvidenceAssignmentResponse{}, &apierror.NotFoundError{Msg: "not assigned to this control"}
 	}

@@ -78,14 +78,15 @@ func (h *commentHandler) addComment(w http.ResponseWriter, r *http.Request) {
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
-	actor := auth.FromContext(r.Context()).Email
+	caller := auth.FromContext(r.Context())
+	actor := caller.Subject
 	c, err := h.svc.Add(r.Context(), auditID, controlID, req, actor)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
 	if control, err := h.controlSvc.GetByID(r.Context(), auditID, controlID); err == nil && control != nil {
-		h.notify.notifyCommentAdded(r.Context(), control, c, actor)
+		h.notify.notifyCommentAdded(r.Context(), control, c, actor, caller.UserID)
 	}
 	response.WriteJSONValue(w, http.StatusCreated, c)
 }
@@ -114,7 +115,7 @@ func (h *commentHandler) deleteComment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	actor := auth.FromContext(r.Context()).Email
+	actor := auth.FromContext(r.Context()).Subject
 	isAdmin := auth.HasPrivilege(r.Context(), privilege.ManageControls)
 	if err := h.svc.Delete(r.Context(), auditID, controlID, commentID, actor, isAdmin); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)

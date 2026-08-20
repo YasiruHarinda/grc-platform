@@ -29,8 +29,8 @@ import (
 
 // requireAssignedAuditor authorizes population-validation, sample-selection, and
 // evidence-validation actions to the control's assigned auditor POC only —
-// matched by email against control.AuditorEmail — since those are external-
-// auditor decisions, not internal-reviewer ones.
+// matched by the caller's own resolved user.id against control.AuditorID —
+// since those are external-auditor decisions, not internal-reviewer ones.
 //
 // requiredPriv is the auditor privilege for the action — AUDIT_VALIDATE_EVIDENCE
 // for the validate endpoints, AUDIT_SELECT_SAMPLE for the sample endpoints. It
@@ -49,7 +49,7 @@ func requireAssignedAuditor(w http.ResponseWriter, r *http.Request, control *mod
 		return false
 	}
 	actor := auth.FromContext(r.Context())
-	if control.AuditorEmail == nil || !strings.EqualFold(*control.AuditorEmail, actor.Email) {
+	if control.AuditorID == nil || *control.AuditorID != actor.UserID {
 		response.WriteError(w, http.StatusForbidden, response.ErrMsgForbidden)
 		return false
 	}
@@ -78,7 +78,7 @@ type decideRoundParams struct {
 	// it (the internal reviewer's plain privilege check). nil to skip.
 	preGate func(w http.ResponseWriter, r *http.Request) bool
 	// postGate runs after the control is fetched — for checks that need it
-	// (requireAssignedAuditor, keyed on control.AuditorEmail). nil to skip.
+	// (requireAssignedAuditor, keyed on control.AuditorID). nil to skip.
 	postGate func(w http.ResponseWriter, r *http.Request, control *model.AuditControl) bool
 
 	requiredStatus    string // the control.Status this action is only valid from
@@ -134,7 +134,7 @@ func (h *evidenceHandler) decideRound(w http.ResponseWriter, r *http.Request, p 
 		return
 	}
 
-	actor := auth.FromContext(r.Context()).Email
+	actor := auth.FromContext(r.Context()).Subject
 	roundStatus, controlStatus := p.approveRoundStatus, p.approveControlStatus
 	reject := req.Decision == "REJECT"
 	if reject {

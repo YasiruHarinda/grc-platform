@@ -131,13 +131,13 @@ type AuditFramework struct {
 type SearchAuditFrameworksRequest struct {
 	SearchQuery string `json:"searchQuery"`
 	StatusKey   string `json:"statusKey"` // ACTIVE | INACTIVE | "" (all)
-	// Scope/UserEmail apply the same row-scoping rule as controls/audits (see
+	// Scope/UserID apply the same row-scoping rule as controls/audits (see
 	// audit_dashboard_repo.go's scopeWhere): a framework has no team of its own,
 	// so it matches when it has at least one audit with at least one control in
 	// scope. Omitted/empty Scope matches nothing; internal callers that want
 	// every row must send ScopeAll explicitly.
-	Scope     Scope  `json:"scope"`
-	UserEmail string `json:"userEmail"`
+	Scope  Scope `json:"scope"`
+	UserID int   `json:"userId"`
 	// ScopeTeamIDs is the team(s) the caller manages, server-derived by the GRC
 	// backend from the caller's grants. Only read when Scope is ScopeTeam.
 	ScopeTeamIDs []int      `json:"scopeTeamIds"`
@@ -271,13 +271,13 @@ type SearchAuditsRequest struct {
 	// single-item scope check (is auditId visible to this caller at this
 	// scope?) so it can reuse this same query instead of a bespoke endpoint.
 	AuditIDs []int `json:"auditIds"`
-	// Scope/UserEmail apply the same row-scoping rule as the dashboard (see
+	// Scope/UserID apply the same row-scoping rule as the dashboard (see
 	// dashboard.go's Scope type and audit_dashboard_repo.go's scopeWhere): an
 	// audit matches only if it has at least one control within scope.
 	// Omitted/empty Scope matches nothing; internal callers that want every
 	// row (e.g. existence/uniqueness checks) must send ScopeAll explicitly.
-	Scope     Scope  `json:"scope"`
-	UserEmail string `json:"userEmail"`
+	Scope  Scope `json:"scope"`
+	UserID int   `json:"userId"`
 	// ScopeTeamIDs is the team(s) the caller manages, server-derived by the GRC
 	// backend from the caller's grants. Only read when Scope is ScopeTeam.
 	ScopeTeamIDs []int      `json:"scopeTeamIds"`
@@ -310,17 +310,24 @@ type AuditControl struct {
 	ControlType         string  `json:"controlType"`
 	Scope               string  `json:"scope"`
 	OwnerID             *int    `json:"ownerId"`
-	OwnerName           *string `json:"ownerName"`
-	TeamID              *int    `json:"teamId"`
-	TeamName            *string `json:"teamName"`
-	AuditorID           *int    `json:"auditorId"`
-	AuditorName         *string `json:"auditorName"`
-	// AuditorEmail identifies the assigned auditor for the assigned-auditor gate
-	// (population validation, sample selection, evidence validation): the caller
-	// is authorized when their token email matches this value.
-	AuditorEmail *string `json:"auditorEmail"`
-	DueDate      *string `json:"dueDate"` // YYYY-MM-DD
-	Status       string  `json:"status"`
+	// OwnerUUID/OwnerUserType are the owner's Asgardeo id and INTERNAL/EXTERNAL
+	// classification — the GRC Backend resolves them to a display name via the
+	// identity directory (routed by OwnerUserType) rather than reading one
+	// from this row (the `user` table stores no name; see shared.sql).
+	OwnerUUID     *string `json:"ownerUuid"`
+	OwnerUserType *string `json:"ownerUserType"`
+	TeamID        *int    `json:"teamId"`
+	TeamName      *string `json:"teamName"`
+	AuditorID     *int    `json:"auditorId"`
+	// AuditorUUID/AuditorUserType are the assigned auditor's Asgardeo id and
+	// classification, resolved to a display name by the GRC Backend the same
+	// way OwnerUUID is. The assigned-auditor gate itself (population
+	// validation, sample selection, evidence validation) compares AuditorID
+	// against the caller's own user.id — no email or uuid comparison involved.
+	AuditorUUID     *string `json:"auditorUuid"`
+	AuditorUserType *string `json:"auditorUserType"`
+	DueDate         *string `json:"dueDate"` // YYYY-MM-DD
+	Status          string  `json:"status"`
 	// SampleReference is the auditor's sample-selection note (set via
 	// UpdateControlRequest.SampleReference / UpdateStatusWithSample). Comments
 	// is the reviewer/auditor's most recent reject reason. Both are plain
@@ -341,10 +348,14 @@ type AuditControl struct {
 	PopulationDescription *string `json:"populationDescription"`
 	PopulationComments    *string `json:"populationComments"`
 	PopulationDueDate     *string `json:"populationDueDate"`
-	PopulationOwnerName   *string `json:"populationOwnerName"`
-	PopulationTeamName    *string `json:"populationTeamName"`
+	// PopulationOwnerUUID/PopulationOwnerUserType are the population owner's
+	// Asgardeo id and classification — see OwnerUUID above for why these are a
+	// uuid/type pair rather than a name.
+	PopulationOwnerUUID     *string `json:"populationOwnerUuid"`
+	PopulationOwnerUserType *string `json:"populationOwnerUserType"`
+	PopulationTeamName      *string `json:"populationTeamName"`
 	// PopulationID/PopulationOwnerID/PopulationStatus are the IDs behind
-	// PopulationOwnerName/PopulationTeamName above (added for the audit
+	// PopulationOwnerUUID/PopulationTeamName above (added for the audit
 	// notification reminder job, which needs to resolve and dedup against the
 	// population's own owner, not just display its name).
 	PopulationID      *int    `json:"populationId"`
@@ -364,12 +375,12 @@ type SearchControlsRequest struct {
 	// single-item scope check (is controlId visible to this caller at this
 	// scope?) so it can reuse this same query instead of a bespoke endpoint.
 	ControlIDs []int `json:"controlIds"`
-	// Scope/UserEmail apply the same row-scoping rule as the dashboard (see
+	// Scope/UserID apply the same row-scoping rule as the dashboard (see
 	// dashboard.go's Scope type and audit_dashboard_repo.go's scopeWhere).
 	// Omitted/empty Scope matches nothing; internal callers that want every
 	// row must send ScopeAll explicitly.
-	Scope     Scope  `json:"scope"`
-	UserEmail string `json:"userEmail"`
+	Scope  Scope `json:"scope"`
+	UserID int   `json:"userId"`
 	// ScopeTeamIDs is the team(s) the caller manages, server-derived by the GRC
 	// backend from the caller's grants. Distinct from TeamIDs above, which is a
 	// client-supplied display filter — only read when Scope is ScopeTeam.
@@ -930,11 +941,11 @@ type AuditEvidenceFile struct {
 	FileType     *string   `json:"fileType"`
 	FileSize     *int64    `json:"fileSize"`
 	CreatedOn    time.Time `json:"createdOn"`
-	// AuditorEmail is the email of the auditor assigned to the file's owning
+	// AuditorID is the user.id of the auditor assigned to the file's owning
 	// control (nil if the control has no auditor or the file has no evidence_id,
 	// e.g. a population file). Only populated by GetEvidenceFileByID, for the
 	// GRC Backend's assigned-auditor download gate — never persisted here.
-	AuditorEmail *string `json:"auditorEmail"`
+	AuditorID *int `json:"auditorId"`
 	// TeamID is the file's owning control's team_id (nil if the control has no
 	// team or the file has no evidence_id). Only populated by
 	// GetEvidenceFileByID, so the GRC Backend can authorize downloads against a

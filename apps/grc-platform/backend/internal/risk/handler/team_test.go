@@ -54,7 +54,7 @@ func (f *fakeTeamService) Update(context.Context, int, model.UpdateTeamRequest, 
 // "may create everywhere".
 func TestListTeamsPrivilegeFilterAppliesEvenWhenCallerSeesEveryRisk(t *testing.T) {
 	ctx := contextForGrants(t,
-		map[string]bool{privilege.ViewRisks: true}, // GLOBAL — makes seesEveryRisk true
+		map[string]bool{privilege.ViewRisks: true},                      // GLOBAL — makes seesEveryRisk true
 		map[int]map[string]bool{asgardeo: {privilege.CreateRisk: true}}, // RISK_CREATE only on Asgardeo
 	)
 

@@ -21,7 +21,6 @@ package entity
 import (
 	"context"
 	"fmt"
-	"net/url"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/repository"
@@ -64,7 +63,7 @@ func NewFrameworkRepository(c *entityclient.Client) repository.FrameworkReposito
 	return &frameworkRepo{c: c}
 }
 
-func (r *frameworkRepo) List(ctx context.Context, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.AuditFramework, error) {
+func (r *frameworkRepo) List(ctx context.Context, scope model.Scope, userID int, scopeTeamIDs []int) ([]*model.AuditFramework, error) {
 	var all []*model.AuditFramework
 	for offset := 0; ; offset += pageLimit {
 		var resp struct {
@@ -73,7 +72,7 @@ func (r *frameworkRepo) List(ctx context.Context, scope model.Scope, userEmail s
 		body := map[string]any{
 			"statusKey":    statusActive,
 			"scope":        scope,
-			"userEmail":    userEmail,
+			"userId":       userID,
 			"scopeTeamIds": scopeTeamIDs,
 			"pagination":   map[string]int{"limit": pageLimit, "offset": offset},
 		}
@@ -183,19 +182,6 @@ func (r *userRepo) List(ctx context.Context) ([]*model.UserRef, error) {
 func (r *userRepo) GetByID(ctx context.Context, id int) (*model.UserRef, error) {
 	var u model.UserRef
 	if err := r.c.Get(ctx, fmt.Sprintf("/users/%d", id), &u); err != nil {
-		if notFound(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return &u, nil
-}
-
-// GetByEmail resolves a user by email — used by the notification dispatcher
-// to render the actor who triggered an event as "Display Name (email)".
-func (r *userRepo) GetByEmail(ctx context.Context, email string) (*model.UserRef, error) {
-	var u model.UserRef
-	if err := r.c.Get(ctx, fmt.Sprintf("/users/by-email/%s", url.QueryEscape(email)), &u); err != nil {
 		if notFound(err) {
 			return nil, nil
 		}

@@ -196,14 +196,14 @@ type RiskListPage struct {
 // RiskListItem is the lightweight DTO returned by GET /api/v1/risks.
 // Joins resolve display names so the frontend table needs no secondary fetches.
 type RiskListItem struct {
-	ID                 int     `json:"id"`
-	RiskCode           string  `json:"risk_code"`
-	RiskTitle          string  `json:"risk_title"`
-	SourceRegisterName string  `json:"source_register_name"`
-	RiskLevel          string  `json:"risk_level"`
-	RiskLevelColor     string  `json:"risk_level_color"`
-	OwnerName          string  `json:"owner_name"`
-	AssignerName       string  `json:"assigner_name"`
+	ID                 int    `json:"id"`
+	RiskCode           string `json:"risk_code"`
+	RiskTitle          string `json:"risk_title"`
+	SourceRegisterName string `json:"source_register_name"`
+	RiskLevel          string `json:"risk_level"`
+	RiskLevelColor     string `json:"risk_level_color"`
+	OwnerName          string `json:"owner_name"`
+	AssignerName       string `json:"assigner_name"`
 	// *UUID identify each person for name resolution against the identity
 	// directory. Not rendered by the client; they exist so the backend can
 	// enrich *Name after the data layer stops joining a display_name.

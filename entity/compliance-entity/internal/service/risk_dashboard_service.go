@@ -35,7 +35,9 @@ type RiskDashboardService interface {
 	Summary(ctx context.Context, req domain.RiskDashboardRequest) (domain.RiskDashboardSummary, error)
 }
 
-type riskDashboardService struct{ repo repository.RiskDashboardRepository }
+type riskDashboardService struct {
+	repo repository.RiskDashboardRepository
+}
 
 // NewRiskDashboardService constructs a RiskDashboardService.
 func NewRiskDashboardService(repo repository.RiskDashboardRepository) RiskDashboardService {

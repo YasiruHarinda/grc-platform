@@ -36,7 +36,9 @@ const trailDateFormat = "2006-01-02"
 type AuditTrailHandler struct{ svc service.AuditTrailService }
 
 // NewAuditTrailHandler constructs a AuditTrailHandler.
-func NewAuditTrailHandler(svc service.AuditTrailService) *AuditTrailHandler { return &AuditTrailHandler{svc: svc} }
+func NewAuditTrailHandler(svc service.AuditTrailService) *AuditTrailHandler {
+	return &AuditTrailHandler{svc: svc}
+}
 
 // CreateAuditTrail handles POST /audits/{auditId}/trail.
 func (h *AuditTrailHandler) CreateAuditTrail(w http.ResponseWriter, r *http.Request) {

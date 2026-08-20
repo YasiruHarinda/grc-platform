@@ -28,7 +28,7 @@ import (
 // FrameworkService defines business operations for audit frameworks, products,
 // and the versioned framework control library.
 type FrameworkService interface {
-	ListFrameworks(ctx context.Context, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.AuditFramework, error)
+	ListFrameworks(ctx context.Context, scope model.Scope, userID int, scopeTeamIDs []int) ([]*model.AuditFramework, error)
 	CreateFramework(ctx context.Context, req model.CreateFrameworkRequest, createdBy string) (*model.AuditFramework, error)
 	ListProducts(ctx context.Context) ([]*model.AuditProduct, error)
 	CreateProduct(ctx context.Context, req model.CreateProductRequest, createdBy string) (*model.AuditProduct, error)
@@ -46,8 +46,8 @@ func NewFrameworkService(frameworkRepo repository.FrameworkRepository, productRe
 	return &frameworkService{frameworkRepo: frameworkRepo, productRepo: productRepo, frameworkControlRepo: frameworkControlRepo}
 }
 
-func (s *frameworkService) ListFrameworks(ctx context.Context, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.AuditFramework, error) {
-	return s.frameworkRepo.List(ctx, scope, userEmail, scopeTeamIDs)
+func (s *frameworkService) ListFrameworks(ctx context.Context, scope model.Scope, userID int, scopeTeamIDs []int) ([]*model.AuditFramework, error) {
+	return s.frameworkRepo.List(ctx, scope, userID, scopeTeamIDs)
 }
 
 func (s *frameworkService) CreateFramework(ctx context.Context, req model.CreateFrameworkRequest, createdBy string) (*model.AuditFramework, error) {

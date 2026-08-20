@@ -89,9 +89,9 @@ type ControlService interface {
 	// stamping the override marker. See ControlRepository.OverrideControlStatus.
 	OverrideControlStatus(ctx context.Context, auditID, controlID int, req domain.OverrideControlStatusRequest) (domain.AuditControl, error)
 	DeleteControl(ctx context.Context, auditID, controlID int) error
-	// GetEvidenceAssignment confirms userEmail is assigned to an actionable control
+	// GetEvidenceAssignment confirms userID is assigned to an actionable control
 	// and returns its audit id (for server-side folder-path derivation).
-	GetEvidenceAssignment(ctx context.Context, userEmail string, controlID int) (domain.EvidenceAssignmentResponse, error)
+	GetEvidenceAssignment(ctx context.Context, userID int, controlID int) (domain.EvidenceAssignmentResponse, error)
 	// FindActivePopulation returns the active population round for an OE control.
 	FindActivePopulation(ctx context.Context, controlID int) (domain.ActivePopulationResponse, error)
 }

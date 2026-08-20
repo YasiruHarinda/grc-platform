@@ -19,7 +19,6 @@ package repository
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -37,38 +36,23 @@ type dashboardRepo struct{ db *sql.DB }
 // NewDashboardRepository constructs a DashboardRepository.
 func NewDashboardRepository(db *sql.DB) DashboardRepository { return &dashboardRepo{db: db} }
 
-// scopeWhere returns a WHERE fragment (starting with "AND"), any args to bind,
-// and an error, for the given row scope. Scope is derived from the caller's
-// privileges upstream (never a role); this just applies it, resolving the actor's
-// team/owner/auditor identity from userEmail. Only sql.ErrNoRows / a NULL user is
-// mapped to " AND 1=0" (a legitimate no-data case); any other DB error propagates
-// so callers return 500 instead of a silent empty dashboard.
-func (r *dashboardRepo) scopeWhere(ctx context.Context, scope domain.Scope, userEmail string, scopeTeamIDs []int) (string, []any, error) {
+// scopeWhere returns a WHERE fragment (starting with "AND") and any args to
+// bind, for the given row scope. Scope is derived from the caller's privileges
+// upstream (never a role); this just applies it against the caller's own,
+// already-resolved user id. A pure function — no DB round-trip needed since
+// the caller already has userID.
+func (r *dashboardRepo) scopeWhere(scope domain.Scope, userID int, scopeTeamIDs []int) (string, []any) {
 	switch scope {
 	case domain.ScopeAll:
-		return "", nil, nil
+		return "", nil
 	case domain.ScopeOwned:
-		uid, ok, err := r.userIDByEmail(ctx, userEmail)
-		if err != nil {
-			return "", nil, err
-		}
-		if !ok {
-			return " AND 1=0", nil, nil
-		}
-		return " AND c.owner_id = ?", []any{uid}, nil
+		return " AND c.owner_id = ?", []any{userID}
 	case domain.ScopeAssigned:
-		uid, ok, err := r.userIDByEmail(ctx, userEmail)
-		if err != nil {
-			return "", nil, err
-		}
-		if !ok {
-			return " AND 1=0", nil, nil
-		}
-		return " AND c.auditor_id = ?", []any{uid}, nil
+		return " AND c.auditor_id = ?", []any{userID}
 	case domain.ScopeTeam:
-		return r.teamScopeWhere(ctx, userEmail, scopeTeamIDs)
+		return r.teamScopeWhere(userID, scopeTeamIDs)
 	default: // ScopeNone and any unrecognized value scope to nothing.
-		return " AND 1=0", nil, nil
+		return " AND 1=0", nil
 	}
 }
 
@@ -77,17 +61,10 @@ func (r *dashboardRepo) scopeWhere(ctx context.Context, scope domain.Scope, user
 // "AND c.team_id IN (...)", which would take away a lead's identity-based
 // access to controls outside their own team.
 //
-// scopeTeamIDs is empty only when the caller manages no team (should not
-// normally reach ScopeTeam at all — the backend only returns ScopeTeam when
-// managedTeamIDs is non-empty) or when userIDByEmail fails to resolve a row;
-// both are handled without ever emitting a bare "IN ()" or an empty (no-filter)
-// fragment.
-func (r *dashboardRepo) teamScopeWhere(ctx context.Context, userEmail string, scopeTeamIDs []int) (string, []any, error) {
-	uid, ok, err := r.userIDByEmail(ctx, userEmail)
-	if err != nil {
-		return "", nil, err
-	}
-
+// scopeTeamIDs is empty only when the caller manages no team — should not
+// normally reach ScopeTeam at all, since the backend only returns ScopeTeam
+// when managedTeamIDs is non-empty.
+func (r *dashboardRepo) teamScopeWhere(userID int, scopeTeamIDs []int) (string, []any) {
 	terms := make([]string, 0, 3)
 	args := make([]any, 0, len(scopeTeamIDs)+2)
 	if len(scopeTeamIDs) > 0 {
@@ -97,48 +74,18 @@ func (r *dashboardRepo) teamScopeWhere(ctx context.Context, userEmail string, sc
 			args = append(args, id)
 		}
 	}
-	if ok {
-		terms = append(terms, "c.owner_id = ?", "c.auditor_id = ?")
-		args = append(args, uid, uid)
-	}
-	// A caller holding a grant always has a `user` row (user_role_grant.user_id
-	// is a foreign key), so !ok should not arise here in practice. If it does,
-	// fall back to the team disjunct alone rather than to 1=0 — losing the
-	// (unreachable) identity disjunct is not a reason to also drop the team's
-	// visibility. 1=0 only when neither is available.
-	if len(terms) == 0 {
-		return " AND 1=0", nil, nil
-	}
-	return " AND (" + strings.Join(terms, " OR ") + ")", args, nil
-}
-
-// userIDByEmail resolves a user's id from their email. ok=false when no such user
-// (or a NULL id) exists — a legitimate "scope to zero rows" case, not an error.
-func (r *dashboardRepo) userIDByEmail(ctx context.Context, email string) (int64, bool, error) {
-	var id sql.NullInt64
-	err := r.db.QueryRowContext(ctx, "SELECT id FROM `user` WHERE email = ?", email).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && !id.Valid) {
-		return 0, false, nil
-	}
-	if err != nil {
-		return 0, false, fmt.Errorf("dashboard.userIDByEmail %q: %w", email, err)
-	}
-	return id.Int64, true, nil
+	terms = append(terms, "c.owner_id = ?", "c.auditor_id = ?")
+	args = append(args, userID, userID)
+	return " AND (" + strings.Join(terms, " OR ") + ")", args
 }
 
 func (r *dashboardRepo) Get(ctx context.Context, req domain.AuditDashboardRequest) (*domain.DashboardData, error) {
 	// Two scopes: the view scope drives stats/charts (baseWhere); the work-queue
 	// scope drives the action/due/pending/validation/overdue lists (queueWhere).
-	scope, args, err := r.scopeWhere(ctx, req.Scope, req.UserEmail, req.ScopeTeamIDs)
-	if err != nil {
-		return nil, err
-	}
+	scope, args := r.scopeWhere(req.Scope, req.UserID, req.ScopeTeamIDs)
 	baseWhere := "WHERE a.status = 'ACTIVE'" + scope
 
-	queueScope, queueArgs, err := r.scopeWhere(ctx, req.WorkQueueScope, req.UserEmail, req.ScopeTeamIDs)
-	if err != nil {
-		return nil, err
-	}
+	queueScope, queueArgs := r.scopeWhere(req.WorkQueueScope, req.UserID, req.ScopeTeamIDs)
 	queueWhere := "WHERE a.status = 'ACTIVE'" + queueScope
 
 	// Status distribution.
@@ -332,7 +279,8 @@ func (r *dashboardRepo) queryActionItems(ctx context.Context, class domain.WorkQ
 		       c.status,
 		       COALESCE(DATE_FORMAT(c.due_date,'%%Y-%%m-%%d'),''),
 		       COALESCE(t.name,''),
-		       COALESCE(u.display_name,''),
+		       COALESCE(u.uuid,''),
+			       COALESCE(u.user_type,''),
 		       c.team_id, c.owner_id
 		FROM audit_control c JOIN audit a ON a.id = c.audit_id
 		LEFT JOIN audit_team t ON t.id = c.team_id
@@ -352,7 +300,8 @@ func (r *dashboardRepo) queryDueSoonItems(ctx context.Context, baseWhere string,
 		       c.status,
 		       COALESCE(DATE_FORMAT(c.due_date,'%%Y-%%m-%%d'),''),
 		       COALESCE(t.name,''),
-		       COALESCE(u.display_name,''),
+		       COALESCE(u.uuid,''),
+			       COALESCE(u.user_type,''),
 		       c.team_id, c.owner_id
 		FROM audit_control c JOIN audit a ON a.id = c.audit_id
 		LEFT JOIN audit_team t ON t.id = c.team_id
@@ -444,10 +393,7 @@ func buildLikeFilter(col, term string) (string, []any) {
 // GetWorkQueuePage returns a single paginated page of work-queue items.
 func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQueueRequest) (*domain.WorkQueuePage, error) {
 	// The work queue uses the work-queue scope (personal for submitters).
-	scope, args, err := r.scopeWhere(ctx, req.WorkQueueScope, req.UserEmail, req.ScopeTeamIDs)
-	if err != nil {
-		return nil, err
-	}
+	scope, args := r.scopeWhere(req.WorkQueueScope, req.UserID, req.ScopeTeamIDs)
 	baseWhere := "WHERE a.status = 'ACTIVE'" + scope
 
 	limit := req.Limit
@@ -484,6 +430,7 @@ func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQue
 
 	var items []domain.DashboardControlItem
 	var total int
+	var err error
 
 	switch req.Tab {
 	case domain.WorkQueueTabActionItems:
@@ -505,7 +452,8 @@ func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQue
 			       c.status,
 			       COALESCE(DATE_FORMAT(c.due_date,'%%Y-%%m-%%d'),''),
 			       COALESCE(t.name,''),
-			       COALESCE(u.display_name,''),
+			       COALESCE(u.uuid,''),
+			       COALESCE(u.user_type,''),
 			       c.team_id, c.owner_id
 			FROM audit_control c JOIN audit a ON a.id = c.audit_id
 			LEFT JOIN audit_team t ON t.id = c.team_id
@@ -518,7 +466,7 @@ func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQue
 		// Due soon is a date concern, not a role/action concern — every non-terminal
 		// status is included, matching queryDueSoonItems above.
 		dueSoonWhere := fmt.Sprintf(`%s AND c.status != 'COMPLETE' AND c.due_date IS NOT NULL AND c.due_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)%s`, baseWhere, filterSQL) // #nosec G201
-		cq := fmt.Sprintf(`SELECT COUNT(*) FROM audit_control c JOIN audit a ON a.id = c.audit_id %s`, dueSoonWhere)                                                                              // #nosec G201
+		cq := fmt.Sprintf(`SELECT COUNT(*) FROM audit_control c JOIN audit a ON a.id = c.audit_id %s`, dueSoonWhere)                                                                             // #nosec G201
 		cqArgs := append(args, filterArgs...)
 		if err := r.db.QueryRowContext(ctx, cq, cqArgs...).Scan(&total); err != nil {
 			return nil, err
@@ -530,7 +478,8 @@ func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQue
 			       c.status,
 			       COALESCE(DATE_FORMAT(c.due_date,'%%Y-%%m-%%d'),''),
 			       COALESCE(t.name,''),
-			       COALESCE(u.display_name,''),
+			       COALESCE(u.uuid,''),
+			       COALESCE(u.user_type,''),
 			       c.team_id, c.owner_id
 			FROM audit_control c JOIN audit a ON a.id = c.audit_id
 			LEFT JOIN audit_team t ON t.id = c.team_id
@@ -546,7 +495,7 @@ func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQue
 		if req.Tab == domain.WorkQueueTabValidation {
 			statusFilter = validationStatusFilter
 		}
-		statusWhere := fmt.Sprintf(`%s AND %s%s`, baseWhere, statusFilter, filterSQL) // #nosec G201
+		statusWhere := fmt.Sprintf(`%s AND %s%s`, baseWhere, statusFilter, filterSQL)                               // #nosec G201
 		cq := fmt.Sprintf(`SELECT COUNT(*) FROM audit_control c JOIN audit a ON a.id = c.audit_id %s`, statusWhere) // #nosec G201
 		cqArgs := append(args, filterArgs...)
 		if err := r.db.QueryRowContext(ctx, cq, cqArgs...).Scan(&total); err != nil {
@@ -559,7 +508,8 @@ func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQue
 			       c.status,
 			       COALESCE(DATE_FORMAT(c.due_date,'%%Y-%%m-%%d'),''),
 			       COALESCE(t.name,''),
-			       COALESCE(u.display_name,''),
+			       COALESCE(u.uuid,''),
+			       COALESCE(u.user_type,''),
 			       c.team_id, c.owner_id
 			FROM audit_control c JOIN audit a ON a.id = c.audit_id
 			LEFT JOIN audit_team t ON t.id = c.team_id
@@ -570,7 +520,7 @@ func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQue
 
 	default: // overdue
 		overdueWhere := fmt.Sprintf(`%s AND c.due_date IS NOT NULL AND c.due_date < CURDATE() AND c.status != 'COMPLETE'%s`, baseWhere, filterSQL) // #nosec G201
-		cq := fmt.Sprintf(`SELECT COUNT(*) FROM audit_control c JOIN audit a ON a.id = c.audit_id %s`, overdueWhere)                              // #nosec G201
+		cq := fmt.Sprintf(`SELECT COUNT(*) FROM audit_control c JOIN audit a ON a.id = c.audit_id %s`, overdueWhere)                               // #nosec G201
 		cqArgs := append(args, filterArgs...)
 		if err := r.db.QueryRowContext(ctx, cq, cqArgs...).Scan(&total); err != nil {
 			return nil, err
@@ -582,7 +532,8 @@ func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQue
 			       c.status,
 			       DATE_FORMAT(c.due_date,'%%Y-%%m-%%d'),
 			       COALESCE(t.name,''),
-			       COALESCE(u.display_name,''),
+			       COALESCE(u.uuid,''),
+			       COALESCE(u.user_type,''),
 			       c.team_id, c.owner_id
 			FROM audit_control c JOIN audit a ON a.id = c.audit_id
 			LEFT JOIN audit_team t ON t.id = c.team_id
@@ -607,7 +558,7 @@ func (r *dashboardRepo) scanControlItems(ctx context.Context, q string, args []a
 	list := []domain.DashboardControlItem{}
 	for rows.Next() {
 		var item domain.DashboardControlItem
-		if err := rows.Scan(&item.ControlID, &item.AuditID, &item.AuditName, &item.ControlNumber, &item.Description, &item.Status, &item.DueDate, &item.Team, &item.ProcessOwner, &item.TeamID, &item.OwnerID); err != nil {
+		if err := rows.Scan(&item.ControlID, &item.AuditID, &item.AuditName, &item.ControlNumber, &item.Description, &item.Status, &item.DueDate, &item.Team, &item.ProcessOwnerUUID, &item.ProcessOwnerUserType, &item.TeamID, &item.OwnerID); err != nil {
 			return nil, err
 		}
 		list = append(list, item)
@@ -623,7 +574,8 @@ func (r *dashboardRepo) queryOverdueControls(ctx context.Context, baseWhere stri
 		       c.status,
 		       DATE_FORMAT(c.due_date,'%%Y-%%m-%%d'),
 		       COALESCE(t.name,''),
-		       COALESCE(u.display_name,''),
+		       COALESCE(u.uuid,''),
+			       COALESCE(u.user_type,''),
 		       c.team_id, c.owner_id
 		FROM audit_control c JOIN audit a ON a.id = c.audit_id
 		LEFT JOIN audit_team t ON t.id = c.team_id

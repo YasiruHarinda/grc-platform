@@ -47,11 +47,11 @@ func (h *controlHandler) listControls(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	scope, _ := deriveScopes(ctx)
 	user := auth.FromContext(ctx)
-	var email string
+	var userID int
 	if user != nil {
-		email = user.Email
+		userID = user.UserID
 	}
-	controls, err := h.svc.ListScoped(ctx, auditID, scope, email, managedTeamIDs(auth.Grants(ctx)))
+	controls, err := h.svc.ListScoped(ctx, auditID, scope, userID, managedTeamIDs(auth.Grants(ctx)))
 	if err != nil {
 		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
 		return
@@ -82,11 +82,11 @@ func (h *controlHandler) getControl(w http.ResponseWriter, r *http.Request) {
 	scope, _ := deriveScopes(ctx)
 	if scope != model.ScopeAll {
 		user := auth.FromContext(ctx)
-		var email string
+		var userID int
 		if user != nil {
-			email = user.Email
+			userID = user.UserID
 		}
-		inScope, err := h.svc.InScope(ctx, auditID, controlID, scope, email, managedTeamIDs(auth.Grants(ctx)))
+		inScope, err := h.svc.InScope(ctx, auditID, controlID, scope, userID, managedTeamIDs(auth.Grants(ctx)))
 		if err != nil {
 			response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
 			return
@@ -117,7 +117,7 @@ func (h *controlHandler) addControl(w http.ResponseWriter, r *http.Request) {
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
-	actor := auth.FromContext(r.Context()).Email
+	actor := auth.FromContext(r.Context()).Subject
 	c, err := h.svc.Add(r.Context(), auditID, req, actor)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
@@ -147,7 +147,7 @@ func (h *controlHandler) bulkAddControls(w http.ResponseWriter, r *http.Request)
 	if err := response.DecodeJSONLimit(w, r, &req, maxBulkBodyBytes); err != nil {
 		return
 	}
-	actor := auth.FromContext(r.Context()).Email
+	actor := auth.FromContext(r.Context()).Subject
 	controls, err := h.svc.BulkAdd(r.Context(), auditID, req.Controls, actor)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
@@ -177,7 +177,7 @@ func (h *controlHandler) updateControl(w http.ResponseWriter, r *http.Request) {
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
-	actor := auth.FromContext(r.Context()).Email
+	actor := auth.FromContext(r.Context()).Subject
 	result, err := h.svc.Update(r.Context(), auditID, controlID, req, actor)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
@@ -392,7 +392,7 @@ func (h *controlHandler) updateControlStatus(w http.ResponseWriter, r *http.Requ
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
-	actor := auth.FromContext(r.Context()).Email
+	actor := auth.FromContext(r.Context()).Subject
 	if err := h.svc.UpdateStatus(r.Context(), auditID, controlID, req, actor); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
@@ -423,7 +423,7 @@ func (h *controlHandler) overrideControlStatus(w http.ResponseWriter, r *http.Re
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
-	actor := auth.FromContext(r.Context()).Email
+	actor := auth.FromContext(r.Context()).Subject
 	if err := h.svc.OverrideStatus(r.Context(), auditID, controlID, req, actor); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
@@ -447,7 +447,7 @@ func (h *controlHandler) deleteControl(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	deletedBy := auth.FromContext(r.Context()).Email
+	deletedBy := auth.FromContext(r.Context()).Subject
 	if err := h.svc.Delete(r.Context(), auditID, controlID, deletedBy); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return

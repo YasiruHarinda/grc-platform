@@ -54,7 +54,7 @@ func (r *auditFrameworkRepo) SearchAuditFrameworks(ctx context.Context, req doma
 		where += " AND status = ?"
 		args = append(args, req.StatusKey)
 	}
-	scopeClause, scopeArgs := frameworkScopeWhere(req.Scope, req.UserEmail, req.ScopeTeamIDs)
+	scopeClause, scopeArgs := frameworkScopeWhere(req.Scope, req.UserID, req.ScopeTeamIDs)
 	where += scopeClause
 	args = append(args, scopeArgs...)
 
@@ -147,20 +147,20 @@ func (r *auditFrameworkRepo) UpdateAuditFramework(ctx context.Context, id int, r
 // to the default deny-all case below, matching scopeWhere's behaviour. A
 // caller that genuinely wants every row (an internal existence/uniqueness
 // check, never an external request) must pass domain.ScopeAll explicitly.
-func frameworkScopeWhere(scope domain.Scope, userEmail string, scopeTeamIDs []int) (string, []any) {
+func frameworkScopeWhere(scope domain.Scope, userID int, scopeTeamIDs []int) (string, []any) {
 	switch scope {
 	case domain.ScopeAll:
 		return "", nil
 	case domain.ScopeOwned:
 		return ` AND EXISTS (SELECT 1 FROM audit a JOIN audit_control c ON c.audit_id = a.id
-			WHERE a.framework_id = audit_framework.id AND c.owner_id = (SELECT id FROM ` + "`user`" + ` WHERE email = ?))`,
-			[]any{userEmail}
+			WHERE a.framework_id = audit_framework.id AND c.owner_id = ?)`,
+			[]any{userID}
 	case domain.ScopeAssigned:
 		return ` AND EXISTS (SELECT 1 FROM audit a JOIN audit_control c ON c.audit_id = a.id
-			WHERE a.framework_id = audit_framework.id AND c.auditor_id = (SELECT id FROM ` + "`user`" + ` WHERE email = ?))`,
-			[]any{userEmail}
+			WHERE a.framework_id = audit_framework.id AND c.auditor_id = ?)`,
+			[]any{userID}
 	case domain.ScopeTeam:
-		pred, args := teamScopePredicate("c", scopeTeamIDs, userEmail)
+		pred, args := teamScopePredicate("c", scopeTeamIDs, userID)
 		return ` AND EXISTS (SELECT 1 FROM audit a JOIN audit_control c ON c.audit_id = a.id
 			WHERE a.framework_id = audit_framework.id AND ` + pred + `)`,
 			args

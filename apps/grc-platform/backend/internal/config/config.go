@@ -109,19 +109,29 @@ type HREntityConfig struct {
 // Asgardeo silently drops a scope the application is not authorised for, so a
 // missing grant appears as a 403 at call time rather than a startup failure.
 //
+// ExternalScopes is the equivalent for organizations/external/* calls
+// (external auditors' identities — see internal/scim.NewExternalClient),
+// assumed to follow the same org_<org>:users:read naming convention as
+// Scopes. That naming is not confirmed against this deployment's actual
+// Choreo API Management scope registration for the external org as of
+// writing — verify it there before depending on external-org lookups
+// resolving in production.
+//
 // UserDomain is the email-domain suffix the directory's bulk cache is scoped
 // to (see internal/directory.Service.StartBulkRefresh). An unfiltered
 // users-search returns the whole org — 300,000+ records last checked,
 // overwhelmingly load-test accounts — and this deployment's directory has no
 // working "active" filter to narrow that with, so a domain suffix is what
-// keeps the cache to real employees instead.
+// keeps the cache to real employees instead. Internal-org only: the bulk
+// cache has no external-org equivalent (see internal/directory.Service.LookupTyped).
 type SCIMConfig struct {
-	BaseURL      string
-	TokenURL     string
-	ClientID     string
-	ClientSecret string
-	Scopes       string
-	UserDomain   string
+	BaseURL        string
+	TokenURL       string
+	ClientID       string
+	ClientSecret   string
+	Scopes         string
+	ExternalScopes string
+	UserDomain     string
 }
 
 // Configured reports whether enough is set to build a working client.
@@ -209,12 +219,13 @@ func Load() (Config, error) {
 			ClientSecret: hrEntityClientSecret,
 		},
 		SCIM: SCIMConfig{
-			BaseURL:      os.Getenv("SCIM_BASE_URL"),
-			TokenURL:     os.Getenv("SCIM_TOKEN_URL"),
-			UserDomain:   envOrDefault("SCIM_USER_DOMAIN", "wso2.com"),
-			ClientID:     os.Getenv("SCIM_CLIENT_ID"),
-			ClientSecret: os.Getenv("SCIM_CLIENT_SECRET"),
-			Scopes:       envOrDefault("SCIM_SCOPES", "org_internal:users:read"),
+			BaseURL:        os.Getenv("SCIM_BASE_URL"),
+			TokenURL:       os.Getenv("SCIM_TOKEN_URL"),
+			UserDomain:     envOrDefault("SCIM_USER_DOMAIN", "wso2.com"),
+			ClientID:       os.Getenv("SCIM_CLIENT_ID"),
+			ClientSecret:   os.Getenv("SCIM_CLIENT_SECRET"),
+			Scopes:         envOrDefault("SCIM_SCOPES", "org_internal:users:read"),
+			ExternalScopes: envOrDefault("SCIM_EXTERNAL_SCOPES", "org_external:users:read"),
 		},
 		// Derived from FRONTEND_BASE_URL rather than its own env var: both are
 		// "the webapp's public origin", and having two meant one could be

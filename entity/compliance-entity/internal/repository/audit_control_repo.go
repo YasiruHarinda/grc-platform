@@ -51,9 +51,9 @@ type ControlRepository interface {
 	// DeleteControl from silently cascading away real work (evidence/population
 	// records cascade-delete with the control at the DB level).
 	CountDeletionBlockers(ctx context.Context, controlID int) (evidenceCount int, activePopulationCount int, err error)
-	// GetEvidenceAssignment returns the control's audit id when userEmail is the
+	// GetEvidenceAssignment returns the control's audit id when userID is the
 	// control's owner and it is currently actionable, else sql.ErrNoRows.
-	GetEvidenceAssignment(ctx context.Context, userEmail string, controlID int) (int, error)
+	GetEvidenceAssignment(ctx context.Context, userID int, controlID int) (int, error)
 	// FindActivePopulation returns the active audit_population id for an OE control
 	// (status PENDING or COMPLIANCE_REJECTED), else sql.ErrNoRows.
 	FindActivePopulation(ctx context.Context, controlID int) (int, error)
@@ -73,17 +73,16 @@ func NewControlRepository(db *sql.DB) ControlRepository { return &controlRepo{db
 // control's owner and it is currently actionable. Returning the audit id lets the
 // GRC Backend both (a) confirm assignment and (b) derive the audit for folder-path
 // binding from the DB, so the client never supplies it. Not found → sql.ErrNoRows.
-func (r *controlRepo) GetEvidenceAssignment(ctx context.Context, userEmail string, controlID int) (int, error) {
+func (r *controlRepo) GetEvidenceAssignment(ctx context.Context, userID int, controlID int) (int, error) {
 	var auditID int
 	err := r.db.QueryRowContext(ctx, `
 		SELECT c.audit_id
 		FROM audit_control c
 		JOIN audit  a ON a.id = c.audit_id
-		JOIN `+"`user`"+` u ON u.id = c.owner_id
-		WHERE u.email = ? AND c.id = ?
+		WHERE c.owner_id = ? AND c.id = ?
 		  AND a.status = 'ACTIVE'
 		  AND c.status IN (`+evidenceActionableStatuses+`)
-		LIMIT 1`, userEmail, controlID).Scan(&auditID)
+		LIMIT 1`, userID, controlID).Scan(&auditID)
 	if err != nil {
 		return 0, err
 	}
@@ -115,9 +114,9 @@ const controlSelectCols = `
   c.id, c.audit_id,
   c.control_number, c.description, c.evidence_requirement,
   c.requirement_type, c.control_type, c.scope,
-  c.owner_id,   u_owner.display_name AS owner_name,
-  c.team_id,    t.name               AS team_name,
-  c.auditor_id, u_aud.display_name   AS auditor_name, u_aud.email AS auditor_email,
+  c.owner_id,   u_owner.uuid AS owner_uuid, u_owner.user_type AS owner_user_type,
+  c.team_id,    t.name       AS team_name,
+  c.auditor_id, u_aud.uuid   AS auditor_uuid, u_aud.user_type AS auditor_user_type,
   DATE_FORMAT(c.due_date, '%Y-%m-%d') AS due_date,
   c.status, c.sample_reference, c.comments, c.control_source,
   (c.due_date IS NOT NULL AND c.due_date < CURDATE() AND c.status != 'COMPLETE') AS is_overdue,
@@ -126,7 +125,8 @@ const controlSelectCols = `
   p.description                        AS population_description,
   p.comments                           AS population_comments,
   DATE_FORMAT(p.due_date, '%Y-%m-%d')  AS population_due_date,
-  u_pop_owner.display_name             AS population_owner_name,
+  u_pop_owner.uuid                     AS population_owner_uuid,
+  u_pop_owner.user_type                AS population_owner_user_type,
   pop_team.name                        AS population_team_name,
   p.id                                 AS population_id,
   p.owner_id                           AS population_owner_id,
@@ -211,7 +211,7 @@ func buildControlFilters(seedWhere string, seedArgs []any, req domain.SearchCont
 			args = append(args, id)
 		}
 	}
-	scopeClause, scopeArgs := controlScopeWhere(req.Scope, req.UserEmail, req.ScopeTeamIDs)
+	scopeClause, scopeArgs := controlScopeWhere(req.Scope, req.UserID, req.ScopeTeamIDs)
 	where += scopeClause
 	args = append(args, scopeArgs...)
 	return where, args
@@ -221,21 +221,19 @@ func buildControlFilters(seedWhere string, seedArgs []any, req domain.SearchCont
 // bind args for the given row scope, mirroring audit_dashboard_repo.go's
 // scopeWhere (same `c` control alias, same owner_id/auditor_id match against
 // the caller's own user id) so list/search endpoints enforce the same
-// row-scoping rule the dashboard already does. Unlike the dashboard's version
-// this never needs a DB round-trip to resolve the caller's identity —
-// auditor/owner match by a correlated subquery on email instead of a
-// pre-resolved user id — so it stays a pure string/args builder, callable
-// from buildControlFilters without a context or *sql.DB.
-func controlScopeWhere(scope domain.Scope, userEmail string, scopeTeamIDs []int) (string, []any) {
+// row-scoping rule the dashboard already does. A pure string/args builder,
+// callable from buildControlFilters without a context or *sql.DB — the caller
+// already has the resolved user id, so no DB round-trip is needed here.
+func controlScopeWhere(scope domain.Scope, userID int, scopeTeamIDs []int) (string, []any) {
 	switch scope {
 	case domain.ScopeAll:
 		return "", nil
 	case domain.ScopeOwned:
-		return " AND c.owner_id = (SELECT id FROM `user` WHERE email = ?)", []any{userEmail}
+		return " AND c.owner_id = ?", []any{userID}
 	case domain.ScopeAssigned:
-		return " AND c.auditor_id = (SELECT id FROM `user` WHERE email = ?)", []any{userEmail}
+		return " AND c.auditor_id = ?", []any{userID}
 	case domain.ScopeTeam:
-		pred, args := teamScopePredicate("c", scopeTeamIDs, userEmail)
+		pred, args := teamScopePredicate("c", scopeTeamIDs, userID)
 		return " AND " + pred, args
 	default: // ScopeNone and any unrecognized value scope to nothing.
 		return " AND 1=0", nil
@@ -245,10 +243,8 @@ func controlScopeWhere(scope domain.Scope, userEmail string, scopeTeamIDs []int)
 // teamScopePredicate builds the additive ScopeTeam predicate shared by every
 // scopeWhere variant in this package: the caller's team's work OR anything
 // they personally own OR anything they audit, keyed off
-// alias.team_id/owner_id/auditor_id. Identity is matched by correlated
-// subquery on email rather than a pre-resolved user id, matching every other
-// scope case in these functions — callers stay pure string/args builders with
-// no context or *sql.DB.
+// alias.team_id/owner_id/auditor_id. A pure string/args builder — callers
+// stay pure too, with no context or *sql.DB.
 //
 // Returns a bare parenthesized predicate with NO leading "AND" — callers
 // combine it into their own clause (a plain "AND", or wrapped in an EXISTS for
@@ -258,7 +254,7 @@ func controlScopeWhere(scope domain.Scope, userEmail string, scopeTeamIDs []int)
 // team lead's identity-based access to a record outside their own team. Never
 // a bare "IN ()" when scopeTeamIDs is empty, and the caller must never receive
 // an empty (no-filter) string in its place.
-func teamScopePredicate(alias string, scopeTeamIDs []int, userEmail string) (string, []any) {
+func teamScopePredicate(alias string, scopeTeamIDs []int, userID int) (string, []any) {
 	terms := make([]string, 0, 3)
 	args := make([]any, 0, len(scopeTeamIDs)+2)
 	if len(scopeTeamIDs) > 0 {
@@ -269,9 +265,9 @@ func teamScopePredicate(alias string, scopeTeamIDs []int, userEmail string) (str
 		}
 	}
 	terms = append(terms,
-		alias+".owner_id   = (SELECT id FROM `user` WHERE email = ?)",
-		alias+".auditor_id = (SELECT id FROM `user` WHERE email = ?)")
-	args = append(args, userEmail, userEmail)
+		alias+".owner_id   = ?",
+		alias+".auditor_id = ?")
+	args = append(args, userID, userID)
 	return "(" + strings.Join(terms, " OR ") + ")", args
 }
 
@@ -786,25 +782,25 @@ func recomputeAuditStatus(ctx context.Context, tx *sql.Tx, auditID int) error {
 func scanControl(s scanner) (*domain.AuditControl, error) {
 	var c domain.AuditControl
 	var ownerID, teamID, auditorID sql.NullInt64
-	var evidenceReq, ownerName, teamName, auditorName, auditorEmail, dueDate sql.NullString
+	var evidenceReq, ownerUUID, ownerUserType, teamName, auditorUUID, auditorUserType, dueDate sql.NullString
 	var sampleReference, comments sql.NullString
 	var overriddenBy sql.NullString
 	var overriddenAt sql.NullTime
-	var popDescription, popComments, popDueDate, popOwnerName, popTeamName sql.NullString
+	var popDescription, popComments, popDueDate, popOwnerUUID, popOwnerUserType, popTeamName sql.NullString
 	var popID, popOwnerID sql.NullInt64
 	var popStatus sql.NullString
 	err := s.Scan(
 		&c.ID, &c.AuditID,
 		&c.ControlNumber, &c.Description, &evidenceReq,
 		&c.RequirementType, &c.ControlType, &c.Scope,
-		&ownerID, &ownerName,
+		&ownerID, &ownerUUID, &ownerUserType,
 		&teamID, &teamName,
-		&auditorID, &auditorName, &auditorEmail,
+		&auditorID, &auditorUUID, &auditorUserType,
 		&dueDate,
 		&c.Status, &sampleReference, &comments, &c.ControlSource, &c.IsOverdue,
 		&c.CreatedOn, &c.UpdatedOn,
 		&c.StatusOverridden, &overriddenBy, &overriddenAt,
-		&popDescription, &popComments, &popDueDate, &popOwnerName, &popTeamName,
+		&popDescription, &popComments, &popDueDate, &popOwnerUUID, &popOwnerUserType, &popTeamName,
 		&popID, &popOwnerID, &popStatus,
 	)
 	if err != nil {
@@ -825,19 +821,21 @@ func scanControl(s scanner) (*domain.AuditControl, error) {
 	}
 	c.EvidenceRequirement = nullStrPtr(evidenceReq)
 	c.OwnerID = nullIntPtr(ownerID)
-	c.OwnerName = nullStrPtr(ownerName)
+	c.OwnerUUID = nullStrPtr(ownerUUID)
+	c.OwnerUserType = nullStrPtr(ownerUserType)
 	c.TeamID = nullIntPtr(teamID)
 	c.TeamName = nullStrPtr(teamName)
 	c.AuditorID = nullIntPtr(auditorID)
-	c.AuditorName = nullStrPtr(auditorName)
-	c.AuditorEmail = nullStrPtr(auditorEmail)
+	c.AuditorUUID = nullStrPtr(auditorUUID)
+	c.AuditorUserType = nullStrPtr(auditorUserType)
 	c.DueDate = nullStrPtr(dueDate)
 	c.SampleReference = nullStrPtr(sampleReference)
 	c.Comments = nullStrPtr(comments)
 	c.PopulationDescription = nullStrPtr(popDescription)
 	c.PopulationComments = nullStrPtr(popComments)
 	c.PopulationDueDate = nullStrPtr(popDueDate)
-	c.PopulationOwnerName = nullStrPtr(popOwnerName)
+	c.PopulationOwnerUUID = nullStrPtr(popOwnerUUID)
+	c.PopulationOwnerUserType = nullStrPtr(popOwnerUserType)
 	c.PopulationTeamName = nullStrPtr(popTeamName)
 	c.OverriddenBy = nullStrPtr(overriddenBy)
 	if overriddenAt.Valid {

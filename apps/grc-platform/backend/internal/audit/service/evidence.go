@@ -107,12 +107,12 @@ type EvidenceService interface {
 	// Entity) plus its name and content type, by file ID.
 	DownloadFile(ctx context.Context, fileID int) (data []byte, fileName, contentType string, err error)
 
-	// FileAuditorEmail returns the email of the auditor assigned to fileID's
+	// FileAuditorID returns the user.id of the auditor assigned to fileID's
 	// owning control (nil if none) and that control's team id (nil if none),
 	// for the assigned-auditor and team-scoped download gates — the download
 	// route only carries a file id, not a control id, so this is how
 	// downloadEvidenceFile resolves assignment/team without one.
-	FileAuditorEmail(ctx context.Context, fileID int) (auditorEmail *string, teamID *int, err error)
+	FileAuditorID(ctx context.Context, fileID int) (auditorID *int, teamID *int, err error)
 
 	// DeleteFile removes a single evidence file from the submission. The caller
 	// must be the file's creator or hold ManageControls (isAdmin=true). The blob
@@ -460,12 +460,12 @@ func (s *evidenceService) DownloadFile(ctx context.Context, fileID int) (data []
 	return data, f.FileName, ct, nil
 }
 
-func (s *evidenceService) FileAuditorEmail(ctx context.Context, fileID int) (auditorEmail *string, teamID *int, err error) {
+func (s *evidenceService) FileAuditorID(ctx context.Context, fileID int) (auditorID *int, teamID *int, err error) {
 	f, err := s.repo.GetFileByID(ctx, fileID)
 	if err != nil {
 		return nil, nil, err
 	}
-	return f.AuditorEmail, f.TeamID, nil
+	return f.AuditorID, f.TeamID, nil
 }
 
 func (s *evidenceService) DeleteFile(ctx context.Context, fileID int, actor string, isAdmin bool) error {

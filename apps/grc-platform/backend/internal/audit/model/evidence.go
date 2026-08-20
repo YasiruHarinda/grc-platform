@@ -31,13 +31,13 @@ type AuditEvidenceFile struct {
 	// ReadURL is the backend proxy download URL (GET /api/v1/evidence/files/{id}/download).
 	// Computed at list time (not persisted); nil if the file has no DB id.
 	ReadURL *string `json:"readUrl"`
-	// AuditorEmail is the email of the auditor assigned to this file's owning
+	// AuditorID is the user.id of the auditor assigned to this file's owning
 	// control (nil if none). Only populated by EvidenceService.GetFileByID's
 	// underlying repo call, for the assigned-auditor download gate — omitted
 	// from JSON since it's not evidence metadata callers need.
-	AuditorEmail *string `json:"-"`
+	AuditorID *int `json:"-"`
 	// TeamID is this file's owning control's team_id (nil if none). Only
-	// populated by the same repo call as AuditorEmail, for the team-scoped
+	// populated by the same repo call as AuditorID, for the team-scoped
 	// download gate — omitted from JSON since it's not evidence metadata
 	// callers need.
 	TeamID *int `json:"-"`

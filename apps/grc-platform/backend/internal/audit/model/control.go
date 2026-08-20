@@ -23,19 +23,24 @@ import "time"
 // control owns its full definition text directly — it is never linked to the
 // framework catalog by foreign key.
 type AuditControl struct {
-	ID          int     `json:"id"`
-	AuditID     int     `json:"auditId"`
-	OwnerID     *int    `json:"ownerId"`
-	OwnerName   *string `json:"ownerName"`
-	TeamID      *int    `json:"teamId"`
-	TeamName    *string `json:"teamName"`
-	AuditorID   *int    `json:"auditorId"`
-	AuditorName *string `json:"auditorName"`
-	// AuditorEmail backs the assigned-auditor gate: the backend compares it
-	// against the caller's token email to authorize population/sample/evidence
-	// validation, and the frontend compares it against the signed-in user's email
-	// to decide whether to show auditor-only cards and actions.
-	AuditorEmail        *string   `json:"auditorEmail"`
+	ID      int  `json:"id"`
+	AuditID int  `json:"auditId"`
+	OwnerID *int `json:"ownerId"`
+	// OwnerName is filled in by the service layer from OwnerUUID/OwnerUserType
+	// via the identity directory, overwriting whatever the entity sent (it
+	// doesn't send a name — the `user` table stores none; see shared.sql).
+	// OwnerUUID/OwnerUserType stay populated afterward too, so a caller can
+	// tell a real "no owner" apart from "not yet enriched".
+	OwnerName     *string `json:"ownerName"`
+	OwnerUUID     *string `json:"ownerUuid"`
+	OwnerUserType *string `json:"ownerUserType"`
+	TeamID        *int    `json:"teamId"`
+	TeamName      *string `json:"teamName"`
+	AuditorID     *int    `json:"auditorId"`
+	// AuditorName is filled in the same way OwnerName is.
+	AuditorName         *string   `json:"auditorName"`
+	AuditorUUID         *string   `json:"auditorUuid"`
+	AuditorUserType     *string   `json:"auditorUserType"`
 	ControlNumber       string    `json:"controlNumber"`
 	Description         string    `json:"description"`
 	EvidenceRequirement *string   `json:"evidenceRequirement"`
@@ -57,8 +62,11 @@ type AuditControl struct {
 	PopulationDescription *string `json:"populationDescription"`
 	PopulationComments    *string `json:"populationComments"`
 	PopulationDueDate     *string `json:"populationDueDate"`
-	PopulationOwnerName   *string `json:"populationOwnerName"`
-	PopulationTeamName    *string `json:"populationTeamName"`
+	// PopulationOwnerName is filled in the same way OwnerName is.
+	PopulationOwnerName     *string `json:"populationOwnerName"`
+	PopulationOwnerUUID     *string `json:"populationOwnerUuid"`
+	PopulationOwnerUserType *string `json:"populationOwnerUserType"`
+	PopulationTeamName      *string `json:"populationTeamName"`
 	// StatusOverridden/OverriddenBy/OverriddenAt record that this control's
 	// status was last set by a backward override rather than the ordinary
 	// workflow.

@@ -23,6 +23,7 @@ import (
 	auditentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/repository/entity"
 	auditservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/aiagent"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
@@ -37,7 +38,7 @@ import (
 // the reminder job (internal/audit/job), which itself needs Control/Audit/
 // Notification from the Deps this function returns, so main.go wires it in
 // after calling this function and before RegisterRoutes.
-func buildAuditDeps(fileSvc *file.Service, ec *entityclient.Client, aiCfg config.AIValidationConfig, emailCfg config.EmailConfig, grantRepo grant.Repository) audithandler.Deps {
+func buildAuditDeps(fileSvc *file.Service, ec *entityclient.Client, aiCfg config.AIValidationConfig, emailCfg config.EmailConfig, grantRepo grant.Repository, dirSvc *directory.Service) audithandler.Deps {
 	// ── Repositories (all Compliance Entity) ──────────────────────────────────
 	auditRepo := auditentity.NewAuditRepository(ec)
 	frameworkRepo := auditentity.NewFrameworkRepository(ec)
@@ -59,11 +60,11 @@ func buildAuditDeps(fileSvc *file.Service, ec *entityclient.Client, aiCfg config
 	// lifecycle events through it.
 	trailSvc := auditservice.NewTrailService(trailRepo)
 	auditSvc := auditservice.NewAuditService(auditRepo, frameworkRepo, productRepo, trailSvc)
-	controlSvc := auditservice.NewControlService(controlRepo, populationRepo, trailSvc)
+	controlSvc := auditservice.NewControlService(controlRepo, populationRepo, trailSvc, dirSvc)
 	frameworkSvc := auditservice.NewFrameworkService(frameworkRepo, productRepo, frameworkControlRepo)
 	userSvc := auditservice.NewUserService(userRepo)
 	teamSvc := auditservice.NewTeamService(teamRepo)
-	dashboardSvc := auditservice.NewDashboardService(dashboardRepo)
+	dashboardSvc := auditservice.NewDashboardService(dashboardRepo, dirSvc)
 	evidenceSvc := auditservice.NewEvidenceService(evidenceRepo, auditRepo, controlRepo, fileSvc)
 	populationSvc := auditservice.NewPopulationService(populationRepo, fileSvc)
 	commentSvc := auditservice.NewCommentService(commentRepo)
@@ -98,6 +99,7 @@ func buildAuditDeps(fileSvc *file.Service, ec *entityclient.Client, aiCfg config
 		// one email-service client for the whole backend, no new env vars.
 		Email:           emailer.New(emailCfg.ServiceURL, emailCfg.FromAddress, emailCfg.TokenURL, emailCfg.ClientID, emailCfg.ClientSecret),
 		Users:           userRepo,
+		Directory:       dirSvc,
 		Grants:          grantRepo,
 		FrontendBaseURL: emailCfg.FrontendBaseURL,
 		// Review, Assignment are wired here as their implementations are added.

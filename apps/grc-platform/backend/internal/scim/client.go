@@ -34,21 +34,35 @@ import (
 	"time"
 )
 
-// Client talks to the SCIM Operations Service's "internal" organization
-// endpoints. The service itself sits behind Choreo API Management with
-// OAuth2 client-credentials auth, mirroring the hr_entity client's pattern.
+// Client talks to the SCIM Operations Service's endpoints for one Asgardeo
+// organization — "internal" (asgardeo/wso2) or "external" (asgardeo/wso2external),
+// picked at construction by NewClient vs NewExternalClient and fixed for the
+// Client's lifetime. The service itself sits behind Choreo API Management
+// with OAuth2 client-credentials auth, mirroring the hr_entity client's
+// pattern.
 type Client struct {
 	baseURL      string
 	tokenURL     string
 	clientID     string
 	clientSecret string
 	// scopes is a space-separated OAuth2 scope string requested on every token
-	// exchange — every method on this client needs org_internal:users:read.
-	// Asgardeo silently omits any scope the application isn't authorized for
-	// from the issued token rather than erroring, so an empty/wrong value here
-	// surfaces later as a 403 "Scope validation failed" from the SCIM
-	// Operations Service's gateway, not as a token-request failure.
-	scopes     string
+	// exchange — every method on this client needs org_internal:users:read (or
+	// org_external:users:read for an external-org Client). Asgardeo silently
+	// omits any scope the application isn't authorized for from the issued
+	// token rather than erroring, so an empty/wrong value here surfaces later
+	// as a 403 "Scope validation failed" from the SCIM Operations Service's
+	// gateway, not as a token-request failure.
+	scopes string
+	// org is the path segment ("internal" or "external") every request this
+	// client makes targets — see NewClient/NewExternalClient. External
+	// auditors' identities live in a genuinely separate Asgardeo organization,
+	// not a filtered view of the internal one (confirmed against
+	// scim-operations-service/modules/scim/client.bal, which backs
+	// organizations/internal/* and organizations/'external/* — the Ballerina
+	// source's leading quote is only its keyword-escape syntax for `external`;
+	// the actual path segment on the wire is unquoted), so there is no single
+	// endpoint that covers both.
+	org        string
 	httpClient *http.Client
 
 	tokenMu     sync.Mutex
@@ -60,16 +74,32 @@ type Client struct {
 // near-expiry token is never handed to an in-flight request.
 const tokenExpiryBuffer = 30 * time.Second
 
-// NewClient creates a Client for the SCIM Operations Service at baseURL,
-// authenticating via OAuth2 client-credentials at tokenURL. scopes is a
-// space-separated list requested on every token exchange (see Client.scopes).
+// NewClient creates a Client for the SCIM Operations Service's internal-org
+// endpoints at baseURL, authenticating via OAuth2 client-credentials at
+// tokenURL. scopes is a space-separated list requested on every token
+// exchange (see Client.scopes).
 func NewClient(baseURL, tokenURL, clientID, clientSecret, scopes string) *Client {
+	return newClient(baseURL, tokenURL, clientID, clientSecret, scopes, "internal")
+}
+
+// NewExternalClient is NewClient for external auditors' identities. Every
+// method on the returned Client calls organizations/external/* instead of
+// organizations/internal/*. ListUsersByDomain is still exposed (the type has
+// no per-org method set) but has no real use here: the bulk-fetch shape it
+// implements has no external-org equivalent to call against, so callers
+// resolving an external uuid should use LookupByUUID.
+func NewExternalClient(baseURL, tokenURL, clientID, clientSecret, scopes string) *Client {
+	return newClient(baseURL, tokenURL, clientID, clientSecret, scopes, "external")
+}
+
+func newClient(baseURL, tokenURL, clientID, clientSecret, scopes, org string) *Client {
 	return &Client{
 		baseURL:      strings.TrimRight(baseURL, "/"),
 		tokenURL:     tokenURL,
 		clientID:     clientID,
 		clientSecret: clientSecret,
 		scopes:       scopes,
+		org:          org,
 		httpClient:   &http.Client{Timeout: 5 * time.Second},
 	}
 }
@@ -289,7 +319,7 @@ func (c *Client) searchUsersPage(ctx context.Context, filter string, startIndex,
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.baseURL+"/organizations/internal/users/search", bytes.NewReader(body))
+		c.baseURL+"/organizations/"+c.org+"/users/search", bytes.NewReader(body))
 	if err != nil {
 		return nil, 0, fmt.Errorf("build scim user search request: %w", err)
 	}

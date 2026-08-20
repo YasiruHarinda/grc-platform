@@ -37,7 +37,7 @@ func NewRiskChangeLogService(repo repository.RiskChangeLogRepository) RiskChange
 // validChangeLogActions mirrors risk_change_log.action in risk_schema.sql —
 // the field-diff actions plus the workflow events that make up a risk's
 // history. Keep in sync with the schema; an unknown action is rejected rather
-// than written, since MySQL would silently truncate it to ''.
+// than written, since MySQL would silently truncate it to ”.
 var validChangeLogActions = map[string]bool{
 	"CREATE": true, "UPDATE": true, "DELETE": true,
 	"SUBMIT": true, "APPROVE": true, "REJECT": true, "ESCALATE": true,
