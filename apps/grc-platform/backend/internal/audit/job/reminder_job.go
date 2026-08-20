@@ -60,6 +60,14 @@ const (
 	reminderHourUTC = 8
 	// runTimeout bounds a single sweep.
 	runTimeout = 30 * time.Minute
+	// releaseTimeout bounds a claim release. Deliberately its own short
+	// deadline on a context.WithoutCancel(ctx) rather than reusing the sweep's
+	// ctx: the likeliest reason a release is needed at all is that runTimeout
+	// just expired mid-send, and releasing on that same expired ctx would fail
+	// immediately, leaving the claim (and thus that owner's reminder) stuck
+	// forever — a DUE_10/DUE_5 claim's dedup key is the due date, so a stuck
+	// claim means that reminder never fires again.
+	releaseTimeout = 10 * time.Second
 )
 
 // ReminderJob sweeps every control/population item daily and emails each
@@ -160,6 +168,13 @@ func dateOnly(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
 
+// releaseCtx detaches from ctx's deadline/cancellation (but keeps its values)
+// and applies releaseTimeout instead, so a release triggered by the sweep's
+// own ctx expiring isn't doomed to fail for the same reason.
+func releaseCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), releaseTimeout)
+}
+
 // tierLabel renders a reminderTier value for the email body.
 func tierLabel(tier string) string {
 	switch tier {
@@ -228,7 +243,10 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 		if r := recover(); r != nil {
 			for ownerID, items := range byOwner {
 				for _, it := range items {
-					if relErr := j.claim.ReleaseClaim(ctx, it.NotificationID); relErr != nil {
+					rctx, cancel := releaseCtx(ctx)
+					relErr := j.claim.ReleaseClaim(rctx, it.NotificationID)
+					cancel()
+					if relErr != nil {
 						slog.Error("reminder job: failed to release claim after a panic — item will NOT retry until this is fixed",
 							"notificationId", it.NotificationID, "ownerId", ownerID, "type", it.Type, "err", relErr)
 					}
@@ -315,7 +333,10 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 			// loud (Error, not Warn) since this is the one failure mode this
 			// mechanism doesn't self-heal from.
 			for _, it := range items {
-				if relErr := j.claim.ReleaseClaim(ctx, it.NotificationID); relErr != nil {
+				rctx, cancel := releaseCtx(ctx)
+				relErr := j.claim.ReleaseClaim(rctx, it.NotificationID)
+				cancel()
+				if relErr != nil {
 					slog.Error("reminder job: failed to release claim after failed send — item will NOT retry until this is fixed",
 						"notificationId", it.NotificationID, "ownerId", ownerID, "type", it.Type, "err", relErr)
 				}

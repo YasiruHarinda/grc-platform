@@ -280,7 +280,8 @@ here).
 | `POST` | `/audit/dashboard/search` | Audit dashboard summary |
 | `POST` | `/audit/work-queue/search` | Work queue page |
 | `POST` | `/audit/notifications` | Log a sent audit-module email |
-| `POST` | `/audit/notifications/exists` | De-dup check for the reminder job |
+| `POST` | `/audit/notifications/claim` | Claim a notification for the reminder job (de-dup) |
+| `DELETE` | `/audit/notifications/{id}/claim` | Release a claimed notification |
 
 ### Files (Azure Blob byte storage — disabled when Azure is not configured)
 
