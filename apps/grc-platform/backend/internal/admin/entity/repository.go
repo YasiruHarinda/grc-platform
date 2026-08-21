@@ -62,6 +62,13 @@ type entGrant struct {
 // Every status is included deliberately — an Admin managing role grants needs
 // to see (and reactivate) an INACTIVE user too, unlike the Risk module's
 // dropdowns, which only ever want ACTIVE ones.
+//
+// query is unused: the entity's SearchUsersRequest dropped free-text search
+// (no email/display name left to search once the uuid-identity migration
+// removed them from the user table — see its own doc comment). The one
+// caller of this method never passes a non-empty query either; filtering by
+// name/email happens client-side in UsersPage against directory-resolved
+// names instead.
 func (r *repository) SearchUsers(ctx context.Context, query string) ([]admin.User, error) {
 	type entUser struct {
 		ID          int        `json:"id"`
@@ -76,7 +83,6 @@ func (r *repository) SearchUsers(ctx context.Context, query string) ([]admin.Use
 	var users []entUser
 	for offset := 0; ; offset += pageLimit {
 		body := map[string]any{
-			"searchQuery":   query,
 			"includeGrants": true,
 			"pagination":    map[string]int{"limit": pageLimit, "offset": offset},
 		}
