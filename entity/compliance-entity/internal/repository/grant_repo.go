@@ -332,9 +332,12 @@ func (r *grantRepo) TeamExists(ctx context.Context, scopeType string, scopeID in
 // runs, so a picked candidate can never 403 on their first approval the way an
 // Asgardeo-group-sourced candidate could.
 //
-// RISK_TEAM only — this has no audit-side caller today, so an AUDIT_TEAM
-// branch would be untested dead code. teamIDs may be empty (no register/team
-// chosen yet in the caller's form), in which case only GLOBAL holders match.
+// RISK_TEAM only. The audit module's notify.go callers (added in this PR)
+// pass nil teamIDs deliberately, so today they only resolve GLOBAL grant
+// holders — an AUDIT_TEAM-scoped admin or internal-comment viewer is not yet
+// resolved as a notification recipient. Extending this with an AUDIT_TEAM
+// branch, and threading a control's team through those callers, is tracked as
+// follow-up work rather than done here.
 func (r *grantRepo) CandidatesForPrivilege(ctx context.Context, privilegeName string, teamIDs []int) ([]domain.GrantCandidate, error) {
 	args := []any{privilegeName}
 	scopeCond := "g.scope_type = 'GLOBAL'"

@@ -65,6 +65,13 @@ type AuditControl struct {
 	StatusOverridden bool       `json:"statusOverridden"`
 	OverriddenBy     *string    `json:"overriddenBy"`
 	OverriddenAt     *time.Time `json:"overriddenAt"`
+	// PopulationID/PopulationOwnerID/PopulationStatus are the IDs behind
+	// PopulationOwnerName/PopulationTeamName above — used by the reminder job
+	// to resolve and dedup against the population's own owner (which may
+	// differ from the control's owner) and to know when its round is done.
+	PopulationID      *int    `json:"populationId"`
+	PopulationOwnerID *int    `json:"populationOwnerId"`
+	PopulationStatus  *string `json:"populationStatus"`
 }
 
 // ControlListResponse is returned by GET /api/v1/audits/{id}/controls.
@@ -130,6 +137,15 @@ type UpdateControlRequest struct {
 	TeamID              *int    `json:"teamId"`
 	AuditorID           *int    `json:"auditorId"`
 	DueDate             *string `json:"dueDate"`
+	// ClearOwner/ClearTeam/ClearAuditor request unassigning that field back to
+	// empty. They exist because OwnerID/TeamID/AuditorID's own nil already
+	// means "field omitted, do not change" — JSON can't tell that apart from
+	// an explicit null, so there would otherwise be no way to ever unassign
+	// one of these once set. Ignored when the matching *ID field is non-nil
+	// (assigning and clearing the same field in one request is nonsensical).
+	ClearOwner   bool `json:"clearOwner"`
+	ClearTeam    bool `json:"clearTeam"`
+	ClearAuditor bool `json:"clearAuditor"`
 	// Population is set only for OE controls being edited from the same form
 	// used to create them; nil means "leave population details unchanged".
 	Population *PopulationDetails `json:"population"`

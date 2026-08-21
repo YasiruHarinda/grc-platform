@@ -1610,7 +1610,7 @@ function Step2Controls({
           {/* Manual */}
           {fwSubTab === "manual" && catalogEmpty && (
             <Alert severity="info" sx={{ py: 0.5 }}>
-              {framework.name}'s library is empty — every control you add here is also added to it.
+              {framework.name}'s library is empty, every control you add here is also added to it.
             </Alert>
           )}
 

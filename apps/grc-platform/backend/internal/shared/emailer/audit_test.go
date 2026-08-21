@@ -1,0 +1,151 @@
+// Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package emailer
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"strings"
+	"testing"
+)
+
+// TestEveryAuditEventHasATemplate guards the map SendAuditEvent looks up:
+// adding an AuditEvent constant without a template would otherwise fail only
+// at runtime, as a notification that silently never sends.
+func TestEveryAuditEventHasATemplate(t *testing.T) {
+	all := []AuditEvent{
+		AuditEventOwnerAssigned, AuditEventAuditorAssigned, AuditEventReminderDue10,
+		AuditEventReminderDue5, AuditEventReminderOverdue, AuditEventResubmissionNeeded,
+		AuditEventSampleSubmitted, AuditEventEvidenceInternalReview, AuditEventPopulationInternalReview,
+		AuditEventEvidenceUnderValidation, AuditEventPopulationUnderValidation,
+		AuditEventPopulationCompleteSampleNeeded, AuditEventControlComplete, AuditEventCommentAdded,
+	}
+	for _, ev := range all {
+		tpl, ok := auditEventTemplates[ev]
+		if !ok {
+			t.Errorf("event %q has no template", ev)
+			continue
+		}
+		if tpl.lead == "" {
+			t.Errorf("event %q has an empty lead sentence", ev)
+		}
+		if got := tpl.subject(AuditEventInfo{Items: []AuditEventItem{{ControlNumber: "C-1"}}}); got == "" {
+			t.Errorf("event %q produced an empty subject", ev)
+		}
+	}
+}
+
+func TestSendAuditEventUnknownEventDoesNotSend(t *testing.T) {
+	var called bool
+	c := newTestClient(t, func(http.ResponseWriter, *http.Request) { called = true })
+
+	if err := c.SendAuditEvent(context.Background(), AuditEvent("NOPE"), "a@b.com", AuditEventInfo{}); err == nil {
+		t.Fatal("want an error for an unknown event, got nil")
+	}
+	if called {
+		t.Error("an unknown event must not reach the email-service")
+	}
+}
+
+func TestSendAuditEventBlankRecipientDoesNotSend(t *testing.T) {
+	var called bool
+	c := newTestClient(t, func(http.ResponseWriter, *http.Request) { called = true })
+
+	if err := c.SendAuditEvent(context.Background(), AuditEventOwnerAssigned, "   ", AuditEventInfo{}); err == nil {
+		t.Fatal("want an error for a blank recipient, got nil")
+	}
+	if called {
+		t.Error("must not call the email-service with a blank recipient")
+	}
+}
+
+func TestSendAuditEventSendsToSingleRecipient(t *testing.T) {
+	var got []string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			To []string `json:"to"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		got = body.To
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"message":"ok"}`))
+	})
+
+	err := c.SendAuditEvent(context.Background(), AuditEventOwnerAssigned, "owner@example.com", AuditEventInfo{
+		Items: []AuditEventItem{{ControlNumber: "C-1", RequirementType: "Evidence Requirement"}},
+	})
+	if err != nil {
+		t.Fatalf("SendAuditEvent: %v", err)
+	}
+	if len(got) != 1 || got[0] != "owner@example.com" {
+		t.Errorf("To = %v, want exactly [owner@example.com]", got)
+	}
+}
+
+// The body is user-supplied in places (item descriptions, rejection
+// comments), so it must be HTML-escaped — html/template, not text/template.
+func TestSendAuditEventEscapesUserSuppliedText(t *testing.T) {
+	var decoded string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Template string `json:"template"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		raw, _ := base64.StdEncoding.DecodeString(body.Template)
+		decoded = string(raw)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"message":"ok"}`))
+	})
+
+	err := c.SendAuditEvent(context.Background(), AuditEventResubmissionNeeded, "owner@example.com", AuditEventInfo{
+		Comment: "<script>alert(1)</script>",
+		Items:   []AuditEventItem{{ControlNumber: "C-1", Description: "<b>desc</b>"}},
+	})
+	if err != nil {
+		t.Fatalf("SendAuditEvent: %v", err)
+	}
+	if strings.Contains(decoded, "<script>") || strings.Contains(decoded, "<b>desc</b>") {
+		t.Errorf("rendered body contains unescaped user input:\n%s", decoded)
+	}
+}
+
+// A mixed control+population batch must still resolve to one subject, not
+// fail or render blank.
+func TestControlThreadSubjectCoversMixedKinds(t *testing.T) {
+	tests := []struct {
+		name  string
+		items []AuditEventItem
+	}{
+		{"no items", nil},
+		{"one control", []AuditEventItem{{ControlNumber: "C-1", RequirementType: "Evidence Requirement"}}},
+		{"one population", []AuditEventItem{{ControlNumber: "C-1", RequirementType: "Population Requirement"}}},
+		{"mixed", []AuditEventItem{
+			{ControlNumber: "C-1", RequirementType: "Evidence Requirement"},
+			{ControlNumber: "C-1", RequirementType: "Population Requirement"},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := controlThreadSubject(AuditEventInfo{AuditName: "Q3 Audit", Items: tt.items})
+			if got == "" {
+				t.Error("subject must never be empty")
+			}
+		})
+	}
+}

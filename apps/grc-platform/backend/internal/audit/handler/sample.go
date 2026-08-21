@@ -23,6 +23,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
@@ -177,6 +178,17 @@ func (h *evidenceHandler) submitSample(w http.ResponseWriter, r *http.Request) {
 	if err := h.controlSvc.UpdateStatusWithSample(r.Context(), auditID, controlID, "SUBMITTED_SAMPLE", req.Note, actor); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
+	}
+	if control.OwnerID != nil {
+		h.notify.notifyAuditEvent(emailer.AuditEventSampleSubmitted, *control.OwnerID, emailer.AuditEventInfo{
+			AuditName: h.notify.auditName(r.Context(), auditID),
+			Actor:     h.notify.describeActor(r.Context(), actor),
+			DetailURL: h.notify.controlDetailURL(auditID, control.ID),
+			Items: []emailer.AuditEventItem{{
+				ControlNumber: control.ControlNumber,
+				Description:   control.Description,
+			}},
+		}, []notificationLogItem{{AuditID: &auditID, Type: "SAMPLE_SUBMITTED", ControlID: &control.ID}})
 	}
 	// UpdateStatusWithSample already records a generic status-change trail row
 	// (statusChangeAction); this adds the same explicit attribution row that

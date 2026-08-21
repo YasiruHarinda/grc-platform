@@ -17,17 +17,22 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
 type controlHandler struct {
 	svc service.ControlService
+	// notify sends owner-assignment notification emails after addControl/
+	// bulkAddControls/updateControl — see notify.go.
+	notify *Deps
 }
 
 // listControls handles GET /api/v1/audits/{id}/controls.
@@ -118,6 +123,7 @@ func (h *controlHandler) addControl(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	h.notifyOwnerAssignments(r.Context(), auditID, []model.AddControlRequest{req}, []*model.AuditControl{c}, actor)
 	response.WriteJSONValue(w, http.StatusCreated, c)
 }
 
@@ -147,6 +153,7 @@ func (h *controlHandler) bulkAddControls(w http.ResponseWriter, r *http.Request)
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	h.notifyOwnerAssignments(r.Context(), auditID, req.Controls, controls, actor)
 	response.WriteJSONValue(w, http.StatusCreated, &model.ControlListResponse{
 		Items: controls,
 		Total: len(controls),
@@ -171,11 +178,201 @@ func (h *controlHandler) updateControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := auth.FromContext(r.Context()).Email
-	if err := h.svc.Update(r.Context(), auditID, controlID, req, actor); err != nil {
+	result, err := h.svc.Update(r.Context(), auditID, controlID, req, actor)
+	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	h.notifyReassignments(r.Context(), auditID, controlID, result, actor)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// recipientBatch accumulates one AuditEventItem batch per recipient user ID
+// for one AuditEvent, alongside which control(s) that recipient's batch
+// touches (for the deep-link decision, see singleControlID) and the
+// audit_notification log rows to write per recipient. Shared shape between
+// the owner and auditor batches notifyOwnerAssignments/notifyReassignments
+// build — same event kind (someone assigned to a control), different role.
+type recipientBatch struct {
+	items      map[int][]emailer.AuditEventItem
+	logs       map[int][]notificationLogItem
+	controlIDs map[int]map[int]bool
+}
+
+func newRecipientBatch() *recipientBatch {
+	return &recipientBatch{
+		items:      map[int][]emailer.AuditEventItem{},
+		logs:       map[int][]notificationLogItem{},
+		controlIDs: map[int]map[int]bool{},
+	}
+}
+
+func (b *recipientBatch) add(recipientID, controlID int, item emailer.AuditEventItem, logItem notificationLogItem) {
+	b.items[recipientID] = append(b.items[recipientID], item)
+	b.logs[recipientID] = append(b.logs[recipientID], logItem)
+	if b.controlIDs[recipientID] == nil {
+		b.controlIDs[recipientID] = map[int]bool{}
+	}
+	b.controlIDs[recipientID][controlID] = true
+}
+
+// sendBatched fires ev once per recipient in batch — one email per person,
+// covering every item batched for them. Deep-links straight to a control
+// when the recipient's batch is about only one; falls back to the audit's
+// control list when they picked up more than one control in the same
+// submission (see singleControlID).
+func (h *controlHandler) sendBatched(ctx context.Context, ev emailer.AuditEvent, auditID int, auditName, actor string, batch *recipientBatch) {
+	actorLabel := h.notify.describeActor(ctx, actor)
+	for recipientID, items := range batch.items {
+		detailURL := h.notify.detailURL(auditID)
+		if controlID, ok := singleControlID(batch.controlIDs[recipientID]); ok {
+			detailURL = h.notify.controlDetailURL(auditID, controlID)
+		}
+		info := emailer.AuditEventInfo{
+			AuditName: auditName,
+			Actor:     actorLabel,
+			DetailURL: detailURL,
+			Items:     items,
+		}
+		h.notify.notifyAuditEvent(ev, recipientID, info, batch.logs[recipientID])
+	}
+}
+
+// notifyOwnerAssignments batches every control's control-owner AND
+// population-owner in reqs into one AuditEventOwnerAssigned email per
+// distinct owner — so a person who is both a control's and its population's
+// owner in the same request gets exactly one email, not two (see
+// emailer.AuditEventOwnerAssigned) — and separately batches every assigned
+// auditor into one AuditEventAuditorAssigned email per distinct auditor.
+// Owner and auditor are deliberately separate emails even when the same
+// person holds both roles across the batch: they're different kinds of
+// assignment. controls is matched to reqs by ControlNumber (unique per
+// audit) rather than index, since bulkAddControls's response is sorted by
+// control number, not request order.
+func (h *controlHandler) notifyOwnerAssignments(ctx context.Context, auditID int, reqs []model.AddControlRequest, controls []*model.AuditControl, actor string) {
+	byNumber := make(map[string]*model.AuditControl, len(controls))
+	for _, c := range controls {
+		if c != nil {
+			byNumber[c.ControlNumber] = c
+		}
+	}
+
+	owners := newRecipientBatch()
+	auditors := newRecipientBatch()
+
+	for _, req := range reqs {
+		c, ok := byNumber[req.ControlNumber]
+		if !ok {
+			continue
+		}
+		if req.OwnerID != nil {
+			owners.add(*req.OwnerID, c.ID, emailer.AuditEventItem{
+				ControlNumber:   c.ControlNumber,
+				Description:     c.Description,
+				DueDate:         derefString(c.DueDate),
+				RequirementType: "Evidence Requirement",
+			}, notificationLogItem{
+				AuditID:   &auditID,
+				Type:      "OWNER_ASSIGNED_CONTROL",
+				ControlID: &c.ID,
+			})
+		}
+		if req.Population != nil && req.Population.OwnerID != nil {
+			owners.add(*req.Population.OwnerID, c.ID, emailer.AuditEventItem{
+				ControlNumber:   c.ControlNumber,
+				Description:     c.Description,
+				DueDate:         derefString(req.Population.DueDate),
+				RequirementType: "Population Requirement",
+			}, notificationLogItem{
+				AuditID:      &auditID,
+				Type:         "OWNER_ASSIGNED_POPULATION",
+				PopulationID: c.PopulationID,
+			})
+		}
+		if req.AuditorID != nil {
+			auditors.add(*req.AuditorID, c.ID, emailer.AuditEventItem{
+				ControlNumber:   c.ControlNumber,
+				Description:     c.Description,
+				DueDate:         derefString(c.DueDate),
+				RequirementType: "Evidence Requirement",
+			}, notificationLogItem{
+				AuditID:   &auditID,
+				Type:      "AUDITOR_ASSIGNED_CONTROL",
+				ControlID: &c.ID,
+			})
+		}
+	}
+
+	name := h.notify.auditName(ctx, auditID)
+	h.sendBatched(ctx, emailer.AuditEventOwnerAssigned, auditID, name, actor, owners)
+	h.sendBatched(ctx, emailer.AuditEventAuditorAssigned, auditID, name, actor, auditors)
+}
+
+// notifyReassignments fires the owner/auditor-assigned events for
+// updateControl's reassignments — new control owner, new population owner,
+// and/or new auditor — coalesced into one owner-assigned email if the first
+// two land on the same person, same as notifyOwnerAssignments. Update
+// doesn't return the updated control (only what changed), so this re-fetches
+// it once, only when there's actually a reassignment to notify about.
+func (h *controlHandler) notifyReassignments(ctx context.Context, auditID, controlID int, result service.ControlUpdateResult, actor string) {
+	if !result.ControlOwnerChanged && !result.PopulationOwnerChanged && !result.AuditorChanged {
+		return
+	}
+	c, err := h.svc.GetByID(ctx, auditID, controlID)
+	if err != nil || c == nil {
+		return
+	}
+
+	owners := newRecipientBatch()
+	auditors := newRecipientBatch()
+	if result.ControlOwnerChanged && result.NewControlOwnerID != nil {
+		owners.add(*result.NewControlOwnerID, c.ID, emailer.AuditEventItem{
+			ControlNumber:   c.ControlNumber,
+			Description:     c.Description,
+			DueDate:         derefString(c.DueDate),
+			RequirementType: "Evidence Requirement",
+		}, notificationLogItem{
+			AuditID:   &auditID,
+			Type:      "OWNER_ASSIGNED_CONTROL",
+			ControlID: &c.ID,
+		})
+	}
+	if result.PopulationOwnerChanged && result.NewPopulationOwnerID != nil {
+		owners.add(*result.NewPopulationOwnerID, c.ID, emailer.AuditEventItem{
+			ControlNumber:   c.ControlNumber,
+			Description:     c.Description,
+			DueDate:         derefString(c.PopulationDueDate),
+			RequirementType: "Population Requirement",
+		}, notificationLogItem{
+			AuditID:      &auditID,
+			Type:         "OWNER_ASSIGNED_POPULATION",
+			PopulationID: c.PopulationID,
+		})
+	}
+	if result.AuditorChanged && result.NewAuditorID != nil {
+		auditors.add(*result.NewAuditorID, c.ID, emailer.AuditEventItem{
+			ControlNumber:   c.ControlNumber,
+			Description:     c.Description,
+			DueDate:         derefString(c.DueDate),
+			RequirementType: "Evidence Requirement",
+		}, notificationLogItem{
+			AuditID:   &auditID,
+			Type:      "AUDITOR_ASSIGNED_CONTROL",
+			ControlID: &c.ID,
+		})
+	}
+
+	name := h.notify.auditName(ctx, auditID)
+	h.sendBatched(ctx, emailer.AuditEventOwnerAssigned, auditID, name, actor, owners)
+	h.sendBatched(ctx, emailer.AuditEventAuditorAssigned, auditID, name, actor, auditors)
+}
+
+// derefString returns "" for a nil pointer instead of dereferencing it.
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // updateControlStatus handles PATCH /api/v1/audits/{id}/controls/{controlId}/status.
@@ -230,6 +427,9 @@ func (h *controlHandler) overrideControlStatus(w http.ResponseWriter, r *http.Re
 	if err := h.svc.OverrideStatus(r.Context(), auditID, controlID, req, actor); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
+	}
+	if control, err := h.svc.GetByID(r.Context(), auditID, controlID); err == nil && control != nil {
+		h.notify.notifyControlStatusReached(r.Context(), control, req.Status, actor)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

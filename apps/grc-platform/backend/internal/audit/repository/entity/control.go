@@ -207,13 +207,26 @@ func (r *controlRepo) Update(ctx context.Context, auditID, controlID int, req mo
 	if req.EvidenceRequirement != nil {
 		body["evidenceRequirement"] = req.EvidenceRequirement
 	}
-	if req.OwnerID != nil {
+	if req.ClearOwner {
+		// The entity's own UpdateControlRequest has the identical nil-means-
+		// unchanged ambiguity on ownerId, so clearing it must be signaled the
+		// same way we signal it here: an explicit clearOwner flag, not just a
+		// null value.
+		body["ownerId"] = nil
+		body["clearOwner"] = true
+	} else if req.OwnerID != nil {
 		body["ownerId"] = req.OwnerID
 	}
-	if req.TeamID != nil {
+	if req.ClearTeam {
+		body["teamId"] = nil
+		body["clearTeam"] = true
+	} else if req.TeamID != nil {
 		body["teamId"] = req.TeamID
 	}
-	if req.AuditorID != nil {
+	if req.ClearAuditor {
+		body["auditorId"] = nil
+		body["clearAuditor"] = true
+	} else if req.AuditorID != nil {
 		body["auditorId"] = req.AuditorID
 	}
 	if req.DueDate != nil {
@@ -253,6 +266,28 @@ func (r *controlRepo) AssignedAuditID(ctx context.Context, userEmail string, con
 		return 0, false, err
 	}
 	return resp.AuditID, true, nil
+}
+
+// ListAllForReminders returns every control across every audit, unfiltered
+// (no status/owner/audit restriction) — for the daily reminder job's sweep.
+// The entity has no due-date range filter, so filtering happens in the job
+// itself; this reuses the existing global search endpoint with an empty
+// filter rather than adding a bespoke one, mirroring List/ListScoped's own
+// paging idiom.
+func (r *controlRepo) ListAllForReminders(ctx context.Context) ([]*model.AuditControl, error) {
+	var all []*model.AuditControl
+	for offset := 0; ; offset += pageLimit {
+		var resp struct {
+			Controls []*model.AuditControl `json:"controls"`
+		}
+		if err := r.c.Post(ctx, "/controls/search", pageBody(offset), &resp); err != nil {
+			return nil, err
+		}
+		all = append(all, resp.Controls...)
+		if len(resp.Controls) < pageLimit {
+			return all, nil
+		}
+	}
 }
 
 func (r *controlRepo) ActivePopulationID(ctx context.Context, controlID int) (int, bool, error) {

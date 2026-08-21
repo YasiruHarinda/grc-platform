@@ -21,6 +21,7 @@ package entity
 import (
 	"context"
 	"fmt"
+	"net/url"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/repository"
@@ -174,6 +175,33 @@ func (r *userRepo) List(ctx context.Context) ([]*model.UserRef, error) {
 			return all, nil
 		}
 	}
+}
+
+// GetByID is deliberately unfiltered by status (unlike List, which only shows
+// ACTIVE users for dropdowns) — the notification dispatcher needs to see an
+// INACTIVE/REMOVED user's real status in order to skip emailing them.
+func (r *userRepo) GetByID(ctx context.Context, id int) (*model.UserRef, error) {
+	var u model.UserRef
+	if err := r.c.Get(ctx, fmt.Sprintf("/users/%d", id), &u); err != nil {
+		if notFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &u, nil
+}
+
+// GetByEmail resolves a user by email — used by the notification dispatcher
+// to render the actor who triggered an event as "Display Name (email)".
+func (r *userRepo) GetByEmail(ctx context.Context, email string) (*model.UserRef, error) {
+	var u model.UserRef
+	if err := r.c.Get(ctx, fmt.Sprintf("/users/by-email/%s", url.QueryEscape(email)), &u); err != nil {
+		if notFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &u, nil
 }
 
 // ── Teams ─────────────────────────────────────────────────────────────────────

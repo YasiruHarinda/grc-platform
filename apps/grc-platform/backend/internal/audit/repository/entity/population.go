@@ -84,6 +84,8 @@ func (r *populationRepo) UpdateDetails(ctx context.Context, populationID int, de
 type entPopulationRound struct {
 	ID              int       `json:"id"`
 	ControlID       int       `json:"controlId"`
+	OwnerID         *int      `json:"ownerId"`
+	TeamID          *int      `json:"teamId"`
 	ReferenceNumber *int      `json:"referenceNumber"`
 	Description     *string   `json:"description"`
 	Status          string    `json:"status"`
@@ -104,6 +106,8 @@ func (p entPopulationRound) toModel() *model.AuditPopulation {
 		DueDate:         p.DueDate,
 		Attestation:     p.Attestation,
 		Comments:        p.Comments,
+		OwnerID:         p.OwnerID,
+		TeamID:          p.TeamID,
 		CreatedAt:       p.CreatedOn,
 		UpdatedAt:       p.UpdatedOn,
 	}

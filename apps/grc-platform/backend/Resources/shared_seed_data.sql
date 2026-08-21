@@ -199,8 +199,8 @@ WHERE  r.role_name = 'grc-platform-management'
 -- explicit — SHARED cannot be granted AUDIT_TEAM or RISK_TEAM, so a
 -- team/register-scoped management "lead" is not expressible through this
 -- role. Nothing in either hub grants it team-scoped today, so this is not a
--- regression against current behaviour, only against a capability the Audit
--- Hub's design docs once described and never shipped.
+-- regression against current behaviour, only against a capability once
+-- planned for the Audit Hub and never shipped.
 --
 -- The four grc-platform-audit-* roles below are module='AUDIT' and stay
 -- distinct per hub, same precedent as grc-platform-risk-compliance-team /

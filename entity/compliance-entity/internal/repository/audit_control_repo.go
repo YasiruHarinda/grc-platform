@@ -44,18 +44,19 @@ type ControlRepository interface {
 	// UpdateControl.
 	OverrideControlStatus(ctx context.Context, auditID, controlID int, req domain.OverrideControlStatusRequest) (*domain.AuditControl, error)
 	DeleteControl(ctx context.Context, auditID, controlID int) error
+	// CountDeletionBlockers returns how many audit_evidence rows exist for the
+	// control and how many audit_population rows count as active: any status
+	// other than PENDING (including the terminal APPROVED), plus any PENDING
+	// round that already holds uploaded evidence files. Used to block
+	// DeleteControl from silently cascading away real work (evidence/population
+	// records cascade-delete with the control at the DB level).
+	CountDeletionBlockers(ctx context.Context, controlID int) (evidenceCount int, activePopulationCount int, err error)
 	// GetEvidenceAssignment returns the control's audit id when userEmail is the
 	// control's owner and it is currently actionable, else sql.ErrNoRows.
 	GetEvidenceAssignment(ctx context.Context, userEmail string, controlID int) (int, error)
 	// FindActivePopulation returns the active audit_population id for an OE control
 	// (status PENDING or COMPLIANCE_REJECTED), else sql.ErrNoRows.
 	FindActivePopulation(ctx context.Context, controlID int) (int, error)
-	// CountDeletionBlockers returns how many audit_evidence rows exist for the
-	// control and how many audit_population rows are still in progress (any
-	// status other than the terminal APPROVED). Used to block DeleteControl from
-	// silently cascading away real work (evidence/population records cascade-
-	// delete with the control at the DB level).
-	CountDeletionBlockers(ctx context.Context, controlID int) (evidenceCount int, activePopulationCount int, err error)
 }
 
 // evidenceActionableStatuses lists the control statuses for which the owner
@@ -126,7 +127,10 @@ const controlSelectCols = `
   p.comments                           AS population_comments,
   DATE_FORMAT(p.due_date, '%Y-%m-%d')  AS population_due_date,
   u_pop_owner.display_name             AS population_owner_name,
-  pop_team.name                        AS population_team_name`
+  pop_team.name                        AS population_team_name,
+  p.id                                 AS population_id,
+  p.owner_id                           AS population_owner_id,
+  p.status                             AS population_status`
 
 const controlFromClause = `
 FROM audit_control c
@@ -134,7 +138,13 @@ LEFT JOIN ` + "`user`" + ` u_owner ON u_owner.id = c.owner_id
 LEFT JOIN audit_team t            ON t.id          = c.team_id
 LEFT JOIN ` + "`user`" + ` u_aud   ON u_aud.id     = c.auditor_id
 LEFT JOIN audit_population p      ON p.control_id  = c.id
-    AND p.id = (SELECT MIN(id) FROM audit_population WHERE control_id = c.id)
+    -- Highest id = current round, matching FindActivePopulation/
+    -- demotePopulationRound/controlService.Update's own "most recent round"
+    -- convention elsewhere in this module — not MIN(id), which would pin
+    -- every consumer (control list/detail, the reminder sweep) to a
+    -- control's very first population round forever, ignoring any
+    -- resubmission cycle.
+    AND p.id = (SELECT MAX(id) FROM audit_population WHERE control_id = c.id)
 LEFT JOIN ` + "`user`" + ` u_pop_owner ON u_pop_owner.id = p.owner_id
 LEFT JOIN audit_team pop_team         ON pop_team.id     = p.team_id`
 
@@ -451,6 +461,19 @@ func (r *controlRepo) BulkCreateControls(ctx context.Context, auditID int, reqs 
 	return controls, nil
 }
 
+func (r *controlRepo) DeleteControl(ctx context.Context, auditID, controlID int) error {
+	result, err := r.db.ExecContext(ctx,
+		"DELETE FROM audit_control WHERE audit_id = ? AND id = ?", auditID, controlID)
+	if err != nil {
+		return fmt.Errorf("control.Delete(%d,%d): %w", auditID, controlID, err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return &apierror.NotFoundError{Msg: fmt.Sprintf("control %d not found in audit %d", controlID, auditID)}
+	}
+	return nil
+}
+
 func (r *controlRepo) CountDeletionBlockers(ctx context.Context, controlID int) (int, int, error) {
 	var evidenceCount int
 	if err := r.db.QueryRowContext(ctx,
@@ -481,19 +504,6 @@ func (r *controlRepo) CountDeletionBlockers(ctx context.Context, controlID int) 
 	return evidenceCount, activePopulationCount, nil
 }
 
-func (r *controlRepo) DeleteControl(ctx context.Context, auditID, controlID int) error {
-	result, err := r.db.ExecContext(ctx,
-		"DELETE FROM audit_control WHERE audit_id = ? AND id = ?", auditID, controlID)
-	if err != nil {
-		return fmt.Errorf("control.Delete(%d,%d): %w", auditID, controlID, err)
-	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
-		return &apierror.NotFoundError{Msg: fmt.Sprintf("control %d not found in audit %d", controlID, auditID)}
-	}
-	return nil
-}
-
 func (r *controlRepo) UpdateControl(ctx context.Context, auditID, controlID int, req domain.UpdateControlRequest) (*domain.AuditControl, error) {
 	sets := []string{}
 	args := []any{}
@@ -514,15 +524,24 @@ func (r *controlRepo) UpdateControl(ctx context.Context, auditID, controlID int,
 		sets = append(sets, "evidence_requirement = ?")
 		args = append(args, *req.EvidenceRequirement)
 	}
-	if req.OwnerID != nil {
+	if req.ClearOwner {
+		sets = append(sets, "owner_id = ?")
+		args = append(args, nil)
+	} else if req.OwnerID != nil {
 		sets = append(sets, "owner_id = ?")
 		args = append(args, *req.OwnerID)
 	}
-	if req.TeamID != nil {
+	if req.ClearTeam {
+		sets = append(sets, "team_id = ?")
+		args = append(args, nil)
+	} else if req.TeamID != nil {
 		sets = append(sets, "team_id = ?")
 		args = append(args, *req.TeamID)
 	}
-	if req.AuditorID != nil {
+	if req.ClearAuditor {
+		sets = append(sets, "auditor_id = ?")
+		args = append(args, nil)
+	} else if req.AuditorID != nil {
 		sets = append(sets, "auditor_id = ?")
 		args = append(args, *req.AuditorID)
 	}
@@ -772,6 +791,8 @@ func scanControl(s scanner) (*domain.AuditControl, error) {
 	var overriddenBy sql.NullString
 	var overriddenAt sql.NullTime
 	var popDescription, popComments, popDueDate, popOwnerName, popTeamName sql.NullString
+	var popID, popOwnerID sql.NullInt64
+	var popStatus sql.NullString
 	err := s.Scan(
 		&c.ID, &c.AuditID,
 		&c.ControlNumber, &c.Description, &evidenceReq,
@@ -784,6 +805,7 @@ func scanControl(s scanner) (*domain.AuditControl, error) {
 		&c.CreatedOn, &c.UpdatedOn,
 		&c.StatusOverridden, &overriddenBy, &overriddenAt,
 		&popDescription, &popComments, &popDueDate, &popOwnerName, &popTeamName,
+		&popID, &popOwnerID, &popStatus,
 	)
 	if err != nil {
 		return nil, err
@@ -821,6 +843,9 @@ func scanControl(s scanner) (*domain.AuditControl, error) {
 	if overriddenAt.Valid {
 		c.OverriddenAt = &overriddenAt.Time
 	}
+	c.PopulationID = nullIntPtr(popID)
+	c.PopulationOwnerID = nullIntPtr(popOwnerID)
+	c.PopulationStatus = nullStrPtr(popStatus)
 	return &c, nil
 }
 

@@ -16,7 +16,9 @@
 --   audit_evidence_file     — files attached to evidence or population
 --   audit_comment           — threaded comments on a control (population + evidence phases)
 --   audit_ai_validation_log — async AI validation results (hints only, append-only)
---   audit_trail             — immutable event log for an audit
+--   audit_trail              — immutable event log for an audit
+--   audit_notification       — send-log for every audit-module email (also the
+--                              reminder job's de-dup mechanism)
 -- =============================================================================
 
 USE grc_platform;
@@ -477,6 +479,146 @@ SET @add_trail_overridden_sql = IF(@trail_has_overridden_action = 0,
 PREPARE add_trail_overridden_stmt FROM @add_trail_overridden_sql;
 EXECUTE add_trail_overridden_stmt;
 DEALLOCATE PREPARE add_trail_overridden_stmt;
+
+-- =============================================================================
+-- audit_notification  (universal send-log for every audit-module email)
+--
+-- One row per email actually sent (not per event-trigger — a triggered event
+-- with zero deliverable recipients, or that fails to send, writes no row).
+-- Also the de-dup mechanism for the daily reminder job (REMINDER_DUE_10 /
+-- REMINDER_DUE_5 / REMINDER_OVERDUE): the job atomically CLAIMS an item by
+-- inserting its row *before* sending — the insert's success or failure IS the
+-- de-dup decision — rather than checking-then-writing, which left a window
+-- for two overlapping runs (e.g. two backend replicas both waking at the
+-- daily reminder hour) to both observe "not sent yet" and both send. A
+-- failed send deletes its claim
+-- row so the item is retried on the next run.
+--
+-- reminder_dedup_key makes that insert collide correctly. A plain
+-- UNIQUE KEY (recipient_id, type, control_id, population_id, due_date_snapshot)
+-- would NOT work: control_id and population_id are mutually-exclusive
+-- nullable columns, and MySQL's unique-index NULL semantics (NULL never
+-- equals NULL) mean two rows that are both, say, control_id=NULL would never
+-- collide. reminder_dedup_key sidesteps this by being a generated, non-NULL
+-- string ONLY for the three REMINDER_* types (COALESCE folds whichever of
+-- control_id/population_id is unset into '', so the two can't collide with
+-- each other); for the other five notification types it's NULL, and MySQL's
+-- unique index — unlike NULL-safe equality — ignores NULL for uniqueness, so
+-- uq_notif_reminder_dedup imposes no constraint on them at all.
+--
+-- due_date_snapshot freezes the due_date a reminder was computed against, so
+-- editing a control/population's due_date later correctly restarts its
+-- reminder cycle (a new due_date_snapshot no longer matches old log rows).
+--
+-- MySQL does not allow a CHECK constraint on columns used in an ON DELETE SET
+-- NULL FK action, so "exactly one of control_id/population_id is non-NULL" is
+-- enforced at the application layer, not here.
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS audit_notification (
+  id                 BIGINT       NOT NULL AUTO_INCREMENT,
+  recipient_id       INT          NULL,
+  audit_id           INT          NULL,
+  control_id         INT          NULL,
+  population_id      INT          NULL,
+  type               ENUM(
+                         'OWNER_ASSIGNED_CONTROL',
+                         'OWNER_ASSIGNED_POPULATION',
+                         'AUDITOR_ASSIGNED_CONTROL',
+                         'REMINDER_DUE_10',
+                         'REMINDER_DUE_5',
+                         'REMINDER_OVERDUE',
+                         'RESUBMISSION_NEEDED',
+                         'SAMPLE_SUBMITTED',
+                         'EVIDENCE_INTERNAL_REVIEW',
+                         'POPULATION_INTERNAL_REVIEW',
+                         'EVIDENCE_UNDER_VALIDATION',
+                         'POPULATION_UNDER_VALIDATION',
+                         'POPULATION_COMPLETE_SAMPLE_NEEDED',
+                         'CONTROL_COMPLETE',
+                         'COMMENT_ADDED'
+                       ) NOT NULL,
+  channel            ENUM('EMAIL') NOT NULL DEFAULT 'EMAIL',
+  due_date_snapshot  DATE         NULL,
+  message            TEXT         NULL,
+  created_at         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_by         VARCHAR(255) NULL,
+  reminder_dedup_key VARCHAR(64) GENERATED ALWAYS AS (
+                         CASE WHEN type IN ('REMINDER_DUE_10', 'REMINDER_DUE_5', 'REMINDER_OVERDUE')
+                           THEN CONCAT_WS('|',
+                                  recipient_id, type,
+                                  COALESCE(control_id, ''), COALESCE(population_id, ''),
+                                  due_date_snapshot)
+                           ELSE NULL
+                         END
+                       ) STORED,
+  PRIMARY KEY (id),
+  KEY idx_notif_dedup (recipient_id, type, control_id, population_id, due_date_snapshot),
+  UNIQUE KEY uq_notif_reminder_dedup (reminder_dedup_key),
+  CONSTRAINT fk_notif_recipient  FOREIGN KEY (recipient_id)  REFERENCES `user`(id)           ON DELETE RESTRICT,
+  CONSTRAINT fk_notif_audit      FOREIGN KEY (audit_id)      REFERENCES audit(id)            ON DELETE SET NULL,
+  CONSTRAINT fk_notif_control    FOREIGN KEY (control_id)    REFERENCES audit_control(id)    ON DELETE SET NULL,
+  CONSTRAINT fk_notif_population FOREIGN KEY (population_id) REFERENCES audit_population(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Backfill the seven status-reached/comment-added type values onto an
+-- audit_notification table created before notifyControlStatusReached and
+-- notifyCommentAdded existed (handler/notify.go) — same information_schema-guard
+-- pattern as audit_trail's OVERRIDDEN backfill above. Without this, every log
+-- write for those seven types fails against an ENUM that doesn't contain them.
+SET @notif_has_comment_added_type = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_notification' AND COLUMN_NAME = 'type'
+    AND COLUMN_TYPE LIKE '%''COMMENT_ADDED''%'
+);
+SET @add_notif_status_types_sql = IF(@notif_has_comment_added_type = 0,
+  'ALTER TABLE audit_notification MODIFY COLUMN type ENUM(
+     ''OWNER_ASSIGNED_CONTROL'',
+     ''OWNER_ASSIGNED_POPULATION'',
+     ''AUDITOR_ASSIGNED_CONTROL'',
+     ''REMINDER_DUE_10'',
+     ''REMINDER_DUE_5'',
+     ''REMINDER_OVERDUE'',
+     ''RESUBMISSION_NEEDED'',
+     ''SAMPLE_SUBMITTED'',
+     ''EVIDENCE_INTERNAL_REVIEW'',
+     ''POPULATION_INTERNAL_REVIEW'',
+     ''EVIDENCE_UNDER_VALIDATION'',
+     ''POPULATION_UNDER_VALIDATION'',
+     ''POPULATION_COMPLETE_SAMPLE_NEEDED'',
+     ''CONTROL_COMPLETE'',
+     ''COMMENT_ADDED''
+   ) NOT NULL',
+  'SELECT 1');
+PREPARE add_notif_status_types_stmt FROM @add_notif_status_types_sql;
+EXECUTE add_notif_status_types_stmt;
+DEALLOCATE PREPARE add_notif_status_types_stmt;
+
+-- Backfill reminder_dedup_key (+ its unique index) onto an audit_notification
+-- table created before the atomic-claim de-dup mechanism existed — same
+-- information_schema-guard pattern as the status-override columns above.
+-- Column and index are added together: nothing in this schema ever adds one
+-- without the other, so a single guard on the column's existence is enough.
+SET @notif_has_dedup_key = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_notification' AND COLUMN_NAME = 'reminder_dedup_key'
+);
+SET @add_notif_dedup_key_sql = IF(@notif_has_dedup_key = 0,
+  'ALTER TABLE audit_notification
+     ADD COLUMN reminder_dedup_key VARCHAR(64) GENERATED ALWAYS AS (
+       CASE WHEN type IN (''REMINDER_DUE_10'', ''REMINDER_DUE_5'', ''REMINDER_OVERDUE'')
+         THEN CONCAT_WS(''|'',
+                recipient_id, type,
+                COALESCE(control_id, ''''), COALESCE(population_id, ''''),
+                due_date_snapshot)
+         ELSE NULL
+       END
+     ) STORED AFTER created_by,
+     ADD UNIQUE KEY uq_notif_reminder_dedup (reminder_dedup_key)',
+  'SELECT 1');
+PREPARE add_notif_dedup_key_stmt FROM @add_notif_dedup_key_sql;
+EXECUTE add_notif_dedup_key_stmt;
+DEALLOCATE PREPARE add_notif_dedup_key_stmt;
 
 SET FOREIGN_KEY_CHECKS = 1;
 

@@ -94,9 +94,9 @@ type EvidenceFileRef struct {
 }
 
 // SubmitEvidenceRequest is the body for POST .../evidence/submit. There is no
-// folder re-listing in the flat evidence layout (see design doc §3.3): the
-// client accumulates the blobName returned by each upload call and submits the
-// exact list of files that make up this round.
+// folder re-listing in the flat evidence layout: the client accumulates the
+// blobName returned by each upload call and submits the exact list of files
+// that make up this round.
 //
 // Attestation is only honored when Files is empty AND the caller holds
 // ManageControls — see EvidenceService.Submit. Anyone else submitting zero
@@ -109,9 +109,9 @@ type SubmitEvidenceRequest struct {
 
 // PopulationSubmitRequest is the body for POST .../population/submit and
 // .../population/{controlId}/submit. Unlike evidence, population/sample keep
-// the folder-listing contract (their subfolders already fence their files —
-// see design doc §3.3), so the client only echoes back the folder path handed
-// out by the upload-link endpoint.
+// the folder-listing contract (their subfolders already fence their files),
+// so the client only echoes back the folder path handed out by the
+// upload-link endpoint.
 //
 // Attestation is a written note standing in for population files — required
 // when the folder has none (mirrors SampleSubmitRequest.Note: files, a note,

@@ -58,7 +58,10 @@ type ControlService interface {
 	InScope(ctx context.Context, auditID, controlID int, scope model.Scope, userEmail string, scopeTeamIDs []int) (bool, error)
 	Add(ctx context.Context, auditID int, req model.AddControlRequest, createdBy string) (*model.AuditControl, error)
 	BulkAdd(ctx context.Context, auditID int, reqs []model.AddControlRequest, createdBy string) ([]*model.AuditControl, error)
-	Update(ctx context.Context, auditID, controlID int, req model.UpdateControlRequest, updatedBy string) error
+	// Update edits a control (and optionally its population round) and
+	// reports what changed via ControlUpdateResult, so the caller (handler,
+	// not this service — see notify.go) can decide what to notify.
+	Update(ctx context.Context, auditID, controlID int, req model.UpdateControlRequest, updatedBy string) (ControlUpdateResult, error)
 	UpdateStatus(ctx context.Context, auditID, controlID int, req model.UpdateStatusRequest, updatedBy string) error
 	// OverrideStatus backward-overrides a control's status (ManageControls-gated
 	// admin escape hatch) — distinct from UpdateStatus's ordinary forward workflow.
@@ -73,6 +76,10 @@ type ControlService interface {
 	// ActivePopulationID returns the active population round id for an OE control;
 	// found=false means no active population (e.g. a DESIGN control).
 	ActivePopulationID(ctx context.Context, controlID int) (populationID int, found bool, err error)
+	// ListAllForReminders returns every control across every audit — for the
+	// daily reminder job's sweep (internal/audit/job). See
+	// repository.ControlRepository.ListAllForReminders.
+	ListAllForReminders(ctx context.Context) ([]*model.AuditControl, error)
 }
 
 type controlService struct {
@@ -207,42 +214,68 @@ func (s *controlService) BulkAdd(ctx context.Context, auditID int, reqs []model.
 	return s.repo.BulkCreate(ctx, auditID, reqs, createdBy)
 }
 
-func (s *controlService) Update(ctx context.Context, auditID, controlID int, req model.UpdateControlRequest, updatedBy string) error {
+// ControlUpdateResult reports what Update changed, so the caller (the
+// handler, not this service) can decide what to notify — see notify.go.
+// "Changed" means the field was provided, non-nil, and differs from the
+// value before this update; a field cleared to nil, or simply not sent, is
+// never a change (no outgoing-owner notification — see the design note on
+// notifyAuditEvent).
+type ControlUpdateResult struct {
+	ControlOwnerChanged    bool
+	PopulationOwnerChanged bool
+	AuditorChanged         bool
+	NewControlOwnerID      *int
+	NewPopulationOwnerID   *int
+	NewAuditorID           *int
+}
+
+func (s *controlService) Update(ctx context.Context, auditID, controlID int, req model.UpdateControlRequest, updatedBy string) (ControlUpdateResult, error) {
+	var result ControlUpdateResult
 	c, err := s.repo.GetByID(ctx, auditID, controlID)
 	if err != nil {
-		return err
+		return result, err
 	}
 	if c == nil {
-		return &apierror.Error{StatusCode: http.StatusNotFound, Body: "control not found"}
+		return result, &apierror.Error{StatusCode: http.StatusNotFound, Body: "control not found"}
 	}
 	if req.ControlNumber != nil && strings.TrimSpace(*req.ControlNumber) != "" {
 		index, err := s.sanitizedControlNumbers(ctx, auditID)
 		if err != nil {
-			return err
+			return result, err
 		}
 		delete(index, strings.ToLower(sanitizeSegment(c.ControlNumber))) // exclude this control's current number
 		if orig, ok := index[strings.ToLower(sanitizeSegment(*req.ControlNumber))]; ok {
-			return &apierror.Error{StatusCode: http.StatusConflict, Body: "a control numbered \"" + orig + "\" already exists in this audit"}
+			return result, &apierror.Error{StatusCode: http.StatusConflict, Body: "a control numbered \"" + orig + "\" already exists in this audit"}
 		}
 	}
 	// DueDate is optional here (nil means "leave unchanged"), but a caller that
 	// does send the field may not clear a control's due date to empty.
 	if req.DueDate != nil && strings.TrimSpace(*req.DueDate) == "" {
-		return &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "dueDate cannot be cleared"}
+		return result, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "dueDate cannot be cleared"}
 	}
 	// Population is only meaningful for OE controls — silently ignored for
 	// DESIGN controls rather than erroring, since the form simply never sends
 	// it for them.
 	if req.Population != nil && c.RequirementType == "OE" {
 		if strings.TrimSpace(req.Population.Description) == "" {
-			return &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "population.description is required"}
+			return result, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "population.description is required"}
 		}
 		if req.Population.DueDate == nil || strings.TrimSpace(*req.Population.DueDate) == "" {
-			return &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "population.dueDate is required"}
+			return result, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "population.dueDate is required"}
 		}
 	}
+
+	if req.OwnerID != nil && (c.OwnerID == nil || *req.OwnerID != *c.OwnerID) {
+		result.ControlOwnerChanged = true
+		result.NewControlOwnerID = req.OwnerID
+	}
+	if req.AuditorID != nil && (c.AuditorID == nil || *req.AuditorID != *c.AuditorID) {
+		result.AuditorChanged = true
+		result.NewAuditorID = req.AuditorID
+	}
+
 	if err := s.repo.Update(ctx, auditID, controlID, req, updatedBy); err != nil {
-		return err
+		return result, err
 	}
 	if req.Population != nil && c.RequirementType == "OE" {
 		// Deliberately not ActivePopulationID here: that only resolves a round
@@ -253,16 +286,20 @@ func (s *controlService) Update(ctx context.Context, auditID, controlID int, req
 		// so take the control's most recent round instead.
 		rounds, err := s.population.ListByControl(ctx, auditID, controlID)
 		if err != nil {
-			return err
+			return result, err
 		}
 		if len(rounds) > 0 {
 			latest := rounds[len(rounds)-1]
+			if req.Population.OwnerID != nil && (latest.OwnerID == nil || *req.Population.OwnerID != *latest.OwnerID) {
+				result.PopulationOwnerChanged = true
+				result.NewPopulationOwnerID = req.Population.OwnerID
+			}
 			if err := s.population.UpdateDetails(ctx, latest.ID, *req.Population, updatedBy); err != nil {
-				return err
+				return result, err
 			}
 		}
 	}
-	return nil
+	return result, nil
 }
 
 func (s *controlService) UpdateStatus(ctx context.Context, auditID, controlID int, req model.UpdateStatusRequest, updatedBy string) error {
@@ -371,6 +408,10 @@ func (s *controlService) AssignedAuditID(ctx context.Context, userEmail string, 
 
 func (s *controlService) ActivePopulationID(ctx context.Context, controlID int) (int, bool, error) {
 	return s.repo.ActivePopulationID(ctx, controlID)
+}
+
+func (s *controlService) ListAllForReminders(ctx context.Context) ([]*model.AuditControl, error) {
+	return s.repo.ListAllForReminders(ctx)
 }
 
 func validateAddRequest(req model.AddControlRequest) error {

@@ -120,6 +120,9 @@ type evidenceHandler struct {
 	// aiClient triggers async AI validation after a submission. It is nil when
 	// AI_VALIDATION_ENABLED is false, which disables the trigger entirely.
 	aiClient *aiagent.Client
+	// notify sends resubmission-needed and sample-submitted notification
+	// emails from decideRound and submitSample — see notify.go.
+	notify *Deps
 }
 
 // requireAssignment enforces resource-level authorization for the web-app evidence
@@ -319,6 +322,9 @@ func (h *evidenceHandler) submitEvidence(w http.ResponseWriter, r *http.Request)
 	if err := h.controlSvc.UpdateStatus(r.Context(), auditID, controlID, statusReq, actor); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
+	}
+	if control, err := h.controlSvc.GetByID(r.Context(), auditID, controlID); err == nil && control != nil {
+		h.notify.notifyControlStatusReached(r.Context(), control, "EVIDENCE_INTERNAL_REVIEW", actor)
 	}
 
 	// Best-effort audit-trail attribution: this submission came through the web
