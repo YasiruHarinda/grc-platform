@@ -48,11 +48,13 @@ func NewRepository(c *entityclient.Client) user.Repository {
 // which differs from the backend's user.User (snake_case, no timestamps).
 // AuditTeamIDs is deliberately not mirrored here — it's a many-to-many slice
 // on the entity side and nothing in the GRC backend or webapp consumes it.
+// The entity itself carries no Email/DisplayName (the `user` table stores
+// neither — see shared.sql); user.User's own Email/DisplayName fields are
+// populated by callers from the identity directory instead (see
+// user/handler/users.go, resolve.go), never from this response.
 type entUser struct {
 	ID          int    `json:"id"`
 	UUID        string `json:"uuid"`
-	Email       string `json:"email"`
-	DisplayName string `json:"displayName"`
 	UserType    string `json:"userType"`
 	RiskTeamIDs []int  `json:"riskTeamIds"`
 	Status      string `json:"status"`
@@ -62,22 +64,9 @@ func (u entUser) toModel() *user.User {
 	return &user.User{
 		ID:          u.ID,
 		UUID:        u.UUID,
-		DisplayName: u.DisplayName,
-		Email:       u.Email,
 		Status:      u.Status,
 		RiskTeamIDs: u.RiskTeamIDs,
 	}
-}
-
-func (r *repository) GetByEmail(ctx context.Context, email string) (*user.User, error) {
-	var u entUser
-	if err := r.c.Get(ctx, "/users/by-email/"+url.PathEscape(email), &u); err != nil {
-		if notFound(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("get user by email: %w", err)
-	}
-	return u.toModel(), nil
 }
 
 func (r *repository) GetByID(ctx context.Context, id int) (*user.User, error) {
@@ -104,21 +93,18 @@ func (r *repository) GetByUUID(ctx context.Context, uuid string) (*user.User, er
 
 // Upsert provisions an account for an employee picked from an HR entity search
 // (e.g. as a risk's Action Owner) who may never have signed in to grc-platform.
-// POST /users is an upsert on the entity side — it inserts when the email is
-// new and refreshes display_name when it isn't — so this is a single round trip
-// with no read-then-write race. userType/status are left empty so the entity
-// applies its own defaults (INTERNAL / ACTIVE).
+// POST /users is an upsert on the entity side, keyed on uuid — it inserts when
+// the uuid is new and just refreshes updated_by when it isn't — so this is a
+// single round trip with no read-then-write race. userType/status are left
+// empty so the entity applies its own defaults (INTERNAL / ACTIVE).
 //
-// uuid is sent even though the row is still keyed on email: this upsert is how
-// an existing row acquires the uuid it was created without. The entity fills
-// only a gap and never overwrites, and it rejects a uuid already held by a
-// different email rather than rewriting that person's row.
-func (r *repository) Upsert(ctx context.Context, uuid, email, displayName, actor string) (*user.User, error) {
+// uuid is required — see the Repository interface doc for why: the caller
+// must have already resolved one (e.g. against the identity directory)
+// before calling this.
+func (r *repository) Upsert(ctx context.Context, uuid, actor string) (*user.User, error) {
 	body := map[string]any{
-		"uuid":        uuid,
-		"email":       email,
-		"displayName": displayName,
-		"createdBy":   actor,
+		"uuid":      uuid,
+		"createdBy": actor,
 	}
 	var u entUser
 	if err := r.c.Post(ctx, "/users", body, &u); err != nil {

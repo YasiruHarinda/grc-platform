@@ -21,8 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
-	"sync"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/apierror"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
@@ -49,13 +47,12 @@ func (r *controlRepo) List(ctx context.Context, auditID int) ([]*model.AuditCont
 		}
 		all = append(all, resp.Controls...)
 		if len(resp.Controls) < pageLimit {
-			r.enrichPopulations(ctx, auditID, all)
 			return all, nil
 		}
 	}
 }
 
-func (r *controlRepo) ListScoped(ctx context.Context, auditID int, scope model.Scope, userEmail string, scopeTeamIDs []int) ([]*model.AuditControl, error) {
+func (r *controlRepo) ListScoped(ctx context.Context, auditID int, scope model.Scope, userID int, scopeTeamIDs []int) ([]*model.AuditControl, error) {
 	var all []*model.AuditControl
 	path := fmt.Sprintf("/audits/%d/controls/search", auditID)
 	for offset := 0; ; offset += pageLimit {
@@ -64,7 +61,7 @@ func (r *controlRepo) ListScoped(ctx context.Context, auditID int, scope model.S
 		}
 		body := map[string]any{
 			"scope":        scope,
-			"userEmail":    userEmail,
+			"userId":       userID,
 			"scopeTeamIds": scopeTeamIDs,
 			"pagination":   map[string]int{"limit": pageLimit, "offset": offset},
 		}
@@ -73,24 +70,23 @@ func (r *controlRepo) ListScoped(ctx context.Context, auditID int, scope model.S
 		}
 		all = append(all, resp.Controls...)
 		if len(resp.Controls) < pageLimit {
-			r.enrichPopulations(ctx, auditID, all)
 			return all, nil
 		}
 	}
 }
 
-// InScope reports whether controlID is visible to userEmail at scope, by
+// InScope reports whether controlID is visible to userID at scope, by
 // reusing /audits/{auditId}/controls/search (the same scoped query ListScoped
 // uses) filtered to just this one control id — avoids a bespoke endpoint for
 // what is otherwise the same check.
-func (r *controlRepo) InScope(ctx context.Context, auditID, controlID int, scope model.Scope, userEmail string, scopeTeamIDs []int) (bool, error) {
+func (r *controlRepo) InScope(ctx context.Context, auditID, controlID int, scope model.Scope, userID int, scopeTeamIDs []int) (bool, error) {
 	var resp struct {
 		Controls []*model.AuditControl `json:"controls"`
 	}
 	body := map[string]any{
 		"controlIds":   []int{controlID},
 		"scope":        scope,
-		"userEmail":    userEmail,
+		"userId":       userID,
 		"scopeTeamIds": scopeTeamIDs,
 		"pagination":   map[string]int{"limit": 1, "offset": 0},
 	}
@@ -100,74 +96,17 @@ func (r *controlRepo) InScope(ctx context.Context, auditID, controlID int, scope
 	return len(resp.Controls) > 0, nil
 }
 
+// GetByID does not separately enrich population-phase fields (due date, owner,
+// team) — the entity's control select already LEFT JOINs the latest
+// audit_population round for OE controls (see controlFromClause,
+// entity/compliance-entity/internal/repository/audit_control_repo.go), so
+// they arrive on the same response as everything else.
 func (r *controlRepo) GetByID(ctx context.Context, auditID, controlID int) (*model.AuditControl, error) {
 	var c model.AuditControl
 	if err := r.c.Get(ctx, fmt.Sprintf("/audits/%d/controls/%d", auditID, controlID), &c); err != nil {
 		return nil, err
 	}
-	r.enrichPopulations(ctx, auditID, []*model.AuditControl{&c})
 	return &c, nil
-}
-
-// entPopulation is the subset of the entity's AuditPopulation JSON needed to
-// enrich controls with population-phase fields.
-type entPopulation struct {
-	ID      int     `json:"id"`
-	OwnerID *int    `json:"ownerId"`
-	TeamID  *int    `json:"teamId"`
-	DueDate *string `json:"dueDate"`
-}
-
-// enrichPopulations fills PopulationDueDate/OwnerName/TeamName on OE controls.
-// The entity's control queries do not join audit_population (and the entity is
-// owned by another team), so the backend stitches the data from the entity's
-// per-control populations endpoint plus the user/team lookups. Enrichment is
-// best-effort: on any error the population fields simply stay nil.
-func (r *controlRepo) enrichPopulations(ctx context.Context, auditID int, controls []*model.AuditControl) {
-	var oe []*model.AuditControl
-	for _, c := range controls {
-		if c.RequirementType == "OE" {
-			oe = append(oe, c)
-		}
-	}
-	if len(oe) == 0 {
-		return
-	}
-
-	// Fetch each OE control's populations and resolve owner/team names with
-	// point-lookups, avoiding full-table scans of the user and team directories.
-	sem := make(chan struct{}, 8)
-	var wg sync.WaitGroup
-	for _, c := range oe {
-		wg.Add(1)
-		go func(c *model.AuditControl) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			var pops []entPopulation
-			if err := r.c.Get(ctx, fmt.Sprintf("/audits/%d/controls/%d/populations", auditID, c.ID), &pops); err != nil || len(pops) == 0 {
-				return
-			}
-			p := pops[len(pops)-1] // latest round
-			c.PopulationDueDate = p.DueDate
-			if p.OwnerID != nil {
-				var u model.UserRef
-				if err := r.c.Get(ctx, fmt.Sprintf("/users/%d", *p.OwnerID), &u); err == nil {
-					name := u.DisplayName
-					c.PopulationOwnerName = &name
-				}
-			}
-			if p.TeamID != nil {
-				var t model.AuditTeam
-				if err := r.c.Get(ctx, fmt.Sprintf("/audit/teams/%d", *p.TeamID), &t); err == nil {
-					name := t.Name
-					c.PopulationTeamName = &name
-				}
-			}
-		}(c)
-	}
-	wg.Wait()
 }
 
 func (r *controlRepo) Create(ctx context.Context, auditID int, req model.AddControlRequest, createdBy string) (*model.AuditControl, error) {
@@ -254,11 +193,11 @@ func (r *controlRepo) Delete(ctx context.Context, auditID, controlID int) error 
 	return r.c.Delete(ctx, fmt.Sprintf("/audits/%d/controls/%d", auditID, controlID))
 }
 
-func (r *controlRepo) AssignedAuditID(ctx context.Context, userEmail string, controlID int) (int, bool, error) {
+func (r *controlRepo) AssignedAuditID(ctx context.Context, userID int, controlID int) (int, bool, error) {
 	var resp struct {
 		AuditID int `json:"auditId"`
 	}
-	path := fmt.Sprintf("/audit-controls/%d/evidence-assignment?email=%s", controlID, url.QueryEscape(userEmail))
+	path := fmt.Sprintf("/audit-controls/%d/evidence-assignment?userId=%d", controlID, userID)
 	if err := r.c.Get(ctx, path, &resp); err != nil {
 		if notFound(err) {
 			return 0, false, nil

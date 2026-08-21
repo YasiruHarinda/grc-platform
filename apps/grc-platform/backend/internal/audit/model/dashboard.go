@@ -66,9 +66,15 @@ type ActionItem struct {
 	Status        string `json:"status"`
 	DueDate       string `json:"dueDate"`
 	Team          string `json:"team"`
-	ProcessOwner  string `json:"processOwner"`
-	TeamID        *int   `json:"teamId"`
-	OwnerID       *int   `json:"ownerId"`
+	// ProcessOwner is filled in by the service layer from
+	// ProcessOwnerUUID/ProcessOwnerUserType via the identity directory,
+	// overwriting whatever the entity sent (it doesn't send a name — the
+	// `user` table stores none; see shared.sql).
+	ProcessOwner         string `json:"processOwner"`
+	ProcessOwnerUUID     string `json:"processOwnerUuid"`
+	ProcessOwnerUserType string `json:"processOwnerUserType"`
+	TeamID               *int   `json:"teamId"`
+	OwnerID              *int   `json:"ownerId"`
 }
 
 // OverdueControl is a single entry in the "Overdue Controls" list.
@@ -81,9 +87,12 @@ type OverdueControl struct {
 	Status        string `json:"status"`
 	DueDate       string `json:"dueDate"`
 	Team          string `json:"team"`
-	ProcessOwner  string `json:"processOwner"`
-	TeamID        *int   `json:"teamId"`
-	OwnerID       *int   `json:"ownerId"`
+	// ProcessOwner is filled in the same way ActionItem's is.
+	ProcessOwner         string `json:"processOwner"`
+	ProcessOwnerUUID     string `json:"processOwnerUuid"`
+	ProcessOwnerUserType string `json:"processOwnerUserType"`
+	TeamID               *int   `json:"teamId"`
+	OwnerID              *int   `json:"ownerId"`
 }
 
 // DashboardData is the full payload returned by GET /api/v1/audit/dashboard.
@@ -164,8 +173,9 @@ type DashboardFilter struct {
 	WorkQueueScope Scope
 	// WorkQueueClass selects the action-items lifecycle bucket for the actor.
 	WorkQueueClass WorkQueueClass
-	// UserEmail is the authenticated user's email (used to look up team/owner/auditor ID).
-	UserEmail string
+	// UserID is the authenticated user's own resolved user.id, used directly for
+	// owner/auditor scoped queries.
+	UserID int
 	// ScopeTeamIDs is the team(s) the actor manages, server-derived from their
 	// grants by deriveScopes/managedTeamIDs — never from client input. Read by
 	// the entity only when ViewScope or WorkQueueScope is ScopeTeam.

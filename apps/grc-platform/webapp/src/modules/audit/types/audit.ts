@@ -108,8 +108,8 @@ export interface AuditControl {
   auditorId: number | null;
   auditorName: string | null;
   // Backs the assigned-auditor gate: population validation, sample selection, and
-  // evidence validation are shown only when this matches the signed-in user's email.
-  auditorEmail: string | null;
+  // evidence validation are shown only when this matches the signed-in user's uuid.
+  auditorUuid: string | null;
   controlNumber: string;
   description: string;
   evidenceRequirement: string | null;

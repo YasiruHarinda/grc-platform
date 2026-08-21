@@ -48,8 +48,9 @@ const (
 )
 
 // AuditDashboardRequest is the body of POST /audit/dashboard/search. Scope and
-// WorkQueueClass are derived by the caller from the actor's privileges; UserEmail
-// resolves the actor's team/owner/auditor identity for scoped queries.
+// WorkQueueClass are derived by the caller from the actor's privileges; UserID
+// is the caller's own resolved user.id, used directly for owner/auditor scoped
+// queries.
 type AuditDashboardRequest struct {
 	// Scope scopes stats, charts and lists (the dashboard view).
 	Scope Scope `json:"scope"`
@@ -57,7 +58,7 @@ type AuditDashboardRequest struct {
 	WorkQueueScope Scope `json:"workQueueScope"`
 	// WorkQueueClass selects the action-items lifecycle bucket.
 	WorkQueueClass WorkQueueClass `json:"workQueueClass"`
-	UserEmail      string         `json:"userEmail"`
+	UserID         int            `json:"userId"`
 	// ScopeTeamIDs is the team(s) the caller manages, server-derived by the GRC
 	// backend from the caller's grants — never from client input. Only read
 	// when Scope or WorkQueueScope is ScopeTeam. Deliberately distinct from any
@@ -117,9 +118,13 @@ type DashboardControlItem struct {
 	Status        string `json:"status"`
 	DueDate       string `json:"dueDate"`
 	Team          string `json:"team"`
-	ProcessOwner  string `json:"processOwner"`
-	TeamID        *int   `json:"teamId"`
-	OwnerID       *int   `json:"ownerId"`
+	// ProcessOwnerUUID/ProcessOwnerUserType are the item's owner's Asgardeo id
+	// and INTERNAL/EXTERNAL classification — see domain.AuditControl.OwnerUUID
+	// for why these are a uuid/type pair rather than a name.
+	ProcessOwnerUUID     string `json:"processOwnerUuid"`
+	ProcessOwnerUserType string `json:"processOwnerUserType"`
+	TeamID               *int   `json:"teamId"`
+	OwnerID              *int   `json:"ownerId"`
 }
 
 // WorkQueueTab identifies which sub-list the caller wants.
@@ -139,13 +144,13 @@ type WorkQueueRequest struct {
 	WorkQueueScope Scope `json:"workQueueScope"`
 	// WorkQueueClass selects the action-items lifecycle bucket for the action-items tab.
 	WorkQueueClass WorkQueueClass `json:"workQueueClass"`
-	UserEmail      string         `json:"userEmail"`
+	UserID         int            `json:"userId"`
 	Tab            WorkQueueTab   `json:"tab"`
-	Page      int          `json:"page"`    // 1-based
-	Limit     int          `json:"limit"`   // rows per page; capped at 100 server-side
-	TeamIDs   []int        `json:"teamIds"` // filter by audit_team.id; nil/empty = all teams
-	OwnerIDs  []int        `json:"ownerIds"` // filter by user.id (process owner); nil/empty = all owners
-	AuditIDs  []int        `json:"auditIds"` // filter by audit.id; nil/empty = all audits
+	Page           int            `json:"page"`     // 1-based
+	Limit          int            `json:"limit"`    // rows per page; capped at 100 server-side
+	TeamIDs        []int          `json:"teamIds"`  // filter by audit_team.id; nil/empty = all teams
+	OwnerIDs       []int          `json:"ownerIds"` // filter by user.id (process owner); nil/empty = all owners
+	AuditIDs       []int          `json:"auditIds"` // filter by audit.id; nil/empty = all audits
 	// ScopeTeamIDs is the team(s) the caller manages, server-derived by the GRC
 	// backend from the caller's grants. NOT the same thing as TeamIDs above,
 	// which is a client-supplied display filter: reusing TeamIDs for scope
@@ -178,7 +183,7 @@ type DashboardData struct {
 	TeamStatusDistribution []TeamStatusCount      `json:"teamStatusDistribution"`
 	ActionItems            []DashboardControlItem `json:"actionItems"`
 	DueSoonItems           []DashboardControlItem `json:"dueSoonItems"`
-	PendingCount           int                     `json:"pendingCount"`
-	ValidationCount        int                     `json:"validationCount"`
+	PendingCount           int                    `json:"pendingCount"`
+	ValidationCount        int                    `json:"validationCount"`
 	OverdueControls        []DashboardControlItem `json:"overdueControls"`
 }

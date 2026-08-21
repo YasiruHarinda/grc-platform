@@ -546,34 +546,21 @@ WHERE  module = 'RISK' AND status = 'ACTIVE' AND scope_basis IS NULL;
 -- identity-provider fallback: either would mean "SELECT * FROM user_role_grant"
 -- no longer answers "who are my admins".
 --
--- Copy the block below, set the uuid (the person's Asgardeo `sub` claim —
--- have them check their own token, or resolve it via SCIM), and run it once
--- per environment.
+-- Copy the block below, set the uuid, and run it once per environment.
 --
--- Stores the uuid only — nothing else — matching exactly what the Admin
--- Console's own "Add User" does (handleCreateUser,
--- internal/admin/handler/users.go): email is left NULL, display_name written
--- as '' only to satisfy NOT NULL and never read back. An earlier version of
--- this template wrote a real email/display_name here; that predated the
--- "provision by uuid alone" design and no longer matches how the platform
--- itself creates users.
+-- The uuid is the bootstrap admin's Asgardeo `sub` claim — the `user` table's
+-- only identity (it stores no email or display name; see shared.sql). Resolve
+-- it against Asgardeo/SCIM ahead of time, the same way the identity directory
+-- would — there is no email to match on here to derive it from.
 --
--- If a `user` row already exists for this person from before the uuid
--- migration (keyed on email, uuid NULL — the common case when bootstrapping
--- an environment that already has data), fill the uuid in on that SAME row
--- instead of the INSERT below creating a second identity for them. Uncomment
--- and run this first if that applies, then skip the INSERT:
+--   SET @bootstrap_admin_uuid = 'CHANGE-ME-asgardeo-sub-claim';
 --
---   UPDATE `user` SET uuid = @bootstrap_admin_uuid, updated_by = 'System'
---   WHERE email = _utf8mb4'CHANGE-ME@example.com' COLLATE utf8mb4_unicode_ci AND uuid IS NULL;
---
---   SET @bootstrap_admin_uuid = 'CHANGE-ME-uuid';
---
---   -- The user row is created here if absent (fresh environment, or this
---   -- person has no prior row). No-op if the UPDATE above already matched.
---   INSERT INTO `user` (uuid, email, display_name, user_type, status, created_by)
---   SELECT @bootstrap_admin_uuid, NULL, '', 'INTERNAL', 'ACTIVE', 'System'
---   WHERE NOT EXISTS (SELECT 1 FROM `user` WHERE uuid = @bootstrap_admin_uuid);
+--   -- The user row is created here if absent. Nothing else creates it: users
+--   -- are provisioned explicitly via POST /users/resolve, not automatically on
+--   -- login, so on a fresh database there are no user rows and the grant below
+--   -- would silently match nothing.
+--   INSERT IGNORE INTO `user` (uuid, user_type, status, created_by)
+--   VALUES (@bootstrap_admin_uuid, 'INTERNAL', 'ACTIVE', 'System');
 --
 --   INSERT INTO user_role_grant (user_id, role_id, scope_type, scope_id, created_by)
 --   SELECT u.id, r.id, 'GLOBAL', 0, 'System'
@@ -584,7 +571,7 @@ WHERE  module = 'RISK' AND status = 'ACTIVE' AND scope_basis IS NULL;
 --
 --   -- Sanity check: 0 rows means the uuid matched no user, and NOBODY can
 --   -- grant roles in this environment. Fix before proceeding.
---   SELECT u.id, u.uuid, r.role_name, g.scope_type
+--   SELECT u.uuid AS bootstrap_admin, r.role_name, g.scope_type
 --   FROM   user_role_grant g
 --   JOIN   `user` u ON u.id = g.user_id
 --   JOIN   `role` r ON r.id = g.role_id

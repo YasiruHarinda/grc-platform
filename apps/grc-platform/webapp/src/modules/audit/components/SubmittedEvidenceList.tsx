@@ -220,7 +220,7 @@ export default function SubmittedEvidenceList({
       {submissions.map((sub) => (
         <Box key={sub.id} sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
           <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
-            Submitted {formatTimestamp(sub.createdAt)}{sub.createdBy ? ` · ${sub.createdBy}` : ""}
+            Submitted {formatTimestamp(sub.createdAt)}{(sub.createdByName || sub.createdBy) ? ` · ${sub.createdByName || sub.createdBy}` : ""}
           </Typography>
           {(sub.files?.length ?? 0) === 0 && sub.attestation && (
             <Box

@@ -47,7 +47,7 @@ function makeControl(overrides: Partial<AuditControl> = {}): AuditControl {
     teamName: "SRE",
     auditorId: null,
     auditorName: null,
-    auditorEmail: null,
+    auditorUuid: null,
     controlNumber: "CC1.1",
     description: "desc",
     evidenceRequirement: null,

@@ -32,7 +32,6 @@ import (
 type GrantRepository interface {
 	GrantsForUserID(ctx context.Context, userID int) ([]domain.UserGrant, error)
 	GrantsForUserIDs(ctx context.Context, userIDs []int) (map[int][]domain.UserGrant, error)
-	GrantsForUserEmail(ctx context.Context, email string) (int, []domain.UserGrant, error)
 	GrantsForUserUUID(ctx context.Context, uuid string) (int, []domain.UserGrant, error)
 	CreateGrant(ctx context.Context, userID int, req domain.CreateUserGrantRequest) (*domain.UserGrant, error)
 	RevokeGrant(ctx context.Context, userID, grantID int, revokedBy string) error
@@ -152,13 +151,15 @@ func (r *grantRepo) GrantsForUserIDs(ctx context.Context, userIDs []int) (map[in
 	return out, rows.Err()
 }
 
-// GrantsForUserEmail resolves a user by email and returns their grants,
-// returning the resolved user id alongside.
+// GrantsForUserUUID resolves a user by their Asgardeo id and returns their
+// grants, returning the resolved user id alongside — the identity a token
+// actually carries, so no translation step stands between authenticating a
+// caller and authorising them.
 //
 // This is the hot path: the GRC backend calls it on every authenticated
 // request to build the caller's scoped privilege set, and consumes both halves
 // of the result (see middleware.UserInfo.UserID). Exposing it as one endpoint
-// rather than making callers chain GET /users/by-email + GET /grants/user/{id}
+// rather than making callers chain GET /users/by-uuid + GET /grants/user/{id}
 // is what keeps that to a single HTTP round trip — the cost worth saving here,
 // since the network hop dominates.
 //
@@ -175,39 +176,9 @@ func (r *grantRepo) GrantsForUserIDs(ctx context.Context, userIDs []int) (map[in
 // distinguish "this person has no roles" from "this person does not exist here"
 // — the two need different handling, and conflating them would silently treat
 // an unprovisioned account as a legitimately unprivileged one.
-func (r *grantRepo) GrantsForUserEmail(ctx context.Context, email string) (int, []domain.UserGrant, error) {
-	var userID int
-	err := r.db.QueryRowContext(ctx,
-		"SELECT id FROM `user` WHERE email = ? AND status = 'ACTIVE'", email).Scan(&userID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil, &apierror.NotFoundError{Msg: "user not found: " + email}
-	}
-	if err != nil {
-		return 0, nil, fmt.Errorf("grant.GrantsForUserEmail lookup: %w", err)
-	}
-
-	grants, err := r.GrantsForUserID(ctx, userID)
-	if err != nil {
-		return 0, nil, err
-	}
-	return userID, grants, nil
-}
-
-// GrantsForUserUUID is GrantsForUserEmail keyed on the Asgardeo id instead —
-// the identity a token actually carries, so no translation step stands between
-// authenticating a caller and authorising them.
 //
-// This is the replacement hot path. The email-keyed version above remains only
-// so the two services can be deployed independently: this one is added first,
-// the GRC backend then switches to it, and only after that can the email
-// version go. Renaming in place would 404 every request from a backend that had
-// not been redeployed yet, which for this endpoint means an auth outage.
-//
-// An empty uuid is NotFound rather than a query. uuid is nullable while the
-// migration runs, so a blank one would otherwise be asked of the database as
-// `uuid = ”` — matching nothing today, but matching whatever ends up stored as
-// empty string later. Refusing it here keeps that from ever becoming a way to
-// resolve an arbitrary user's grants.
+// An empty uuid is NotFound rather than a query — refusing it here keeps a
+// blank string from ever becoming a way to resolve an arbitrary user's grants.
 func (r *grantRepo) GrantsForUserUUID(ctx context.Context, uuid string) (int, []domain.UserGrant, error) {
 	if strings.TrimSpace(uuid) == "" {
 		return 0, nil, &apierror.NotFoundError{Msg: "user not found: empty uuid"}
@@ -216,9 +187,6 @@ func (r *grantRepo) GrantsForUserUUID(ctx context.Context, uuid string) (int, []
 	err := r.db.QueryRowContext(ctx,
 		"SELECT id FROM `user` WHERE uuid = ? AND status = 'ACTIVE'", uuid).Scan(&userID)
 	if errors.Is(err, sql.ErrNoRows) {
-		// Not an error, same as the email path: an authenticated caller with no
-		// user row here holds nothing rather than failing the request. During the
-		// migration this also covers a row whose uuid was never backfilled.
 		return 0, nil, &apierror.NotFoundError{Msg: "user not found for uuid"}
 	}
 	if err != nil {

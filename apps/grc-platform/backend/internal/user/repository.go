@@ -26,19 +26,19 @@ import "context"
 // can treat "not found" as a domain condition rather than an error.
 // TODO: extend as user-related endpoints are implemented
 type Repository interface {
-	GetByEmail(ctx context.Context, email string) (*User, error)
 	GetByID(ctx context.Context, id int) (*User, error)
 	// GetByUUID resolves a user by their Asgardeo id. Returns (nil, nil) when
 	// no user carries that uuid — including a row whose uuid has not been
 	// backfilled yet — so a caller distinguishes "nobody" from a lookup failure.
 	GetByUUID(ctx context.Context, uuid string) (*User, error)
-	// Upsert creates the user if their email is unknown, or refreshes their
-	// display name if it isn't, recording uuid when supplied. actor is recorded
-	// as created_by/updated_by.
+	// Upsert creates the user if their uuid is unknown, or refreshes it if a
+	// row for it already exists. actor is recorded as created_by/updated_by.
 	//
-	// uuid may be empty for an employee with no Asgardeo account: the row is
-	// then created without one rather than the provision being refused. An
-	// empty uuid never clears one the row already has.
-	Upsert(ctx context.Context, uuid, email, displayName, actor string) (*User, error)
+	// uuid is required: the `user` table stores no email or display name to
+	// fall back on as a matching key (see shared.sql), and the column is
+	// NOT NULL. A caller that cannot resolve one (e.g. the identity directory
+	// is unreachable) must refuse the provision rather than calling this with
+	// an empty string.
+	Upsert(ctx context.Context, uuid, actor string) (*User, error)
 	List(ctx context.Context) ([]*User, error)
 }

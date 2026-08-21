@@ -106,10 +106,17 @@ func main() {
 	// tolerates by answering "no such user" — see scim.Client.LookupByEmail.
 	// Local development without credentials for this internal service then
 	// provisions users without a uuid instead of failing.
-	var scimClient *scim.Client
+	// scimExternalClient resolves user_type=EXTERNAL identities (external
+	// auditors), which live in a separate Asgardeo org from scimClient's —
+	// see internal/scim.NewExternalClient. Only Audit has external users
+	// today; Risk keeps resolving everyone through scimClient/dirSvc's
+	// existing internal-only Lookup/LookupAll, untouched by this.
+	var scimClient, scimExternalClient *scim.Client
 	if cfg.SCIM.Configured() {
 		scimClient = scim.NewClient(cfg.SCIM.BaseURL, cfg.SCIM.TokenURL,
 			cfg.SCIM.ClientID, cfg.SCIM.ClientSecret, cfg.SCIM.Scopes)
+		scimExternalClient = scim.NewExternalClient(cfg.SCIM.BaseURL, cfg.SCIM.TokenURL,
+			cfg.SCIM.ClientID, cfg.SCIM.ClientSecret, cfg.SCIM.ExternalScopes)
 	} else {
 		slog.Warn("SCIM is not configured; users will be provisioned without an Asgardeo uuid, " +
 			"risk notifications will have no deliverable recipients, and the Risk Owner / " +
@@ -118,7 +125,7 @@ func main() {
 
 	// One directory for the whole process, so its cache is shared across every
 	// request rather than rebuilt per call site.
-	dirSvc := directory.New(scimClient, directory.DefaultTTL)
+	dirSvc := directory.NewWithExternal(scimClient, scimExternalClient, directory.DefaultTTL)
 	if scimClient != nil && cfg.SCIM.UserDomain != "" {
 		// Warms a bulk snapshot of everyone in the domain so Lookup/LookupAll
 		// serve them without a per-uuid SCIM call, refreshing it every 12h.
@@ -148,7 +155,7 @@ func main() {
 	userhandler.RegisterRoutes(mux, userDeps)
 	riskDeps := buildRiskDeps(entityCli, fileSvc, hrClient, grantRepo, dirSvc, scimClient, cfg.Email)
 	riskhandler.RegisterRoutes(mux, riskDeps)
-	auditDeps := buildAuditDeps(fileSvc, entityCli, cfg.AIValidation, cfg.Email, grantRepo)
+	auditDeps := buildAuditDeps(fileSvc, entityCli, cfg.AIValidation, cfg.Email, grantRepo, dirSvc)
 	reminderJob := auditjob.NewReminderJob(auditDeps.Audit, auditDeps.Control, auditDeps.Notification, auditDeps.SendReminderDigestSync)
 	auditDeps.TriggerReminderJob = reminderJob.RunOnce
 	audithandler.RegisterRoutes(mux, auditDeps)

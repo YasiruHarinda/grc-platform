@@ -73,11 +73,17 @@ func (r *auditTrailRepo) CreateAuditTrail(ctx context.Context, auditID int, req 
 	return r.getAuditTrailByID(ctx, id)
 }
 
+const auditTrailSelectCols = `
+	        t.id, t.actor_id, t.audit_id, t.control_id, t.evidence_id, t.action,
+	        t.details, t.created_by, u_actor.user_type AS actor_user_type, t.created_at`
+
+const auditTrailFromClause = `
+	 FROM audit_trail t
+	 LEFT JOIN ` + "`user`" + ` u_actor ON u_actor.id = t.actor_id`
+
 func (r *auditTrailRepo) getAuditTrailByID(ctx context.Context, id int64) (*domain.AuditTrail, error) {
 	return scanAuditTrail(r.db.QueryRowContext(ctx,
-		`SELECT id, actor_id, audit_id, control_id, evidence_id, action,
-		        details, created_by, created_at
-		 FROM audit_trail WHERE id = ?`, id))
+		`SELECT`+auditTrailSelectCols+auditTrailFromClause+` WHERE t.id = ?`, id))
 }
 
 // inClause returns "col IN (?,?,...)" and the values as `any`, or ("", nil) when
@@ -106,7 +112,7 @@ func (r *auditTrailRepo) ListAuditTrail(ctx context.Context, auditID int, filter
 		where += " AND " + clause
 		args = append(args, clauseArgs...)
 	}
-	where += " AND (? IS NULL OR created_at >= ?) AND (? IS NULL OR created_at <= ?)"
+	where += " AND (? IS NULL OR t.created_at >= ?) AND (? IS NULL OR t.created_at <= ?)"
 	args = append(args,
 		nilableAny(filter.From), nilableAny(filter.From),
 		nilableAny(filter.To), nilableAny(filter.To),
@@ -114,15 +120,13 @@ func (r *auditTrailRepo) ListAuditTrail(ctx context.Context, auditID int, filter
 
 	var total int
 	if err := r.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM audit_trail "+where, args...).Scan(&total); err != nil {
+		"SELECT COUNT(*) FROM audit_trail t "+where, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("audit_trail.ListCount: %w", err)
 	}
 
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, actor_id, audit_id, control_id, evidence_id, action,
-		        details, created_by, created_at
-		 FROM audit_trail `+where+
-			" ORDER BY created_at DESC LIMIT ? OFFSET ?",
+		`SELECT`+auditTrailSelectCols+auditTrailFromClause+" "+where+
+			" ORDER BY t.created_at DESC LIMIT ? OFFSET ?",
 		append(append([]any{}, args...), limit, offset)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("audit_trail.List: %w", err)
@@ -146,10 +150,10 @@ func (r *auditTrailRepo) ListAuditTrail(ctx context.Context, auditID int, filter
 func scanAuditTrail(s scanner) (*domain.AuditTrail, error) {
 	var e domain.AuditTrail
 	var actorID, controlID, evidenceID sql.NullInt64
-	var details, createdBy sql.NullString
+	var details, createdBy, actorUserType sql.NullString
 	err := s.Scan(
 		&e.ID, &actorID, &e.AuditID, &controlID, &evidenceID,
-		&e.Action, &details, &createdBy, &e.CreatedOn,
+		&e.Action, &details, &createdBy, &actorUserType, &e.CreatedOn,
 	)
 	if err != nil {
 		return nil, err
@@ -171,6 +175,9 @@ func scanAuditTrail(s scanner) (*domain.AuditTrail, error) {
 	}
 	if createdBy.Valid {
 		e.CreatedBy = &createdBy.String
+	}
+	if actorUserType.Valid {
+		e.CreatedByUserType = &actorUserType.String
 	}
 	return &e, nil
 }

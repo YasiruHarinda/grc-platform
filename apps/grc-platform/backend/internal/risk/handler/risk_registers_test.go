@@ -232,9 +232,8 @@ func (f fakeUserRepo) GetByUUID(_ context.Context, uuid string) (*user.User, err
 	}
 	return &user.User{ID: f.id, Email: f.email, DisplayName: f.displayName}, nil
 }
-func (f fakeUserRepo) GetByID(context.Context, int) (*user.User, error)       { return nil, nil }
-func (f fakeUserRepo) GetByEmail(context.Context, string) (*user.User, error) { return nil, nil }
-func (f fakeUserRepo) Upsert(context.Context, string, string, string, string) (*user.User, error) {
+func (f fakeUserRepo) GetByID(context.Context, int) (*user.User, error) { return nil, nil }
+func (f fakeUserRepo) Upsert(context.Context, string, string) (*user.User, error) {
 	return nil, nil
 }
 func (f fakeUserRepo) List(context.Context) ([]*user.User, error) { return nil, nil }

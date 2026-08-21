@@ -30,15 +30,14 @@ type stubUsers struct {
 	id   int
 }
 
-func (s stubUsers) GetByEmail(context.Context, string) (*userentity.User, error) { return nil, nil }
-func (s stubUsers) GetByID(context.Context, int) (*userentity.User, error)       { return nil, nil }
+func (s stubUsers) GetByID(context.Context, int) (*userentity.User, error) { return nil, nil }
 func (s stubUsers) GetByUUID(_ context.Context, uuid string) (*userentity.User, error) {
 	if uuid != s.uuid {
 		return nil, nil
 	}
 	return &userentity.User{ID: s.id, UUID: uuid}, nil
 }
-func (s stubUsers) Upsert(context.Context, string, string, string, string) (*userentity.User, error) {
+func (s stubUsers) Upsert(context.Context, string, string) (*userentity.User, error) {
 	return nil, nil
 }
 func (s stubUsers) List(context.Context) ([]*userentity.User, error) { return nil, nil }

@@ -125,16 +125,21 @@ func (d *Deps) sendAuditEvent(ctx context.Context, ev emailer.AuditEvent, ownerU
 		slog.Warn("audit notification: failed to resolve recipient", "event", ev, "ownerId", ownerUserID, "err", err)
 		return fmt.Errorf("resolve recipient: %w", err)
 	}
-	if u == nil || u.Email == "" {
-		slog.Warn("audit notification: recipient has no email on file", "event", ev, "ownerId", ownerUserID)
+	if u == nil {
+		slog.Warn("audit notification: recipient not found", "event", ev, "ownerId", ownerUserID)
 		return nil
 	}
 	if u.Status != "" && u.Status != "ACTIVE" {
 		slog.Info("audit notification: recipient not active, skipping", "event", ev, "ownerId", ownerUserID, "status", u.Status)
 		return nil
 	}
+	person, found := d.Directory.LookupTyped(ctx, u.UUID, u.UserType)
+	if !found || person.Email == "" {
+		slog.Warn("audit notification: recipient has no email on file", "event", ev, "ownerId", ownerUserID)
+		return nil
+	}
 
-	if err := d.Email.SendAuditEvent(ctx, ev, u.Email, info); err != nil {
+	if err := d.Email.SendAuditEvent(ctx, ev, person.Email, info); err != nil {
 		slog.Warn("audit notification: send failed", "event", ev, "ownerId", ownerUserID, "err", err)
 		return fmt.Errorf("send: %w", err)
 	}
@@ -170,29 +175,33 @@ func (d *Deps) logSends(ctx context.Context, recipientUserID int, logItems []not
 }
 
 // describeActor renders the person who triggered a notification as
-// "Display Name (email)". Handlers only have the caller's email (it is what
-// the JWT carries), and an email alone reads poorly in a notification — but
-// it is also the unambiguous identifier, so both are shown rather than
-// swapping one for the other.
+// "Display Name (email)". Handlers only have the caller's uuid (auth.FromContext's
+// Subject — the token's verified `sub` claim), so that's what's looked up; an
+// email alone would read poorly in a notification, but resolving one is also
+// the unambiguous fallback, so both are shown rather than swapping one for
+// the other.
 //
-// Degrades to the bare email whenever the name can't be resolved: the caller
-// may have no platform user row yet, the lookup may fail, or the row may have
-// no display name. A notification is never worth failing over a cosmetic
-// lookup, so every one of those paths returns something sendable.
-func (d *Deps) describeActor(ctx context.Context, email string) string {
-	email = strings.TrimSpace(email)
-	if email == "" {
+// Looked up via the internal-org directory path only (plain Lookup, not
+// LookupTyped): the actor's user_type isn't available here without a second
+// round trip to Users.GetByID, and no live external-auditor login path exists
+// yet to make that lookup worth its cost. An external actor degrades to the
+// bare uuid below, same as any other unresolvable one.
+//
+// Degrades to the bare uuid whenever the name can't be resolved: the actor
+// may have no Asgardeo account known to the directory, the lookup may fail,
+// or the entry may have no display name. A notification is never worth
+// failing over a cosmetic lookup, so every one of those paths returns
+// something sendable.
+func (d *Deps) describeActor(ctx context.Context, uuid string) string {
+	uuid = strings.TrimSpace(uuid)
+	if uuid == "" {
 		return ""
 	}
-	u, err := d.Users.GetByEmail(ctx, email)
-	if err != nil {
-		slog.Warn("audit notification: failed to resolve actor name", "actor", email, "err", err)
-		return email
+	person, found := d.Directory.Lookup(ctx, uuid)
+	if !found || strings.TrimSpace(person.DisplayName) == "" || person.Email == "" {
+		return uuid
 	}
-	if u == nil || strings.TrimSpace(u.DisplayName) == "" {
-		return email
-	}
-	return fmt.Sprintf("%s (%s)", strings.TrimSpace(u.DisplayName), email)
+	return fmt.Sprintf("%s (%s)", strings.TrimSpace(person.DisplayName), person.Email)
 }
 
 // detailURL builds the "View in Audit Hub" link for auditID alone — used only
@@ -482,7 +491,12 @@ func (d *Deps) notifyControlComplete(ctx context.Context, control *model.AuditCo
 // detached from the request context, for the same reason notifyAuditEvent
 // runs detached: it must survive past the handler returning, and addComment
 // must not block the response on it.
-func (d *Deps) notifyCommentAdded(reqCtx context.Context, control *model.AuditControl, comment *model.AuditComment, actor string) {
+//
+// actorUserID is the commenter's own resolved user.id (auth.FromContext's
+// UserID), passed by the caller rather than re-derived from actor (their
+// uuid) here — the caller already has it, and it is what self-exclusion below
+// compares against directly, with no directory round trip needed.
+func (d *Deps) notifyCommentAdded(reqCtx context.Context, control *model.AuditControl, comment *model.AuditComment, actor string, actorUserID int) {
 	go func() {
 		defer func() {
 			if p := recover(); p != nil {
@@ -526,9 +540,7 @@ func (d *Deps) notifyCommentAdded(reqCtx context.Context, control *model.AuditCo
 			recipients[id] = true
 		}
 
-		if actorUser, err := d.Users.GetByEmail(ctx, actor); err == nil && actorUser != nil {
-			delete(recipients, actorUser.ID)
-		}
+		delete(recipients, actorUserID)
 		if len(recipients) == 0 {
 			return
 		}

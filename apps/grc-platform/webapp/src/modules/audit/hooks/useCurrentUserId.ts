@@ -17,14 +17,14 @@
 import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
 
 /**
- * The signed-in user's email, from the same `email` ID-token claim the backend
- * reads (middleware.UserInfo.Email). Used purely for UI gating (e.g. showing
- * auditor-only cards when it matches control.auditorEmail) — the backend
- * re-derives and enforces this independently, so a mismatch here only hides a
- * button, it never grants access.
+ * The signed-in user's Asgardeo uuid, from the `sub` ID-token claim the
+ * backend reads as auth.FromContext(ctx).Subject. Used purely for UI gating
+ * (e.g. "is this my comment") — the backend re-derives and enforces
+ * ownership independently from the same claim, so a mismatch here only
+ * hides a button, it never grants access.
  */
-export function useCurrentUserEmail(): string | null {
+export function useCurrentUserId(): string | null {
   const claims = useIdTokenClaims();
-  const email = claims?.email;
-  return typeof email === "string" ? email : null;
+  const sub = claims?.sub;
+  return typeof sub === "string" ? sub : null;
 }

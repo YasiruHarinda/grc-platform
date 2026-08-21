@@ -35,7 +35,7 @@ func NewDashboardHandler(svc service.DashboardService) *DashboardHandler {
 }
 
 // GetDashboard handles POST /audit/dashboard/search.
-// Body: { scope, workQueueScope, workQueueClass, userEmail, scopeTeamIds }.
+// Body: { scope, workQueueScope, workQueueClass, userId, scopeTeamIds }.
 // scopeTeamIds is the server-derived team scope (from the caller's grants),
 // not a client-supplied filter.
 func (h *DashboardHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
@@ -53,7 +53,7 @@ func (h *DashboardHandler) GetDashboard(w http.ResponseWriter, r *http.Request) 
 }
 
 // GetWorkQueuePage handles POST /audit/work-queue/search.
-// Body: { workQueueScope, workQueueClass, userEmail, tab, page, limit, scopeTeamIds, ...filters }.
+// Body: { workQueueScope, workQueueClass, userId, tab, page, limit, scopeTeamIds, ...filters }.
 // scopeTeamIds is the server-derived team scope (from the caller's grants);
 // distinct from the client-supplied teamIds display filter among ...filters.
 func (h *DashboardHandler) GetWorkQueuePage(w http.ResponseWriter, r *http.Request) {

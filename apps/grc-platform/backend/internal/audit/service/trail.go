@@ -29,7 +29,7 @@ import (
 // entity's own max page size (100), so it is the most we can get in one call.
 const defaultTrailLimit = 100
 
-// defaultAuditTrailLimit is the default page size for the audit-wide activity log. 
+// defaultAuditTrailLimit is the default page size for the audit-wide activity log.
 const defaultAuditTrailLimit = 100
 
 // TrailService defines business operations for the audit trail (append-only log).

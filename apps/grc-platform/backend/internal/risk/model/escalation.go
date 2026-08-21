@@ -42,10 +42,10 @@ type Escalation struct {
 	// view an escalated risk would otherwise receive two other people's
 	// identifiers that the webapp never reads. Nil when the manager has no
 	// Asgardeo account, or when HR has no manager on file at all.
-	AssignerLeadUUID     *string   `json:"-"`
-	ActionOwnerLeadUUID  *string   `json:"-"`
-	Status               string    `json:"status"` // OPEN | RESOLVED
-	CreatedAt            time.Time `json:"created_at"`
+	AssignerLeadUUID    *string   `json:"-"`
+	ActionOwnerLeadUUID *string   `json:"-"`
+	Status              string    `json:"status"` // OPEN | RESOLVED
+	CreatedAt           time.Time `json:"created_at"`
 }
 
 // EscalationCommentRequest is the payload for

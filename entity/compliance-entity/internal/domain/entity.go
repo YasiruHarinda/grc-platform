@@ -47,12 +47,10 @@ type Pagination struct {
 type User struct {
 	ID int `json:"id"`
 	// UUID is the user's Asgardeo id — the same value their OIDC token carries
-	// as `sub`, and this platform's identity for them. Empty when the row
-	// predates the identity migration and no Asgardeo account could be matched
-	// to its email; such a user cannot be resolved by uuid yet.
+	// as `sub`, and this platform's sole identity for them (see shared.sql —
+	// the `user` table stores neither an email nor a display name; the GRC
+	// Backend resolves both from the identity directory by uuid instead).
 	UUID         string    `json:"uuid"`
-	Email        string    `json:"email"`
-	DisplayName  string    `json:"displayName"`
 	UserType     string    `json:"userType"` // INTERNAL | EXTERNAL
 	AuditTeamIDs []int     `json:"auditTeamIds"`
 	RiskTeamIDs  []int     `json:"riskTeamIds"`
@@ -68,10 +66,14 @@ type User struct {
 }
 
 // SearchUsersRequest is the payload for POST /users/search.
+//
+// No free-text search field: the `user` table carries nothing text-searchable
+// (no email, no display name — see User.UUID) once the identity migration
+// drops them. A caller wanting to search by name has to do it against the
+// identity directory instead, not this table.
 type SearchUsersRequest struct {
-	SearchQuery string     `json:"searchQuery"`
-	StatusKey   string     `json:"statusKey"` // ACTIVE | INACTIVE | REMOVED | "" (all)
-	Pagination  Pagination `json:"pagination"`
+	StatusKey  string     `json:"statusKey"` // ACTIVE | INACTIVE | REMOVED | "" (all)
+	Pagination Pagination `json:"pagination"`
 	// IncludeGrants embeds each returned user's active grants (see User.Grants)
 	// in this same response, batched in one extra query — for the Admin
 	// Console's user list, which needs both without an N+1 round trip per row.
@@ -131,13 +133,13 @@ type AuditFramework struct {
 type SearchAuditFrameworksRequest struct {
 	SearchQuery string `json:"searchQuery"`
 	StatusKey   string `json:"statusKey"` // ACTIVE | INACTIVE | "" (all)
-	// Scope/UserEmail apply the same row-scoping rule as controls/audits (see
+	// Scope/UserID apply the same row-scoping rule as controls/audits (see
 	// audit_dashboard_repo.go's scopeWhere): a framework has no team of its own,
 	// so it matches when it has at least one audit with at least one control in
 	// scope. Omitted/empty Scope matches nothing; internal callers that want
 	// every row must send ScopeAll explicitly.
-	Scope     Scope  `json:"scope"`
-	UserEmail string `json:"userEmail"`
+	Scope  Scope `json:"scope"`
+	UserID int   `json:"userId"`
 	// ScopeTeamIDs is the team(s) the caller manages, server-derived by the GRC
 	// backend from the caller's grants. Only read when Scope is ScopeTeam.
 	ScopeTeamIDs []int      `json:"scopeTeamIds"`
@@ -271,13 +273,13 @@ type SearchAuditsRequest struct {
 	// single-item scope check (is auditId visible to this caller at this
 	// scope?) so it can reuse this same query instead of a bespoke endpoint.
 	AuditIDs []int `json:"auditIds"`
-	// Scope/UserEmail apply the same row-scoping rule as the dashboard (see
+	// Scope/UserID apply the same row-scoping rule as the dashboard (see
 	// dashboard.go's Scope type and audit_dashboard_repo.go's scopeWhere): an
 	// audit matches only if it has at least one control within scope.
 	// Omitted/empty Scope matches nothing; internal callers that want every
 	// row (e.g. existence/uniqueness checks) must send ScopeAll explicitly.
-	Scope     Scope  `json:"scope"`
-	UserEmail string `json:"userEmail"`
+	Scope  Scope `json:"scope"`
+	UserID int   `json:"userId"`
 	// ScopeTeamIDs is the team(s) the caller manages, server-derived by the GRC
 	// backend from the caller's grants. Only read when Scope is ScopeTeam.
 	ScopeTeamIDs []int      `json:"scopeTeamIds"`
@@ -310,17 +312,24 @@ type AuditControl struct {
 	ControlType         string  `json:"controlType"`
 	Scope               string  `json:"scope"`
 	OwnerID             *int    `json:"ownerId"`
-	OwnerName           *string `json:"ownerName"`
-	TeamID              *int    `json:"teamId"`
-	TeamName            *string `json:"teamName"`
-	AuditorID           *int    `json:"auditorId"`
-	AuditorName         *string `json:"auditorName"`
-	// AuditorEmail identifies the assigned auditor for the assigned-auditor gate
-	// (population validation, sample selection, evidence validation): the caller
-	// is authorized when their token email matches this value.
-	AuditorEmail *string `json:"auditorEmail"`
-	DueDate      *string `json:"dueDate"` // YYYY-MM-DD
-	Status       string  `json:"status"`
+	// OwnerUUID/OwnerUserType are the owner's Asgardeo id and INTERNAL/EXTERNAL
+	// classification — the GRC Backend resolves them to a display name via the
+	// identity directory (routed by OwnerUserType) rather than reading one
+	// from this row (the `user` table stores no name; see shared.sql).
+	OwnerUUID     *string `json:"ownerUuid"`
+	OwnerUserType *string `json:"ownerUserType"`
+	TeamID        *int    `json:"teamId"`
+	TeamName      *string `json:"teamName"`
+	AuditorID     *int    `json:"auditorId"`
+	// AuditorUUID/AuditorUserType are the assigned auditor's Asgardeo id and
+	// classification, resolved to a display name by the GRC Backend the same
+	// way OwnerUUID is. The assigned-auditor gate itself (population
+	// validation, sample selection, evidence validation) compares AuditorID
+	// against the caller's own user.id — no email or uuid comparison involved.
+	AuditorUUID     *string `json:"auditorUuid"`
+	AuditorUserType *string `json:"auditorUserType"`
+	DueDate         *string `json:"dueDate"` // YYYY-MM-DD
+	Status          string  `json:"status"`
 	// SampleReference is the auditor's sample-selection note (set via
 	// UpdateControlRequest.SampleReference / UpdateStatusWithSample). Comments
 	// is the reviewer/auditor's most recent reject reason. Both are plain
@@ -341,10 +350,14 @@ type AuditControl struct {
 	PopulationDescription *string `json:"populationDescription"`
 	PopulationComments    *string `json:"populationComments"`
 	PopulationDueDate     *string `json:"populationDueDate"`
-	PopulationOwnerName   *string `json:"populationOwnerName"`
-	PopulationTeamName    *string `json:"populationTeamName"`
+	// PopulationOwnerUUID/PopulationOwnerUserType are the population owner's
+	// Asgardeo id and classification — see OwnerUUID above for why these are a
+	// uuid/type pair rather than a name.
+	PopulationOwnerUUID     *string `json:"populationOwnerUuid"`
+	PopulationOwnerUserType *string `json:"populationOwnerUserType"`
+	PopulationTeamName      *string `json:"populationTeamName"`
 	// PopulationID/PopulationOwnerID/PopulationStatus are the IDs behind
-	// PopulationOwnerName/PopulationTeamName above (added for the audit
+	// PopulationOwnerUUID/PopulationTeamName above (added for the audit
 	// notification reminder job, which needs to resolve and dedup against the
 	// population's own owner, not just display its name).
 	PopulationID      *int    `json:"populationId"`
@@ -364,12 +377,12 @@ type SearchControlsRequest struct {
 	// single-item scope check (is controlId visible to this caller at this
 	// scope?) so it can reuse this same query instead of a bespoke endpoint.
 	ControlIDs []int `json:"controlIds"`
-	// Scope/UserEmail apply the same row-scoping rule as the dashboard (see
+	// Scope/UserID apply the same row-scoping rule as the dashboard (see
 	// dashboard.go's Scope type and audit_dashboard_repo.go's scopeWhere).
 	// Omitted/empty Scope matches nothing; internal callers that want every
 	// row must send ScopeAll explicitly.
-	Scope     Scope  `json:"scope"`
-	UserEmail string `json:"userEmail"`
+	Scope  Scope `json:"scope"`
+	UserID int   `json:"userId"`
 	// ScopeTeamIDs is the team(s) the caller manages, server-derived by the GRC
 	// backend from the caller's grants. Distinct from TeamIDs above, which is a
 	// client-supplied display filter — only read when Scope is ScopeTeam.
@@ -688,19 +701,14 @@ type SearchRisksResponse struct {
 // unaffected — the Audit module has no equivalent grant migration yet, so its
 // membership is still genuinely written here.
 type CreateUserRequest struct {
-	// UUID is the Asgardeo id to record for this user. Optional: a caller that
-	// has not resolved one yet (or is provisioning someone with no Asgardeo
-	// account) may leave it empty, and the row is created without one. Supplying
-	// it for an email that already exists fills in a uuid the row was missing,
-	// but never overwrites one it already has.
-	UUID string `json:"uuid"`
-	// Email may be empty when UUID is supplied instead — the Admin Console's
-	// "Add User" flow provisions by uuid alone (see uuid-identity migration),
-	// storing neither email nor display name. Stored as SQL NULL, not "", so
-	// multiple uuid-only rows don't collide on uq_user_email (NULLs never
-	// conflict with each other under a unique index; empty strings would).
-	Email        string `json:"email"`
-	DisplayName  string `json:"displayName"`
+	// UUID is the Asgardeo id to record for this user — required, and the sole
+	// matching key: a request whose uuid already exists refreshes that row
+	// (an upsert) rather than creating a second one. Unlike before the
+	// identity migration, a caller cannot provision a user without first
+	// resolving one (e.g. against the identity directory) — there is no
+	// longer an email to fall back on as a matching key, and the column is
+	// NOT NULL.
+	UUID         string `json:"uuid"`
 	UserType     string `json:"userType"` // INTERNAL | EXTERNAL; defaults to INTERNAL
 	AuditTeamIDs []int  `json:"auditTeamIds"`
 	Status       string `json:"status"`
@@ -713,7 +721,6 @@ type CreateUserRequest struct {
 // memberships wholesale — the same nil-vs-empty convention used by
 // UpdateRiskRequest.ComplianceReferenceIDs.
 type UpdateUserRequest struct {
-	DisplayName  *string `json:"displayName"`
 	UserType     *string `json:"userType"` // INTERNAL | EXTERNAL
 	AuditTeamIDs []int   `json:"auditTeamIds"`
 	Status       *string `json:"status"`
@@ -930,11 +937,11 @@ type AuditEvidenceFile struct {
 	FileType     *string   `json:"fileType"`
 	FileSize     *int64    `json:"fileSize"`
 	CreatedOn    time.Time `json:"createdOn"`
-	// AuditorEmail is the email of the auditor assigned to the file's owning
+	// AuditorID is the user.id of the auditor assigned to the file's owning
 	// control (nil if the control has no auditor or the file has no evidence_id,
 	// e.g. a population file). Only populated by GetEvidenceFileByID, for the
 	// GRC Backend's assigned-auditor download gate — never persisted here.
-	AuditorEmail *string `json:"auditorEmail"`
+	AuditorID *int `json:"auditorId"`
 	// TeamID is the file's owning control's team_id (nil if the control has no
 	// team or the file has no evidence_id). Only populated by
 	// GetEvidenceFileByID, so the GRC Backend can authorize downloads against a
@@ -1379,15 +1386,19 @@ type ListRiskAssessmentsResponse struct {
 
 // AuditTrail is one immutable entry in the audit trail.
 type AuditTrail struct {
-	ID         int64     `json:"id"`
-	ActorID    *int      `json:"actorId"`
-	AuditID    *int      `json:"auditId"`
-	ControlID  *int      `json:"controlId"`
-	EvidenceID *int      `json:"evidenceId"`
-	Action     string    `json:"action"`  // CREATED | UPLOADED | RESUBMITTED | APPROVED | REJECTED | COMMENTED | ESCALATED | AI_VALIDATED | EXPORTED
-	Details    *string   `json:"details"` // raw JSON string
-	CreatedBy  *string   `json:"createdBy"`
-	CreatedOn  time.Time `json:"createdOn"`
+	ID         int64   `json:"id"`
+	ActorID    *int    `json:"actorId"`
+	AuditID    *int    `json:"auditId"`
+	ControlID  *int    `json:"controlId"`
+	EvidenceID *int    `json:"evidenceId"`
+	Action     string  `json:"action"`  // CREATED | UPLOADED | RESUBMITTED | APPROVED | REJECTED | COMMENTED | ESCALATED | AI_VALIDATED | EXPORTED
+	Details    *string `json:"details"` // raw JSON string
+	CreatedBy  *string `json:"createdBy"`
+	// CreatedByUserType is the actor's user.user_type (INTERNAL | EXTERNAL),
+	// joined from actor_id — nil when actor_id is NULL. See
+	// AuditComment.CreatedByUserType for the same pattern.
+	CreatedByUserType *string   `json:"createdByUserType"`
+	CreatedOn         time.Time `json:"createdOn"`
 }
 
 // CreateAuditTrailRequest is the payload for POST /audits/{auditId}/trail.
@@ -1668,15 +1679,20 @@ type ListRiskChangeLogResponse struct {
 // is opened. Threaded via ParentCommentID; IsInternal hides it from the
 // external auditor.
 type AuditComment struct {
-	ID              int       `json:"id"`
-	ControlID       int       `json:"controlId"`
-	AuthorID        *int      `json:"authorId"`
-	ParentCommentID *int      `json:"parentCommentId"`
-	Content         string    `json:"content"`
-	IsInternal      bool      `json:"isInternal"`
-	CreatedBy       *string   `json:"createdBy"`
-	CreatedOn       time.Time `json:"createdOn"`
-	UpdatedOn       time.Time `json:"updatedOn"`
+	ID              int     `json:"id"`
+	ControlID       int     `json:"controlId"`
+	AuthorID        *int    `json:"authorId"`
+	ParentCommentID *int    `json:"parentCommentId"`
+	Content         string  `json:"content"`
+	IsInternal      bool    `json:"isInternal"`
+	CreatedBy       *string `json:"createdBy"`
+	// CreatedByUserType is the author's user.user_type (INTERNAL | EXTERNAL),
+	// joined from author_id — nil when author_id is NULL (author since
+	// deleted). Lets a caller route CreatedBy through the right identity org,
+	// same as OwnerUserType/AuditorUserType on AuditControl.
+	CreatedByUserType *string   `json:"createdByUserType"`
+	CreatedOn         time.Time `json:"createdOn"`
+	UpdatedOn         time.Time `json:"updatedOn"`
 }
 
 // CreateAuditCommentRequest is the payload for POST /audits/{auditId}/controls/{controlId}/comments.

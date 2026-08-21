@@ -68,7 +68,12 @@ type entry struct {
 // Service resolves uuids to people, caching what it learns.
 type Service struct {
 	scim *scim.Client
-	ttl  time.Duration
+	// externalSCIM resolves `user_type = EXTERNAL` identities, which live in a
+	// genuinely separate Asgardeo organization from scim — see LookupTyped.
+	// nil unless set via NewWithExternal, same nil-tolerance as scim itself:
+	// every external lookup then answers "unknown" rather than panicking.
+	externalSCIM *scim.Client
+	ttl          time.Duration
 
 	mu    sync.RWMutex
 	items map[string]entry
@@ -80,11 +85,27 @@ type Service struct {
 // New returns a Service backed by client. A nil client is allowed and makes
 // every lookup unresolved — local development without credentials for this
 // internal service, where showing no name is preferable to failing.
+//
+// Lookup/LookupAll built on this Service only ever resolve against client's
+// org (in practice always the internal one — every caller today is Risk,
+// which has no external users). Audit, which does, uses NewWithExternal and
+// LookupTyped/LookupAllTyped instead.
 func New(client *scim.Client, ttl time.Duration) *Service {
 	if ttl <= 0 {
 		ttl = DefaultTTL
 	}
 	return &Service{scim: client, ttl: ttl, items: make(map[string]entry)}
+}
+
+// NewWithExternal is New plus a second client for the external Asgardeo org,
+// enabling LookupTyped/LookupAllTyped's EXTERNAL routing. externalClient may
+// be nil (local development without credentials for that org), in which case
+// every external lookup answers "unknown" — the same degrade-rather-than-fail
+// contract client's own nil-tolerance already gives internal lookups.
+func NewWithExternal(client, externalClient *scim.Client, ttl time.Duration) *Service {
+	s := New(client, ttl)
+	s.externalSCIM = externalClient
+	return s
 }
 
 // Lookup resolves a uuid to a person, reporting whether the directory knows
@@ -168,6 +189,84 @@ func (s *Service) LookupAll(ctx context.Context, uuids []string) map[string]Pers
 		}
 	}
 	return out
+}
+
+// LookupTyped is Lookup with an explicit routing hint: userType is the
+// caller's local user.user_type value ("INTERNAL" or "EXTERNAL"). It exists
+// because directory.Service has no database access of its own — it cannot
+// tell an internal uuid from an external one by the string alone, so a caller
+// that has both org types (Audit) must say which this uuid is.
+//
+// Any userType other than the literal "EXTERNAL" is treated as INTERNAL,
+// matching the user.user_type column's own NOT NULL DEFAULT 'INTERNAL'. An
+// INTERNAL uuid resolves exactly as Lookup already does (bulk snapshot, then
+// the per-uuid internal fallback). An EXTERNAL uuid skips the bulk snapshot
+// (internal-org only) and goes straight to a per-uuid call against
+// externalSCIM, cached the same way. A uuid resolved as one type is never
+// findable as the other — the two SCIM orgs don't share identities — which is
+// deliberate: cross-wiring a uuid to the wrong org should fail the lookup,
+// not silently resolve to nothing or, worse, someone else.
+func (s *Service) LookupTyped(ctx context.Context, uuid, userType string) (Person, bool) {
+	if userType != "EXTERNAL" {
+		return s.Lookup(ctx, uuid)
+	}
+	return s.lookupExternal(ctx, uuid)
+}
+
+// LookupAllTyped is LookupAll for callers that need per-uuid EXTERNAL/INTERNAL
+// routing (see LookupTyped) — uuidTypes maps a uuid to its local
+// user.user_type. An empty-string uuid key is skipped, same as LookupAll.
+func (s *Service) LookupAllTyped(ctx context.Context, uuidTypes map[string]string) map[string]Person {
+	out := make(map[string]Person, len(uuidTypes))
+	for uuid, userType := range uuidTypes {
+		if uuid == "" {
+			continue
+		}
+		if p, ok := s.LookupTyped(ctx, uuid, userType); ok {
+			out[uuid] = p
+		}
+	}
+	return out
+}
+
+// lookupExternal is Lookup's per-uuid-only path (no bulk snapshot — the
+// external org has no equivalent of ListUsersByDomain to build one from)
+// against externalSCIM, cached in the same items map as the internal fallback
+// path under a distinct key so an internal and external uuid that happened to
+// collide as strings could never share a cache entry.
+func (s *Service) lookupExternal(ctx context.Context, uuid string) (Person, bool) {
+	if uuid == "" {
+		return Person{}, false
+	}
+	key := "external:" + uuid
+
+	s.mu.RLock()
+	cached, cachedOK := s.items[key]
+	s.mu.RUnlock()
+	if cachedOK && time.Now().Before(cached.refreshAt) {
+		return cached.person, cached.found
+	}
+
+	dirUser, err := s.externalSCIM.LookupByUUID(ctx, uuid)
+	if err != nil {
+		if cachedOK && cached.found {
+			slog.WarnContext(ctx, "directory: external lookup failed, serving the last known value",
+				"ageLimit", s.ttl, "err", err)
+			return cached.person, true
+		}
+		slog.WarnContext(ctx, "directory: external lookup failed and nothing cached", "err", err)
+		return Person{}, false
+	}
+
+	e := entry{refreshAt: time.Now().Add(s.ttl)}
+	if dirUser != nil {
+		e.person = Person{UUID: dirUser.UUID, Email: dirUser.Email, DisplayName: dirUser.DisplayName}
+		e.found = true
+	}
+	s.mu.Lock()
+	s.items[key] = e
+	s.mu.Unlock()
+	return e.person, e.found
 }
 
 func (s *Service) bulkLookup(uuid string) (Person, bool) {

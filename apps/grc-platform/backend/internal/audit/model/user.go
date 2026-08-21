@@ -21,11 +21,15 @@ package model
 // Used to populate owner/auditor dropdowns in the UI.
 
 type UserRef struct {
-	ID          int     `json:"id"`
-	DisplayName string  `json:"displayName"`
-	Email       string  `json:"email"`
-	UserType    string  `json:"userType"` // INTERNAL | EXTERNAL
-	ProfileURL  *string `json:"profileUrl"`
+	ID          int    `json:"id"`
+	DisplayName string `json:"displayName"`
+	Email       string `json:"email"`
+	// UUID is the user's Asgardeo id, used with UserType to resolve a
+	// deliverable email/display name via the identity directory — see
+	// Deps.Directory in notify.go.
+	UUID       string  `json:"uuid"`
+	UserType   string  `json:"userType"` // INTERNAL | EXTERNAL
+	ProfileURL *string `json:"profileUrl"`
 	// Status is ACTIVE | INACTIVE | REMOVED — used by the notification
 	// dispatcher to skip emailing a user who is no longer active.
 	Status string `json:"status"`

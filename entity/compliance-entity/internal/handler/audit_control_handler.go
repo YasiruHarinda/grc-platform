@@ -67,7 +67,7 @@ func (h *ControlHandler) SearchControlsGlobal(w http.ResponseWriter, r *http.Req
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// GetEvidenceAssignment handles GET /audit-controls/{controlId}/evidence-assignment?email=.
+// GetEvidenceAssignment handles GET /audit-controls/{controlId}/evidence-assignment?userId=.
 // 200 {"auditId":N} when the user is assigned to this actionable control; 404 otherwise.
 func (h *ControlHandler) GetEvidenceAssignment(w http.ResponseWriter, r *http.Request) {
 	controlID, err := strconv.Atoi(r.PathValue("controlId"))
@@ -75,7 +75,12 @@ func (h *ControlHandler) GetEvidenceAssignment(w http.ResponseWriter, r *http.Re
 		writeServiceError(w, r, &apierror.ValidationError{Msg: "controlId must be a positive integer"})
 		return
 	}
-	resp, err := h.svc.GetEvidenceAssignment(r.Context(), r.URL.Query().Get("email"), controlID)
+	userID, err := strconv.Atoi(r.URL.Query().Get("userId"))
+	if err != nil {
+		writeServiceError(w, r, &apierror.ValidationError{Msg: "userId must be a positive integer"})
+		return
+	}
+	resp, err := h.svc.GetEvidenceAssignment(r.Context(), userID, controlID)
 	if err != nil {
 		writeServiceError(w, r, err)
 		return

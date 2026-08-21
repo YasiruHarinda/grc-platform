@@ -28,10 +28,10 @@ import { AuditPrivilege } from "@modules/audit/privileges";
 export const auditRoutes = (
   <Route path="audit">
     <Route index element={<Navigate to="audits" replace />} />
-    <Route path="audits" element={<AuditsListPage />} />
+    <Route path="audits" element={<AuditPrivilegeGuard privilege={AuditPrivilege.ViewAudits}><AuditsListPage /></AuditPrivilegeGuard>} />
     <Route path="audits/create" element={<AuditPrivilegeGuard privilege={AuditPrivilege.CreateAudit}><CreateAuditPage /></AuditPrivilegeGuard>} />
     <Route path="audits/:auditId" element={<AuditDetailPage />} />
     <Route path="audits/:auditId/activity" element={<AuditActivityLogPage />} />
-    <Route path="dashboard" element={<AuditDashboard />} />
+    <Route path="dashboard" element={<AuditPrivilegeGuard privilege={AuditPrivilege.ViewAudits}><AuditDashboard /></AuditPrivilegeGuard>} />
   </Route>
 );

@@ -32,7 +32,7 @@ import {
 import { Lock, MessageSquare, Trash2 } from "@wso2/oxygen-ui-icons-react";
 import { useState, type JSX } from "react";
 import { useAddComment, useDeleteComment, useGetComments } from "@modules/audit/api/useComments";
-import { useCurrentUserEmail } from "@modules/audit/hooks/useCurrentUserEmail";
+import { useCurrentUserId } from "@modules/audit/hooks/useCurrentUserId";
 import { useAuditPrivileges } from "@modules/audit/hooks/useAuditPrivileges";
 import { AuditPrivilege } from "@modules/audit/privileges";
 import { formatTimestamp } from "@modules/audit/utils/format";
@@ -55,7 +55,7 @@ export default function CommentsSection({
   const comments = useGetComments(auditId, controlId);
   const addComment = useAddComment();
   const deleteComment = useDeleteComment();
-  const currentUserEmail = useCurrentUserEmail();
+  const currentUserId = useCurrentUserId();
   const { can } = useAuditPrivileges();
   const isAdmin = can(AuditPrivilege.ManageControls);
 
@@ -111,7 +111,7 @@ export default function CommentsSection({
             >
               <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
                 <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, flex: 1 }}>
-                  {c.createdBy || "Unknown"} · {formatTimestamp(c.createdAt)}
+                  {c.createdByName || c.createdBy || "Unknown"} · {formatTimestamp(c.createdAt)}
                 </Typography>
                 {c.isInternal && (
                   <Chip
@@ -123,7 +123,7 @@ export default function CommentsSection({
                     variant="outlined"
                   />
                 )}
-                {canComment && (isAdmin || c.createdBy === currentUserEmail) && (
+                {canComment && (isAdmin || c.createdBy === currentUserId) && (
                   <IconButton
                     size="small"
                     aria-label="Delete comment"

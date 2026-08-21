@@ -30,6 +30,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/apierror"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/aiagent"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
@@ -122,7 +123,36 @@ type evidenceHandler struct {
 	aiClient *aiagent.Client
 	// notify sends resubmission-needed and sample-submitted notification
 	// emails from decideRound and submitSample — see notify.go.
-	notify *Deps
+	notify    *Deps
+	directory *directory.Service
+}
+
+// resolveEvidenceSubmitters batch-resolves each round's CreatedByName from
+// CreatedBy (the submitter's raw uuid) — see AuditTrailEntry.CreatedByName
+// for the same pattern.
+func (h *evidenceHandler) resolveEvidenceSubmitters(ctx context.Context, evidence []*model.AuditEvidence) {
+	uuids := make([]string, 0, len(evidence))
+	for _, e := range evidence {
+		if e.CreatedBy != "" {
+			uuids = append(uuids, e.CreatedBy)
+		}
+	}
+	people := h.directory.LookupAll(ctx, uuids)
+	for _, e := range evidence {
+		p, ok := people[e.CreatedBy]
+		if !ok {
+			e.CreatedByName = e.CreatedBy
+			continue
+		}
+		switch {
+		case strings.TrimSpace(p.DisplayName) != "":
+			e.CreatedByName = strings.TrimSpace(p.DisplayName)
+		case p.Email != "":
+			e.CreatedByName = p.Email
+		default:
+			e.CreatedByName = e.CreatedBy
+		}
+	}
 }
 
 // requireAssignment enforces resource-level authorization for the web-app evidence
@@ -156,7 +186,7 @@ func (h *evidenceHandler) requireAssignment(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	actor := auth.FromContext(r.Context())
-	derived, found, err := h.controlSvc.AssignedAuditID(r.Context(), actor.Email, controlID)
+	derived, found, err := h.controlSvc.AssignedAuditID(r.Context(), actor.UserID, controlID)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return false
@@ -308,7 +338,7 @@ func (h *evidenceHandler) submitEvidence(w http.ResponseWriter, r *http.Request)
 	}
 
 	user := auth.FromContext(r.Context())
-	actor := user.Email
+	actor := user.Subject
 	isAdmin := auth.HasPrivilege(r.Context(), privilege.ManageControls)
 
 	evidence, err := h.svc.Submit(r.Context(), auditID, controlID, req.Files, req.Attestation, isAdmin, actor)
@@ -378,7 +408,7 @@ func (h *evidenceHandler) addEvidenceFiles(w http.ResponseWriter, r *http.Reques
 	}
 
 	user := auth.FromContext(r.Context())
-	actor := user.Email
+	actor := user.Subject
 
 	evidence, err := h.svc.AddFiles(r.Context(), auditID, controlID, req.Files, actor)
 	if err != nil {
@@ -430,7 +460,7 @@ func (h *evidenceHandler) withdrawEvidence(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	actor := auth.FromContext(r.Context()).Email
+	actor := auth.FromContext(r.Context()).Subject
 
 	// Resource-level check: the caller must own the latest submission round.
 	// ManageControls holders (compliance admin) can withdraw any submission.
@@ -669,7 +699,7 @@ func (h *evidenceHandler) deleteEvidenceRound(w http.ResponseWriter, r *http.Req
 	if h.requireEditableEvidenceControl(w, r, auditID, controlID) == nil {
 		return
 	}
-	actor := auth.FromContext(r.Context()).Email
+	actor := auth.FromContext(r.Context()).Subject
 	isAdmin := auth.HasPrivilege(r.Context(), privilege.ManageControls)
 	if err := h.svc.DeleteRound(r.Context(), auditID, controlID, evidenceID, actor, isAdmin); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
@@ -687,7 +717,7 @@ func (h *evidenceHandler) deleteEvidenceRound(w http.ResponseWriter, r *http.Req
 // deleteFile performs the authorization-checked delete shared by both delete
 // routes. It writes the error response and returns false on failure.
 func (h *evidenceHandler) deleteFile(w http.ResponseWriter, r *http.Request, fileID int) bool {
-	actor := auth.FromContext(r.Context()).Email
+	actor := auth.FromContext(r.Context()).Subject
 	isAdmin := auth.HasPrivilege(r.Context(), privilege.ManageControls)
 	if err := h.svc.DeleteFile(r.Context(), fileID, actor, isAdmin); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
@@ -727,7 +757,7 @@ func (h *evidenceHandler) reconcileAfterDelete(ctx context.Context, auditID, con
 		return control.Status, nil
 	}
 
-	actor := auth.FromContext(ctx).Email
+	actor := auth.FromContext(ctx).Subject
 	statusReq := model.UpdateStatusRequest{Status: "EVIDENCE_PENDING"}
 	if err := h.controlSvc.UpdateStatus(ctx, auditID, controlID, statusReq, actor); err != nil {
 		return "", err
@@ -741,17 +771,17 @@ func (h *evidenceHandler) reconcileAfterDelete(ctx context.Context, auditID, con
 // requireEvidenceFileAccess authorizes downloadEvidenceFile with the same rule
 // as canViewEvidence, but resolved from a file id instead of a control — the
 // download route (GET /api/v1/evidence/files/{fileId}/download) carries no
-// auditId/controlId to look a control up by, so FileAuditorEmail returns the
-// owning control's team alongside the auditor email in one round trip.
+// auditId/controlId to look a control up by, so FileAuditorID returns the
+// owning control's team alongside the auditor id in one round trip.
 // ManageControls, SubmitEvidence, ReviewEvidence, and ViewAllAudits bypass —
 // checked against that team (HasPrivilegeIn), since all four can be granted
 // scoped to a single team (module=AUDIT) and the unscoped HasPrivilege would
 // let such a grant download every other team's files too. Anyone else (e.g.
 // an external auditor holding only ValidateEvidence) must be the
-// email-matched auditor of the file's owning control.
+// id-matched auditor of the file's owning control.
 func (h *evidenceHandler) requireEvidenceFileAccess(w http.ResponseWriter, r *http.Request, fileID int) bool {
 	ctx := r.Context()
-	auditorEmail, fileTeamID, err := h.svc.FileAuditorEmail(ctx, fileID)
+	auditorID, fileTeamID, err := h.svc.FileAuditorID(ctx, fileID)
 	if err != nil {
 		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
 		return false
@@ -767,7 +797,7 @@ func (h *evidenceHandler) requireEvidenceFileAccess(w http.ResponseWriter, r *ht
 		return true
 	}
 	actor := auth.FromContext(ctx)
-	if auditorEmail == nil || !strings.EqualFold(*auditorEmail, actor.Email) {
+	if auditorID == nil || *auditorID != actor.UserID {
 		response.WriteError(w, http.StatusForbidden, response.ErrMsgForbidden)
 		return false
 	}
@@ -803,7 +833,7 @@ func (h *evidenceHandler) downloadEvidenceFile(w http.ResponseWriter, r *http.Re
 
 // canViewEvidence allows: the team (SubmitEvidence), an internal reviewer
 // (ReviewEvidence), an org-wide reader (ViewAllAudits), ManageControls, or the
-// control's assigned auditor (by email, e.g. ValidateEvidence holders). Each
+// control's assigned auditor (by user id, e.g. ValidateEvidence holders). Each
 // privilege is checked against control's own team (HasPrivilegeIn), since all
 // four can be granted scoped to a single team (module=AUDIT) — the unscoped
 // HasPrivilege would let a team-scoped grant view every other team's evidence
@@ -821,7 +851,7 @@ func canViewEvidence(r *http.Request, control *model.AuditControl) bool {
 		return true
 	}
 	actor := auth.FromContext(ctx)
-	return control.AuditorEmail != nil && strings.EqualFold(*control.AuditorEmail, actor.Email)
+	return control.AuditorID != nil && *control.AuditorID == actor.UserID
 }
 
 // listEvidence handles GET /api/v1/audits/{id}/controls/{controlId}/evidence.
@@ -857,5 +887,6 @@ func (h *evidenceHandler) listEvidence(w http.ResponseWriter, r *http.Request) {
 	if evidence == nil {
 		evidence = []*model.AuditEvidence{}
 	}
+	h.resolveEvidenceSubmitters(r.Context(), evidence)
 	response.WriteJSONValue(w, http.StatusOK, evidence)
 }

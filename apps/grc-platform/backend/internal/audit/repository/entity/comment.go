@@ -37,13 +37,14 @@ func NewCommentRepository(c *entityclient.Client) repository.CommentRepository {
 // which differs from the backend model (createdAt / createdBy string) — see
 // entEvidence in evidence.go for the same pattern.
 type entComment struct {
-	ID              int       `json:"id"`
-	ControlID       int       `json:"controlId"`
-	ParentCommentID *int      `json:"parentCommentId"`
-	Content         string    `json:"content"`
-	IsInternal      bool      `json:"isInternal"`
-	CreatedBy       *string   `json:"createdBy"`
-	CreatedOn       time.Time `json:"createdOn"`
+	ID                int       `json:"id"`
+	ControlID         int       `json:"controlId"`
+	ParentCommentID   *int      `json:"parentCommentId"`
+	Content           string    `json:"content"`
+	IsInternal        bool      `json:"isInternal"`
+	CreatedBy         *string   `json:"createdBy"`
+	CreatedByUserType *string   `json:"createdByUserType"`
+	CreatedOn         time.Time `json:"createdOn"`
 }
 
 func (c entComment) toModel() *model.AuditComment {
@@ -57,6 +58,9 @@ func (c entComment) toModel() *model.AuditComment {
 	}
 	if c.CreatedBy != nil {
 		m.CreatedBy = *c.CreatedBy
+	}
+	if c.CreatedByUserType != nil {
+		m.CreatedByUserType = *c.CreatedByUserType
 	}
 	return m
 }

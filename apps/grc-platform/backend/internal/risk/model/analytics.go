@@ -127,11 +127,11 @@ type WorkflowStageCount struct {
 // AgingRiskItem is one row of the "Aging Open Risks" table: an open risk
 // ranked by days since it was identified.
 type AgingRiskItem struct {
-	ID             int     `json:"id"`
-	RiskCode       string  `json:"risk_code"`
-	RiskTitle      string  `json:"risk_title"`
-	RegisterName   string  `json:"register_name"`
-	OwnerName      string  `json:"owner_name"`
+	ID           int    `json:"id"`
+	RiskCode     string `json:"risk_code"`
+	RiskTitle    string `json:"risk_title"`
+	RegisterName string `json:"register_name"`
+	OwnerName    string `json:"owner_name"`
 	// OwnerUUID identifies the owner for directory name resolution — not
 	// rendered by the client, see enrichAnalytics.
 	OwnerUUID      string  `json:"-"`

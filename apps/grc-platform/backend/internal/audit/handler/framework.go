@@ -38,11 +38,11 @@ func (h *frameworkHandler) listFrameworks(w http.ResponseWriter, r *http.Request
 	ctx := r.Context()
 	scope, _ := deriveScopes(ctx)
 	user := auth.FromContext(ctx)
-	var email string
+	var userID int
 	if user != nil {
-		email = user.Email
+		userID = user.UserID
 	}
-	frameworks, err := h.svc.ListFrameworks(ctx, scope, email, managedTeamIDs(auth.Grants(ctx)))
+	frameworks, err := h.svc.ListFrameworks(ctx, scope, userID, managedTeamIDs(auth.Grants(ctx)))
 	if err != nil {
 		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
 		return
@@ -62,7 +62,7 @@ func (h *frameworkHandler) createFramework(w http.ResponseWriter, r *http.Reques
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
-	actor := auth.FromContext(r.Context()).Email
+	actor := auth.FromContext(r.Context()).Subject
 	fw, err := h.svc.CreateFramework(r.Context(), req, actor)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
@@ -96,7 +96,7 @@ func (h *frameworkHandler) createProduct(w http.ResponseWriter, r *http.Request)
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
-	actor := auth.FromContext(r.Context()).Email
+	actor := auth.FromContext(r.Context()).Subject
 	p, err := h.svc.CreateProduct(r.Context(), req, actor)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
@@ -141,7 +141,7 @@ func (h *frameworkHandler) createFrameworkControl(w http.ResponseWriter, r *http
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
-	actor := auth.FromContext(r.Context()).Email
+	actor := auth.FromContext(r.Context()).Subject
 	fc, err := h.svc.CreateFrameworkControl(r.Context(), id, req, actor)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)

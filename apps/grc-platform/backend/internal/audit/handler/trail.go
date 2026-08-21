@@ -17,12 +17,15 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
@@ -33,7 +36,44 @@ import (
 const trailDateFormat = "2006-01-02"
 
 type trailHandler struct {
-	svc service.TrailService
+	svc       service.TrailService
+	directory *directory.Service
+}
+
+// resolveTrailActors fills each entry's CreatedByName from CreatedBy (the
+// actor's raw uuid, per audit_trail's write path), batching the directory
+// lookups for the whole page rather than one call per row. CreatedBy itself
+// is left untouched — see AuditTrailEntry.CreatedByName.
+//
+// Falls back to email, then the bare uuid, for an actor the directory can't
+// resolve. Uses LookupAllTyped, routed by each entry's CreatedByUserType: an
+// external auditor (AUDIT_VALIDATE_EVIDENCE/AUDIT_REVIEW_EVIDENCE are
+// external-reachable — see evidenceHandler.requireEvidenceFileAccess) can be
+// the actor of a trail row via controlService.UpdateStatus, and the internal-
+// only Lookup could never resolve their identity.
+func (h *trailHandler) resolveTrailActors(ctx context.Context, entries []*model.AuditTrailEntry) {
+	uuidTypes := make(map[string]string, len(entries))
+	for _, e := range entries {
+		if e.CreatedBy != "" {
+			uuidTypes[e.CreatedBy] = e.CreatedByUserType
+		}
+	}
+	people := h.directory.LookupAllTyped(ctx, uuidTypes)
+	for _, e := range entries {
+		p, ok := people[e.CreatedBy]
+		if !ok {
+			e.CreatedByName = e.CreatedBy
+			continue
+		}
+		switch {
+		case strings.TrimSpace(p.DisplayName) != "":
+			e.CreatedByName = strings.TrimSpace(p.DisplayName)
+		case p.Email != "":
+			e.CreatedByName = p.Email
+		default:
+			e.CreatedByName = e.CreatedBy
+		}
+	}
 }
 
 // listControlTrail handles GET /api/v1/audits/{id}/controls/{controlId}/trail.
@@ -62,6 +102,7 @@ func (h *trailHandler) listControlTrail(w http.ResponseWriter, r *http.Request) 
 	if entries == nil {
 		entries = []*model.AuditTrailEntry{}
 	}
+	h.resolveTrailActors(r.Context(), entries)
 	response.WriteJSONValue(w, http.StatusOK, &model.TrailListResponse{
 		Items: entries,
 		Total: total,
@@ -139,6 +180,7 @@ func (h *trailHandler) listAuditTrail(w http.ResponseWriter, r *http.Request) {
 	if entries == nil {
 		entries = []*model.AuditTrailEntry{}
 	}
+	h.resolveTrailActors(r.Context(), entries)
 	response.WriteJSONValue(w, http.StatusOK, &model.TrailListResponse{
 		Items: entries,
 		Total: total,

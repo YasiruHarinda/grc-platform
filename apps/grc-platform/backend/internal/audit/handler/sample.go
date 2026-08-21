@@ -163,7 +163,7 @@ func (h *evidenceHandler) submitSample(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := auth.FromContext(r.Context())
-	actor := user.Email
+	actor := user.Subject
 	fileCount, err := h.popSvc.SubmitSample(r.Context(), round.ID, req.FolderPath, actor)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
@@ -223,7 +223,7 @@ func (h *evidenceHandler) requestSampleTime(w http.ResponseWriter, r *http.Reque
 		response.WriteError(w, http.StatusConflict, "more time can only be requested right after the population is approved")
 		return
 	}
-	actor := auth.FromContext(r.Context()).Email
+	actor := auth.FromContext(r.Context()).Subject
 	statusReq := model.UpdateStatusRequest{Status: "AWAITING_SAMPLE"}
 	if err := h.controlSvc.UpdateStatus(r.Context(), auditID, controlID, statusReq, actor); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)

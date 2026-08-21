@@ -34,16 +34,13 @@ type fakeUserRepo struct {
 }
 
 func (f *fakeUserRepo) List(ctx context.Context) ([]*userentity.User, error) { return f.users, nil }
-func (f *fakeUserRepo) GetByEmail(ctx context.Context, email string) (*userentity.User, error) {
-	panic("not used by handleListUsers")
-}
 func (f *fakeUserRepo) GetByID(ctx context.Context, id int) (*userentity.User, error) {
 	panic("not used by handleListUsers")
 }
 func (f *fakeUserRepo) GetByUUID(ctx context.Context, uuid string) (*userentity.User, error) {
 	panic("not used by handleListUsers")
 }
-func (f *fakeUserRepo) Upsert(ctx context.Context, uuid, email, displayName, actor string) (*userentity.User, error) {
+func (f *fakeUserRepo) Upsert(ctx context.Context, uuid, actor string) (*userentity.User, error) {
 	panic("not used by handleListUsers")
 }
 

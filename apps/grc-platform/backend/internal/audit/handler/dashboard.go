@@ -104,7 +104,7 @@ func (h *dashboardHandler) getDashboard(w http.ResponseWriter, r *http.Request) 
 
 	f := model.DashboardFilter{}
 	if user != nil {
-		f.UserEmail = user.Email
+		f.UserID = user.UserID
 	}
 	f.ViewScope, f.WorkQueueScope = deriveScopes(r.Context())
 	f.ScopeTeamIDs = managedTeamIDs(auth.Grants(r.Context()))
@@ -127,7 +127,7 @@ func (h *dashboardHandler) getWorkQueue(w http.ResponseWriter, r *http.Request) 
 
 	f := model.DashboardFilter{}
 	if user != nil {
-		f.UserEmail = user.Email
+		f.UserID = user.UserID
 	}
 	f.ViewScope, f.WorkQueueScope = deriveScopes(r.Context())
 	f.ScopeTeamIDs = managedTeamIDs(auth.Grants(r.Context()))

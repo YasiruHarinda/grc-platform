@@ -120,11 +120,11 @@ type RepeatedRiskOccurrence struct {
 // HighRiskItem is one row of the "High Severity Open Risks" table: an open
 // risk whose effective residual level is HIGH.
 type HighRiskItem struct {
-	ID                 int     `json:"id"`
-	RiskCode           string  `json:"risk_code"`
-	RiskTitle          string  `json:"risk_title"`
-	RegisterName       string  `json:"register_name"`
-	OwnerName          string  `json:"owner_name"`
+	ID           int    `json:"id"`
+	RiskCode     string `json:"risk_code"`
+	RiskTitle    string `json:"risk_title"`
+	RegisterName string `json:"register_name"`
+	OwnerName    string `json:"owner_name"`
 	// OwnerUUID identifies the owner for directory name resolution — not
 	// rendered by the client, see enrichDashboard.
 	OwnerUUID          string  `json:"-"`

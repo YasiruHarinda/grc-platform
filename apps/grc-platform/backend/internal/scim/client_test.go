@@ -87,6 +87,70 @@ func TestListUsersByDomain_ShortPage(t *testing.T) {
 	}
 }
 
+// TestNewExternalClient_HitsExternalOrgPath confirms NewExternalClient's
+// requests target organizations/external/*, not organizations/internal/* —
+// the two orgs hold genuinely distinct identities (see the design doc's
+// §1.4), so a client wired to the wrong path would silently never resolve
+// anyone, or worse, resolve the wrong org's uuid space.
+func TestNewExternalClient_HitsExternalOrgPath(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewEncoder(w).Encode(tokenResponse{AccessToken: "test-token", ExpiresIn: 3600}); err != nil {
+			t.Errorf("encode token response: %v", err)
+		}
+	}))
+	defer tokenSrv.Close()
+
+	var gotPath string
+	searchSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		if err := json.NewEncoder(w).Encode(userSearchResult{
+			TotalResults: 1,
+			Resources:    []scimUser{{ID: "ext-uuid-1", UserName: "auditor@external.example"}},
+		}); err != nil {
+			t.Errorf("encode user search response: %v", err)
+		}
+	}))
+	defer searchSrv.Close()
+
+	c := NewExternalClient(searchSrv.URL, tokenSrv.URL, "id", "secret", "org_external:users:read")
+
+	got, err := c.LookupByUUID(context.Background(), "ext-uuid-1")
+	if err != nil {
+		t.Fatalf("LookupByUUID: %v", err)
+	}
+	if got == nil || got.UUID != "ext-uuid-1" {
+		t.Fatalf("got %+v, want a resolved external user", got)
+	}
+	if gotPath != "/organizations/external/users/search" {
+		t.Errorf("hit path %q, want /organizations/external/users/search", gotPath)
+	}
+}
+
+// TestNewClient_StillHitsInternalOrgPath guards the refactor that introduced
+// the org field: NewClient's existing callers (main.go, the backfill tools)
+// must keep resolving against organizations/internal/*, unchanged.
+func TestNewClient_StillHitsInternalOrgPath(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(tokenResponse{AccessToken: "test-token", ExpiresIn: 3600})
+	}))
+	defer tokenSrv.Close()
+
+	var gotPath string
+	searchSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		json.NewEncoder(w).Encode(userSearchResult{Resources: []scimUser{}})
+	}))
+	defer searchSrv.Close()
+
+	c := NewClient(searchSrv.URL, tokenSrv.URL, "id", "secret", "org_internal:users:read")
+	if _, err := c.LookupByUUID(context.Background(), "some-uuid"); err != nil {
+		t.Fatalf("LookupByUUID: %v", err)
+	}
+	if gotPath != "/organizations/internal/users/search" {
+		t.Errorf("hit path %q, want /organizations/internal/users/search", gotPath)
+	}
+}
+
 func fakeUsers(startIndex, n int) []scimUser {
 	users := make([]scimUser, n)
 	for i := range users {

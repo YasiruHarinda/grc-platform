@@ -38,6 +38,7 @@ export interface TrailEntry {
   controlId: number | null;
   evidenceId: number | null;
   createdBy: string;
+  createdByName: string;
   createdAt: string;
   // Free-form JSON recorded with the event (e.g. { from, to, via, comment,
   // controlNumber }). Passed through verbatim by the backend; may be absent.
