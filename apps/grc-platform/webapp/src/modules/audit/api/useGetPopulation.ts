@@ -27,6 +27,11 @@ export interface PopulationFile {
   filePath: string;
   fileType: string | null;
   fileSize: number | null;
+  // Raw uuid of whoever uploaded the file (the team for POPULATION, the
+  // auditor for SAMPLE), and that uuid resolved to a display name by the
+  // backend — see PopulationFileList, which shows the attribution header.
+  createdBy: string;
+  createdByName: string;
   createdAt: string;
   readUrl: string | null;
 }

@@ -683,7 +683,9 @@ function SampleSelectionCard({
       )}
 
       {population.isLoading && <Skeleton variant="rounded" height={44} />}
-      {sampleFiles.length > 0 && <PopulationFileList files={sampleFiles} emptyText="" />}
+      {sampleFiles.length > 0 && (
+        <PopulationFileList files={sampleFiles} emptyText="" attributionLabel="Selected" />
+      )}
     </SectionCard>
   );
 }
@@ -864,7 +866,14 @@ function SampleUploadCard({
 
       {existingFiles.length > 0 && (
         <Box sx={{ mb: 1.5 }}>
-          <PopulationFileList files={existingFiles} emptyText="" auditId={auditId} controlId={controlId} canDelete />
+          <PopulationFileList
+            files={existingFiles}
+            emptyText=""
+            auditId={auditId}
+            controlId={controlId}
+            canDelete
+            attributionLabel="Selected"
+          />
         </Box>
       )}
 

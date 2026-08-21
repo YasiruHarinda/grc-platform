@@ -54,7 +54,18 @@ type PopulationFile struct {
 	FilePath     string    `json:"filePath"`
 	FileType     *string   `json:"fileType"`
 	FileSize     *int64    `json:"fileSize"`
-	CreatedAt    time.Time `json:"createdAt"`
+	// CreatedBy is the raw uuid of whoever uploaded this file — the submitting
+	// team member for a POPULATION file, the auditor for a SAMPLE one.
+	CreatedBy string `json:"createdBy"`
+	// CreatedByName is CreatedBy resolved through the identity directory, for
+	// display — see AuditTrailEntry.CreatedByName. CreatedBy stays the raw uuid.
+	CreatedByName string `json:"createdByName"`
+	// CreatedByUserType is CreatedBy's user.user_type (INTERNAL | EXTERNAL),
+	// which routes the uuid to the right identity org when resolving
+	// CreatedByName — a SAMPLE file's uploader is the auditor, who may be
+	// external. Omitted from JSON: it exists only to pick the lookup org.
+	CreatedByUserType string    `json:"-"`
+	CreatedAt         time.Time `json:"createdAt"`
 	// ReadURL is the backend proxy download URL (GET .../population/files/{id}/download).
 	// Computed at list time (not persisted); nil if the file has no DB id.
 	ReadURL *string `json:"readUrl"`
