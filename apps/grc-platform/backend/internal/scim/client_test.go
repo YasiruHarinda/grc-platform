@@ -94,17 +94,21 @@ func TestListUsersByDomain_ShortPage(t *testing.T) {
 // anyone, or worse, resolve the wrong org's uuid space.
 func TestNewExternalClient_HitsExternalOrgPath(t *testing.T) {
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(tokenResponse{AccessToken: "test-token", ExpiresIn: 3600})
+		if err := json.NewEncoder(w).Encode(tokenResponse{AccessToken: "test-token", ExpiresIn: 3600}); err != nil {
+			t.Errorf("encode token response: %v", err)
+		}
 	}))
 	defer tokenSrv.Close()
 
 	var gotPath string
 	searchSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
-		json.NewEncoder(w).Encode(userSearchResult{
+		if err := json.NewEncoder(w).Encode(userSearchResult{
 			TotalResults: 1,
 			Resources:    []scimUser{{ID: "ext-uuid-1", UserName: "auditor@external.example"}},
-		})
+		}); err != nil {
+			t.Errorf("encode user search response: %v", err)
+		}
 	}))
 	defer searchSrv.Close()
 
