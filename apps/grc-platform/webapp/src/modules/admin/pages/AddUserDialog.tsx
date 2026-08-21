@@ -129,16 +129,31 @@ export default function AddUserDialog({
   useEffect(() => {
     if (stage !== 1 || userType !== "INTERNAL" || query.trim().length < 2) {
       setResults([]);
+      setSearching(false);
       return;
     }
+    // cancelled guards against a slower, superseded search resolving after a
+    // newer one and overwriting its results — the debounce timer alone only
+    // stops a request that hasn't fired yet, not one already in flight when
+    // the query changes again.
+    let cancelled = false;
     setSearching(true);
     const t = setTimeout(() => {
       searchDirectory(authFetch, query)
-        .then(setResults)
-        .catch(() => setResults([]))
-        .finally(() => setSearching(false));
+        .then((r) => {
+          if (!cancelled) setResults(r);
+        })
+        .catch(() => {
+          if (!cancelled) setResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setSearching(false);
+        });
     }, 300);
-    return () => clearTimeout(t);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, stage, userType]);
 

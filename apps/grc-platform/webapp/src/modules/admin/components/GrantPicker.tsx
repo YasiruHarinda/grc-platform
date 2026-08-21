@@ -50,14 +50,29 @@ export default function GrantPicker({ roles, onAdd }: GrantPickerProps): JSX.Ele
     setScopeId("GLOBAL");
     if (!selectedRole || selectedRole.module !== "RISK" || !selectedRole.scopeBasis) {
       setTeams([]);
+      setTeamsLoading(false);
       return;
     }
+    // Guards against two races when the role selection changes quickly: a
+    // stale response overwriting the newer role's teams if requests resolve
+    // out of order, and teamsLoading getting stuck true if a later role
+    // switch takes the early-return branch above before this one settles.
+    let cancelled = false;
     const type = selectedRole.scopeBasis === "SOURCE_REGISTER" ? "SOURCE_REGISTER" : "ASSIGNMENT";
     setTeamsLoading(true);
     fetchScopeTeams(authFetch, type)
-      .then(setTeams)
-      .catch(() => setTeams([]))
-      .finally(() => setTeamsLoading(false));
+      .then((t) => {
+        if (!cancelled) setTeams(t);
+      })
+      .catch(() => {
+        if (!cancelled) setTeams([]);
+      })
+      .finally(() => {
+        if (!cancelled) setTeamsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roleId]);
 
