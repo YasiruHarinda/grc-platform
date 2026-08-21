@@ -63,10 +63,10 @@ export default function UsersPage(): JSX.Element {
   // Select disables rather than the whole table.
   const [statusUpdatingId, setStatusUpdatingId] = useState<number | null>(null);
 
-  const load = () => {
+  const load = (): Promise<void> => {
     setLoading(true);
     setError(null);
-    Promise.all([fetchAdminUsers(authFetch), fetchRoles(authFetch)])
+    return Promise.all([fetchAdminUsers(authFetch), fetchRoles(authFetch)])
       .then(([u, r]) => {
         setUsers(u);
         setRoles(r);
