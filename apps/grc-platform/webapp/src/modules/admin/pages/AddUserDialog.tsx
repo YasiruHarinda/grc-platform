@@ -98,6 +98,11 @@ export default function AddUserDialog({
   const [pendingGrants, setPendingGrants] = useState<PendingGrantEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Set once createAdminUser succeeds. User creation and each grant are
+  // separate backend calls with no shared transaction — tracking this lets a
+  // retry after a failed grant skip re-provisioning the (already-created)
+  // user and only replay the grants that didn't go through.
+  const [createdUserId, setCreatedUserId] = useState<number | null>(null);
 
   const reset = () => {
     setStage(1);
@@ -107,6 +112,7 @@ export default function AddUserDialog({
     setSelected(null);
     setPendingGrants([]);
     setError(null);
+    setCreatedUserId(null);
   };
 
   useEffect(() => {
@@ -169,15 +175,32 @@ export default function AddUserDialog({
     if (!selected) return;
     setError(null);
     setSubmitting(true);
+    let userId = createdUserId;
     try {
-      const created = await createAdminUser(authFetch, selected.uuid);
-      for (const g of pendingGrants) {
-        await createGrant(authFetch, created.id, g);
+      if (userId === null) {
+        const created = await createAdminUser(authFetch, selected.uuid);
+        userId = created.id;
+        setCreatedUserId(userId);
+      }
+      // Grants are applied one at a time, and removed from pendingGrants as
+      // each succeeds — so if one fails partway, only the grants that never
+      // went through remain in the list for a retry.
+      let remaining = pendingGrants;
+      while (remaining.length) {
+        await createGrant(authFetch, userId, remaining[0]);
+        remaining = remaining.slice(1);
+        setPendingGrants(remaining);
       }
       onCreated();
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to create user");
+      // The user (and any grants that succeeded before the failure) are
+      // already persisted server-side even though this call failed —
+      // refresh the caller's list so that isn't invisible, and leave the
+      // dialog open so the admin can retry just the remaining grants.
+      if (userId !== null) onCreated();
+      const msg = e instanceof Error ? e.message : "Failed to create user";
+      setError(userId !== null ? `User created, but a grant failed: ${msg}. Retry to apply the remaining grants.` : msg);
     } finally {
       setSubmitting(false);
     }
@@ -258,7 +281,10 @@ export default function AddUserDialog({
                     {selected.email}
                   </Typography>
                 </Box>
-                <Button size="small" onClick={() => setSelected(null)}>
+                {/* Disabled once the user is actually created (createdUserId set) —
+                    swapping the selection at that point would leave a retry
+                    granting roles to the wrong, already-provisioned person. */}
+                <Button size="small" disabled={createdUserId !== null} onClick={() => setSelected(null)}>
                   Change
                 </Button>
               </Box>
@@ -383,7 +409,7 @@ export default function AddUserDialog({
             disabled={!pendingGrants.length || submitting}
             onClick={handleFinish}
           >
-            {submitting ? "Creating…" : "Create User & Grant"}
+            {submitting ? "Creating…" : createdUserId !== null ? "Retry remaining grants" : "Create User & Grant"}
           </Button>
         )}
       </DialogActions>
