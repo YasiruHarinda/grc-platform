@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
-from app.api.routes import products, frameworks, controls, evidence, submissions, agent, usage, me
+from app.api.routes import products, frameworks, controls, evidence, submissions, agent, usage, me, runner_config
 from app.config import settings
 
 
@@ -96,6 +96,7 @@ app.include_router(submissions.router, prefix="/api")
 app.include_router(agent.router, prefix="/api")
 app.include_router(usage.router, prefix="/api")
 app.include_router(me.router, prefix="/api")
+app.include_router(runner_config.router, prefix="/api")
 
 
 @app.get("/health")
