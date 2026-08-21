@@ -56,6 +56,23 @@ from pathlib import Path
 # below and the real subprocess call can never drift apart.
 MANUAL_INSTALL_COMMAND = "playwright install chromium"
 
+# The one channel value that means "Playwright's own bundled binary" rather
+# than a system browser. Named once, because both the detection below and
+# the launch-failure advice at the bottom turn on it, and a literal repeated
+# in two places is exactly how the two drift apart.
+BUNDLED_CHROMIUM_CHANNEL = "chromium"
+
+# Proper product names for the system-browser channels, so a failure message
+# reads "Microsoft Edge" rather than "msedge". Any channel not listed here
+# falls back to its own name, which is the honest thing to print when we do
+# not know what it is called.
+_CHANNEL_DISPLAY_NAMES = {
+    "chrome": "Google Chrome",
+    "chrome-beta": "Google Chrome Beta",
+    "msedge": "Microsoft Edge",
+    "msedge-beta": "Microsoft Edge Beta",
+}
+
 # Printed before the download starts, never after -- a multi-second (or,
 # on a slow link, multi-minute) silence with no explanation looks exactly
 # like a hang, and the natural reaction to a hang is to kill the process.
@@ -63,6 +80,16 @@ DOWNLOAD_WARNING = (
     "\n[runner] Downloading Chromium for the browser agent (about 150 MB) "
     "-- this can take a minute on a slow connection.\n"
 )
+
+
+def _normalise_channel(channel: str) -> str:
+    """The channel as the rest of this module compares it.
+
+    Falls back to the same default as `settings.BROWSER_CHANNEL`, so a blank
+    or missing value is read as "chrome" (a system browser) rather than
+    accidentally as Chromium.
+    """
+    return (channel or "chrome").strip().lower()
 
 
 class ChromiumInstallError(Exception):
@@ -95,8 +122,8 @@ def chromium_is_installed(channel: str) -> bool:
     `Path.exists()` on that answer can't be fooled by output-format
     changes across Playwright versions.
     """
-    normalised = (channel or "chrome").strip().lower()
-    if normalised != "chromium":
+    normalised = _normalise_channel(channel)
+    if normalised != BUNDLED_CHROMIUM_CHANNEL:
         return True
 
     try:
@@ -170,3 +197,34 @@ def ensure_chromium_installed(channel: str) -> None:
 
     print(DOWNLOAD_WARNING)
     install_chromium()
+
+
+def launch_failure_advice(channel: str) -> str:
+    """What to tell an engineer whose browser would not launch, phrased for
+    the channel they are actually configured to use.
+
+    `doctor` used to print `playwright install chromium` for every channel.
+    That is only correct on the "chromium" channel. On every other channel
+    the Runner launches a *system* browser (see the module docstring), and
+    the bundled Chromium that command fetches is not the binary that failed
+    to launch -- so the engineer downloads roughly 150 MB, waits, and finds
+    the original failure exactly where they left it. Wrong advice is worse
+    than no advice here, because it costs real time before it is discovered
+    to be wrong.
+
+    For a system channel the fix is to install that browser. The message
+    also names BROWSER_CHANNEL=chromium as the way out, because someone who
+    cannot install Chrome (no admin rights, a locked-down machine) is not
+    actually stuck: switching the channel makes the Runner fetch and use its
+    own browser instead. That escape hatch is invisible otherwise.
+    """
+    normalised = _normalise_channel(channel)
+    if normalised == BUNDLED_CHROMIUM_CHANNEL:
+        return f"Try: {MANUAL_INSTALL_COMMAND}"
+    name = _CHANNEL_DISPLAY_NAMES.get(normalised, normalised)
+    return (
+        f"The Runner is set to the {normalised} channel, which means this "
+        f"machine's own {name}.\n"
+        f"Install {name}, or set BROWSER_CHANNEL=chromium to have the Runner "
+        "download and use its own browser instead."
+    )

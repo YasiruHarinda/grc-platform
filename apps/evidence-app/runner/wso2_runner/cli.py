@@ -407,8 +407,17 @@ def doctor(
             b.close()
         print(f"    ✓ {channel} launches OK")
     except Exception as exc:
+        # Advice has to match the channel. Printing "playwright install
+        # chromium" unconditionally, as this used to, is wrong on every
+        # channel but "chromium": it fetches a browser the Runner is not
+        # going to launch, so the engineer waits out a 150 MB download and
+        # finds the same failure still there. See browser_install for the
+        # full reasoning.
+        from wso2_runner.browser_install import launch_failure_advice
+
         print(f"    ✗ Browser launch failed: {exc}")
-        print("       Try: playwright install chromium")
+        for line in launch_failure_advice(settings.BROWSER_CHANNEL).splitlines():
+            print(f"       {line}")
 
     # Check LLM
     print(f"\n[4] LLM: provider={settings.AGENT_PROVIDER} model={settings.AGENT_MODEL}")

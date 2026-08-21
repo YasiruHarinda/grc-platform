@@ -1494,3 +1494,54 @@ def test_start_exits_nonzero_and_names_manual_command_when_chromium_install_fail
     assert "playwright install chromium" in result.output
     # run_forever must never be reached -- no browser opens on a failed install.
     assert fake_run_forever == []
+
+
+def test_doctor_browser_failure_does_not_advise_playwright_on_the_chrome_channel(monkeypatch):
+    """`doctor` used to print "Try: playwright install chromium" whenever a
+    browser failed to launch, whatever the channel was.
+
+    BROWSER_CHANNEL defaults to "chrome", which means the machine's own
+    Google Chrome, not Playwright's bundled binary. So on the default
+    settings that advice sent an engineer off to download roughly 150 MB of
+    a browser the Runner is not going to launch, after which the original
+    failure was still there. The advice now has to match the channel.
+
+    Playwright is genuinely absent in this environment, so the command's own
+    try/except is what produces the failure branch, no stubbing needed.
+    """
+
+    def fake_get(url, *a, **k):
+        return _FakeResponse({"status": "ok"})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(settings, "BROWSER_CHANNEL", "chrome")
+    monkeypatch.setattr(settings, "AGENT_PROVIDER", "anthropic")
+    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "sk-x")
+    monkeypatch.setattr(oauth, "has_cached_session", lambda: False)
+
+    result = runner.invoke(cli.app, ["doctor", "--server", "http://cloud.test"])
+
+    assert result.exit_code == 0
+    assert "playwright install chromium" not in result.output
+    assert "BROWSER_CHANNEL=chromium" in result.output
+
+
+def test_doctor_browser_failure_still_advises_playwright_on_the_chromium_channel(monkeypatch):
+    """The other half of the pair above. On the "chromium" channel the
+    Runner really does launch Playwright's bundled binary, so
+    `playwright install chromium` is the correct thing to type and must
+    still be printed."""
+
+    def fake_get(url, *a, **k):
+        return _FakeResponse({"status": "ok"})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(settings, "BROWSER_CHANNEL", "chromium")
+    monkeypatch.setattr(settings, "AGENT_PROVIDER", "anthropic")
+    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "sk-x")
+    monkeypatch.setattr(oauth, "has_cached_session", lambda: False)
+
+    result = runner.invoke(cli.app, ["doctor", "--server", "http://cloud.test"])
+
+    assert result.exit_code == 0
+    assert "playwright install chromium" in result.output

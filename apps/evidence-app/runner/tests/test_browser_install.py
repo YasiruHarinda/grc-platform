@@ -243,3 +243,63 @@ def test_manual_install_command_constant_matches_what_install_chromium_runs():
     -- MANUAL_INSTALL_COMMAND is what cli.py names to the engineer, and it
     must be exactly what `install_chromium()` actually runs."""
     assert browser_install.MANUAL_INSTALL_COMMAND == "playwright install chromium"
+
+
+# ── launch_failure_advice ────────────────────────────────────────────────
+
+
+def test_launch_failure_advice_names_the_playwright_command_for_chromium():
+    """On the "chromium" channel the Runner launches Playwright's own
+    bundled binary, so `playwright install chromium` is exactly the right
+    thing to type."""
+    advice = browser_install.launch_failure_advice("chromium")
+
+    assert browser_install.MANUAL_INSTALL_COMMAND in advice
+
+
+def test_launch_failure_advice_does_not_name_playwright_for_a_system_channel():
+    """The bug this guards against: `playwright install chromium` used to be
+    printed for every channel. On the default "chrome" channel that advice
+    is actively wrong -- it downloads roughly 150 MB of a browser the Runner
+    will not launch, and the original failure is still there afterwards."""
+    advice = browser_install.launch_failure_advice("chrome")
+
+    assert browser_install.MANUAL_INSTALL_COMMAND not in advice
+    assert "chrome" in advice.lower()
+
+
+def test_launch_failure_advice_offers_the_chromium_channel_as_a_way_out():
+    """Someone with no Google Chrome and no way to install it is not stuck:
+    switching the channel makes the Runner fetch and use its own browser.
+    The advice has to say so, or that escape hatch is invisible."""
+    advice = browser_install.launch_failure_advice("chrome")
+
+    assert "BROWSER_CHANNEL=chromium" in advice
+
+
+def test_launch_failure_advice_names_whichever_system_channel_is_configured():
+    """Not hardcoded to Chrome. msedge means the machine's own Edge, and the
+    message has to name the browser the engineer actually configured."""
+    advice = browser_install.launch_failure_advice("msedge")
+
+    assert "msedge" in advice
+    assert browser_install.MANUAL_INSTALL_COMMAND not in advice
+
+
+def test_launch_failure_advice_uses_the_browser_s_real_product_name():
+    """"Install msedge" reads like a typo. The channel value still appears,
+    because that is what the engineer sets in their config, but the thing
+    they have to go and install is named the way the vendor names it."""
+    advice = browser_install.launch_failure_advice("msedge")
+
+    assert "Microsoft Edge" in advice
+    assert "msedge" in advice
+
+
+def test_launch_failure_advice_falls_back_to_the_channel_name_when_unknown():
+    """A channel we have no product name for still gets usable advice,
+    rather than a blank where the browser name should be."""
+    advice = browser_install.launch_failure_advice("some-future-channel")
+
+    assert "some-future-channel" in advice
+    assert "BROWSER_CHANNEL=chromium" in advice
