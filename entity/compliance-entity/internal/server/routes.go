@@ -49,6 +49,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	commentRepo := repository.NewCommentRepository(db)
 	aiValidationRepo := repository.NewAIValidationRepository(db)
 	auditTrailRepo := repository.NewAuditTrailRepository(db)
+	auditNotificationRepo := repository.NewAuditNotificationRepository(db)
 	riskTeamRepo := repository.NewRiskTeamRepository(db)
 	riskScoreRepo := repository.NewRiskScoreRepository(db)
 	riskCategoryRepo := repository.NewRiskCategoryRepository(db)
@@ -80,6 +81,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	commentSvc := service.NewCommentService(commentRepo, auditTrailRepo)
 	aiValidationSvc := service.NewAIValidationService(aiValidationRepo)
 	auditTrailSvc := service.NewAuditTrailService(auditTrailRepo)
+	auditNotificationSvc := service.NewAuditNotificationService(auditNotificationRepo)
 	riskTeamSvc := service.NewRiskTeamService(riskTeamRepo)
 	riskScoreSvc := service.NewCachedRiskScoreService(service.NewRiskScoreService(riskScoreRepo))
 	riskCategorySvc := service.NewRiskCategoryService(riskCategoryRepo)
@@ -119,6 +121,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	commentH := handler.NewCommentHandler(commentSvc)
 	aiValidationH := handler.NewAIValidationHandler(aiValidationSvc)
 	auditTrailH := handler.NewAuditTrailHandler(auditTrailSvc)
+	auditNotificationH := handler.NewAuditNotificationHandler(auditNotificationSvc)
 	riskTeamH := handler.NewRiskTeamHandler(riskTeamSvc)
 	riskScoreH := handler.NewRiskScoreHandler(riskScoreSvc)
 	riskCategoryH := handler.NewRiskCategoryHandler(riskCategorySvc)
@@ -235,6 +238,12 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	// Audit trail (append-only; write from external callers, read for timeline UI)
 	mux.HandleFunc("POST /audits/{auditId}/trail", auditTrailH.CreateAuditTrail)
 	mux.HandleFunc("GET /audits/{auditId}/trail", auditTrailH.ListAuditTrail)
+
+	// Audit notifications (send-log for every audit-module email; also the
+	// reminder job's de-dup mechanism)
+	mux.HandleFunc("POST /audit/notifications", auditNotificationH.CreateAuditNotification)
+	mux.HandleFunc("POST /audit/notifications/claim", auditNotificationH.ClaimAuditNotification)
+	mux.HandleFunc("DELETE /audit/notifications/{id}/claim", auditNotificationH.ReleaseAuditNotificationClaim)
 
 	// Controls (cross-audit search; nested CRUD under audits)
 	mux.HandleFunc("POST /audit/dashboard/search", dashboardH.GetDashboard)

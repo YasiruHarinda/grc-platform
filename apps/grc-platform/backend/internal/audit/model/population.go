@@ -33,9 +33,14 @@ type AuditPopulation struct {
 	Comments        *string `json:"comments"`
 	// Attestation is a written note standing in for population files (a
 	// fileless submit, or a note alongside files). Nil otherwise.
-	Attestation *string   `json:"attestation"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	Attestation *string `json:"attestation"`
+	// OwnerID/TeamID are the population-phase process owner and team, which
+	// may differ from the control's own owner/team (evidence phase) — see
+	// PopulationDetails on model/control.go, which is where they're written.
+	OwnerID   *int      `json:"ownerId"`
+	TeamID    *int      `json:"teamId"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // PopulationFile is one file on a population round, tagged POPULATION

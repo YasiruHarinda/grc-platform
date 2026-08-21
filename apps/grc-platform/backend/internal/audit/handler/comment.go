@@ -27,7 +27,10 @@ import (
 )
 
 type commentHandler struct {
-	svc service.CommentService
+	svc        service.CommentService
+	controlSvc service.ControlService
+	// notify sends the comment-added notification email — see notify.go.
+	notify *Deps
 }
 
 // listComments handles GET /api/v1/audits/{id}/controls/{controlId}/comments.
@@ -80,6 +83,9 @@ func (h *commentHandler) addComment(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
+	}
+	if control, err := h.controlSvc.GetByID(r.Context(), auditID, controlID); err == nil && control != nil {
+		h.notify.notifyCommentAdded(r.Context(), control, c, actor)
 	}
 	response.WriteJSONValue(w, http.StatusCreated, c)
 }

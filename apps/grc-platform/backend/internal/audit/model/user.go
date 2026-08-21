@@ -26,4 +26,7 @@ type UserRef struct {
 	Email       string  `json:"email"`
 	UserType    string  `json:"userType"` // INTERNAL | EXTERNAL
 	ProfileURL  *string `json:"profileUrl"`
+	// Status is ACTIVE | INACTIVE | REMOVED — used by the notification
+	// dispatcher to skip emailing a user who is no longer active.
+	Status string `json:"status"`
 }

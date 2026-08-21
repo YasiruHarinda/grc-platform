@@ -208,6 +208,38 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /users/by-uuid/{uuid}:
+    get:
+      tags:
+      - Users
+      summary: Get a user by Asgardeo uuid
+      description: >-
+        The identity path this platform resolves through going forward — the
+        `sub` claim of the caller's OIDC token, not their email. Literal
+        second path segment for the same collision-avoidance reason as
+        by-email: "/users/by-uuid/{uuid}" cannot collide with "/users/{id}"
+        (different segment counts) or with by-email (different literal
+        second segment).
+      operationId: getUserByUUID
+      parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Get a user by uuid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /users/{id}:
     get:
       tags:
@@ -2221,6 +2253,37 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /grants/by-uuid/{uuid}:
+    get:
+      tags:
+      - Role Grants
+      summary: Get a user's role grants by Asgardeo uuid
+      description: >-
+        Resolves a user by uuid and returns their active grants in one round
+        trip — the uuid counterpart of GET /grants/by-email, kept alongside
+        it (not a replacement) until every backend caller has redeployed onto
+        uuid-based auth. Same no-store, not-cached, 404-on-unknown-user
+        contract as by-email.
+      operationId: getGrantsByUUID
+      parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: The user's active grants
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserGrantsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /grants/user/{id}:
     get:
       tags:
@@ -3304,6 +3367,9 @@ components:
       properties:
         id:
           type: integer
+        uuid:
+          type: string
+          description: The user's Asgardeo id — the same value their OIDC token carries as `sub`. Empty when the row predates the identity migration and no Asgardeo account could be matched to its email yet.
         email:
           type: string
         displayName:
@@ -4831,12 +4897,14 @@ components:
           type: string
         assignerId: &id014
           type: integer
-        assignerName: &id015
+        assignerUuid: &id015
           type: string
+          description: Asgardeo id of the risk assigner. Empty when the row predates the identity migration and has not been backfilled.
         ownerId: &id016
           type: integer
-        ownerName: &id017
+        ownerUuid: &id017
           type: string
+          description: Asgardeo id of the risk owner. Empty when the row predates the identity migration and has not been backfilled.
         workflowStatus: &id018
           type: string
           enum:
@@ -5393,6 +5461,14 @@ components:
         decision:
           type: string
           nullable: true
+        assignerLeadUuid:
+          type: string
+          nullable: true
+          description: Asgardeo id of the risk assigner's line manager, resolved via SCIM email→uuid lookup and frozen at escalation time. Never re-resolved, so a later reorg does not silently change who has access to a historical escalation. Nil when the manager's email couldn't be resolved to an Asgardeo account, or HR has no manager on file. A lead need not be a platform user.
+        actionOwnerLeadUuid:
+          type: string
+          nullable: true
+          description: Same as assignerLeadUuid, for the action plan owner's line manager.
         status:
           type: string
           enum:
@@ -5418,6 +5494,13 @@ components:
           nullable: true
         actionPlanId:
           type: integer
+          nullable: true
+        assignerLeadUuid:
+          type: string
+          nullable: true
+          description: Frozen at escalation time — see RiskEscalation's assignerLeadUuid.
+        actionOwnerLeadUuid:
+          type: string
           nullable: true
         createdBy:
           type: string
@@ -6062,15 +6145,16 @@ components:
     GrantCandidate:
       type: object
       description: >-
-        One user eligible for a role-gated picker field. Carries only what a
-        picker needs to render an option — no team memberships, no timestamps.
+        One user eligible for a role-gated picker field. Carries only id and
+        uuid — no team memberships, no timestamps, and no name or email,
+        since the platform stores neither; the caller resolves those from
+        the identity directory.
       properties:
         id:
           type: integer
-        email:
+        uuid:
           type: string
-        displayName:
-          type: string
+          description: The candidate's Asgardeo id. Empty when the row has not been backfilled yet — the caller then cannot resolve them and must drop them from the picker rather than offer someone with no name.
     GrantCandidatesResponse:
       type: object
       properties:
@@ -6120,9 +6204,9 @@ components:
         assignmentTeamId: *id012
         assignmentTeamName: *id013
         assignerId: *id014
-        assignerName: *id015
+        assignerUuid: *id015
         ownerId: *id016
-        ownerName: *id017
+        ownerUuid: *id017
         workflowStatus: *id018
         treatmentStrategy: *id019
         grossScoreId: *id020
@@ -6384,7 +6468,7 @@ components:
           type: string
         registerName:
           type: string
-        ownerName:
+        ownerUuid:
           type: string
         identifiedDate:
           type: string
@@ -6525,7 +6609,7 @@ components:
           type: string
         registerName:
           type: string
-        ownerName:
+        ownerUuid:
           type: string
         riskLevel:
           type: string

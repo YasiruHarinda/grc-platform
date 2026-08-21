@@ -30,6 +30,7 @@ import (
 	adminentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/admin/entity"
 	adminhandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/admin/handler"
 	audithandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/handler"
+	auditjob "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/job"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
@@ -147,7 +148,10 @@ func main() {
 	userhandler.RegisterRoutes(mux, userDeps)
 	riskDeps := buildRiskDeps(entityCli, fileSvc, hrClient, grantRepo, dirSvc, scimClient, cfg.Email)
 	riskhandler.RegisterRoutes(mux, riskDeps)
-	audithandler.RegisterRoutes(mux, buildAuditDeps(fileSvc, entityCli, cfg.AIValidation))
+	auditDeps := buildAuditDeps(fileSvc, entityCli, cfg.AIValidation, cfg.Email, grantRepo)
+	reminderJob := auditjob.NewReminderJob(auditDeps.Audit, auditDeps.Control, auditDeps.Notification, auditDeps.SendReminderDigestSync)
+	auditDeps.TriggerReminderJob = reminderJob.RunOnce
+	audithandler.RegisterRoutes(mux, auditDeps)
 	adminhandler.RegisterRoutes(mux, adminhandler.Deps{
 		Admin:     adminentity.NewRepository(entityCli),
 		Users:     userDeps.Users,
@@ -164,6 +168,10 @@ func main() {
 	defer jobCancel()
 	go riskjob.NewEscalationJob(riskDeps.Risk, riskDeps.Escalation, riskDeps.NotifyEscalationSync).Start(jobCtx)
 
+	// Daily audit due-date reminder digest — fixed 08:00 UTC send time (not a
+	// 24h-since-boot ticker like the escalation job above), so the digest
+	// arrives at a predictable time regardless of server restarts.
+	go reminderJob.Start(jobCtx)
 	handler := middleware.SecurityHeaders(
 		middleware.CORS(cfg.CORSAllowedOrigin)(
 			middleware.CorrelationID(

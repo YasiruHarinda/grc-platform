@@ -165,6 +165,9 @@ func (h *evidenceHandler) submitPopulation(w http.ResponseWriter, r *http.Reques
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	if control, err := h.controlSvc.GetByID(r.Context(), auditID, controlID); err == nil && control != nil {
+		h.notify.notifyControlStatusReached(r.Context(), control, "POPULATION_INTERNAL_REVIEW", actor)
+	}
 
 	// Best-effort audit-trail attribution: this submission came through the web app.
 	recordEvidenceTrail(r.Context(), h.trailSvc, auditID, controlID, 0, actor, channelWebApp, user.Issuer, nil)

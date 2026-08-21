@@ -21,6 +21,7 @@ import (
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
 	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
 
@@ -42,7 +43,8 @@ func handleListUsers(repo userentity.Repository, dir *directory.Service) http.Ha
 		}
 
 		out := make([]*userentity.User, 0, len(users))
-		if dir != nil {
+		switch {
+		case dir != nil:
 			uuids := make([]string, 0, len(users))
 			for _, u := range users {
 				uuids = append(uuids, u.UUID)
@@ -58,6 +60,14 @@ func handleListUsers(repo userentity.Repository, dir *directory.Service) http.Ha
 					Status: u.Status, RiskTeamIDs: u.RiskTeamIDs,
 				})
 			}
+		case auth.AllowAll(r.Context()):
+			// Local dev, no SCIM configured: dir is nil, so nobody could ever
+			// resolve, which would silently empty this dropdown in the one
+			// mode meant to be permissive. Mirrors resolveCandidates'
+			// keepUnresolved path (candidates.go) — return the raw rows,
+			// which still carry their own Email/DisplayName directly from
+			// the entity for as long as those columns exist (see user.User).
+			out = users
 		}
 		response.WriteJSONValue(w, http.StatusOK, out)
 	}

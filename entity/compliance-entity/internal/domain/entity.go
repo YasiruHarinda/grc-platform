@@ -343,6 +343,13 @@ type AuditControl struct {
 	PopulationDueDate     *string `json:"populationDueDate"`
 	PopulationOwnerName   *string `json:"populationOwnerName"`
 	PopulationTeamName    *string `json:"populationTeamName"`
+	// PopulationID/PopulationOwnerID/PopulationStatus are the IDs behind
+	// PopulationOwnerName/PopulationTeamName above (added for the audit
+	// notification reminder job, which needs to resolve and dedup against the
+	// population's own owner, not just display its name).
+	PopulationID      *int    `json:"populationId"`
+	PopulationOwnerID *int    `json:"populationOwnerId"`
+	PopulationStatus  *string `json:"populationStatus"`
 }
 
 // SearchControlsRequest is the payload for POST /audits/{auditId}/controls/search.
@@ -846,12 +853,21 @@ type UpdateControlRequest struct {
 	OwnerID             *int    `json:"ownerId"`
 	TeamID              *int    `json:"teamId"`
 	AuditorID           *int    `json:"auditorId"`
-	DueDate             *string `json:"dueDate"`
-	Status              *string `json:"status"`
-	Comments            *string `json:"comments"`
-	SampleReference     *string `json:"sampleReference"`
-	UpdatedBy           string  `json:"updatedBy"`
-	ExpectedStatus      string  `json:"-"` // set server-side for atomic transition; never decoded from JSON
+	// ClearOwner/ClearTeam/ClearAuditor request setting that column back to
+	// NULL. They exist because OwnerID/TeamID/AuditorID's own nil already
+	// means "field omitted, leave column unchanged" — a JSON `null` decodes
+	// to the same nil pointer, so without these there would be no way for a
+	// caller to ever unassign one of these once set. Ignored when the
+	// matching *ID field is non-nil.
+	ClearOwner      bool    `json:"clearOwner"`
+	ClearTeam       bool    `json:"clearTeam"`
+	ClearAuditor    bool    `json:"clearAuditor"`
+	DueDate         *string `json:"dueDate"`
+	Status          *string `json:"status"`
+	Comments        *string `json:"comments"`
+	SampleReference *string `json:"sampleReference"`
+	UpdatedBy       string  `json:"updatedBy"`
+	ExpectedStatus  string  `json:"-"` // set server-side for atomic transition; never decoded from JSON
 }
 
 // OverrideControlStatusRequest is the payload for
@@ -1400,6 +1416,69 @@ type ListAuditTrailResponse struct {
 	Total  int          `json:"total"`
 	Limit  int          `json:"limit"`
 	Offset int          `json:"offset"`
+}
+
+// =============================================================================
+// Audit Notification (audit_notification) — send-log for every audit-module
+// email, also the daily reminder job's de-dup mechanism. See audit_schema.sql
+// for the full column comment.
+// =============================================================================
+
+// AuditNotification is one logged email send.
+type AuditNotification struct {
+	ID int64 `json:"id"`
+	// RecipientID's column is nullable, but the FK is ON DELETE RESTRICT (see
+	// audit_schema.sql): a user with notification history can't be deleted,
+	// so recipient_id is never actually NULL for a real row. RESTRICT (not
+	// SET NULL) specifically to keep reminder_dedup_key's uniqueness meaningful
+	// — SET NULL would let two different recipients' rows collide onto the
+	// same key once both users were deleted.
+	RecipientID     *int      `json:"recipientId"`
+	AuditID         *int      `json:"auditId"`
+	ControlID       *int      `json:"controlId"`
+	PopulationID    *int      `json:"populationId"`
+	Type            string    `json:"type"`
+	Channel         string    `json:"channel"`
+	DueDateSnapshot *string   `json:"dueDateSnapshot"` // YYYY-MM-DD
+	Message         *string   `json:"message"`
+	CreatedBy       *string   `json:"createdBy"`
+	CreatedOn       time.Time `json:"createdOn"`
+}
+
+// CreateAuditNotificationRequest is the payload for POST /audit/notifications.
+type CreateAuditNotificationRequest struct {
+	RecipientID     int     `json:"recipientId"`
+	AuditID         *int    `json:"auditId"`
+	ControlID       *int    `json:"controlId"`
+	PopulationID    *int    `json:"populationId"`
+	Type            string  `json:"type"`
+	DueDateSnapshot *string `json:"dueDateSnapshot"`
+	Message         *string `json:"message"`
+	CreatedBy       *string `json:"createdBy"`
+}
+
+// ClaimAuditNotificationRequest is the payload for POST
+// /audit/notifications/claim — the reminder job's atomic de-dup claim. The
+// insert this triggers either succeeds (caller now owns sending this item) or
+// collides on uq_notif_reminder_dedup (someone else already claimed it). Type
+// must be one of the three REMINDER_* values; this is not a general-purpose
+// insert.
+type ClaimAuditNotificationRequest struct {
+	RecipientID     int     `json:"recipientId"`
+	AuditID         *int    `json:"auditId"`
+	Type            string  `json:"type"`
+	ControlID       *int    `json:"controlId"`
+	PopulationID    *int    `json:"populationId"`
+	DueDateSnapshot *string `json:"dueDateSnapshot"`
+}
+
+// ClaimAuditNotificationResponse is returned by POST /audit/notifications/claim.
+// Claimed is false (with ID unset) when the item was already claimed by
+// another caller — a normal, expected outcome of two runs racing, not an
+// error.
+type ClaimAuditNotificationResponse struct {
+	Claimed bool  `json:"claimed"`
+	ID      int64 `json:"id,omitempty"`
 }
 
 // =============================================================================

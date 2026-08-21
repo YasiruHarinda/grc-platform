@@ -18,10 +18,14 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/repository"
 	auditservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/aiagent"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 )
 
 // Deps holds all service dependencies for Audit Hub handlers.
@@ -44,20 +48,45 @@ type Deps struct {
 	// AIAgent triggers async AI validation after an evidence submission.
 	// Nil when AI_VALIDATION_ENABLED is false — the trigger becomes a no-op.
 	AIAgent *aiagent.Client
+
+	// Email sends every audit-module notification (owner assigned, reminder
+	// digest, resubmission needed, sample submitted) — see notify.go.
+	Email *emailer.Client
+	// Users resolves an owner_id/actor email to a deliverable address and
+	// display name for notify.go. Distinct from the User service (which
+	// backs the owner/auditor dropdown UI) — this is the same repository,
+	// used for direct lookups instead of listing.
+	Users repository.UserRepository
+	// Grants answers "which active users hold AUDIT_MANAGE_CONTROLS" — the
+	// admin recipient set for notify.go's notifyControlStatusReached. Same
+	// repository the Risk Hub already uses for its role-gated pickers
+	// (internal/risk/handler/candidates.go); nil in local dev (no privilege
+	// store configured), in which case admin notifications are skipped.
+	Grants grant.Repository
+	// FrontendBaseURL builds the "View in Audit Hub" link inside notification
+	// emails.
+	FrontendBaseURL string
+	// TriggerReminderJob runs the daily due-date reminder sweep on demand —
+	// wired in cmd/server/main.go to the reminder job's RunOnce method, kept
+	// as a plain function here so this package never imports internal/audit/job
+	// (which would import back into handler and cycle). Nil disables the
+	// manual-trigger endpoint.
+	TriggerReminderJob func(ctx context.Context) error
 }
 
 // RegisterRoutes mounts all Audit Hub routes onto mux.
 func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	ah := &auditHandler{svc: deps.Audit}
-	ch := &controlHandler{svc: deps.Control}
+	ch := &controlHandler{svc: deps.Control, notify: &deps}
 	tlh := &trailHandler{svc: deps.Trail}
 	fh := &frameworkHandler{svc: deps.Framework}
 	uh := &userHandler{svc: deps.User}
 	th := &teamHandler{svc: deps.Team}
 	dh := &dashboardHandler{svc: deps.Dashboard}
-	eh := &evidenceHandler{svc: deps.Evidence, controlSvc: deps.Control, popSvc: deps.Population, trailSvc: deps.Trail, aiClient: deps.AIAgent}
-	cmh := &commentHandler{svc: deps.Comment}
+	eh := &evidenceHandler{svc: deps.Evidence, controlSvc: deps.Control, popSvc: deps.Population, trailSvc: deps.Trail, aiClient: deps.AIAgent, notify: &deps}
+	cmh := &commentHandler{svc: deps.Comment, controlSvc: deps.Control, notify: &deps}
 	avh := &aiValidationHandler{svc: deps.AIValidation}
+	rjh := &reminderJobHandler{trigger: deps.TriggerReminderJob}
 
 	// Current user (shared by both hubs — resolved privilege set unions RISK_*
 	// and AUDIT_* names).
@@ -76,6 +105,11 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /api/v1/audit/products", fh.createProduct)
 	mux.HandleFunc("GET /api/v1/audit/users", uh.listUsers)
 	mux.HandleFunc("GET /api/v1/audit/teams", th.listTeams)
+
+	// Manual trigger for the daily due-date reminder digest — QA/ops
+	// convenience so the job can be tested/re-run without waiting for its
+	// fixed daily time or restarting the server.
+	mux.HandleFunc("POST /api/v1/audits/reminders/run", rjh.run)
 
 	// Audit CRUD.
 	mux.HandleFunc("GET /api/v1/audits", ah.listAudits)

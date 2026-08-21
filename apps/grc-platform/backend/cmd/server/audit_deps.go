@@ -24,13 +24,20 @@ import (
 	auditservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/aiagent"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/file"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 )
 
 // buildAuditDeps wires Audit Hub dependencies. The audit module now reads/writes
 // ALL data through the Compliance Entity (via ec) — no direct MySQL access.
-func buildAuditDeps(fileSvc *file.Service, ec *entityclient.Client, aiCfg config.AIValidationConfig) audithandler.Deps {
+//
+// TriggerReminderJob is deliberately left unset here — it needs a reference to
+// the reminder job (internal/audit/job), which itself needs Control/Audit/
+// Notification from the Deps this function returns, so main.go wires it in
+// after calling this function and before RegisterRoutes.
+func buildAuditDeps(fileSvc *file.Service, ec *entityclient.Client, aiCfg config.AIValidationConfig, emailCfg config.EmailConfig, grantRepo grant.Repository) audithandler.Deps {
 	// ── Repositories (all Compliance Entity) ──────────────────────────────────
 	auditRepo := auditentity.NewAuditRepository(ec)
 	frameworkRepo := auditentity.NewFrameworkRepository(ec)
@@ -45,6 +52,7 @@ func buildAuditDeps(fileSvc *file.Service, ec *entityclient.Client, aiCfg config
 	trailRepo := auditentity.NewTrailRepository(ec)
 	dashboardRepo := auditentity.NewDashboardRepository(ec)
 	aiValidationRepo := auditentity.NewAIValidationRepository(ec)
+	notificationRepo := auditentity.NewNotificationRepository(ec)
 
 	// ── Services ──────────────────────────────────────────────────────────────
 	// trailSvc is built first: both the audit and control services record
@@ -60,6 +68,7 @@ func buildAuditDeps(fileSvc *file.Service, ec *entityclient.Client, aiCfg config
 	populationSvc := auditservice.NewPopulationService(populationRepo, fileSvc)
 	commentSvc := auditservice.NewCommentService(commentRepo)
 	aiValidationSvc := auditservice.NewAIValidationService(aiValidationRepo)
+	notificationSvc := auditservice.NewNotificationService(notificationRepo)
 
 	// AI validation trigger client — only when explicitly enabled per env.
 	var aiAgent *aiagent.Client
@@ -82,9 +91,15 @@ func buildAuditDeps(fileSvc *file.Service, ec *entityclient.Client, aiCfg config
 		Population:   populationSvc,
 		Trail:        trailSvc,
 		Comment:      commentSvc,
+		Notification: notificationSvc,
 		AIValidation: aiValidationSvc,
 		AIAgent:      aiAgent,
-		// Review, Assignment, Notification are wired here as their
-		// implementations are added.
+		// Reuses the same email-service credentials already loaded for risk —
+		// one email-service client for the whole backend, no new env vars.
+		Email:           emailer.New(emailCfg.ServiceURL, emailCfg.FromAddress, emailCfg.TokenURL, emailCfg.ClientID, emailCfg.ClientSecret),
+		Users:           userRepo,
+		Grants:          grantRepo,
+		FrontendBaseURL: emailCfg.FrontendBaseURL,
+		// Review, Assignment are wired here as their implementations are added.
 	}
 }

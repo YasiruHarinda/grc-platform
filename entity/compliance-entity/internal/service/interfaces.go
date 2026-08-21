@@ -195,6 +195,18 @@ type AuditTrailService interface {
 	ListAuditTrail(ctx context.Context, auditID int, filter domain.TrailFilter, limit, offset int) (domain.ListAuditTrailResponse, error)
 }
 
+// AuditNotificationService defines operations on audit_notification.
+type AuditNotificationService interface {
+	CreateAuditNotification(ctx context.Context, req domain.CreateAuditNotificationRequest) (domain.AuditNotification, error)
+	// ClaimAuditNotification is the reminder job's atomic de-dup claim.
+	// claimed=false (id=0) means another caller already claimed this item;
+	// not an error.
+	ClaimAuditNotification(ctx context.Context, req domain.ClaimAuditNotificationRequest) (claimed bool, id int64, err error)
+	// ReleaseAuditNotificationClaim deletes a claim row so its item is
+	// retryable on a future run.
+	ReleaseAuditNotificationClaim(ctx context.Context, id int64) error
+}
+
 // CommentService defines operations on audit_comment (control-scoped — one
 // thread per control, spanning population and evidence phases).
 type CommentService interface {

@@ -106,11 +106,26 @@ type ControlRepository interface {
 	// ActivePopulationID returns the active population round for an OE control.
 	// found=false means no active population (e.g. a DESIGN control).
 	ActivePopulationID(ctx context.Context, controlID int) (populationID int, found bool, err error)
+	// ListAllForReminders returns every control across every audit —
+	// including terminal-status ones and DESIGN controls with no
+	// population — for the daily reminder job's sweep. The job filters by
+	// status/owner/due-date/audit-status itself; this exists (rather than
+	// reusing ListScoped) because the job has no caller identity to scope
+	// by and needs every audit, not one.
+	ListAllForReminders(ctx context.Context) ([]*model.AuditControl, error)
 }
 
 // UserRepository is the data-access contract for the shared user list (owner/auditor dropdowns).
 type UserRepository interface {
 	List(ctx context.Context) ([]*model.UserRef, error)
+	// GetByID resolves a single user by ID — used by the notification
+	// dispatcher to turn an owner_id into a deliverable email address.
+	// Returns (nil, nil) if no such user exists.
+	GetByID(ctx context.Context, id int) (*model.UserRef, error)
+	// GetByEmail resolves a single user by email — used by the notification
+	// dispatcher to render the actor who triggered an event as
+	// "Display Name (email)". Returns (nil, nil) if no such user exists.
+	GetByEmail(ctx context.Context, email string) (*model.UserRef, error)
 }
 
 // TeamRepository is the data-access contract for the audit team list.
@@ -188,7 +203,25 @@ type CommentRepository interface {
 	Delete(ctx context.Context, commentID int) error
 }
 type AssignmentRepository interface{}
-type NotificationRepository interface{}
+
+// NotificationRepository is the data-access contract for audit_notification —
+// the send-log written after every audit-module email, and the daily
+// reminder job's de-dup mechanism.
+type NotificationRepository interface {
+	// Create logs one sent email. Called only after a successful send — used
+	// by every notification type except the reminder tiers, which use
+	// Claim/ReleaseClaim instead.
+	Create(ctx context.Context, n model.NotificationLogEntry) error
+	// Claim atomically reserves a (recipient, type, control/population, due
+	// date) reminder item — the insert succeeding IS the de-dup decision.
+	// claimed=false means another caller already claimed this item; not an
+	// error.
+	Claim(ctx context.Context, recipientID, auditID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (claimed bool, notificationID int64, err error)
+	// ReleaseClaim deletes a claim row so its item is retryable on a future
+	// run — called only when the owner's digest failed to send after the
+	// claim succeeded.
+	ReleaseClaim(ctx context.Context, notificationID int64) error
+}
 
 // TrailRepository appends to and reads the append-only audit_trail (via the entity).
 type TrailRepository interface {

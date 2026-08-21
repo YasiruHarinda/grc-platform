@@ -18,16 +18,28 @@ package service
 
 import (
 	"context"
-	"errors"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/repository"
 )
 
-// NotificationService defines business operations for audit notifications.
+// NotificationService is the send-log for every audit-module email
+// (assignment, reminder, resubmission, sample-submitted) and the daily
+// reminder job's de-dup mechanism — a thin pass-through over
+// repository.NotificationRepository. See model.NotificationLogEntry and
+// audit_schema.sql's audit_notification comment for the full design.
 type NotificationService interface {
-	List(ctx context.Context, recipientID int) ([]*model.AuditNotification, error)
-	MarkRead(ctx context.Context, id, recipientID int) error
+	// Create logs one sent email. Called only after a successful send — used
+	// by every notification type except the reminder tiers, which use
+	// Claim/ReleaseClaim instead.
+	Create(ctx context.Context, n model.NotificationLogEntry) error
+	// Claim atomically reserves a reminder item. claimed=false means another
+	// caller already claimed it; not an error.
+	Claim(ctx context.Context, recipientID, auditID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (claimed bool, notificationID int64, err error)
+	// ReleaseClaim deletes a claim row so its item is retryable on a future
+	// run — called only when the owner's digest failed to send after the
+	// claim succeeded.
+	ReleaseClaim(ctx context.Context, notificationID int64) error
 }
 
 type notificationService struct {
@@ -38,14 +50,14 @@ func NewNotificationService(repo repository.NotificationRepository) Notification
 	return &notificationService{repo: repo}
 }
 
-var errNotImplemented = errors.New("not implemented")
-
-func (s *notificationService) List(ctx context.Context, recipientID int) ([]*model.AuditNotification, error) {
-	// TODO: delegate to repo, filter by recipient_id
-	return nil, errNotImplemented
+func (s *notificationService) Create(ctx context.Context, n model.NotificationLogEntry) error {
+	return s.repo.Create(ctx, n)
 }
 
-func (s *notificationService) MarkRead(ctx context.Context, id, recipientID int) error {
-	// TODO: verify notification belongs to recipientID, set is_read=true via repo
-	return errNotImplemented
+func (s *notificationService) Claim(ctx context.Context, recipientID, auditID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (bool, int64, error) {
+	return s.repo.Claim(ctx, recipientID, auditID, notifType, controlID, populationID, dueDateSnapshot)
+}
+
+func (s *notificationService) ReleaseClaim(ctx context.Context, notificationID int64) error {
+	return s.repo.ReleaseClaim(ctx, notificationID)
 }

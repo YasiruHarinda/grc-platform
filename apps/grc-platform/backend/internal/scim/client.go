@@ -359,7 +359,12 @@ func (c *Client) ListUsersByDomain(ctx context.Context, domain string) ([]Direct
 	filter := fmt.Sprintf(`userName ew %q`, "@"+domain)
 
 	var all []DirectoryUser
-	for startIndex := 1; ; startIndex += usersPageSize {
+	// Advances by len(page), not usersPageSize: the service is only observed
+	// to ignore a smaller requested size (see usersPageSize's comment), not
+	// guaranteed to always return exactly what was asked for. Advancing by
+	// the fixed request size on a page that came back short would skip every
+	// record between the short page's end and the next requested startIndex.
+	for startIndex := 1; ; {
 		page, total, err := c.searchUsersPage(ctx, filter, startIndex, usersPageSize)
 		if err != nil {
 			return nil, fmt.Errorf("list users by domain %q (from index %d): %w", domain, startIndex, err)
@@ -368,6 +373,7 @@ func (c *Client) ListUsersByDomain(ctx context.Context, domain string) ([]Direct
 		if len(page) == 0 || startIndex+len(page) > total {
 			break
 		}
+		startIndex += len(page)
 	}
 	return all, nil
 }

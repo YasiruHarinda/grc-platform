@@ -201,6 +201,12 @@ export interface UpdateControlRequest {
   ownerId?: number | null;
   teamId?: number | null;
   auditorId?: number | null;
+  /** True to explicitly unassign the owner — omitting ownerId alone leaves it unchanged. */
+  clearOwner?: boolean;
+  /** True to explicitly unassign the team — omitting teamId alone leaves it unchanged. */
+  clearTeam?: boolean;
+  /** True to explicitly unassign the auditor — omitting auditorId alone leaves it unchanged. */
+  clearAuditor?: boolean;
   /** OE controls only; omit/null to leave population details unchanged. */
   population?: PopulationDetails | null;
 }
