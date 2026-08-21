@@ -79,5 +79,6 @@ func (d *Deps) handleAnalyticsSummary(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.enrichAnalytics(r.Context(), summary)
 	response.WriteJSONValue(w, http.StatusOK, summary)
 }

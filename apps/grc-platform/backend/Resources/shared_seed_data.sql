@@ -39,8 +39,7 @@
 --
 --   User-to-role assignment lives in user_role_grant, granted per scope. This
 --   file seeds only the catalogue (which roles exist, and what each can do).
---   Everything else is granted by an admin through User Management, or by the
---   one-time backfill (cmd/backfill-grants).
+--   Everything else is granted by an admin through User Management.
 --
 --   role.module decides which scopes a role may be granted against:
 --   RISK → GLOBAL or RISK_TEAM, AUDIT → GLOBAL or AUDIT_TEAM, SHARED → GLOBAL.

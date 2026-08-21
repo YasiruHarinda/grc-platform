@@ -183,6 +183,23 @@ const (
 	EventRejected            RiskEvent = "REJECTED"
 	EventEscalated           RiskEvent = "ESCALATED"
 	EventEscalationCommented RiskEvent = "ESCALATION_COMMENTED"
+	// EventPendingComplianceReview and EventPendingComplianceClosure notify
+	// the Compliance Admin role — not a named individual, see
+	// notifyComplianceAdmins — that a risk has cleared owner/management
+	// approval and is now sitting in PENDING_COMPLIANCE_REVIEW or
+	// PENDING_COMPLIANCE_CLOSURE waiting on them. Distinct from
+	// EventPendingMgmtApproval/EventPendingMgmtClosure, whose "Who needs to
+	// act" block hardcodes the Management Approver: sending those to
+	// compliance admins instead named the wrong role and the wrong person in
+	// the email body, even though the recipient list was correct.
+	EventPendingComplianceReview  RiskEvent = "PENDING_COMPLIANCE_REVIEW"
+	EventPendingComplianceClosure RiskEvent = "PENDING_COMPLIANCE_CLOSURE"
+	// EventClosed fires once, when Compliance closes the risk
+	// (PENDING_COMPLIANCE_CLOSURE → CLOSED). Purely informational — nothing is
+	// left to do, so unlike every other event it declares no actions — and
+	// sent the same two-call way as EventEscalated: notifyRiskEvent to the
+	// three named roles, notifyComplianceAdmins for the role-wide one.
+	EventClosed RiskEvent = "CLOSED"
 )
 
 // RiskEventInfo carries everything any template might render. Fields not
@@ -246,10 +263,18 @@ type RiskCreated = RiskEventInfo
 
 // eventTemplate is the per-event copy. Everything structural (the field table,
 // the comment block, the link) lives in bodyTemplate below, so adding an event
-// is a subject line and a lead sentence rather than another HTML blob.
+// is a lead sentence rather than another HTML blob.
+//
+// There is deliberately no per-event subject here anymore: every event for a
+// given risk shares one subject ("[GRC Platform] {RiskCode} - {RiskTitle}",
+// built once in SendRiskEvent) so a recipient's several emails about the same
+// risk land in one thread in their mail client — Gmail and Outlook both group
+// by an exact subject match when there is no Message-ID chain to follow, and
+// the email-service this platform calls gives no way to set one (see
+// sendEmailRequest). A varying subject per event, however descriptive,
+// defeats that grouping.
 type eventTemplate struct {
-	subject func(RiskEventInfo) string
-	lead    string
+	lead string
 	// actorLabel names what Actor did, for this event specifically — "Created
 	// by" on creation, "Rejected by" on a rejection. A single generic label
 	// would leave the reader guessing which of the several people on a risk
@@ -266,9 +291,6 @@ type eventTemplate struct {
 // rejects it rather than sending a blank email.
 var eventTemplates = map[RiskEvent]eventTemplate{
 	EventCreated: {
-		subject: func(i RiskEventInfo) string {
-			return fmt.Sprintf("New Risk Assigned: %s - %s", i.RiskCode, i.RiskTitle)
-		},
 		lead:       "A new risk has been created and assigned to you.",
 		actorLabel: "Created by",
 		actions: []roleInstruction{
@@ -276,9 +298,6 @@ var eventTemplates = map[RiskEvent]eventTemplate{
 		},
 	},
 	EventPendingMgmtApproval: {
-		subject: func(i RiskEventInfo) string {
-			return fmt.Sprintf("Management Approval Required: %s - %s", i.RiskCode, i.RiskTitle)
-		},
 		lead:       "This risk has been approved by its Risk Owner and now needs your management approval.",
 		actorLabel: "Approved by Risk Owner",
 		actions: []roleInstruction{
@@ -286,9 +305,6 @@ var eventTemplates = map[RiskEvent]eventTemplate{
 		},
 	},
 	EventComplianceApproved: {
-		subject: func(i RiskEventInfo) string {
-			return fmt.Sprintf("Risk Approved — Remediation Can Begin: %s - %s", i.RiskCode, i.RiskTitle)
-		},
 		lead:       "This risk has cleared compliance approval. Remediation can now begin.",
 		actorLabel: "Approved by Compliance",
 		actions: []roleInstruction{
@@ -297,9 +313,6 @@ var eventTemplates = map[RiskEvent]eventTemplate{
 		},
 	},
 	EventActionPlanCompleted: {
-		subject: func(i RiskEventInfo) string {
-			return fmt.Sprintf("Action Plan Completed: %s - %s", i.RiskCode, i.RiskTitle)
-		},
 		lead:       "An action plan for this risk has been completed. Please reassess and submit it for approval.",
 		actorLabel: "Completed by",
 		actions: []roleInstruction{
@@ -307,9 +320,6 @@ var eventTemplates = map[RiskEvent]eventTemplate{
 		},
 	},
 	EventPendingOwnerClosure: {
-		subject: func(i RiskEventInfo) string {
-			return fmt.Sprintf("Completion Approval Required: %s - %s", i.RiskCode, i.RiskTitle)
-		},
 		lead:       "Remediation for this risk has been marked complete and needs your sign-off as Risk Owner.",
 		actorLabel: "Submitted by",
 		actions: []roleInstruction{
@@ -317,19 +327,25 @@ var eventTemplates = map[RiskEvent]eventTemplate{
 		},
 	},
 	EventPendingMgmtClosure: {
-		subject: func(i RiskEventInfo) string {
-			return fmt.Sprintf("Closure Approval Required: %s - %s", i.RiskCode, i.RiskTitle)
-		},
 		lead:       "This risk's completed remediation has been signed off by its Risk Owner and now needs your management approval before closure.",
 		actorLabel: "Approved by Risk Owner",
 		actions: []roleInstruction{
 			{RoleManagementApprover, "Review the completed remediation and approve or reject the closure."},
 		},
 	},
+	EventPendingComplianceReview: {
+		lead:       "This risk has cleared owner/management approval and now needs compliance review before remediation can begin.",
+		actorLabel: "Approved by",
+		// No actions: compliance approval is role-wide, not a named
+		// individual (see canOverrideAssigneeIn) — there is nobody to list
+		// under "Who needs to act", and every recipient already knows why
+		// they received this.
+	},
+	EventPendingComplianceClosure: {
+		lead:       "This risk's completed remediation has cleared owner/management sign-off and now needs compliance closure.",
+		actorLabel: "Approved by",
+	},
 	EventRejected: {
-		subject: func(i RiskEventInfo) string {
-			return fmt.Sprintf("Risk Returned for Revision: %s - %s", i.RiskCode, i.RiskTitle)
-		},
 		lead:       "This risk has been rejected and returned to you for revision.",
 		actorLabel: "Rejected by",
 		actions: []roleInstruction{
@@ -337,9 +353,6 @@ var eventTemplates = map[RiskEvent]eventTemplate{
 		},
 	},
 	EventEscalationCommented: {
-		subject: func(i RiskEventInfo) string {
-			return fmt.Sprintf("Escalation Reviewed — Back With You: %s - %s", i.RiskCode, i.RiskTitle)
-		},
 		lead:       "This escalated risk has been reviewed and returned to you. It stays in the Overdue tab until you submit it for completion approval.",
 		actorLabel: "Reviewed by",
 		actions: []roleInstruction{
@@ -347,15 +360,18 @@ var eventTemplates = map[RiskEvent]eventTemplate{
 		},
 	},
 	EventEscalated: {
-		subject: func(i RiskEventInfo) string {
-			return fmt.Sprintf("Risk Escalated — Remediation Overdue: %s - %s", i.RiskCode, i.RiskTitle)
-		},
 		lead:       "This risk has passed its implementation date without completing remediation and has been escalated.",
 		actorLabel: "Escalated by",
 		actions: []roleInstruction{
 			{RoleActionOwner, "Complete the outstanding action plan steps."},
 			{RoleRiskAssigner, "Bring remediation back on track and keep the risk updated."},
 		},
+	},
+	EventClosed: {
+		lead:       "This risk has cleared compliance closure and is now closed. No further action is required.",
+		actorLabel: "Closed by",
+		// No actions: the risk is done, so there is nobody left to list under
+		// "Who needs to act".
 	},
 }
 
@@ -490,10 +506,15 @@ func (c *Client) SendRiskEvent(ctx context.Context, ev RiskEvent, to []string, i
 		return fmt.Errorf("emailer: render template: %w", err)
 	}
 
+	// One subject per risk, not per event: every event about the same risk
+	// reuses it exactly, so a recipient's several emails about it land in one
+	// thread in their mail client — see eventTemplate's doc comment.
+	subject := sanitizeSubject(fmt.Sprintf("[GRC Platform] %s - %s", info.RiskCode, info.RiskTitle))
+
 	reqBody := sendEmailRequest{
 		To:       recipients,
 		From:     c.from,
-		Subject:  sanitizeSubject(tpl.subject(info)),
+		Subject:  subject,
 		Template: base64.StdEncoding.EncodeToString(body.Bytes()),
 	}
 	b, err := json.Marshal(reqBody)

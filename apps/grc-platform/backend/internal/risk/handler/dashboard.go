@@ -79,5 +79,6 @@ func (d *Deps) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.enrichDashboard(r.Context(), summary)
 	response.WriteJSONValue(w, http.StatusOK, summary)
 }

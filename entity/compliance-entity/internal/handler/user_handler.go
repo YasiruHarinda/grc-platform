@@ -75,6 +75,18 @@ func (h *UserHandler) GetUserByEmail(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(user)
 }
 
+// GetUserByUUID handles GET /users/by-uuid/{uuid}.
+func (h *UserHandler) GetUserByUUID(w http.ResponseWriter, r *http.Request) {
+	uuid := r.PathValue("uuid")
+	user, err := h.svc.GetUserByUUID(r.Context(), uuid)
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(user)
+}
+
 // CreateUser handles POST /users.
 func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	var req domain.CreateUserRequest

@@ -85,5 +85,6 @@ func (d *Deps) handleListRiskHistory(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.enrichHistory(r.Context(), entries)
 	response.WriteJSONValue(w, http.StatusOK, entries)
 }

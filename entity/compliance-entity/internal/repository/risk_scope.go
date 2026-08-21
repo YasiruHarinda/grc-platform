@@ -26,11 +26,11 @@ import "strings"
 //	sourceIDs     → r.source_register_id  (risks raised in these registers)
 //	assignmentIDs → r.assignment_team_id  (work routed to these teams)
 //
-// They are separate because different roles are about different dimensions of
-// a risk — a Risk Owner of HR should see work routed to HR, not risks HR
-// happened to raise. A single list applied to both columns conflated the two,
-// which mattered because a risk_team row can be both a register and an
-// assignment team.
+// Visibility is team-membership based, not scope-basis based: the GRC backend
+// populates both lists with the SAME set of teams — every team the caller
+// holds any grant on — so belonging to a team is enough to see a risk raised
+// there or routed there. The two params stay separate here only because they
+// match different columns; nothing about this function assumes they differ.
 //
 // Both empty means unrestricted. Classifying whether a caller needs scoping at
 // all happens in the GRC backend, which resolves their grants and only then

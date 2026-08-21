@@ -31,16 +31,19 @@ type Escalation struct {
 	// Decision holds the management/lead comment that returns an escalated
 	// risk to its assigner. Nil until someone comments.
 	Decision *string `json:"decision"`
-	// Line managers of the assigner and action owner, resolved from the HR
-	// entity once at escalation time. They decide who may comment on a
-	// medium/low escalation and who can see the risk — authorizeComment
-	// (risk/service/escalation.go) reads these two Go fields directly, but
-	// they're json:"-" deliberately: handleListEscalations is gated only on
-	// the broad RISK_VIEW_RISKS privilege, so anyone who can view an
-	// escalated risk would otherwise receive two other people's email
-	// addresses that the webapp never reads.
-	AssignerLeadEmail    *string   `json:"-"`
-	ActionOwnerLeadEmail *string   `json:"-"`
+	// AssignerLeadUUID/ActionOwnerLeadUUID are the Asgardeo ids of the line
+	// managers of the assigner and action owner, resolved from the HR entity
+	// once at escalation time (via SCIM email→uuid resolution — see
+	// escalationService.managerOf) and frozen here. They decide who may
+	// comment on a medium/low escalation and who can see the risk —
+	// authorizeComment (risk/service/escalation.go) reads these two Go fields
+	// directly, but they're json:"-" deliberately: handleListEscalations is
+	// gated only on the broad RISK_VIEW_RISKS privilege, so anyone who can
+	// view an escalated risk would otherwise receive two other people's
+	// identifiers that the webapp never reads. Nil when the manager has no
+	// Asgardeo account, or when HR has no manager on file at all.
+	AssignerLeadUUID     *string   `json:"-"`
+	ActionOwnerLeadUUID  *string   `json:"-"`
 	Status               string    `json:"status"` // OPEN | RESOLVED
 	CreatedAt            time.Time `json:"created_at"`
 }

@@ -159,6 +159,11 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	// Users
 	mux.HandleFunc("POST /users/search", userH.SearchUsers)
 	mux.HandleFunc("GET /users/by-email/{email}", userH.GetUserByEmail)
+	// Literal second segment, for the same reason as by-email — see the note on
+	// the grant routes below. "/users/by-uuid/{uuid}" cannot collide with
+	// "/users/{id}" (different segment counts) or with by-email (different
+	// literal), so all three patterns stay unambiguous.
+	mux.HandleFunc("GET /users/by-uuid/{uuid}", userH.GetUserByUUID)
 	mux.HandleFunc("GET /users/{id}", userH.GetUserByID)
 	mux.HandleFunc("POST /users", userH.CreateUser)
 	mux.HandleFunc("PATCH /users/{id}", userH.UpdateUser)
@@ -177,6 +182,12 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	// authenticated request. Its responses are never cached, so revoking a
 	// grant takes effect on the caller's next request.
 	mux.HandleFunc("GET /grants/by-email/{email}", grantH.GrantsByEmail)
+	// The uuid-keyed replacement. Both are served during the identity migration:
+	// this service and the GRC backend deploy independently, so the new route has
+	// to exist before the backend can call it, and the old one has to survive
+	// until every backend has been redeployed. Removing by-email while an older
+	// backend is still live would 404 its every authenticated request.
+	mux.HandleFunc("GET /grants/by-uuid/{uuid}", grantH.GrantsByUUID)
 	mux.HandleFunc("GET /grants/candidates", grantH.Candidates)
 	// GrantsByUserID / CreateGrant / RevokeGrant are deliberately NOT wired up
 	// yet — held back rather than shipped with no caller. This service has no

@@ -18,10 +18,12 @@ package main
 
 import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
 	riskhandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/handler"
 	riskentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/repository/entity"
 	riskservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/service"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/file"
@@ -49,6 +51,8 @@ func buildRiskDeps(
 	fileSvc *file.Service,
 	hrClient *hrentity.Client,
 	grantRepo grant.Repository,
+	dirSvc *directory.Service,
+	scimClient *scim.Client,
 	emailCfg config.EmailConfig,
 ) riskhandler.Deps {
 	userRepo := userentity.NewRepository(ec)
@@ -63,13 +67,14 @@ func buildRiskDeps(
 		ActionPlan:      riskservice.NewActionPlanService(actionPlanRepo, userRepo),
 		Evidence:        riskservice.NewEvidenceService(riskentity.NewRiskEvidenceRepository(ec), riskRepo, actionPlanRepo, fileSvc),
 		History:         riskservice.NewHistoryService(riskentity.NewHistoryRepository(ec)),
-		Escalation:      riskservice.NewEscalationService(riskentity.NewEscalationRepository(ec), riskRepo, actionPlanRepo, userRepo, hrClient),
+		Escalation:      riskservice.NewEscalationService(riskentity.NewEscalationRepository(ec), riskRepo, actionPlanRepo, userRepo, hrClient, scimClient, dirSvc),
 		Compliance:      riskservice.NewComplianceReferenceService(riskentity.NewComplianceReferenceRepository(ec)),
 		Analytics:       riskservice.NewAssembledAnalyticsService(riskentity.NewAnalyticsRepository(ec)),
 		Dashboard:       riskservice.NewAssembledDashboardService(riskentity.NewDashboardRepository(ec)),
 		Employee:        riskservice.NewEmployeeSearchService(hrClient),
 		Users:           userRepo,
 		Grants:          grantRepo,
+		Directory:       dirSvc,
 		Email:           emailer.New(emailCfg.ServiceURL, emailCfg.FromAddress, emailCfg.TokenURL, emailCfg.ClientID, emailCfg.ClientSecret),
 		FrontendBaseURL: emailCfg.FrontendBaseURL,
 	}

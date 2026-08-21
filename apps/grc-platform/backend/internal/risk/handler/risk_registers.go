@@ -32,16 +32,22 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
-// requireUserEmail extracts the caller's email and writes a 401 when the
-// request carries no authenticated user. Returns ("", false) on failure.
-func requireUserEmail(w http.ResponseWriter, r *http.Request) (string, bool) {
+// requireCallerUUID extracts the caller's Asgardeo id and writes a 401 when
+// the request carries no authenticated user. Returns ("", false) on failure.
+//
+// Was requireUserEmail, returning email with a subject fallback — the
+// platform is removing email as an identity, so subject is now the only
+// answer, not a fallback for a missing claim. This is what created_by/
+// updated_by are stamped with, what notifyRiskEvent's actor resolves through,
+// and what every ownership check (action-plan owner, evidence uploader,
+// high-risk escalation commenter) compares the caller against — see
+// internal/user's uuid field and internal/directory for how a uuid becomes a
+// displayable name again.
+func requireCallerUUID(w http.ResponseWriter, r *http.Request) (string, bool) {
 	user := auth.FromContext(r.Context())
 	if user == nil {
 		response.WriteError(w, http.StatusUnauthorized, response.ErrMsgUnauthorized)
 		return "", false
-	}
-	if user.Email != "" {
-		return user.Email, true
 	}
 	return user.Subject, true
 }
@@ -145,19 +151,15 @@ func holdsNoGrants(ctx context.Context) bool {
 }
 
 // callerUserID resolves the authenticated caller to their internal user id,
-// the same email/subject lookup handleListRisks' Action Owner list scoping
-// uses. Returns (nil, nil) — not an error — when the caller has no platform
-// user row, so callers can fail closed on that case themselves.
+// the same uuid lookup handleListRisks' Action Owner list scoping uses.
+// Returns (nil, nil) — not an error — when the caller has no platform user
+// row, so callers can fail closed on that case themselves.
 func (d *Deps) callerUserID(ctx context.Context) (*int, error) {
 	userInfo := auth.FromContext(ctx)
 	if userInfo == nil {
 		return nil, nil
 	}
-	email := userInfo.Email
-	if email == "" {
-		email = userInfo.Subject
-	}
-	caller, err := d.Users.GetByEmail(ctx, email)
+	caller, err := d.Users.GetByUUID(ctx, userInfo.Subject)
 	if err != nil {
 		return nil, err
 	}
@@ -263,14 +265,16 @@ func (d *Deps) requireRiskAssigner(w http.ResponseWriter, r *http.Request, riskI
 //
 // It implements the read half of the access rule:
 //
-//	See a risk if you hold a GLOBAL grant, OR a grant on its source register
-//	or assignment team, OR you are personally named on it.
+//	See a risk if you hold a GLOBAL grant, OR ANY grant on a team that is
+//	either its source register or its assignment team, OR you are personally
+//	named on it.
 //
-// Note that reading is deliberately broader than acting. A grant on the
-// assignment team is enough to see a risk routed to your team, but confers no
-// authority over it — that follows the source register alone. The two halves
-// are enforced in different places: this function for reading, and
-// RequirePrivilegeIn(..., SourceRegisterID) for writing.
+// Reading is team-membership based, not scope-basis based: belonging to a
+// team at all — through any role, however that role scopes its authority —
+// is enough to see risks raised there or routed there. Acting is the narrow
+// half: RequirePrivilegeIn(..., SourceRegisterID) still requires the specific
+// privilege in the risk's SOURCE register, so a Risk Owner whose team merely
+// raised this risk can see it but still cannot approve it.
 func (d *Deps) riskVisibleToCaller(ctx context.Context, riskID int) (bool, error) {
 	if seesEveryRisk(ctx) {
 		return true, nil
@@ -281,18 +285,8 @@ func (d *Deps) riskVisibleToCaller(ctx context.Context, riskID int) (bool, error
 		return false, err
 	}
 
-	// Grant axis, one dimension each: a SOURCE_REGISTER-based grant matches
-	// where the risk was raised, an ASSIGNMENT_TEAM-based one matches where the
-	// work was routed. Matching both lists against both columns would let a
-	// Risk Owner of HR see risks HR merely raised.
-	set := callerGrants(ctx)
-	for _, id := range set.SourceScopeIDs() {
-		if id == risk.SourceRegisterID {
-			return true, nil
-		}
-	}
-	for _, id := range set.AssignmentScopeIDs() {
-		if id == risk.AssignmentTeamID {
+	for _, id := range callerGrants(ctx).AllScopeIDs() {
+		if id == risk.SourceRegisterID || id == risk.AssignmentTeamID {
 			return true, nil
 		}
 	}
@@ -356,9 +350,9 @@ func (d *Deps) handleListRisks(w http.ResponseWriter, r *http.Request) {
 	filter.OpenEscalationOnly = q.Get("open_escalation") == "true"
 	// Taken from the authenticated caller, never the query string: this widens
 	// visibility, so a client-supplied value would let anyone read any risk
-	// they could name a lead email for.
+	// they could name a lead for.
 	if user := auth.FromContext(r.Context()); user != nil {
-		filter.EscalationLeadEmail = user.Email
+		filter.EscalationLeadUUID = user.Subject
 	}
 
 	filter.Limit = 50
@@ -388,11 +382,11 @@ func (d *Deps) handleListRisks(w http.ResponseWriter, r *http.Request) {
 	// cannot be resolved would hand them the entire register, so an
 	// unresolvable caller gets an empty page, never an unscoped one.
 	if holdsNoGrants(r.Context()) {
-		email, ok := requireUserEmail(w, r)
+		callerUUID, ok := requireCallerUUID(w, r)
 		if !ok {
 			return
 		}
-		caller, err := d.Users.GetByEmail(r.Context(), email)
+		caller, err := d.Users.GetByUUID(r.Context(), callerUUID)
 		if err != nil {
 			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 			return
@@ -412,19 +406,19 @@ func (d *Deps) handleListRisks(w http.ResponseWriter, r *http.Request) {
 		filter.ActionOwnerID = &caller.ID
 	}
 
-	// Team scoping: a caller with grants but no GLOBAL one sees only risks
-	// whose source register or assignment team they hold a grant on. Reading is
-	// broad on purpose — a grant on the assignment team shows you work routed
-	// to your team — while authority over those risks still follows the source
-	// register alone.
+	// Team scoping: a caller with grants but no GLOBAL one sees every risk
+	// belonging to a team they hold ANY grant on — raised there or routed
+	// there, regardless of that grant's own scope_basis. Membership is what
+	// decides visibility here; authority over those risks still follows the
+	// source register alone, enforced separately by RequirePrivilegeIn.
 	if isTeamScopedOnly(r.Context()) {
-		set := callerGrants(r.Context())
-		sourceIDs := set.SourceScopeIDs()
-		assignmentIDs := set.AssignmentScopeIDs()
-		if len(sourceIDs) == 0 && len(assignmentIDs) == 0 {
-			// Reachable: a caller may hold only grants whose role has no
-			// scope_basis. Two empty lists mean "unrestricted" downstream, so
-			// this must fail closed rather than hand them every risk.
+		teamIDs := callerGrants(r.Context()).AllScopeIDs()
+		if len(teamIDs) == 0 {
+			// Reachable: a caller may hold only GLOBAL grants for a privilege
+			// other than ViewRisks (see seesEveryRisk's caution), so they carry
+			// no RISK_TEAM-scoped grant at all. An empty list means
+			// "unrestricted" downstream, so this must fail closed rather than
+			// hand them every risk.
 			response.WriteJSONValue(w, http.StatusOK, model.RiskListPage{
 				Items:  []*model.RiskListItem{},
 				Total:  0,
@@ -433,8 +427,8 @@ func (d *Deps) handleListRisks(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		filter.ScopeSourceRegisterIDs = sourceIDs
-		filter.ScopeAssignmentTeamIDs = assignmentIDs
+		filter.ScopeSourceRegisterIDs = teamIDs
+		filter.ScopeAssignmentTeamIDs = teamIDs
 	}
 
 	page, err := d.Risk.List(r.Context(), filter)
@@ -442,6 +436,7 @@ func (d *Deps) handleListRisks(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.enrichListItems(r.Context(), page.Items)
 	response.WriteJSONValue(w, http.StatusOK, page)
 }
 
@@ -472,29 +467,37 @@ func (d *Deps) handleGetRisk(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
-	detail.EffectivePrivileges = effectivePrivilegesFor(r.Context(), detail.SourceRegisterID)
+	detail.EffectivePrivileges = effectivePrivilegesFor(r.Context(), detail.SourceRegisterID, detail.AssignmentTeamID)
+	d.enrichDetail(r.Context(), detail)
 	response.WriteJSONValue(w, http.StatusOK, detail)
 }
 
-// effectivePrivilegesFor resolves what the caller may do on a risk in the given
-// register, for the UI to render its action buttons from.
+// effectivePrivilegesFor resolves what the caller may do on a risk, for the
+// UI to render its action buttons from.
+//
+// Takes both of a risk's team dimensions, not just its source register:
+// RISK_OWNER_APPROVE/RISK_OWNER_REJECT/RISK_ASSESS are held by
+// grc-platform-risk-owner, scoped ASSIGNMENT_TEAM, so a caller whose grant
+// sits on the risk's assignment team rather than its source register would
+// otherwise never see the button for an action they are fully entitled to —
+// see auth.HasPrivilegeInEither for the full reasoning.
 //
 // In local dev (no privilege store configured) every check is allowed, so the
 // honest answer is "everything the module defines" rather than an empty list —
 // otherwise the UI would hide every action in the one mode where the server
 // permits them all, and local dev would look broken instead of permissive.
-func effectivePrivilegesFor(ctx context.Context, registerID int) []string {
+func effectivePrivilegesFor(ctx context.Context, sourceRegisterID, assignmentTeamID int) []string {
 	if privilege.FromContext(ctx) == nil {
 		return privilege.AllRiskPrivileges()
 	}
-	return callerGrants(ctx).PrivilegesIn(registerID)
+	return callerGrants(ctx).PrivilegesInEither(sourceRegisterID, assignmentTeamID)
 }
 
 // handleUpdateRisk serves PUT /api/v1/risks/{id}.
 // Updating any restricted field (implementation_date, email_subject, action_steps)
 // on an IN_REMEDIATION risk moves it to PENDING_AMENDMENT.
 func (d *Deps) handleUpdateRisk(w http.ResponseWriter, r *http.Request) {
-	by, ok := requireUserEmail(w, r)
+	by, ok := requireCallerUUID(w, r)
 	if !ok {
 		return
 	}
@@ -567,7 +570,7 @@ func (d *Deps) handleUpdateRisk(w http.ResponseWriter, r *http.Request) {
 // to the Risk Owner role, or to the risk's team, does not make someone the owner
 // of every risk in it. Compliance admins bypass — see requireRiskActor.
 func (d *Deps) handleOwnerApproveRisk(w http.ResponseWriter, r *http.Request) {
-	by, ok := requireUserEmail(w, r)
+	by, ok := requireCallerUUID(w, r)
 	if !ok {
 		return
 	}
@@ -580,7 +583,7 @@ func (d *Deps) handleOwnerApproveRisk(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
-	if !auth.RequirePrivilegeIn(r.Context(), w, privilege.OwnerApproveRisk, detail.SourceRegisterID) {
+	if !auth.RequirePrivilegeInEither(r.Context(), w, privilege.OwnerApproveRisk, detail.SourceRegisterID, detail.AssignmentTeamID) {
 		return
 	}
 	if !d.requireRiskActor(w, r, detail.OwnerID, detail.SourceRegisterID, "Risk Owner") {
@@ -614,8 +617,11 @@ func (d *Deps) notifyAfterOwnerApprove(id int, detail *model.RiskDetail, fromSta
 			d.notifyRiskEvent(emailer.EventPendingMgmtApproval, id, []int{detail.ManagementApproverID}, by, "")
 			return
 		}
-		// → PENDING_COMPLIANCE_REVIEW: a role, not a named individual.
-		notifyComplianceAdmins(emailer.EventPendingMgmtApproval, id)
+		// → PENDING_COMPLIANCE_REVIEW: a role, not a named individual. A
+		// dedicated event, not EventPendingMgmtApproval — that template
+		// hardcodes the Management Approver as who needs to act, which is
+		// wrong for compliance admin recipients.
+		d.notifyComplianceAdmins(emailer.EventPendingComplianceReview, id, detail.SourceRegisterID, by, "")
 
 	case model.StatusPendingOwnerCompletion:
 		if acceptHigh {
@@ -623,15 +629,17 @@ func (d *Deps) notifyAfterOwnerApprove(id int, detail *model.RiskDetail, fromSta
 			d.notifyRiskEvent(emailer.EventPendingMgmtClosure, id, []int{detail.ManagementApproverID}, by, "")
 			return
 		}
-		// → PENDING_COMPLIANCE_CLOSURE: a role, not a named individual.
-		notifyComplianceAdmins(emailer.EventPendingMgmtClosure, id)
+		// → PENDING_COMPLIANCE_CLOSURE: a role, not a named individual. See
+		// the PENDING_COMPLIANCE_REVIEW branch above for why this is its own
+		// event rather than EventPendingMgmtClosure.
+		d.notifyComplianceAdmins(emailer.EventPendingComplianceClosure, id, detail.SourceRegisterID, by, "")
 	}
 }
 
 // handleManagementApproveRisk serves POST /api/v1/risks/{id}/management-approve.
 // Serves both management stages — see riskservice.ManagementApprove.
 func (d *Deps) handleManagementApproveRisk(w http.ResponseWriter, r *http.Request) {
-	by, ok := requireUserEmail(w, r)
+	by, ok := requireCallerUUID(w, r)
 	if !ok {
 		return
 	}
@@ -660,16 +668,24 @@ func (d *Deps) handleManagementApproveRisk(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	d.recordEvent(r.Context(), id, by, model.HistoryApprove, model.HistoryDetails{Role: "Management"})
-	// Both management stages hand off to a compliance stage, whose recipient is
-	// a role rather than a named individual — suppressed for now.
-	notifyComplianceAdmins(emailer.EventComplianceApproved, id)
+	// Both management stages hand off to a compliance stage, whose recipient
+	// is a role rather than a named individual — which event depends on
+	// which stage this was, captured before the transition above. Not
+	// EventComplianceApproved: that event means compliance has ALREADY
+	// approved and remediation may begin, the opposite of what just
+	// happened here.
+	complianceEvent := emailer.EventPendingComplianceReview
+	if detail.WorkflowStatus == model.StatusPendingManagementClosure {
+		complianceEvent = emailer.EventPendingComplianceClosure
+	}
+	d.notifyComplianceAdmins(complianceEvent, id, detail.SourceRegisterID, by, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleApproveRisk serves POST /api/v1/risks/{id}/approve.
 // Compliance approval: PENDING_COMPLIANCE_REVIEW → IN_REMEDIATION.
 func (d *Deps) handleApproveRisk(w http.ResponseWriter, r *http.Request) {
-	by, ok := requireUserEmail(w, r)
+	by, ok := requireCallerUUID(w, r)
 	if !ok {
 		return
 	}
@@ -746,7 +762,7 @@ func rejectPrivilegeFor(status string) string {
 // Routes to PENDING_REVISION from any pending-approval stage; stores rejection_stage.
 // The required privilege depends on which stage the risk is currently at.
 func (d *Deps) handleRejectRisk(w http.ResponseWriter, r *http.Request) {
-	by, ok := requireUserEmail(w, r)
+	by, ok := requireCallerUUID(w, r)
 	if !ok {
 		return
 	}
@@ -760,7 +776,12 @@ func (d *Deps) handleRejectRisk(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
-	if !auth.RequirePrivilegeIn(r.Context(), w, rejectPrivilegeFor(detail.WorkflowStatus), detail.SourceRegisterID) {
+	// Either dimension, not just the source register: at the owner stage this
+	// is RISK_OWNER_REJECT, which grc-platform-risk-owner holds scoped
+	// ASSIGNMENT_TEAM (see auth.HasPrivilegeInEither). Management/compliance
+	// stages only ever grant their privilege SOURCE_REGISTER-scoped, so the
+	// assignment-team side of this check simply never matches for them.
+	if !auth.RequirePrivilegeInEither(r.Context(), w, rejectPrivilegeFor(detail.WorkflowStatus), detail.SourceRegisterID, detail.AssignmentTeamID) {
 		return
 	}
 	// Rejecting is restricted to the same named individual who would have
@@ -801,7 +822,7 @@ func (d *Deps) handleRejectRisk(w http.ResponseWriter, r *http.Request) {
 // handleCompleteRisk serves POST /api/v1/risks/{id}/complete.
 // Transitions IN_REMEDIATION → PENDING_OWNER_COMPLETION_APPROVAL.
 func (d *Deps) handleCompleteRisk(w http.ResponseWriter, r *http.Request) {
-	by, ok := requireUserEmail(w, r)
+	by, ok := requireCallerUUID(w, r)
 	if !ok {
 		return
 	}
@@ -833,7 +854,7 @@ func (d *Deps) handleCompleteRisk(w http.ResponseWriter, r *http.Request) {
 // handleResubmitRisk serves POST /api/v1/risks/{id}/resubmit.
 // Transitions PENDING_REVISION → PENDING_RISK_OWNER_APPROVAL and clears rejection info.
 func (d *Deps) handleResubmitRisk(w http.ResponseWriter, r *http.Request) {
-	by, ok := requireUserEmail(w, r)
+	by, ok := requireCallerUUID(w, r)
 	if !ok {
 		return
 	}
@@ -877,7 +898,7 @@ func (d *Deps) handleResubmitRisk(w http.ResponseWriter, r *http.Request) {
 // handleCancelRisk serves POST /api/v1/risks/{id}/cancel.
 // Soft-deletes a risk by moving it to CANCELLED. Only valid from PENDING_RISK_OWNER_APPROVAL.
 func (d *Deps) handleCancelRisk(w http.ResponseWriter, r *http.Request) {
-	by, ok := requireUserEmail(w, r)
+	by, ok := requireCallerUUID(w, r)
 	if !ok {
 		return
 	}
@@ -899,7 +920,7 @@ func (d *Deps) handleCancelRisk(w http.ResponseWriter, r *http.Request) {
 // handleCloseRisk serves POST /api/v1/risks/{id}/close.
 // Transitions PENDING_COMPLIANCE_CLOSURE → CLOSED.
 func (d *Deps) handleCloseRisk(w http.ResponseWriter, r *http.Request) {
-	by, ok := requireUserEmail(w, r)
+	by, ok := requireCallerUUID(w, r)
 	if !ok {
 		return
 	}
@@ -923,7 +944,24 @@ func (d *Deps) handleCloseRisk(w http.ResponseWriter, r *http.Request) {
 	d.recordEvent(r.Context(), id, by, model.HistoryClose, model.HistoryDetails{
 		From: model.StatusPendingComplianceClosure, To: model.StatusClosed,
 	})
+	d.notifyRiskClosed(r.Context(), id, registerID, by)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// notifyRiskClosed tells everyone with a stake in this risk that it has
+// reached CLOSED: the Assigner, Risk Owner, and Management Approver by name,
+// plus the Compliance Admin role via notifyComplianceAdmins. Two calls, not
+// one, for the same reason NotifyEscalation splits them — a role has no
+// single user id to fold in alongside the three named recipients.
+func (d *Deps) notifyRiskClosed(ctx context.Context, riskID, registerID int, by string) {
+	detail, err := d.Risk.GetByID(ctx, riskID)
+	if err != nil {
+		slog.Warn("risk notification: failed to load risk for closure", "riskId", riskID, "err", err)
+		return
+	}
+	d.notifyRiskEvent(emailer.EventClosed, riskID,
+		[]int{detail.AssignerID, detail.OwnerID, detail.ManagementApproverID}, by, "")
+	d.notifyComplianceAdmins(emailer.EventClosed, riskID, registerID, by, "")
 }
 
 // notifyOwnerOfCompletion tells the risk's owner that remediation has been

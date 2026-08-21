@@ -116,7 +116,7 @@ type AgingRiskItem struct {
 	RiskCode       string  `json:"riskCode"`
 	RiskTitle      string  `json:"riskTitle"`
 	RegisterName   string  `json:"registerName"`
-	OwnerName      string  `json:"ownerName"`
+	OwnerUUID      string  `json:"ownerUuid"`
 	RiskLevel      string  `json:"riskLevel"`
 	ColorCode      string  `json:"colorCode"`
 	IdentifiedDate *string `json:"identifiedDate"`

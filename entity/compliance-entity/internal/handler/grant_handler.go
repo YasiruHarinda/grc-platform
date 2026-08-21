@@ -53,6 +53,22 @@ func (h *GrantHandler) GrantsByEmail(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// GrantsByUUID handles GET /grants/by-uuid/{uuid}.
+//
+// The replacement for GrantsByEmail, keyed on the Asgardeo id the caller's token
+// already carries. Same contract, same no-store requirement — see GrantsByEmail
+// for why a revoked grant must never be served from a cache.
+func (h *GrantHandler) GrantsByUUID(w http.ResponseWriter, r *http.Request) {
+	resp, err := h.svc.GrantsForUserUUID(r.Context(), r.PathValue("uuid"))
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
 // GrantsByUserID handles GET /grants/user/{id}.
 func (h *GrantHandler) GrantsByUserID(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(r.PathValue("id"))

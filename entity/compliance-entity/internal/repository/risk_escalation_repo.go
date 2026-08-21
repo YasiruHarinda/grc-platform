@@ -135,13 +135,13 @@ func (r *riskEscalationRepo) Escalate(ctx context.Context, riskID int, req domai
 	ins, err := tx.ExecContext(ctx,
 		`INSERT INTO risk_escalation
 		 (risk_id, new_treatment_strategy, action_plan_id,
-		  assigner_lead_email, action_owner_lead_email, status, created_by, updated_by)
+		  assigner_lead_uuid, action_owner_lead_uuid, status, created_by, updated_by)
 		 VALUES (?, ?, ?, ?, ?, 'OPEN', ?, ?)`,
 		riskID,
 		nullableString(req.NewTreatmentStrategy),
 		nullableInt(req.ActionPlanID),
-		nullableString(req.AssignerLeadEmail),
-		nullableString(req.ActionOwnerLeadEmail),
+		nullableString(req.AssignerLeadUUID),
+		nullableString(req.ActionOwnerLeadUUID),
 		req.CreatedBy, req.CreatedBy)
 	if err != nil {
 		return nil, fmt.Errorf("risk_escalation.Escalate insert: %w", err)
@@ -157,7 +157,7 @@ func (r *riskEscalationRepo) Escalate(ctx context.Context, riskID int, req domai
 func (r *riskEscalationRepo) GetRiskEscalationByID(ctx context.Context, riskID, escalationID int) (*domain.RiskEscalation, error) {
 	e, err := scanRiskEscalation(r.db.QueryRowContext(ctx,
 		`SELECT id, risk_id, new_treatment_strategy,
-		        action_plan_id, decision, assigner_lead_email, action_owner_lead_email,
+		        action_plan_id, decision, assigner_lead_uuid, action_owner_lead_uuid,
 		        status, created_by, updated_by, created_at, updated_at
 		 FROM risk_escalation WHERE id = ? AND risk_id = ?`, escalationID, riskID))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -255,7 +255,7 @@ func (r *riskEscalationRepo) CommentEscalation(ctx context.Context, riskID, esca
 func (r *riskEscalationRepo) GetOpenByActionPlanID(ctx context.Context, planID int) (*domain.RiskEscalation, error) {
 	e, err := scanRiskEscalation(r.db.QueryRowContext(ctx,
 		`SELECT id, risk_id, new_treatment_strategy,
-		        action_plan_id, decision, assigner_lead_email, action_owner_lead_email,
+		        action_plan_id, decision, assigner_lead_uuid, action_owner_lead_uuid,
 		        status, created_by, updated_by, created_at, updated_at
 		 FROM risk_escalation WHERE action_plan_id = ? AND status = 'OPEN'`, planID))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -270,7 +270,7 @@ func (r *riskEscalationRepo) GetOpenByActionPlanID(ctx context.Context, planID i
 func (r *riskEscalationRepo) ListRiskEscalations(ctx context.Context, riskID int) ([]domain.RiskEscalation, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT id, risk_id, new_treatment_strategy,
-		        action_plan_id, decision, assigner_lead_email, action_owner_lead_email,
+		        action_plan_id, decision, assigner_lead_uuid, action_owner_lead_uuid,
 		        status, created_by, updated_by, created_at, updated_at
 		 FROM risk_escalation WHERE risk_id = ? ORDER BY created_at DESC`, riskID)
 	if err != nil {
@@ -294,12 +294,12 @@ func (r *riskEscalationRepo) ListRiskEscalations(ctx context.Context, riskID int
 
 func scanRiskEscalation(s scanner) (*domain.RiskEscalation, error) {
 	var e domain.RiskEscalation
-	var strategy, decision, assignerLead, actionOwnerLead, createdBy, updatedBy sql.NullString
+	var strategy, decision, assignerLeadUUID, actionOwnerLeadUUID, createdBy, updatedBy sql.NullString
 	var actionPlanID sql.NullInt64
 	err := s.Scan(
 		&e.ID, &e.RiskID,
 		&strategy, &actionPlanID,
-		&decision, &assignerLead, &actionOwnerLead,
+		&decision, &assignerLeadUUID, &actionOwnerLeadUUID,
 		&e.Status,
 		&createdBy, &updatedBy,
 		&e.CreatedOn, &e.UpdatedOn,
@@ -317,11 +317,11 @@ func scanRiskEscalation(s scanner) (*domain.RiskEscalation, error) {
 	if decision.Valid {
 		e.Decision = &decision.String
 	}
-	if assignerLead.Valid {
-		e.AssignerLeadEmail = &assignerLead.String
+	if assignerLeadUUID.Valid {
+		e.AssignerLeadUUID = &assignerLeadUUID.String
 	}
-	if actionOwnerLead.Valid {
-		e.ActionOwnerLeadEmail = &actionOwnerLead.String
+	if actionOwnerLeadUUID.Valid {
+		e.ActionOwnerLeadUUID = &actionOwnerLeadUUID.String
 	}
 	if createdBy.Valid {
 		e.CreatedBy = &createdBy.String

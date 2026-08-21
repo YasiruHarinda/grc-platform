@@ -69,13 +69,25 @@ func (s *userService) GetUserByEmail(ctx context.Context, email string) (domain.
 	return *u, nil
 }
 
+func (s *userService) GetUserByUUID(ctx context.Context, uuid string) (domain.User, error) {
+	if strings.TrimSpace(uuid) == "" {
+		return domain.User{}, &apierror.ValidationError{Msg: "uuid is required"}
+	}
+	u, err := s.repo.GetUserByUUID(ctx, uuid)
+	if err != nil {
+		return domain.User{}, err
+	}
+	return *u, nil
+}
+
 func (s *userService) CreateUser(ctx context.Context, req domain.CreateUserRequest) (domain.User, error) {
 	if req.Email == "" {
 		return domain.User{}, &apierror.ValidationError{Msg: "email is required"}
 	}
-	if req.DisplayName == "" {
-		return domain.User{}, &apierror.ValidationError{Msg: "displayName is required"}
-	}
+	// DisplayName is deliberately not required: callers are moving off storing
+	// one at all (see risk/handler's resolve.go, which now sends "" here on
+	// purpose) — requiring it would refuse the very provisioning flow that
+	// migration depends on.
 	if req.CreatedBy == "" {
 		return domain.User{}, &apierror.ValidationError{Msg: "createdBy is required"}
 	}

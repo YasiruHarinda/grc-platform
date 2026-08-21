@@ -294,7 +294,7 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 				// direction is worse than a clear error: guessing "none" looks
 				// to the user like their access was revoked, and guessing
 				// "previous" would need a cache this deliberately does not have.
-				userID, grants, gErr := cfg.Grants.ForEmail(r.Context(), identityKey(info))
+				userID, grants, gErr := cfg.Grants.ForUUID(r.Context(), info.Subject)
 				if gErr != nil {
 					slog.ErrorContext(r.Context(), "auth: failed to load grants", "err", gErr)
 					writeGrantLoadError(w)
@@ -313,16 +313,6 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
-}
-
-// identityKey returns the value the grant lookup is keyed on. Email is the
-// user table's identity today; subject is the fallback for a token that
-// carries no email claim.
-func identityKey(info *UserInfo) string {
-	if info.Email != "" {
-		return info.Email
-	}
-	return info.Subject
 }
 
 // UserInfoFromContext retrieves the authenticated user from the context.

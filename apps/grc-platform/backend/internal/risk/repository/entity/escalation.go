@@ -48,8 +48,8 @@ type entEscalation struct {
 	NewTreatmentStrategy *string   `json:"newTreatmentStrategy"`
 	ActionPlanID         *int      `json:"actionPlanId"`
 	Decision             *string   `json:"decision"`
-	AssignerLeadEmail    *string   `json:"assignerLeadEmail"`
-	ActionOwnerLeadEmail *string   `json:"actionOwnerLeadEmail"`
+	AssignerLeadUUID     *string   `json:"assignerLeadUuid"`
+	ActionOwnerLeadUUID  *string   `json:"actionOwnerLeadUuid"`
 	Status               string    `json:"status"`
 	CreatedOn            time.Time `json:"createdOn"`
 }
@@ -61,8 +61,8 @@ func (e entEscalation) toModel() *model.Escalation {
 		NewTreatmentStrategy: e.NewTreatmentStrategy,
 		ActionPlanID:         e.ActionPlanID,
 		Decision:             e.Decision,
-		AssignerLeadEmail:    e.AssignerLeadEmail,
-		ActionOwnerLeadEmail: e.ActionOwnerLeadEmail,
+		AssignerLeadUUID:     e.AssignerLeadUUID,
+		ActionOwnerLeadUUID:  e.ActionOwnerLeadUUID,
 		Status:               e.Status,
 		CreatedAt:            e.CreatedOn,
 	}
@@ -82,11 +82,11 @@ func (r *escalationRepository) List(ctx context.Context, riskID int) ([]*model.E
 	return escalations, nil
 }
 
-func (r *escalationRepository) Escalate(ctx context.Context, riskID int, createdBy string, assignerLead, actionOwnerLead *string) (*model.Escalation, error) {
+func (r *escalationRepository) Escalate(ctx context.Context, riskID int, createdBy string, assignerLeadUUID, actionOwnerLeadUUID *string) (*model.Escalation, error) {
 	body := map[string]any{
-		"createdBy":            createdBy,
-		"assignerLeadEmail":    assignerLead,
-		"actionOwnerLeadEmail": actionOwnerLead,
+		"createdBy":           createdBy,
+		"assignerLeadUuid":    assignerLeadUUID,
+		"actionOwnerLeadUuid": actionOwnerLeadUUID,
 	}
 	var e entEscalation
 	if err := r.c.Post(ctx, fmt.Sprintf("/risks/%d/escalate", riskID), body, &e); err != nil {

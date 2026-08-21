@@ -32,6 +32,7 @@ import (
 type GrantRepository interface {
 	GrantsForUserID(ctx context.Context, userID int) ([]domain.UserGrant, error)
 	GrantsForUserEmail(ctx context.Context, email string) (int, []domain.UserGrant, error)
+	GrantsForUserUUID(ctx context.Context, uuid string) (int, []domain.UserGrant, error)
 	CreateGrant(ctx context.Context, userID int, req domain.CreateUserGrantRequest) (*domain.UserGrant, error)
 	RevokeGrant(ctx context.Context, userID, grantID int, revokedBy string) error
 	GetRoleByID(ctx context.Context, roleID int) (*domain.Role, error)
@@ -141,6 +142,45 @@ func (r *grantRepo) GrantsForUserEmail(ctx context.Context, email string) (int, 
 	}
 	if err != nil {
 		return 0, nil, fmt.Errorf("grant.GrantsForUserEmail lookup: %w", err)
+	}
+
+	grants, err := r.GrantsForUserID(ctx, userID)
+	if err != nil {
+		return 0, nil, err
+	}
+	return userID, grants, nil
+}
+
+// GrantsForUserUUID is GrantsForUserEmail keyed on the Asgardeo id instead —
+// the identity a token actually carries, so no translation step stands between
+// authenticating a caller and authorising them.
+//
+// This is the replacement hot path. The email-keyed version above remains only
+// so the two services can be deployed independently: this one is added first,
+// the GRC backend then switches to it, and only after that can the email
+// version go. Renaming in place would 404 every request from a backend that had
+// not been redeployed yet, which for this endpoint means an auth outage.
+//
+// An empty uuid is NotFound rather than a query. uuid is nullable while the
+// migration runs, so a blank one would otherwise be asked of the database as
+// `uuid = ”` — matching nothing today, but matching whatever ends up stored as
+// empty string later. Refusing it here keeps that from ever becoming a way to
+// resolve an arbitrary user's grants.
+func (r *grantRepo) GrantsForUserUUID(ctx context.Context, uuid string) (int, []domain.UserGrant, error) {
+	if strings.TrimSpace(uuid) == "" {
+		return 0, nil, &apierror.NotFoundError{Msg: "user not found: empty uuid"}
+	}
+	var userID int
+	err := r.db.QueryRowContext(ctx,
+		"SELECT id FROM `user` WHERE uuid = ? AND status = 'ACTIVE'", uuid).Scan(&userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Not an error, same as the email path: an authenticated caller with no
+		// user row here holds nothing rather than failing the request. During the
+		// migration this also covers a row whose uuid was never backfilled.
+		return 0, nil, &apierror.NotFoundError{Msg: "user not found for uuid"}
+	}
+	if err != nil {
+		return 0, nil, fmt.Errorf("grant.GrantsForUserUUID lookup: %w", err)
 	}
 
 	grants, err := r.GrantsForUserID(ctx, userID)
@@ -307,8 +347,15 @@ func (r *grantRepo) CandidatesForPrivilege(ctx context.Context, privilegeName st
 		scopeCond += " OR (g.scope_type = 'RISK_TEAM' AND rt.status = 'ACTIVE' AND g.scope_id IN (" +
 			strings.Join(placeholders, ",") + "))"
 	}
+	// uuid only — the platform stores no name or email for anyone. The caller
+	// resolves each candidate's current name from the identity directory.
+	//
+	// COALESCE, because uuid is nullable until every row is backfilled: a
+	// candidate whose uuid is still NULL comes back as "" rather than requiring
+	// every scan target here to be nullable. A caller that can't resolve ""
+	// drops that candidate rather than offering someone with no name.
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT DISTINCT u.id, u.email, u.display_name
+		SELECT DISTINCT u.id, COALESCE(u.uuid, '')
 		FROM   user_role_grant g
 		JOIN   `+"`role`"+` r    ON r.id = g.role_id AND r.status = 'ACTIVE'
 		JOIN   role_privilege rp ON rp.role_id = r.id AND rp.is_active = TRUE
@@ -316,7 +363,7 @@ func (r *grantRepo) CandidatesForPrivilege(ctx context.Context, privilegeName st
 		JOIN   `+"`user`"+` u    ON u.id = g.user_id AND u.status = 'ACTIVE'
 		LEFT JOIN risk_team rt   ON g.scope_type = 'RISK_TEAM' AND rt.id = g.scope_id
 		WHERE  g.status = 'ACTIVE' AND (`+scopeCond+`)
-		ORDER BY u.display_name`, args...)
+		ORDER BY u.id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("grant.CandidatesForPrivilege: %w", err)
 	}
@@ -325,7 +372,7 @@ func (r *grantRepo) CandidatesForPrivilege(ctx context.Context, privilegeName st
 	out := []domain.GrantCandidate{}
 	for rows.Next() {
 		var c domain.GrantCandidate
-		if err := rows.Scan(&c.ID, &c.Email, &c.DisplayName); err != nil {
+		if err := rows.Scan(&c.ID, &c.UUID); err != nil {
 			return nil, fmt.Errorf("grant.CandidatesForPrivilege scan: %w", err)
 		}
 		out = append(out, c)

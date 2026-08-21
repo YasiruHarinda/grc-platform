@@ -66,15 +66,29 @@ export function useAuthApiClient() {
     input: RequestInfo | URL,
     options?: RequestInit,
   ): Promise<Response> => {
+    const isMockAuth = window.config?.GRC_PLATFORM_MOCK_AUTH === true;
+
     let token: string | null = null;
-    try {
-      token = await getIdToken();
-    } catch (err) {
-      const isMockAuth = window.config?.GRC_PLATFORM_MOCK_AUTH === true;
-      if (!isMockAuth) {
+    if (isMockAuth) {
+      // Deterministic: never attempt a real Asgardeo token in mock mode, even
+      // if a real session happens to still be live in the browser (e.g. left
+      // over from before MOCK_AUTH was switched on). Falling back to the mock
+      // token only when getIdToken() FAILED made local identity depend on
+      // unpredictable browser session state — a lingering real session
+      // silently won, sending a real signed token whose sub the local `user`
+      // table (backfilled from the identity directory) had never heard of,
+      // and every request 404'd with no obvious cause.
+      token = window.config?.GRC_PLATFORM_MOCK_AUTH_TOKEN ?? null;
+    } else {
+      try {
+        token = await getIdToken();
+      } catch (err) {
         console.warn("[useAuthApiClient] token retrieval failed:", err);
       }
     }
+    // "local-dev" is not a parseable JWT (not 3 dot-separated segments) and
+    // the backend rejects it outright — this is the last-resort fallback,
+    // only reached in mock mode with no GRC_PLATFORM_MOCK_AUTH_TOKEN set.
     return fetch(input, {
       ...options,
       headers: buildRequestHeaders(options, token ?? "local-dev"),

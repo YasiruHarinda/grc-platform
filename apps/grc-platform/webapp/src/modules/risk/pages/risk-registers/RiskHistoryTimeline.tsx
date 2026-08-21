@@ -172,7 +172,7 @@ export default function RiskHistoryTimeline({ entries }: { entries: HistoryEntry
                 </Typography>
               )}
               <Typography variant="caption" color="text.secondary">
-                {formatDate(e.created_at)} · {e.created_by}
+                {formatDate(e.created_at)} · {e.created_by_email || e.created_by}
               </Typography>
             </Box>
           </Box>

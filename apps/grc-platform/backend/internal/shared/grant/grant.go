@@ -180,18 +180,19 @@ func (s *Set) HasGlobal(priv string) bool {
 	return s.global[priv]
 }
 
-// SourceScopeIDs returns the team ids of grants that scope by SOURCE register —
-// the registers whose risks the caller may see because they work in them.
-// Matched against risk.source_register_id.
-func (s *Set) SourceScopeIDs() []int {
-	return s.scopeIDsWithBasis(BasisSourceRegister, false)
-}
-
-// AssignmentScopeIDs returns the team ids of grants that scope by ASSIGNMENT
-// team — work routed to the caller's team. Matched against
-// risk.assignment_team_id.
-func (s *Set) AssignmentScopeIDs() []int {
-	return s.scopeIDsWithBasis(BasisAssignmentTeam, false)
+// AllScopeIDs returns the team ids of every non-GLOBAL grant the caller holds,
+// regardless of scope_basis — reading is team-membership based: belonging to a
+// team at all is what lets someone see a risk raised there OR routed there, on
+// the Risk Registers list. Matched against risk.source_register_id and
+// risk.assignment_team_id alike.
+//
+// Deliberately not what HasIn enforces. Membership answers "may they see it";
+// HasIn(priv, teamID) — checked per-column, source register only for authority
+// — still answers "may they act on it", so a Risk Owner scoped by
+// ASSIGNMENT_TEAM sees a risk their team merely raised, but still cannot
+// approve it: that needs a privilege in the risk's SOURCE register specifically.
+func (s *Set) AllScopeIDs() []int {
+	return s.scopeIDsWithBasis("", false)
 }
 
 // RegisterScopeIDs returns the team ids the caller may see REGISTER-BASED pages
@@ -302,19 +303,22 @@ func (s *Set) TeamIDs() []int {
 	return ids
 }
 
-// PrivilegesIn returns, sorted, the privileges the caller holds in one scope —
-// their GLOBAL grants plus any grant on that specific team.
+// PrivilegesInEither returns, sorted, the privileges the caller holds across
+// two scopes at once — their GLOBAL grants plus any grant on either team,
+// deduplicated.
 //
-// This is what a client needs to render actions for one object truthfully.
-// Handing the browser the union instead would show buttons that 403, and
-// handing it the raw grants would mean reimplementing the access rule there.
-func (s *Set) PrivilegesIn(teamID int) []string {
+// This is what a client needs to render actions for one risk truthfully.
+// Handing the browser the unscoped union instead would show buttons that
+// 403; handing it the raw grants would mean reimplementing the access rule
+// there. Two scopes rather than one because a risk has two team dimensions
+// and a privilege may be granted via either — see auth.HasPrivilegeInEither.
+func (s *Set) PrivilegesInEither(teamA, teamB int) []string {
 	if s == nil {
 		return []string{}
 	}
-	out := make([]string, 0, len(s.global)+len(s.byTeam[teamID]))
+	out := make([]string, 0, len(s.global)+len(s.byTeam[teamA])+len(s.byTeam[teamB]))
 	seen := make(map[string]bool, cap(out))
-	for _, m := range []map[string]bool{s.global, s.byTeam[teamID]} {
+	for _, m := range []map[string]bool{s.global, s.byTeam[teamA], s.byTeam[teamB]} {
 		for p := range m {
 			if !seen[p] {
 				seen[p] = true

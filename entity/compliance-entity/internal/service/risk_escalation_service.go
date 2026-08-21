@@ -166,9 +166,9 @@ func (s *riskEscalationService) EscalateRisk(ctx context.Context, riskID int, re
 	// a concurrent escalate (daily job vs. manual click) fail rather than
 	// create a duplicate escalation.
 	e, err := s.repo.Escalate(ctx, riskID, domain.CreateRiskEscalationRequest{
-		CreatedBy:            req.CreatedBy,
-		AssignerLeadEmail:    req.AssignerLeadEmail,
-		ActionOwnerLeadEmail: req.ActionOwnerLeadEmail,
+		CreatedBy:           req.CreatedBy,
+		AssignerLeadUUID:    req.AssignerLeadUUID,
+		ActionOwnerLeadUUID: req.ActionOwnerLeadUUID,
 	})
 	if err != nil {
 		return domain.RiskEscalation{}, err

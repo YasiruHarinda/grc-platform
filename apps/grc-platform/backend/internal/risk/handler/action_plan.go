@@ -41,7 +41,7 @@ import (
 // RISK_MANAGE_ACTION_PLANS plus the assigner identity check, matching every
 // other assigner-side action.
 func (d *Deps) handleCreateActionPlan(w http.ResponseWriter, r *http.Request) {
-	by, ok := requireUserEmail(w, r)
+	by, ok := requireCallerUUID(w, r)
 	if !ok {
 		return
 	}
@@ -156,7 +156,7 @@ func (d *Deps) handleListActionPlanSteps(w http.ResponseWriter, r *http.Request)
 // no role at all. Gating on a privilege nobody can hold would 403 the very
 // person the action exists for.
 func (d *Deps) handleUpdateActionPlanStep(w http.ResponseWriter, r *http.Request) {
-	by, ok := requireUserEmail(w, r)
+	by, ok := requireCallerUUID(w, r)
 	if !ok {
 		return
 	}
@@ -195,7 +195,7 @@ func (d *Deps) handleUpdateActionPlanStep(w http.ResponseWriter, r *http.Request
 // POST /api/v1/risks/{id}/action-plans/{planId}/complete. Requires every step
 // already COMPLETED (enforced entity-side).
 func (d *Deps) handleCompleteActionPlan(w http.ResponseWriter, r *http.Request) {
-	by, ok := requireUserEmail(w, r)
+	by, ok := requireCallerUUID(w, r)
 	if !ok {
 		return
 	}

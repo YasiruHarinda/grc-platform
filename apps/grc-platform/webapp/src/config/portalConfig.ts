@@ -16,6 +16,11 @@
 
 export interface GRCPlatformWindowConfig {
   GRC_PLATFORM_MOCK_AUTH?: boolean;
+  // A forged JWT (see useAuthApiClient's fallbackToken) used in place of the
+  // literal "local-dev" when GRC_PLATFORM_MOCK_AUTH is true — that literal
+  // isn't a parseable JWT, so the backend 401s every request without this.
+  // Local dev only; never set outside public/config.js.
+  GRC_PLATFORM_MOCK_AUTH_TOKEN?: string;
   GRC_PLATFORM_AUTH_BASE_URL?: string;
   GRC_PLATFORM_AUTH_CLIENT_ID?: string;
   GRC_PLATFORM_AUTH_SIGN_IN_REDIRECT_URL?: string;

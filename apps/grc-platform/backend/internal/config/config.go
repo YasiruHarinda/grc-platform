@@ -28,7 +28,7 @@ type Config struct {
 	Auth                    AuthConfig
 	ComplianceEntityBaseURL string
 	HREntity                HREntityConfig
-	RiskGroups              RiskGroupsConfig
+	SCIM                    SCIMConfig
 	CORSAllowedOrigin       string
 	AIValidation            AIValidationConfig
 	Email                   EmailConfig
@@ -92,18 +92,41 @@ type HREntityConfig struct {
 	ClientSecret string
 }
 
-// RiskGroupsConfig holds Asgardeo group names still awaiting a Risk Hub
-// consumer. The Management Approver and Risk Owner pickers used to be here
-// too, but those now read user_role_grant directly (see
-// riskhandler.Deps.Grants) — an Asgardeo group and a platform grant are two
-// independently-maintained sources, and nothing kept them in sync, so a
-// candidate sourced from the group could lack the grant their approval action
-// actually checks and 403 on first use.
-type RiskGroupsConfig struct {
-	// ComplianceAdmin is provisioned for the future Compliance Admin email
-	// notification (see notifyComplianceAdmins in risk/handler/notify.go,
-	// currently a deliberate no-op) — nothing reads this yet.
-	ComplianceAdmin string
+// SCIMConfig holds the connection details for the internal SCIM Operations
+// Service, which this platform uses as its identity directory: resolving an
+// email to a person's Asgardeo id, and a uuid back to their name. A security
+// review required that the platform stop storing names and emails, so this is
+// where both now come from.
+//
+// Optional, unlike HREntityConfig. An unset BaseURL disables directory lookups
+// rather than failing startup: local development frequently runs without
+// credentials for an internal, VPN-only service, and the flows that use it are
+// written to degrade (a user is provisioned without a uuid) rather than break.
+// Configure it in every deployed environment.
+//
+// Scopes is a space-separated OAuth2 scope string. Reading users needs
+// org_internal:users:read, which is granted separately from the groups scope —
+// Asgardeo silently drops a scope the application is not authorised for, so a
+// missing grant appears as a 403 at call time rather than a startup failure.
+//
+// UserDomain is the email-domain suffix the directory's bulk cache is scoped
+// to (see internal/directory.Service.StartBulkRefresh). An unfiltered
+// users-search returns the whole org — 300,000+ records last checked,
+// overwhelmingly load-test accounts — and this deployment's directory has no
+// working "active" filter to narrow that with, so a domain suffix is what
+// keeps the cache to real employees instead.
+type SCIMConfig struct {
+	BaseURL      string
+	TokenURL     string
+	ClientID     string
+	ClientSecret string
+	Scopes       string
+	UserDomain   string
+}
+
+// Configured reports whether enough is set to build a working client.
+func (c SCIMConfig) Configured() bool {
+	return c.BaseURL != "" && c.TokenURL != "" && c.ClientID != "" && c.ClientSecret != ""
 }
 
 // Load reads configuration from environment variables.
@@ -185,8 +208,13 @@ func Load() (Config, error) {
 			ClientID:     hrEntityClientID,
 			ClientSecret: hrEntityClientSecret,
 		},
-		RiskGroups: RiskGroupsConfig{
-			ComplianceAdmin: envOrDefault("RISK_COMPLIANCE_ADMIN_GROUP", "grc-platform-risk-compliance-admin"),
+		SCIM: SCIMConfig{
+			BaseURL:      os.Getenv("SCIM_BASE_URL"),
+			TokenURL:     os.Getenv("SCIM_TOKEN_URL"),
+			UserDomain:   envOrDefault("SCIM_USER_DOMAIN", "wso2.com"),
+			ClientID:     os.Getenv("SCIM_CLIENT_ID"),
+			ClientSecret: os.Getenv("SCIM_CLIENT_SECRET"),
+			Scopes:       envOrDefault("SCIM_SCOPES", "org_internal:users:read"),
 		},
 		// Derived from FRONTEND_BASE_URL rather than its own env var: both are
 		// "the webapp's public origin", and having two meant one could be

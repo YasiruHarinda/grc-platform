@@ -57,7 +57,13 @@ type HistoryEntry struct {
 	NewValue     *string         `json:"new_value"`
 	Details      json.RawMessage `json:"details,omitempty"`
 	CreatedBy    string          `json:"created_by"`
-	CreatedAt    time.Time       `json:"created_at"`
+	// CreatedByEmail is CreatedBy resolved through the identity directory, for
+	// the History tab to render instead of a raw uuid. Empty when it can't be
+	// resolved — directory unreachable, uuid not backfilled, or the daily
+	// escalation job's "system" sentinel — in which case the client falls back
+	// to CreatedBy, same convention as the backend's own describeActor.
+	CreatedByEmail string    `json:"created_by_email,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // HistoryDetails is the payload recorded alongside a workflow event. Every

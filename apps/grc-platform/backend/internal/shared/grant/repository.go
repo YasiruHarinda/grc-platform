@@ -30,11 +30,12 @@ import (
 
 // Repository loads a caller's grants.
 type Repository interface {
-	// ForEmail returns the user's internal id and their active grants.
+	// ForUUID returns the user's internal id and their active grants, keyed on
+	// the Asgardeo id the caller's token carries as `sub`.
 	// A user with no platform account returns (0, nil, nil) — not an error —
 	// so an authenticated caller who has never been provisioned is treated as
 	// holding nothing rather than failing the request outright.
-	ForEmail(ctx context.Context, email string) (int, []Grant, error)
+	ForUUID(ctx context.Context, uuid string) (int, []Grant, error)
 	// Candidates returns every user who holds privilegeName — GLOBAL, or
 	// scoped to one of teamIDs. Used to populate role-gated picker fields
 	// (Risk Owner, Management Approver) with people who will actually pass
@@ -43,11 +44,16 @@ type Repository interface {
 	Candidates(ctx context.Context, privilegeName string, teamIDs []int) ([]Candidate, error)
 }
 
-// Candidate is one user eligible for a role-gated picker field.
+// Candidate is one user eligible for a role-gated picker field. Carries only
+// id and uuid — the caller resolves a name/email from the identity directory
+// (see risk/handler/candidates.go's resolveCandidates), which is the only
+// source for either now; the entity no longer selects them.
 type Candidate struct {
-	ID          int    `json:"id"`
-	Email       string `json:"email"`
-	DisplayName string `json:"displayName"`
+	ID int `json:"id"`
+	// UUID is the candidate's Asgardeo id. Empty when the row has not been
+	// backfilled yet — the caller then cannot resolve them and must drop them
+	// from the picker rather than offer someone with no name.
+	UUID string `json:"uuid"`
 }
 
 type entityRepository struct{ c *entityclient.Client }
@@ -60,7 +66,7 @@ type grantsResponse struct {
 	Grants []Grant `json:"grants"`
 }
 
-// ForEmail fetches grants from the entity.
+// ForUUID fetches grants from the entity, keyed on the caller's Asgardeo id.
 //
 // Deliberately uncached, here and on the entity side. Grants are the revocation
 // path: an admin who removes someone's role must see it take effect on that
@@ -70,9 +76,15 @@ type grantsResponse struct {
 //
 // This is why grants have their own endpoint rather than riding along on the
 // user payload, which the entity caches for five minutes.
-func (r *entityRepository) ForEmail(ctx context.Context, email string) (int, []Grant, error) {
+//
+// The uuid comes straight from the verified token's `sub`, so no email→user
+// translation sits between authenticating a caller and authorising them. During
+// the identity migration a row whose uuid has not been backfilled yet resolves
+// to nothing here — the same "no grants" state as an unprovisioned account,
+// which fails closed rather than granting anything by accident.
+func (r *entityRepository) ForUUID(ctx context.Context, uuid string) (int, []Grant, error) {
 	var resp grantsResponse
-	err := r.c.Get(ctx, "/grants/by-email/"+url.PathEscape(email), &resp)
+	err := r.c.Get(ctx, "/grants/by-uuid/"+url.PathEscape(uuid), &resp)
 	if err != nil {
 		if isNotFound(err) {
 			// Authenticated, but no user row here yet. Holding no grants is a
@@ -80,7 +92,7 @@ func (r *entityRepository) ForEmail(ctx context.Context, email string) (int, []G
 			// are personally named on, which is nothing until provisioned.
 			return 0, nil, nil
 		}
-		// No email in the message: this runs on every request, gets logged via
+		// No uuid in the message: this runs on every request, gets logged via
 		// slog.ErrorContext on any entity outage, and the correlation ID
 		// already ties the log line to the request without putting a user
 		// identifier in application logs.
@@ -91,7 +103,7 @@ func (r *entityRepository) ForEmail(ctx context.Context, email string) (int, []G
 
 // Candidates fetches candidates from the entity.
 //
-// Deliberately uncached, same reasoning as ForEmail: a revoked grant must stop
+// Deliberately uncached, same reasoning as ForUUID: a revoked grant must stop
 // offering that person as a picker option on the caller's very next form load.
 func (r *entityRepository) Candidates(ctx context.Context, privilegeName string, teamIDs []int) ([]Candidate, error) {
 	q := url.Values{}

@@ -45,7 +45,12 @@ type Pagination struct {
 // junction table, RiskTeamIDs via user_risk_team — so each is always a slice,
 // never null; a user with no membership in that module gets an empty slice.
 type User struct {
-	ID           int       `json:"id"`
+	ID int `json:"id"`
+	// UUID is the user's Asgardeo id — the same value their OIDC token carries
+	// as `sub`, and this platform's identity for them. Empty when the row
+	// predates the identity migration and no Asgardeo account could be matched
+	// to its email; such a user cannot be resolved by uuid yet.
+	UUID         string    `json:"uuid"`
 	Email        string    `json:"email"`
 	DisplayName  string    `json:"displayName"`
 	UserType     string    `json:"userType"` // INTERNAL | EXTERNAL
@@ -504,15 +509,19 @@ type Risk struct {
 	AssignmentTeamID   int     `json:"assignmentTeamId"`
 	AssignmentTeamName string  `json:"assignmentTeamName"`
 	AssignerID         int     `json:"assignerId"`
-	AssignerName       string  `json:"assignerName"`
-	OwnerID            int     `json:"ownerId"`
-	OwnerName          string  `json:"ownerName"`
+	// *UUID fields are the Asgardeo id of each person — the platform stores no
+	// name or email for anyone, so this is the only identity the caller gets;
+	// resolving it to a current name is the caller's job (an identity
+	// directory lookup). Empty when the row is not backfilled.
+	AssignerUUID string `json:"assignerUuid"`
+	OwnerID      int    `json:"ownerId"`
+	OwnerUUID    string `json:"ownerUuid"`
 	// ManagementApproverID names the user who approves this risk during
 	// PENDING_MANAGEMENT_APPROVAL and is the target an ESCALATED risk
 	// conceptually escalates to. Required on every risk regardless of level
 	// or treatment strategy.
 	ManagementApproverID   int       `json:"managementApproverId"`
-	ManagementApproverName string    `json:"managementApproverName"`
+	ManagementApproverUUID string    `json:"managementApproverUuid"`
 	WorkflowStatus         string    `json:"workflowStatus"`
 	TreatmentStrategy      *string   `json:"treatmentStrategy"`
 	GrossScoreID           *int      `json:"grossScoreId"`
@@ -616,13 +625,13 @@ type SearchRisksRequest struct {
 	// to Escalate, which will only reject it again.
 	ExcludeOpenEscalation bool `json:"excludeOpenEscalation"`
 
-	// EscalationLeadEmail widens the result set rather than narrowing it: a
-	// risk with an open escalation naming this email as the assigner's or
-	// action owner's lead is included even when the scope lists would exclude it.
-	// Leads are frequently outside the risk's team and are not necessarily
-	// platform users at all, so without this they could never reach the risk
-	// they are being asked to comment on.
-	EscalationLeadEmail string `json:"escalationLeadEmail"`
+	// EscalationLeadUUID widens the result set rather than narrowing it: a
+	// risk with an open escalation naming this uuid as the assigner's or
+	// action owner's lead is included even when the scope lists would exclude
+	// it. Leads are frequently outside the risk's team and are not
+	// necessarily platform users at all, so without this they could never
+	// reach the risk they are being asked to comment on.
+	EscalationLeadUUID string `json:"escalationLeadUuid"`
 
 	Pagination Pagination `json:"pagination"`
 }
@@ -648,6 +657,12 @@ type SearchRisksResponse struct {
 // unaffected — the Audit module has no equivalent grant migration yet, so its
 // membership is still genuinely written here.
 type CreateUserRequest struct {
+	// UUID is the Asgardeo id to record for this user. Optional: a caller that
+	// has not resolved one yet (or is provisioning someone with no Asgardeo
+	// account) may leave it empty, and the row is created without one. Supplying
+	// it for an email that already exists fills in a uuid the row was missing,
+	// but never overwrites one it already has.
+	UUID         string `json:"uuid"`
 	Email        string `json:"email"`
 	DisplayName  string `json:"displayName"`
 	UserType     string `json:"userType"` // INTERNAL | EXTERNAL; defaults to INTERNAL
@@ -1280,7 +1295,7 @@ type RiskAssessment struct {
 	ScoreID          int       `json:"scoreId"`
 	Progress         string    `json:"progress"`
 	ReassessmentDate string    `json:"reassessmentDate"` // YYYY-MM-DD
-	AssessedBy       string    `json:"assessedBy"`       // actor email
+	AssessedBy       string    `json:"assessedBy"`       // actor uuid
 	CreatedOn        time.Time `json:"createdOn"`
 	// Residual score, resolved by joining risk_score on score_id. A bare
 	// scoreId is not enough for callers: the GRC backend renders the residual
@@ -1433,18 +1448,23 @@ type RiskEscalation struct {
 	NewTreatmentStrategy *string `json:"newTreatmentStrategy"`
 	ActionPlanID         *int    `json:"actionPlanId"`
 	Decision             *string `json:"decision"`
-	// Line managers of the risk assigner and the action plan owner, resolved
-	// from the HR entity once when the risk escalated and frozen here. They
-	// drive who may comment on a medium/low escalation and who can see the
-	// risk, so they must not be re-resolved later — a reorg would otherwise
-	// silently change who has access to a historical escalation.
-	AssignerLeadEmail    *string   `json:"assignerLeadEmail"`
-	ActionOwnerLeadEmail *string   `json:"actionOwnerLeadEmail"`
-	Status               string    `json:"status"` // OPEN | RESOLVED
-	CreatedBy            *string   `json:"createdBy"`
-	UpdatedBy            *string   `json:"updatedBy"`
-	CreatedOn            time.Time `json:"createdOn"`
-	UpdatedOn            time.Time `json:"updatedOn"`
+	// AssignerLeadUUID/ActionOwnerLeadUUID are the Asgardeo ids of the line
+	// managers of the risk assigner and the action plan owner, resolved from
+	// the HR entity (via SCIM email→uuid lookup) once when the risk escalated
+	// and frozen here. They drive who may comment on a medium/low escalation
+	// and who can see the risk, so they must not be re-resolved later — a
+	// reorg would otherwise silently change who has access to a historical
+	// escalation. A lead need not be a platform user: EscalationService.
+	// authorizeComment matches a caller against these directly, not against
+	// any row in `user`. Nil when the manager's email couldn't be resolved to
+	// an Asgardeo account, or when HR has no manager on file at all.
+	AssignerLeadUUID    *string   `json:"assignerLeadUuid"`
+	ActionOwnerLeadUUID *string   `json:"actionOwnerLeadUuid"`
+	Status              string    `json:"status"` // OPEN | RESOLVED
+	CreatedBy           *string   `json:"createdBy"`
+	UpdatedBy           *string   `json:"updatedBy"`
+	CreatedOn           time.Time `json:"createdOn"`
+	UpdatedOn           time.Time `json:"updatedOn"`
 }
 
 // CreateRiskEscalationRequest is the payload for POST /risks/{riskId}/escalations.
@@ -1452,9 +1472,9 @@ type CreateRiskEscalationRequest struct {
 	NewTreatmentStrategy *string `json:"newTreatmentStrategy"`
 	ActionPlanID         *int    `json:"actionPlanId"`
 	// Frozen at escalation time — see RiskEscalation's field comment.
-	AssignerLeadEmail    *string `json:"assignerLeadEmail"`
-	ActionOwnerLeadEmail *string `json:"actionOwnerLeadEmail"`
-	CreatedBy            string  `json:"createdBy"`
+	AssignerLeadUUID    *string `json:"assignerLeadUuid"`
+	ActionOwnerLeadUUID *string `json:"actionOwnerLeadUuid"`
+	CreatedBy           string  `json:"createdBy"`
 }
 
 // EscalateRiskRequest is the payload for POST /risks/{riskId}/escalate — the
@@ -1462,10 +1482,11 @@ type CreateRiskEscalationRequest struct {
 // as an alternative to waiting for the daily job to reach it.
 type EscalateRiskRequest struct {
 	CreatedBy string `json:"createdBy"`
-	// Resolved by the caller (the GRC backend, which owns the HR client) and
-	// passed in, so this service keeps its single outbound dependency: MySQL.
-	AssignerLeadEmail    *string `json:"assignerLeadEmail"`
-	ActionOwnerLeadEmail *string `json:"actionOwnerLeadEmail"`
+	// Resolved by the caller (the GRC backend, which owns the HR client and the
+	// SCIM client) and passed in, so this service keeps its single outbound
+	// dependency: MySQL.
+	AssignerLeadUUID    *string `json:"assignerLeadUuid"`
+	ActionOwnerLeadUUID *string `json:"actionOwnerLeadUuid"`
 }
 
 // UpdateRiskEscalationRequest is the payload for PATCH /risks/{riskId}/escalations/{escalationId}.
@@ -1620,9 +1641,10 @@ type NextSequenceResponse struct {
 type RiskDetail struct {
 	Risk
 
-	// ComplianceApproverName resolves compliance_approval_by, which the
-	// summary Risk does not carry.
-	ComplianceApproverName *string `json:"complianceApproverName"`
+	// ComplianceApproverUUID resolves compliance_approval_by, which the
+	// summary Risk does not carry. Empty until a risk actually clears
+	// compliance approval.
+	ComplianceApproverUUID string `json:"complianceApproverUuid"`
 
 	// GrossScore is the rating given at creation. EffectiveScore is the
 	// residual standing now: the most recent assessment's score when one

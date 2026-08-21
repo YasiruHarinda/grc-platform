@@ -167,6 +167,48 @@ func RequirePrivilege(ctx context.Context, w http.ResponseWriter, priv string) b
 	return false
 }
 
+// HasPrivilegeInEither returns true if the caller holds priv in EITHER of two
+// team scopes — through a GLOBAL grant, or a grant on either team specifically.
+//
+// Needed because a handful of privileges are legitimately granted by roles
+// that scope by different dimensions of the same risk: RISK_OWNER_APPROVE,
+// RISK_OWNER_REJECT and RISK_ASSESS are held both by grc-platform-risk-owner
+// (scope_basis ASSIGNMENT_TEAM — the team a risk is routed to) and by roles
+// scoped SOURCE_REGISTER (grc-platform-risk-assigner for RISK_ASSESS,
+// grc-platform-risk-compliance-admin's override for the owner actions). A
+// single-dimension check can satisfy at most one of those roles; this checks
+// both. Which dimension the caller actually holds it through is not this
+// check's business — the per-risk identity gate (requireRiskActor) still
+// decides whether they may act on THIS risk.
+func HasPrivilegeInEither(ctx context.Context, priv string, teamA, teamB int) bool {
+	if middleware.UserInfoFromContext(ctx) == nil {
+		return false
+	}
+	if privilege.FromContext(ctx) == nil {
+		// Local dev allow-all mode.
+		return true
+	}
+	set := grant.FromContext(ctx)
+	return set.HasIn(priv, teamA) || set.HasIn(priv, teamB)
+}
+
+// RequirePrivilegeInEither is RequirePrivilegeIn for a privilege that may be
+// granted via either of a risk's two team dimensions — see
+// HasPrivilegeInEither for why a single dimension is not enough.
+func RequirePrivilegeInEither(ctx context.Context, w http.ResponseWriter, priv string, teamA, teamB int) bool {
+	if HasPrivilegeInEither(ctx, priv, teamA, teamB) {
+		return true
+	}
+
+	response.WriteError(
+		w,
+		http.StatusForbidden,
+		response.ErrMsgForbidden,
+	)
+
+	return false
+}
+
 // RequireAnyPrivilege writes a 403 JSON response and returns false when the
 // user holds none of the given privileges. Use it for dual-audience routes
 // (e.g. an advisory hint visible to both submitters and reviewers):

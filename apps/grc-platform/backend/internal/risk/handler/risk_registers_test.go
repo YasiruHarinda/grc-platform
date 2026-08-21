@@ -18,12 +18,16 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/middleware"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
@@ -45,7 +49,7 @@ func contextForGrants(t *testing.T, global map[string]bool, byTeam map[int]map[s
 	grantCount += len(byTeam)
 
 	set := grant.NewForTest(global, byTeam, grantCount)
-	ctx := middleware.WithUserInfo(context.Background(), &middleware.UserInfo{Email: "test@wso2.com"})
+	ctx := middleware.WithUserInfo(context.Background(), &middleware.UserInfo{Subject: "test-caller-uuid"})
 	ctx = grant.WithContext(ctx, set)
 	return privilege.WithContext(ctx, set.PrivilegeMap())
 }
@@ -208,26 +212,29 @@ func TestRolesDoNotMergeAcrossRegisters(t *testing.T) {
 	}
 }
 
-// fakeUserRepo resolves exactly one email to one id, so requireRiskActor can be
-// exercised without the Compliance Entity. Every other method is unused here.
+// fakeUserRepo resolves exactly one uuid to one id, so requireRiskActor and
+// describeActor can be exercised without the Compliance Entity. Every other
+// method is unused here.
 type fakeUserRepo struct {
-	email       string
+	uuid        string
 	id          int
+	email       string
 	displayName string
 	err         error
 }
 
-func (f fakeUserRepo) GetByEmail(_ context.Context, email string) (*user.User, error) {
+func (f fakeUserRepo) GetByUUID(_ context.Context, uuid string) (*user.User, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
-	if email != f.email {
+	if uuid != f.uuid {
 		return nil, nil // "not found" is a domain condition, not an error
 	}
-	return &user.User{ID: f.id, Email: email, DisplayName: f.displayName}, nil
+	return &user.User{ID: f.id, Email: f.email, DisplayName: f.displayName}, nil
 }
-func (f fakeUserRepo) GetByID(context.Context, int) (*user.User, error) { return nil, nil }
-func (f fakeUserRepo) Upsert(context.Context, string, string, string) (*user.User, error) {
+func (f fakeUserRepo) GetByID(context.Context, int) (*user.User, error)       { return nil, nil }
+func (f fakeUserRepo) GetByEmail(context.Context, string) (*user.User, error) { return nil, nil }
+func (f fakeUserRepo) Upsert(context.Context, string, string, string, string) (*user.User, error) {
 	return nil, nil
 }
 func (f fakeUserRepo) List(context.Context) ([]*user.User, error) { return nil, nil }
@@ -237,11 +244,11 @@ func (f fakeUserRepo) List(context.Context) ([]*user.User, error) { return nil, 
 // matters: not "which role may override" but "override WHERE".
 
 func TestRequireRiskActor(t *testing.T) {
-	const callerEmail = "test@wso2.com" // the email contextForGrants puts on the request
+	const callerUUID = "test-caller-uuid" // the uuid contextForGrants puts on the request
 	cases := []struct {
 		name       string
 		byTeam     map[int]map[string]bool
-		callerID   int // id the caller's email resolves to; 0 = no platform user row
+		callerID   int // id the caller's uuid resolves to; 0 = no platform user row
 		wantUserID int // the id named on the risk
 		wantOK     bool
 		wantStatus int
@@ -260,9 +267,9 @@ func TestRequireRiskActor(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			repo := fakeUserRepo{email: callerEmail, id: c.callerID}
+			repo := fakeUserRepo{uuid: callerUUID, id: c.callerID}
 			if c.callerID == 0 {
-				repo.email = "someone-else@wso2.com" // caller's email resolves to nothing
+				repo.uuid = "someone-elses-uuid" // caller's uuid resolves to nothing
 			}
 			d := &Deps{Users: repo}
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/risks/1/owner-approve", nil).
@@ -284,46 +291,81 @@ func TestRequireRiskActor(t *testing.T) {
 	}
 }
 
-// describeActor decides how the person who triggered a notification appears in
-// the email. Every failure path must still yield something sendable — a
-// cosmetic lookup is never worth losing a notification over.
+// fakeSCIMServer stands in for the SCIM Operations Service, resolving exactly
+// one uuid (if any) to a name/email — enough to drive describeActor's
+// formatting logic through its cases without duplicating internal/directory's
+// own, more thorough coverage of the cache/staleness mechanics themselves.
+func fakeSCIMServer(t *testing.T, uuid, givenName, familyName, email string) *directory.Service {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /oauth2/token", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "t", "expires_in": 3600})
+	})
+	mux.HandleFunc("POST /organizations/internal/users/search", func(w http.ResponseWriter, r *http.Request) {
+		resources := []map[string]any{}
+		if uuid != "" {
+			resources = append(resources, map[string]any{
+				"id": uuid, "userName": email,
+				"name": map[string]any{"givenName": givenName, "familyName": familyName},
+			})
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"Resources": resources})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	c := scim.NewClient(srv.URL, srv.URL+"/oauth2/token", "id", "secret", "scope")
+	return directory.New(c, time.Hour)
+}
+
+// describeActor decides how the person who triggered a notification appears
+// in the email. Every failure path must still yield something sendable — a
+// cosmetic lookup is never worth losing a notification over. The identity
+// directory is the only source now (see resolvePerson) — no stored fallback
+// left to fall through to.
 func TestDescribeActor(t *testing.T) {
+	const actorUUID = "actor-uuid"
 	cases := []struct {
 		name string
-		repo fakeUserRepo
+		dir  *directory.Service
 		in   string
 		want string
 	}{
 		{
 			"name and email when resolvable",
-			fakeUserRepo{email: "w@wso2.com", id: 1, displayName: "Wethmi Ranasinghe"},
-			"w@wso2.com",
-			"Wethmi Ranasinghe (w@wso2.com)",
+			fakeSCIMServer(t, actorUUID, "Ruwan", "Silva", "ruwan@wso2.com"),
+			actorUUID,
+			"Ruwan Silva (ruwan@wso2.com)",
 		},
 		{
-			"bare email when the user has no platform row",
-			fakeUserRepo{email: "someone-else@wso2.com", id: 1, displayName: "Other"},
-			"w@wso2.com",
-			"w@wso2.com",
+			// Resolution failed (uuid unknown to the directory — the fake
+			// server's own uuid is empty, so it answers every search with no
+			// resources, regardless of what was queried): the raw uuid is the
+			// fallback, not blank — the daily escalation job's "system"
+			// sentinel actor depends on exactly this (see escalation_job.go).
+			"raw uuid when the directory doesn't know them",
+			fakeSCIMServer(t, "", "", "", ""),
+			actorUUID,
+			actorUUID,
 		},
 		{
-			"bare email when the row has no display name",
-			fakeUserRepo{email: "w@wso2.com", id: 1, displayName: "   "},
-			"w@wso2.com",
-			"w@wso2.com",
+			"bare email when the directory has no name on file",
+			fakeSCIMServer(t, actorUUID, "", "", "ruwan@wso2.com"),
+			actorUUID,
+			"ruwan@wso2.com",
 		},
 		{
-			"bare email when the lookup fails",
-			fakeUserRepo{err: errStub},
-			"w@wso2.com",
-			"w@wso2.com",
+			"raw uuid when the directory is unconfigured",
+			nil,
+			actorUUID,
+			actorUUID,
 		},
-		{"empty in, empty out", fakeUserRepo{}, "", ""},
-		{"whitespace is trimmed", fakeUserRepo{}, "  ", ""},
+		{"empty in, empty out", nil, "", ""},
+		{"whitespace is trimmed", nil, "  ", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			d := &Deps{Users: c.repo}
+			d := &Deps{Directory: c.dir}
 			if got := d.describeActor(context.Background(), c.in); got != c.want {
 				t.Errorf("describeActor(%q) = %q, want %q", c.in, got, c.want)
 			}
@@ -331,6 +373,8 @@ func TestDescribeActor(t *testing.T) {
 	}
 }
 
+// errStub is a shared stub error for tests across this package that need a
+// distinguishable non-nil error without caring about its content.
 var errStub = errors.New("entity unavailable")
 
 // TestLocalDevAllowAllClassification guards the local-dev mode

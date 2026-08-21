@@ -30,7 +30,7 @@ import (
 // Records a residual risk assessment (likelihood, impact, progress, reassessment_date)
 // stored in the risk_assessment table. This is separate from "Submit for Approval".
 func (d *Deps) handleAssessRisk(w http.ResponseWriter, r *http.Request) {
-	by, ok := requireUserEmail(w, r)
+	by, ok := requireCallerUUID(w, r)
 	if !ok {
 		return
 	}
@@ -41,12 +41,18 @@ func (d *Deps) handleAssessRisk(w http.ResponseWriter, r *http.Request) {
 	// Reassessment has no per-risk identity gate, so this scoped check is
 	// the whole authorisation. It is also the one write action authorised by
 	// the grant axis alone — worth remembering when adding another.
-	registerID, err := d.sourceRegisterOf(r.Context(), id)
+	//
+	// Checked against both team dimensions: RISK_ASSESS is held by
+	// grc-platform-risk-assigner (scope_basis SOURCE_REGISTER — they raised
+	// it) AND grc-platform-risk-owner (scope_basis ASSIGNMENT_TEAM — it was
+	// routed to them), so either alone must be enough. See
+	// auth.HasPrivilegeInEither.
+	detail, err := d.Risk.GetByID(r.Context(), id)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
-	if !auth.RequirePrivilegeIn(r.Context(), w, privilege.AssessRisk, registerID) {
+	if !auth.RequirePrivilegeInEither(r.Context(), w, privilege.AssessRisk, detail.SourceRegisterID, detail.AssignmentTeamID) {
 		return
 	}
 

@@ -126,12 +126,15 @@ type ListRolesResponse struct {
 // GrantCandidate is one user eligible to be picked for a role-gated field —
 // e.g. Risk Owner or Management Approver — because they hold the privilege
 // that field's approval action requires, in a scope that covers the field's
-// context. Deliberately carries only what a picker needs to render an option:
-// no team memberships, no timestamps.
+// context. Deliberately carries only what a picker needs: id and uuid, no
+// team memberships, no timestamps — and no name or email, since the platform
+// stores neither; the caller resolves one from the identity directory.
 type GrantCandidate struct {
-	ID          int    `json:"id"`
-	Email       string `json:"email"`
-	DisplayName string `json:"displayName"`
+	ID int `json:"id"`
+	// UUID is the candidate's Asgardeo id. Empty when the row has not been
+	// backfilled yet — the caller then cannot resolve them and must drop them
+	// from the picker rather than offer someone with no name.
+	UUID string `json:"uuid"`
 }
 
 // GrantCandidatesResponse is returned by GET /grants/candidates.

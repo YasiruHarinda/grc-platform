@@ -132,6 +132,9 @@ type AgingRiskItem struct {
 	RiskTitle      string  `json:"risk_title"`
 	RegisterName   string  `json:"register_name"`
 	OwnerName      string  `json:"owner_name"`
+	// OwnerUUID identifies the owner for directory name resolution — not
+	// rendered by the client, see enrichAnalytics.
+	OwnerUUID      string  `json:"-"`
 	RiskLevel      string  `json:"risk_level"`
 	ColorCode      string  `json:"color_code"`
 	IdentifiedDate *string `json:"identified_date"`

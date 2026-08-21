@@ -167,6 +167,8 @@ export interface HistoryEntry {
   new_value: string | null;
   details?: HistoryDetails;
   created_by: string;
+  /** created_by resolved to an email by the backend; falls back to created_by when unresolved. */
+  created_by_email?: string;
   created_at: string;
 }
 
@@ -581,6 +583,15 @@ export async function fetchRiskOwnerCandidates(authFetch: AuthFetch, teamIds?: n
   return handleResponse<UserOption[]>(res);
 }
 
+// fetchRiskAssignerCandidates returns every user who already holds RISK_CREATE
+// — GLOBAL, or scoped to one of teamIds (pass the chosen source register).
+// Same guarantee as fetchManagementApprovers/fetchRiskOwnerCandidates: a
+// candidate offered here can never 403 on Create Risk for lack of the grant.
+export async function fetchRiskAssignerCandidates(authFetch: AuthFetch, teamIds?: number[]): Promise<UserOption[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk-assigner-candidates${teamIdsQuery(teamIds)}`);
+  return handleResponse<UserOption[]>(res);
+}
+
 // searchEmployees looks up active employees by email substring, live
 // from the HR entity service (never the GRC platform's own database), for
 export async function searchEmployees(authFetch: AuthFetch, query: string): Promise<EmployeeOption[]> {
@@ -690,6 +701,8 @@ export interface RiskEvidence {
   note: string;
   evidence_type: RiskEvidenceType;
   created_by: string;
+  /** created_by resolved to an email by the backend; falls back to created_by when unresolved. */
+  created_by_email?: string;
   created_at: string;
   download_url?: string;
 }

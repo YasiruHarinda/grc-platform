@@ -46,10 +46,9 @@ import {
   fetchRiskCategories,
   fetchRiskScores,
   fetchSourceRegisterTeams,
-  fetchUsers,
   uploadRiskEvidence,
 } from "../api/riskApi";
-import type { ComplianceReference, CreateRiskResponse, RiskCategory, RiskScore, RiskTeam, UserOption } from "../api/riskApi";
+import type { ComplianceReference, CreateRiskResponse, RiskCategory, RiskScore, RiskTeam } from "../api/riskApi";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { RiskPrivilege } from "../privileges";
 
@@ -122,7 +121,6 @@ export default function AddRisk(): JSX.Element {
   const [riskScores, setRiskScores]                   = useState<RiskScore[]>([]);
   const [complianceRefs, setComplianceRefs]           = useState<ComplianceReference[]>([]);
   const [riskCategories, setRiskCategories]           = useState<RiskCategory[]>([]);
-  const [users, setUsers]                             = useState<UserOption[]>([]);
   const [fetchError, setFetchError]                   = useState<string | null>(null);
   const [submitError, setSubmitError]                 = useState<string | null>(null);
   // Set only when the risk itself was created successfully but a staged
@@ -132,7 +130,7 @@ export default function AddRisk(): JSX.Element {
   // create a duplicate.
   const [attachmentWarning, setAttachmentWarning]     = useState<string | null>(null);
 
-  const { getDecodedIdToken, isSignedIn } = useAsgardeo();
+  const { isSignedIn } = useAsgardeo();
   const authFetch = useAuthApiClient();
 
   const isMockAuth = window.config?.GRC_PLATFORM_MOCK_AUTH === true;
@@ -200,34 +198,26 @@ export default function AddRisk(): JSX.Element {
       fetchRiskScores(authFetch),
       fetchComplianceReferences(authFetch),
       fetchRiskCategories(authFetch),
-      fetchUsers(authFetch),
     ])
-      .then(([srTeams, atTeams, scores, refs, categories, userList]) => {
+      .then(([srTeams, atTeams, scores, refs, categories]) => {
         setSourceRegisterTeams(srTeams);
         setAssignmentTeams(atTeams);
         setRiskScores(scores);
         setComplianceRefs(refs);
         setRiskCategories(categories);
-        setUsers(userList);
       })
       .catch(() => {
         setFetchError("Failed to load form data. Please refresh the page.");
       });
   }, [isSignedIn, isMockAuth, authFetch]);
 
-  // Pre-fill assignedBy with the current signed-in user once the user list is loaded.
-  // Skipped in mock mode — no real decoded token is available.
-  useEffect(() => {
-    if (isMockAuth || !isSignedIn || users.length === 0) return;
-    getDecodedIdToken()
-      .then((token) => {
-        const email = token?.email as string | undefined;
-        if (!email) return;
-        const me = users.find((u) => u.email === email);
-        if (me) methods.setValue("assignedBy", me.id, { shouldDirty: false });
-      })
-      .catch(() => {});
-  }, [isSignedIn, isMockAuth, users, getDecodedIdToken]);
+  // "Risk Assigned To" defaults to the signed-in caller — see
+  // BasicInformationStep, which owns that field and fetches its own
+  // register-scoped candidate list. This used to live here, matching a
+  // decoded Asgardeo ID token against the unscoped user list — broken in
+  // mock-auth mode (no real session to decode) and no longer valid anyway,
+  // since eligibility is now register-dependent rather than "any platform
+  // user".
 
   // Re-fetch the next sequence ID whenever year, quarter, or source register changes.
   useEffect(() => {
@@ -362,7 +352,6 @@ export default function AddRisk(): JSX.Element {
       sourceRegisterTeams={sourceRegisterTeams}
       complianceRefs={complianceRefs}
       riskCategories={riskCategories}
-      users={users}
     />,
     <RiskAssessmentStep riskScores={riskScores} />,
     <ActionPlanStep
