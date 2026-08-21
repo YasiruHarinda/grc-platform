@@ -24,8 +24,11 @@ that merely sets `AGENT_PROVIDER = "azure"` still reaches `run_forever`
 exactly as it did before this gate existed. The dedicated Azure gate tests
 further down override that stub to exercise the failure paths.
 """
+import os
+import subprocess
 import sys
 import types
+from pathlib import Path
 
 import httpx
 import pytest
@@ -38,6 +41,10 @@ from wso2_runner.azure_credential import ClientAuthenticationError, CredentialUn
 from wso2_runner.config import settings
 
 runner = CliRunner()
+
+# Root of the runner package — cwd for the subprocess test below, so a plain
+# `import wso2_runner...` resolves the same way it does for every other test.
+_RUNNER_ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture
@@ -170,6 +177,37 @@ def test_start_exits_nonzero_and_prompts_configure_when_no_provider(fake_run_for
 
 def test_start_proceeds_to_run_forever_when_provider_configured(fake_run_forever):
     settings.AGENT_PROVIDER = "anthropic"
+
+    result = runner.invoke(cli.app, ["start", "someone@wso2.com"])
+
+    assert result.exit_code == 0
+    assert fake_run_forever == [(None, "someone@wso2.com", None)]
+
+
+# ── start: ASGARDEO_ORG gate ─────────────────────────────────────────────
+#
+# ASGARDEO_ORG used to be a required pydantic field with no default, so a
+# missing value crashed at import time with a raw traceback before `start`
+# ever ran. It now defaults to "", and `start` is responsible for catching
+# a missing value itself and naming it in plain language, the same way it
+# already does for AGENT_PROVIDER above.
+
+
+def test_start_exits_nonzero_and_names_asgardeo_org_when_missing(fake_run_forever, monkeypatch):
+    settings.AGENT_PROVIDER = "anthropic"
+    monkeypatch.setattr(settings, "ASGARDEO_ORG", "")
+
+    result = runner.invoke(cli.app, ["start", "someone@wso2.com"])
+
+    assert result.exit_code == 1
+    assert "ASGARDEO_ORG" in result.output
+    # run_forever must never be reached when the org gate blocks.
+    assert fake_run_forever == []
+
+
+def test_start_proceeds_to_run_forever_when_asgardeo_org_configured(fake_run_forever, monkeypatch):
+    settings.AGENT_PROVIDER = "anthropic"
+    monkeypatch.setattr(settings, "ASGARDEO_ORG", "acme")
 
     result = runner.invoke(cli.app, ["start", "someone@wso2.com"])
 
@@ -419,6 +457,45 @@ def test_configure_gemini_provider_writes_api_key(monkeypatch, tmp_path):
     assert "drag the agent's Chrome window to monitor 2" in result.output
 
 
+def test_configure_runs_on_a_brand_new_machine(tmp_path):
+    """The bug this whole ticket exists for: on a machine with no
+    ~/.wso2-runner/.env, `configure` crashed with a raw pydantic traceback
+    before its first prompt, because it does `from wso2_runner.config
+    import CONFIG_DIR, CONFIG_FILE` (see `configure()` in cli.py), which
+    re-runs config.py's module-level `settings = RunnerSettings()`.
+
+    The tests above can't reproduce that: `wso2_runner.config` is already
+    imported by the time they run, and conftest.py has already seeded
+    ASGARDEO_ORG into the environment (see its docstring). Only a real
+    subprocess, with HOME pointed at an empty directory, proves the wizard
+    can actually start on a genuinely fresh machine.
+    """
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path),
+        # See test_import_never_raises_on_a_machine_with_no_config in
+        # tests/test_config.py for why PYTHONPATH has to be forwarded
+        # explicitly once HOME points somewhere else.
+        "PYTHONPATH": os.pathsep.join(p for p in sys.path if p),
+    }
+    env.pop("ASGARDEO_ORG", None)
+
+    # provider=ollama, model=<default>, monitor=<default> — needs no API key.
+    result = subprocess.run(
+        [sys.executable, "-c", "import sys; sys.argv = ['wso2-runner', 'configure']; from wso2_runner.cli import app; app()"],
+        cwd=_RUNNER_ROOT,
+        env=env,
+        input="ollama\n\n1\n",
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    config_file = tmp_path / ".wso2-runner" / ".env"
+    assert config_file.exists()
+    assert "AGENT_PROVIDER=ollama" in config_file.read_text()
+
+
 # ── doctor ───────────────────────────────────────────────────────────────
 
 
@@ -450,6 +527,34 @@ def test_doctor_reports_backend_health_and_missing_client_id(monkeypatch):
     assert "Backend connectivity: http://cloud.test" in result.output
     assert "{'status': 'ok'}" in result.output
     assert "ASGARDEO_CLIENT_ID is not set" in result.output
+
+
+def test_doctor_reports_missing_asgardeo_org(monkeypatch):
+    """Mirrors test_doctor_reports_backend_health_and_missing_client_id
+    above, for ASGARDEO_ORG: it must be reported the same way, as a plain
+    line naming the setting, never a traceback.
+
+    ASGARDEO_CLIENT_ID is set (unlike that other test) so this exercises
+    the ASGARDEO_ORG check specifically, rather than short-circuiting on a
+    missing client ID first. `oauth.has_cached_session` is stubbed to keep
+    this test from depending on whether the machine running it happens to
+    have a real cached Asgardeo session on disk.
+    """
+
+    def fake_get(url, *a, **k):
+        return _FakeResponse({"status": "ok"})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(settings, "ASGARDEO_ORG", "")
+    monkeypatch.setattr(settings, "ASGARDEO_CLIENT_ID", "some-client-id")
+    monkeypatch.setattr(settings, "AGENT_PROVIDER", "anthropic")
+    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "sk-x")
+    monkeypatch.setattr(oauth, "has_cached_session", lambda: False)
+
+    result = runner.invoke(cli.app, ["doctor", "--server", "http://cloud.test"])
+
+    assert result.exit_code == 0
+    assert "ASGARDEO_ORG is not set" in result.output
 
 
 def test_doctor_reports_missing_anthropic_key(monkeypatch):

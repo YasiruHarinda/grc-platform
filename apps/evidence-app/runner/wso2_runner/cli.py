@@ -103,6 +103,19 @@ def start(
         )
         raise typer.Exit(1)
 
+    # ASGARDEO_ORG has no default that would work (it names a specific
+    # Asgardeo tenant), and `configure` above doesn't ask for it — it's set
+    # by hand, per the setup docs. Caught here, in plain language, rather
+    # than left to blow up deep inside run_forever (loop.py reads it to sign
+    # in and to build the cloud client).
+    if not settings.ASGARDEO_ORG:
+        typer.echo(
+            f"\n[runner] ASGARDEO_ORG is not set. Add it to {CONFIG_FILE} — "
+            "see the setup docs.\n",
+            err=True,
+        )
+        raise typer.Exit(1)
+
     # Prove Azure auth works *before* the poll loop starts — not on first
     # use. The credential otherwise authenticates lazily on first LLM call,
     # which happens after a browser window has already opened and a task
@@ -198,7 +211,9 @@ def doctor(
     # Check auth — uses a cached Asgardeo session if one exists; does not
     # force an interactive login just to run a diagnostic check.
     print("\n[2] Asgardeo auth check")
-    if not settings.ASGARDEO_CLIENT_ID:
+    if not settings.ASGARDEO_ORG:
+        print("    ✗ ASGARDEO_ORG is not set — see the setup docs")
+    elif not settings.ASGARDEO_CLIENT_ID:
         print("    ✗ ASGARDEO_CLIENT_ID is not set — see the setup docs")
     else:
         if not oauth.has_cached_session():
