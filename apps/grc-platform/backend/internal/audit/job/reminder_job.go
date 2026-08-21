@@ -86,6 +86,14 @@ type ReminderJob struct {
 	// on success — the claim already did, before the send was even attempted
 	// (see claimer's doc comment).
 	notify func(ctx context.Context, ownerUserID int, items []model.ReminderItem) error
+	// admins resolves the Audit Compliance Admin recipient set once per sweep,
+	// and notifyAdmin delivers one admin's alert for one overdue item. Both nil
+	// unless WithAdminAlerts wired them, which disables the escalation
+	// entirely — the owner reminders are unaffected either way. Plain functions
+	// for the same import-cycle reason as notify above; wired to
+	// handler.Deps.ReminderAdminIDs / SendOverdueAdminAlertSync at startup.
+	admins      func(ctx context.Context) ([]int, error)
+	notifyAdmin func(ctx context.Context, adminUserID int, item model.ReminderItem) error
 	// running serializes runOnce against itself: Start's daily ticker and the
 	// manual-trigger endpoint (handler.reminderJobHandler.run) both end up
 	// calling runOnce on this same instance. This guards a same-process
@@ -102,6 +110,31 @@ func NewReminderJob(
 	notify func(ctx context.Context, ownerUserID int, items []model.ReminderItem) error,
 ) *ReminderJob {
 	return &ReminderJob{audits: audits, controls: controls, claim: claim, notify: notify}
+}
+
+// WithAdminAlerts turns on the overdue admin escalation: on top of the owner's
+// own digest, every admin `admins` returns gets one email per overdue item.
+// Returns j so it can be chained onto NewReminderJob.
+//
+// Opt-in via a setter rather than two more constructor parameters so a job
+// built without it (and every existing caller) keeps working unchanged — with
+// either function nil the escalation is simply skipped.
+func (j *ReminderJob) WithAdminAlerts(
+	admins func(ctx context.Context) ([]int, error),
+	notifyAdmin func(ctx context.Context, adminUserID int, item model.ReminderItem) error,
+) *ReminderJob {
+	j.admins = admins
+	j.notifyAdmin = notifyAdmin
+	return j
+}
+
+// adminAlert is one overdue item escalated to one admin. Kept out of byOwner's
+// digests because this is one email per item, not one per recipient: an admin
+// with twenty overdue controls gets twenty alerts, each naming its own control
+// and linking straight to it.
+type adminAlert struct {
+	adminID int
+	item    model.ReminderItem
 }
 
 // Start waits until the next occurrence of reminderHourUTC, runs the sweep,
@@ -212,9 +245,25 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 	// ACTIVE and ARCHIVED audits both stay in scope; only COMPLETED/REMOVED
 	// are excluded — an archived audit can still be ongoing.
 	activeAuditIDs := make(map[int]bool, len(audits))
+	// Names come from this same already-fetched list, so the overdue admin
+	// alert can head each email with its audit without a lookup per email.
+	auditNames := make(map[int]string, len(audits))
 	for _, a := range audits {
 		if a.Status != "COMPLETED" && a.Status != "REMOVED" {
 			activeAuditIDs[a.ID] = true
+		}
+		auditNames[a.ID] = a.Name
+	}
+
+	// Resolved once per sweep, not per control. A failure here is logged and
+	// treated as "no admins": the owner reminders below are the primary
+	// delivery and must not be lost to a failed grant lookup.
+	var adminIDs []int
+	if j.admins != nil && j.notifyAdmin != nil {
+		adminIDs, err = j.admins(ctx)
+		if err != nil {
+			slog.Warn("reminder job: failed to resolve admin recipients, skipping overdue escalation this run", "err", err)
+			adminIDs = nil
 		}
 	}
 
@@ -227,8 +276,22 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 	today := time.Now().UTC()
 	todayStr := today.Format("2006-01-02")
 	byOwner := map[int][]model.ReminderItem{}
+	var adminAlerts []adminAlert
 	queued, skippedDup, skippedErr := 0, 0, 0
 
+	// release gives one claim back so a later run retries the item. If the
+	// release itself fails, the claim IS stuck: logged loud (Error, not Warn)
+	// since that's the one failure mode this mechanism doesn't self-heal from.
+	// why names the path that triggered it, for the log line.
+	release := func(notificationID int64, recipientID int, notifType, why string) {
+		rctx, cancel := releaseCtx(ctx)
+		relErr := j.claim.ReleaseClaim(rctx, notificationID)
+		cancel()
+		if relErr != nil {
+			slog.Error("reminder job: failed to release claim — item will NOT retry until this is fixed",
+				"reason", why, "notificationId", notificationID, "recipientId", recipientID, "type", notifType, "err", relErr)
+		}
+	}
 	// Release every still-pending claim before letting a panic reach the
 	// top-level recover above — otherwise those items would stay claimed
 	// forever with nothing sent, the same stuck-claim outcome the ordinary
@@ -236,20 +299,22 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 	// (after byOwner exists, so it can reference it) rather than with the
 	// top-level recover: defers run LIFO, so this one fires first and can
 	// still re-panic for the top-level recover to log and convert to an
-	// error, same as any other panic. The send loop below deletes each
-	// owner's entry from byOwner as it's resolved (success or ordinary
-	// failure), so whatever remains here is exactly the unresolved set.
+	// error, same as any other panic. The send loops below delete each owner's
+	// entry from byOwner (and zero each resolved adminAlerts entry) as they're
+	// resolved, so whatever remains here is exactly the unresolved set.
 	defer func() {
 		if r := recover(); r != nil {
 			for ownerID, items := range byOwner {
 				for _, it := range items {
-					rctx, cancel := releaseCtx(ctx)
-					relErr := j.claim.ReleaseClaim(rctx, it.NotificationID)
-					cancel()
-					if relErr != nil {
-						slog.Error("reminder job: failed to release claim after a panic — item will NOT retry until this is fixed",
-							"notificationId", it.NotificationID, "ownerId", ownerID, "type", it.Type, "err", relErr)
-					}
+					release(it.NotificationID, ownerID, it.Type, "panic")
+				}
+			}
+			// Same contract for the escalations: the send loop below zeroes each
+			// entry as it resolves it, so a non-zero NotificationID here means
+			// nothing was ever sent for it.
+			for _, a := range adminAlerts {
+				if a.item.NotificationID != 0 {
+					release(a.item.NotificationID, a.adminID, a.item.Type, "panic")
 				}
 			}
 			panic(r)
@@ -278,6 +343,43 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 		queued++
 	}
 
+	// queueAdmins escalates one overdue item to every admin. It claims per
+	// admin, so each gets their own de-dup row and a failed send releases only
+	// that admin's claim.
+	//
+	// Claims under the item's own REMINDER_OVERDUE type rather than a type of
+	// its own: the de-dup key already includes the recipient, so an admin's row
+	// can't collide with the owner's, and the daily re-fire falls out of the
+	// same today-dated snapshot with no schema change. The one consequence is
+	// that an admin who also OWNS an overdue item shares a key between their
+	// digest entry and their escalation — which is why they're skipped here
+	// explicitly: the owner claim is always made first (queue is called just
+	// above), so relying on the collision would silently drop the escalation
+	// anyway, and being explicit says that's intended rather than incidental.
+	// Either way they hear about it exactly once, in the digest they get as its
+	// owner.
+	queueAdmins := func(item model.ReminderItem, controlID, populationID *int) {
+		for _, adminID := range adminIDs {
+			if adminID == item.OwnerUserID {
+				continue
+			}
+			claimed, notificationID, err := j.claim.Claim(ctx, adminID, item.AuditID, item.Type, controlID, populationID, &item.DedupSnapshot)
+			if err != nil {
+				// Fail closed, exactly as queue does.
+				slog.Warn("reminder job: admin claim failed, skipping this run (fail closed)", "adminId", adminID, "type", item.Type, "err", err)
+				skippedErr++
+				continue
+			}
+			if !claimed {
+				skippedDup++
+				continue
+			}
+			item.NotificationID = notificationID
+			adminAlerts = append(adminAlerts, adminAlert{adminID: adminID, item: item})
+			queued++
+		}
+	}
+
 	for _, c := range controls {
 		if c == nil || !activeAuditIDs[c.AuditID] {
 			continue
@@ -288,7 +390,7 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 				if tier == "REMINDER_OVERDUE" {
 					dedupSnapshot = todayStr // re-fires daily — see model.ReminderItem.DedupSnapshot
 				}
-				queue(*c.OwnerID, model.ReminderItem{
+				item := model.ReminderItem{
 					AuditID:         c.AuditID,
 					ControlID:       &c.ID,
 					Type:            tier,
@@ -298,7 +400,14 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 					Tier:            tierLabel(tier),
 					RequirementType: "Evidence Requirement",
 					DedupSnapshot:   dedupSnapshot,
-				}, &c.ID, nil)
+					AuditName:       auditNames[c.AuditID],
+					LinkControlID:   c.ID,
+					OwnerUserID:     *c.OwnerID,
+				}
+				queue(*c.OwnerID, item, &c.ID, nil)
+				if tier == "REMINDER_OVERDUE" {
+					queueAdmins(item, &c.ID, nil)
+				}
 			}
 		}
 		if c.PopulationOwnerID != nil && (c.PopulationStatus == nil || *c.PopulationStatus != "APPROVED") && c.PopulationDueDate != nil {
@@ -307,7 +416,7 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 				if tier == "REMINDER_OVERDUE" {
 					dedupSnapshot = todayStr
 				}
-				queue(*c.PopulationOwnerID, model.ReminderItem{
+				item := model.ReminderItem{
 					AuditID:         c.AuditID,
 					PopulationID:    c.PopulationID,
 					Type:            tier,
@@ -317,7 +426,14 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 					Tier:            tierLabel(tier),
 					RequirementType: "Population Requirement",
 					DedupSnapshot:   dedupSnapshot,
-				}, nil, c.PopulationID)
+					AuditName:       auditNames[c.AuditID],
+					LinkControlID:   c.ID,
+					OwnerUserID:     *c.PopulationOwnerID,
+				}
+				queue(*c.PopulationOwnerID, item, nil, c.PopulationID)
+				if tier == "REMINDER_OVERDUE" {
+					queueAdmins(item, nil, c.PopulationID)
+				}
 			}
 		}
 	}
@@ -329,17 +445,9 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 			// The digest didn't go out, so every item it would have covered
 			// must give up its claim — otherwise they'd stay claimed forever
 			// with nothing ever sent, silently starving that owner of
-			// reminders. If the release itself fails, the claim IS stuck: log
-			// loud (Error, not Warn) since this is the one failure mode this
-			// mechanism doesn't self-heal from.
+			// reminders.
 			for _, it := range items {
-				rctx, cancel := releaseCtx(ctx)
-				relErr := j.claim.ReleaseClaim(rctx, it.NotificationID)
-				cancel()
-				if relErr != nil {
-					slog.Error("reminder job: failed to release claim after failed send — item will NOT retry until this is fixed",
-						"notificationId", it.NotificationID, "ownerId", ownerID, "type", it.Type, "err", relErr)
-				}
+				release(it.NotificationID, ownerID, it.Type, "failed send")
 			}
 			notifyFailed++
 			delete(byOwner, ownerID) // resolved (failed+released) — the panic-recovery defer above must not also release it
@@ -348,7 +456,27 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 		sent++
 		delete(byOwner, ownerID) // resolved (sent) — must never be released, even if a later owner's notify panics
 	}
+
+	// Overdue escalations, one email per (admin, item). Each stands alone, so
+	// unlike a digest a failure releases only its own claim and every other
+	// alert still goes out. The entry is zeroed either way, so the
+	// panic-recovery defer above knows it's resolved.
+	adminSent, adminFailed := 0, 0
+	for i, a := range adminAlerts {
+		if err := j.notifyAdmin(ctx, a.adminID, a.item); err != nil {
+			slog.Warn("reminder job: overdue admin alert failed",
+				"adminId", a.adminID, "controlNumber", a.item.ControlNumber, "err", err)
+			release(a.item.NotificationID, a.adminID, a.item.Type, "failed admin send")
+			adminFailed++
+		} else {
+			adminSent++
+		}
+		adminAlerts[i] = adminAlert{}
+	}
+
 	slog.Info("reminder job: run complete",
-		"owners", sent, "notifyFailed", notifyFailed, "itemsQueued", queued, "itemsSkippedDup", skippedDup, "itemsSkippedErr", skippedErr)
+		"owners", sent, "notifyFailed", notifyFailed,
+		"adminAlertsSent", adminSent, "adminAlertsFailed", adminFailed,
+		"itemsQueued", queued, "itemsSkippedDup", skippedDup, "itemsSkippedErr", skippedErr)
 	return nil
 }

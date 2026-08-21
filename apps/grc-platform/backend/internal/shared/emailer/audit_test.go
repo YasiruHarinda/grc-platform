@@ -31,7 +31,8 @@ import (
 func TestEveryAuditEventHasATemplate(t *testing.T) {
 	all := []AuditEvent{
 		AuditEventOwnerAssigned, AuditEventAuditorAssigned, AuditEventReminderDue10,
-		AuditEventReminderDue5, AuditEventReminderOverdue, AuditEventResubmissionNeeded,
+		AuditEventReminderDue5, AuditEventReminderOverdue, AuditEventReminderOverdueAdmin,
+		AuditEventResubmissionNeeded,
 		AuditEventSampleSubmitted, AuditEventEvidenceInternalReview, AuditEventPopulationInternalReview,
 		AuditEventEvidenceUnderValidation, AuditEventPopulationUnderValidation,
 		AuditEventPopulationCompleteSampleNeeded, AuditEventControlComplete, AuditEventCommentAdded,
@@ -147,5 +148,35 @@ func TestControlThreadSubjectCoversMixedKinds(t *testing.T) {
 				t.Error("subject must never be empty")
 			}
 		})
+	}
+}
+
+// The overdue escalation must NOT thread with the control's ordinary workflow
+// mail (it re-sends daily and would bury itself), and must stay identical
+// across days so each day's escalation threads with the previous ones.
+func TestOverdueAdminSubjectIsItsOwnStableThread(t *testing.T) {
+	info := AuditEventInfo{
+		AuditName: "Q3 Audit",
+		Items:     []AuditEventItem{{ControlNumber: "C-1", RequirementType: "Evidence Requirement"}},
+	}
+	got := overdueAdminSubject(info)
+	if got == "" {
+		t.Fatal("subject must never be empty")
+	}
+	if got == controlThreadSubject(info) {
+		t.Errorf("overdue subject %q must differ from the control thread subject", got)
+	}
+	if !strings.Contains(got, "C-1") || !strings.Contains(got, "Q3 Audit") {
+		t.Errorf("subject %q should name both the audit and the control", got)
+	}
+	// The item's due date is the only thing that changes day to day; the
+	// subject must not depend on it.
+	info.Items[0].DueDate = "2026-01-01"
+	if again := overdueAdminSubject(info); again != got {
+		t.Errorf("subject changed with the item's due date (%q vs %q) — daily escalations would stop threading", again, got)
+	}
+	// Degrades rather than panicking if it ever gets a multi-item batch.
+	if overdueAdminSubject(AuditEventInfo{AuditName: "Q3 Audit"}) == "" {
+		t.Error("subject must never be empty, even with no items")
 	}
 }

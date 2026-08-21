@@ -47,6 +47,15 @@ const (
 	AuditEventResubmissionNeeded AuditEvent = "AUDIT_RESUBMISSION_NEEDED"
 	AuditEventSampleSubmitted    AuditEvent = "AUDIT_SAMPLE_SUBMITTED"
 
+	// AuditEventReminderOverdueAdmin escalates a single overdue item to every
+	// Audit Compliance Admin, alongside the owner's own AuditEventReminderOverdue
+	// digest entry. Unlike the three owner reminder tiers above it is one email
+	// per overdue item rather than a digest, so an admin sees each overdue
+	// control named in its own message (mirroring the per-control admin emails
+	// notifyControlStatusReached already sends), and it names the owner rather
+	// than an actor — see auditEventTemplates' "Owned by" label.
+	AuditEventReminderOverdueAdmin AuditEvent = "AUDIT_REMINDER_OVERDUE_ADMIN"
+
 	// The six below notify admin/auditor recipients when a control reaches a
 	// given status, regardless of which endpoint produced the transition —
 	// see handler/notify.go's notifyControlStatusReached. None ever populate
@@ -86,9 +95,13 @@ type AuditEventItem struct {
 // reaches SendAuditEvent — Items is that recipient's personalized batch.
 type AuditEventInfo struct {
 	AuditName string
-	// Actor is whoever triggered this event — who assigned the owner, who
-	// rejected, who submitted the sample. Empty for the system-generated
-	// reminder digest, which has no actor.
+	// Actor is the person this email's header line names, labelled by the
+	// template's actorLabel: normally whoever triggered the event — who
+	// assigned the owner, who rejected, who submitted the sample. The
+	// system-generated overdue admin alert has no actor and reuses this to name
+	// the item's owner instead ("Owned by ..."), which is the one fact an admin
+	// needs that the item table doesn't already carry. Empty for the owner
+	// reminder digest, which has neither.
 	Actor string
 	// Comment carries a rejection reason. Omitted from the body when empty.
 	Comment   string
@@ -140,6 +153,23 @@ func reminderSubject(tier string) func(AuditEventInfo) string {
 	}
 }
 
+// overdueAdminSubject is the admin escalation's subject. Deliberately NOT
+// controlThreadSubject: this alert re-sends every day the item stays overdue,
+// so threading it into the control's ordinary workflow conversation would bury
+// a growing pile of escalations under whatever else happened on that control.
+// Keeping it its own stable string instead threads each day's escalation with
+// the previous ones, which is the conversation an admin actually wants.
+//
+// Info is always about exactly one item here (one email per overdue item), so
+// Items[0] is safe — but fall back to the audit name alone rather than
+// panicking if that ever stops holding.
+func overdueAdminSubject(i AuditEventInfo) string {
+	if len(i.Items) != 1 {
+		return fmt.Sprintf("[GRC Platform] Overdue — %s", i.AuditName)
+	}
+	return fmt.Sprintf("[GRC Platform] Overdue — %s - %s", i.AuditName, i.Items[0].ControlNumber)
+}
+
 // auditEventTemplates is the single place to see everything the audit module
 // sends. An AuditEvent with no entry here is a programming error and
 // SendAuditEvent rejects it rather than sending a blank email.
@@ -168,6 +198,11 @@ var auditEventTemplates = map[AuditEvent]auditEventTemplate{
 		subject:    reminderSubject("Overdue"),
 		lead:       "The following item(s) you own are overdue.",
 		actorLabel: "",
+	},
+	AuditEventReminderOverdueAdmin: {
+		subject:    overdueAdminSubject,
+		lead:       "The following item is overdue and has not been completed.",
+		actorLabel: "Owned by",
 	},
 	AuditEventResubmissionNeeded: {
 		subject:    controlThreadSubject,
