@@ -111,14 +111,22 @@ export default function RiskTeamsPage(): JSX.Element {
     setDescription(team.description ?? "");
     // A pre-existing SOURCE_REGISTER-only team (none in real data today, but
     // the enum still permits one) has no matching option in this form — fall
-    // back to "Register" rather than rendering an unselectable blank value.
+    // back to displaying "Register" rather than rendering an unselectable
+    // blank value. The Select is locked in this case (see isSourceRegister
+    // below) and handleSave sends the real team_type unchanged, so this
+    // display-only substitution never reaches the save payload.
     setTeamType(team.team_type === "ASSIGNMENT" ? "ASSIGNMENT" : "BOTH");
     setStatus(team.status === "INACTIVE" ? "INACTIVE" : "ACTIVE");
     setDialogError(null);
     setDialogOpen(true);
   };
 
-  const codeRequired = teamType === "BOTH";
+  // This form has no way to represent SOURCE_REGISTER as a real selection
+  // (see teamTypeOptions above) — so an edit must never let the two-option
+  // selector's displayed fallback overwrite a team that's actually
+  // SOURCE_REGISTER-only on save.
+  const isSourceRegister = editing?.team_type === "SOURCE_REGISTER";
+  const codeRequired = teamType === "BOTH" || isSourceRegister;
 
   const handleSave = async () => {
     if (!name.trim()) {
@@ -136,7 +144,7 @@ export default function RiskTeamsPage(): JSX.Element {
         name: name.trim(),
         code: code.trim() ? code.trim().toUpperCase() : null,
         description: description.trim(),
-        team_type: teamType,
+        team_type: isSourceRegister ? "SOURCE_REGISTER" : teamType,
         status,
       };
       if (editing) {
@@ -270,7 +278,7 @@ export default function RiskTeamsPage(): JSX.Element {
                   : "Only needed for a Register team — this one doesn't require it."
               }
             />
-            <FormControl fullWidth size="small">
+            <FormControl fullWidth size="small" disabled={isSourceRegister}>
               <InputLabel id="team-type-label">Team Type</InputLabel>
               <Select
                 labelId="team-type-label"
@@ -287,7 +295,9 @@ export default function RiskTeamsPage(): JSX.Element {
             </FormControl>
           </Stack>
           <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: -1.5, mb: 2.5 }}>
-            {teamTypeOptions.find((o) => o.value === teamType)?.hint}
+            {isSourceRegister
+              ? "Source Register-only — this type isn't editable from this console; saving keeps it unchanged."
+              : teamTypeOptions.find((o) => o.value === teamType)?.hint}
           </Typography>
           <TextField
             fullWidth

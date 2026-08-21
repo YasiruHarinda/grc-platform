@@ -176,9 +176,12 @@ export interface TeamPayload {
   name: string;
   code: string | null;
   description: string;
-  // "BOTH" | "ASSIGNMENT" only — see teamTypeOptions in RiskTeamsPage.tsx for
-  // why SOURCE_REGISTER is never sent from this console.
-  team_type: "BOTH" | "ASSIGNMENT";
+  // The form's own Team Type selector only ever offers "BOTH" | "ASSIGNMENT"
+  // (see teamTypeOptions in RiskTeamsPage.tsx) — but editing a pre-existing
+  // SOURCE_REGISTER team must still round-trip that value unchanged, since
+  // the update endpoint doesn't support partial updates and would otherwise
+  // silently upgrade it to a full register.
+  team_type: "BOTH" | "ASSIGNMENT" | "SOURCE_REGISTER";
   status: "ACTIVE" | "INACTIVE";
 }
 
