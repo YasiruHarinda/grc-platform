@@ -133,9 +133,31 @@ func (r *riskReferenceRepo) UpdateRiskReference(ctx context.Context, id int, req
 // before the DELETE rather than relying on a constraint error that MySQL will
 // never raise.
 func (r *riskReferenceRepo) DeleteRiskReference(ctx context.Context, id int) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("risk_reference.Delete(%d) begin: %w", id, err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// FOR UPDATE takes an exclusive lock on the reference row for the rest of
+	// this transaction. A concurrent INSERT into risk_compliance_reference for
+	// this reference_id must take a shared lock on this same row to satisfy
+	// fk_rcr_reference, so it blocks until this transaction commits or rolls
+	// back — closing the window where a link could be added between the
+	// in-use count below and the DELETE and then silently vanish under the
+	// cascade.
+	var exists int
+	if err := tx.QueryRowContext(ctx,
+		"SELECT id FROM risk_security_compliance_reference WHERE id = ? FOR UPDATE", id).Scan(&exists); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return &apierror.NotFoundError{Msg: fmt.Sprintf("compliance reference %d not found", id)}
+		}
+		return fmt.Errorf("risk_reference.Delete(%d) lock: %w", id, err)
+	}
+
 	var inUse int
-	if err := r.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM risk_compliance_reference WHERE reference_id = ?", id).Scan(&inUse); err != nil {
+	if err := tx.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM risk_compliance_reference WHERE reference_id = ? FOR UPDATE", id).Scan(&inUse); err != nil {
 		return fmt.Errorf("risk_reference.Delete(%d) in-use check: %w", id, err)
 	}
 	if inUse > 0 {
@@ -143,12 +165,11 @@ func (r *riskReferenceRepo) DeleteRiskReference(ctx context.Context, id int) err
 			Msg: fmt.Sprintf("compliance reference is used by %d risk(s) and cannot be deleted", inUse)}
 	}
 
-	res, err := r.db.ExecContext(ctx, "DELETE FROM risk_security_compliance_reference WHERE id = ?", id)
-	if err != nil {
+	if _, err := tx.ExecContext(ctx, "DELETE FROM risk_security_compliance_reference WHERE id = ?", id); err != nil {
 		return fmt.Errorf("risk_reference.Delete(%d): %w", id, err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return &apierror.NotFoundError{Msg: fmt.Sprintf("compliance reference %d not found", id)}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("risk_reference.Delete(%d) commit: %w", id, err)
 	}
 	return nil
 }

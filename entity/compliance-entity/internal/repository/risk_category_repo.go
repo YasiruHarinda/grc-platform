@@ -130,9 +130,31 @@ func (r *riskCategoryRepo) UpdateRiskCategory(ctx context.Context, id int, req d
 // runs, so a category that's actually in use is refused with a clear 409
 // rather than quietly rewriting historical risk records.
 func (r *riskCategoryRepo) DeleteRiskCategory(ctx context.Context, id int) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("risk_category.Delete(%d) begin: %w", id, err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// FOR UPDATE takes an exclusive lock on the category row for the rest of
+	// this transaction. A concurrent INSERT into risk_category_reference for
+	// this category_id must take a shared lock on this same row to satisfy
+	// fk_rcat_category, so it blocks until this transaction commits or rolls
+	// back — closing the window where a reference could be added between the
+	// in-use count below and the DELETE and then silently vanish under the
+	// cascade.
+	var exists int
+	if err := tx.QueryRowContext(ctx,
+		"SELECT id FROM risk_category WHERE id = ? FOR UPDATE", id).Scan(&exists); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return &apierror.NotFoundError{Msg: fmt.Sprintf("risk category %d not found", id)}
+		}
+		return fmt.Errorf("risk_category.Delete(%d) lock: %w", id, err)
+	}
+
 	var inUse int
-	if err := r.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM risk_category_reference WHERE category_id = ?", id).Scan(&inUse); err != nil {
+	if err := tx.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM risk_category_reference WHERE category_id = ? FOR UPDATE", id).Scan(&inUse); err != nil {
 		return fmt.Errorf("risk_category.Delete(%d) in-use check: %w", id, err)
 	}
 	if inUse > 0 {
@@ -140,12 +162,11 @@ func (r *riskCategoryRepo) DeleteRiskCategory(ctx context.Context, id int) error
 			Msg: fmt.Sprintf("risk category is used by %d risk(s) and cannot be deleted", inUse)}
 	}
 
-	res, err := r.db.ExecContext(ctx, "DELETE FROM risk_category WHERE id = ?", id)
-	if err != nil {
+	if _, err := tx.ExecContext(ctx, "DELETE FROM risk_category WHERE id = ?", id); err != nil {
 		return fmt.Errorf("risk_category.Delete(%d): %w", id, err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return &apierror.NotFoundError{Msg: fmt.Sprintf("risk category %d not found", id)}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("risk_category.Delete(%d) commit: %w", id, err)
 	}
 	return nil
 }
