@@ -624,15 +624,239 @@ def test_configure_prompts_for_and_writes_user_email(monkeypatch, tmp_path):
     assert "email" in result.output.lower()
 
 
+# ── configure: --server ──────────────────────────────────────────────────
+#
+# `configure` never wrote CLOUD_URL, ASGARDEO_ORG or ASGARDEO_CLIENT_ID --
+# a new machine was left pointed at the http://localhost:8000 default in
+# config.py, which looks configured but polls nothing. `--server <url>`
+# fetches the org and client ID from that server's `/api/runner-config` and
+# saves all three together. httpx.get is stubbed throughout, exactly as the
+# `doctor` tests below stub it -- no test here reaches the network.
+
+
+def test_configure_with_server_writes_cloud_url_org_and_client_id(monkeypatch, tmp_path):
+    cfg_dir = tmp_path / ".wso2-runner"
+    cfg_file = cfg_dir / ".env"
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
+
+    def fake_get(url, *a, **k):
+        assert url == "https://cloud.example.com/api/runner-config"
+        return _FakeResponse({"asgardeo_org": "wso2", "asgardeo_client_id": "abc-123"})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    # email, provider=ollama, model=<default>, monitor=<default>
+    input_text = "someone@wso2.com\nollama\n\n1\n"
+    result = runner.invoke(
+        cli.app, ["configure", "--server", "https://cloud.example.com"], input=input_text
+    )
+
+    assert result.exit_code == 0, result.output
+    content = cfg_file.read_text()
+    assert "CLOUD_URL=https://cloud.example.com" in content
+    assert "ASGARDEO_ORG=wso2" in content
+    assert "ASGARDEO_CLIENT_ID=abc-123" in content
+
+
+def test_configure_server_values_come_from_response_not_a_stale_file(monkeypatch, tmp_path):
+    """The org and client ID written must be whatever the endpoint just
+    returned, not whatever happened to already be on disk -- proves the
+    wizard doesn't just leave an old value in place under a new CLOUD_URL."""
+    cfg_dir = tmp_path / ".wso2-runner"
+    cfg_file = cfg_dir / ".env"
+    cfg_dir.mkdir()
+    cfg_file.write_text("ASGARDEO_ORG=stale-org\nASGARDEO_CLIENT_ID=stale-client\n")
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
+
+    def fake_get(url, *a, **k):
+        return _FakeResponse({"asgardeo_org": "fresh-org", "asgardeo_client_id": "fresh-client"})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    input_text = "someone@wso2.com\nollama\n\n1\n"
+    result = runner.invoke(
+        cli.app, ["configure", "--server", "https://cloud.example.com"], input=input_text
+    )
+
+    assert result.exit_code == 0, result.output
+    content = cfg_file.read_text()
+    assert "ASGARDEO_ORG=fresh-org" in content
+    assert "ASGARDEO_CLIENT_ID=fresh-client" in content
+    assert "stale-org" not in content
+    assert "stale-client" not in content
+
+
+def test_configure_server_connection_refused_names_url_and_exits_nonzero(monkeypatch, tmp_path):
+    cfg_dir = tmp_path / ".wso2-runner"
+    cfg_file = cfg_dir / ".env"
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
+
+    def fake_get(url, *a, **k):
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    result = runner.invoke(cli.app, ["configure", "--server", "https://cloud.example.com"])
+
+    assert result.exit_code != 0
+    assert "https://cloud.example.com" in result.output
+
+
+def test_configure_server_404_names_url_and_exits_nonzero(monkeypatch, tmp_path):
+    cfg_dir = tmp_path / ".wso2-runner"
+    cfg_file = cfg_dir / ".env"
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
+
+    def fake_get(url, *a, **k):
+        return _FakeResponse({}, status_code=404)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    result = runner.invoke(cli.app, ["configure", "--server", "https://cloud.example.com"])
+
+    assert result.exit_code != 0
+    assert "https://cloud.example.com" in result.output
+    assert "404" in result.output
+
+
+def test_configure_server_non_json_body_names_url_and_exits_nonzero(monkeypatch, tmp_path):
+    cfg_dir = tmp_path / ".wso2-runner"
+    cfg_file = cfg_dir / ".env"
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
+
+    def fake_get(url, *a, **k):
+        return _FakeNonJsonResponse()
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    result = runner.invoke(cli.app, ["configure", "--server", "https://cloud.example.com"])
+
+    assert result.exit_code != 0
+    assert "https://cloud.example.com" in result.output
+
+
+def test_configure_server_missing_key_names_url_and_exits_nonzero(monkeypatch, tmp_path):
+    cfg_dir = tmp_path / ".wso2-runner"
+    cfg_file = cfg_dir / ".env"
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
+
+    def fake_get(url, *a, **k):
+        # asgardeo_client_id missing entirely -- a backend too old to have
+        # been updated alongside this endpoint might do this.
+        return _FakeResponse({"asgardeo_org": "wso2"})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    result = runner.invoke(cli.app, ["configure", "--server", "https://cloud.example.com"])
+
+    assert result.exit_code != 0
+    assert "https://cloud.example.com" in result.output
+
+
+def test_configure_server_failure_writes_no_config_file_at_all(monkeypatch, tmp_path):
+    """A failed fetch must exit before any prompt is asked and before
+    anything is written -- there is no partial config, and nothing here can
+    leave a fresh machine with the http://localhost:8000 default silently
+    treated as configured."""
+    cfg_dir = tmp_path / ".wso2-runner"
+    cfg_file = cfg_dir / ".env"
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
+
+    def fake_get(url, *a, **k):
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    result = runner.invoke(cli.app, ["configure", "--server", "https://cloud.example.com"])
+
+    assert result.exit_code != 0
+    assert not cfg_file.exists()
+
+
+def test_configure_server_failure_leaves_an_existing_config_file_untouched(monkeypatch, tmp_path):
+    """Same guarantee as above, but against a machine that was already
+    configured -- a bad --server must not overwrite CLOUD_URL with a
+    partial value or fall back to localhost, it must change nothing."""
+    cfg_dir = tmp_path / ".wso2-runner"
+    cfg_file = cfg_dir / ".env"
+    cfg_dir.mkdir()
+    original_content = (
+        "CLOUD_URL=https://old-cloud.example.com\n"
+        "ASGARDEO_ORG=old-org\n"
+        "ASGARDEO_CLIENT_ID=old-client\n"
+    )
+    cfg_file.write_text(original_content)
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
+
+    def fake_get(url, *a, **k):
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    result = runner.invoke(cli.app, ["configure", "--server", "https://cloud.example.com"])
+
+    assert result.exit_code != 0
+    assert cfg_file.read_text() == original_content
+    assert "localhost" not in cfg_file.read_text()
+
+
+def test_configure_without_server_leaves_the_three_server_keys_untouched(monkeypatch, tmp_path):
+    cfg_dir = tmp_path / ".wso2-runner"
+    cfg_file = cfg_dir / ".env"
+    cfg_dir.mkdir()
+    cfg_file.write_text(
+        "CLOUD_URL=https://cloud.example.com\n"
+        "ASGARDEO_ORG=wso2\n"
+        "ASGARDEO_CLIENT_ID=abc-123\n"
+    )
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
+
+    def fake_get(url, *a, **k):
+        raise AssertionError("no --server was given, httpx.get should never be called")
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    input_text = "someone@wso2.com\nollama\n\n1\n"
+    result = runner.invoke(cli.app, ["configure"], input=input_text)
+
+    assert result.exit_code == 0, result.output
+    content = cfg_file.read_text()
+    assert "CLOUD_URL=https://cloud.example.com" in content
+    assert "ASGARDEO_ORG=wso2" in content
+    assert "ASGARDEO_CLIENT_ID=abc-123" in content
+
+
 # ── doctor ───────────────────────────────────────────────────────────────
 
 
 class _FakeResponse:
-    def __init__(self, data):
+    def __init__(self, data, status_code=200):
         self._data = data
+        self.status_code = status_code
 
     def json(self):
         return self._data
+
+
+class _FakeNonJsonResponse:
+    """A 200 whose body isn't JSON -- e.g. an nginx or load balancer error
+    page returned instead of the API response. `.json()` raises the same
+    way httpx's real `Response.json()` does when the body doesn't parse."""
+
+    def __init__(self):
+        self.status_code = 200
+
+    def json(self):
+        raise ValueError("not JSON")
 
 
 def test_doctor_reports_backend_health_and_missing_client_id(monkeypatch):

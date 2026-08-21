@@ -8,17 +8,105 @@ import typer
 app = typer.Typer(help="WSO2 Compliance Evidence Runner — polls cloud backend and runs browser automation locally.")
 
 
+def _fetch_server_config(server: str) -> dict[str, str]:
+    """Fetch CLOUD_URL / ASGARDEO_ORG / ASGARDEO_CLIENT_ID for `--server`.
+
+    Talks to GET {server}/api/runner-config (see
+    backend/app/api/routes/runner_config.py), which hands back
+    {"asgardeo_org": ..., "asgardeo_client_id": ...} with no auth required —
+    the Runner needs these before it can log in at all, so there is no
+    token yet to present.
+
+    On any failure this prints a plain message naming the URL that was
+    tried and raises typer.Exit(1) — it never returns a partial dict. The
+    whole reason `--server` exists is to stop a fresh Runner from silently
+    inheriting the http://localhost:8000 default in config.py, which looks
+    configured but polls nothing. A --server that half-works (e.g. writes
+    CLOUD_URL but not the org, because the response was odd) recreates
+    exactly that trap in a new shape: `configure` would exit 0, the file
+    would exist, and the Runner would still fail to reach anything real.
+    Better to write nothing at all and make the operator try again.
+    """
+    import httpx
+
+    url = f"{server.rstrip('/')}/api/runner-config"
+
+    try:
+        response = httpx.get(url, timeout=5)
+    except Exception as exc:
+        typer.echo(f"\nCould not reach {url}: {exc}\n", err=True)
+        raise typer.Exit(1)
+
+    if response.status_code != 200:
+        typer.echo(
+            f"\n{url} returned HTTP {response.status_code}. Check the "
+            "server address — or the backend there may be too old to have "
+            "this endpoint.\n",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    try:
+        data = response.json()
+    except Exception:
+        typer.echo(
+            f"\n{url} did not return JSON. Check the server address — this "
+            "usually means it's wrong (e.g. pointing at a login page or a "
+            "load balancer's error page instead of the backend).\n",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    asgardeo_org = data.get("asgardeo_org") if isinstance(data, dict) else None
+    asgardeo_client_id = data.get("asgardeo_client_id") if isinstance(data, dict) else None
+    if not asgardeo_org or not asgardeo_client_id:
+        typer.echo(
+            f"\n{url} responded, but the body is missing asgardeo_org or "
+            "asgardeo_client_id. Check the server address — or the backend "
+            "there may be too old to have this endpoint.\n",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    return {
+        "CLOUD_URL": server,
+        "ASGARDEO_ORG": asgardeo_org,
+        "ASGARDEO_CLIENT_ID": asgardeo_client_id,
+    }
+
+
 @app.command()
-def configure():
+def configure(
+    server: str = typer.Option(
+        None,
+        "--server",
+        "-s",
+        help="Cloud backend URL, e.g. https://portal.example.com — fetches "
+        "the Asgardeo org and client ID from it and saves CLOUD_URL "
+        "alongside them, so you never hand edit ~/.wso2-runner/.env",
+    ),
+):
     """First-time setup wizard — saves your LLM credentials to ~/.wso2-runner/.env."""
     from wso2_runner.config import CONFIG_DIR, CONFIG_FILE
     from wso2_runner.env_file import read_env_values, write_config_file
+
+    # Fetched before anything is printed or asked, deliberately. A wrong
+    # --server is a typo or a stale URL, and the sooner that's reported the
+    # better — nobody should have to answer eight prompts about their LLM
+    # provider only to be told at the very end that the server address was
+    # wrong and none of it was saved anyway.
+    server_updates: dict[str, str] = {}
+    if server is not None:
+        server_updates = _fetch_server_config(server)
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     print("\nWSO2 Compliance Runner — setup wizard")
     print("=" * 42)
     print("This saves your config to ~/.wso2-runner/.env\n")
+
+    if server_updates:
+        print(f"Fetched Asgardeo org and client ID from {server}\n")
 
     # Read what's already on disk before asking anything, so a value this
     # wizard already knows (e.g. re-running configure on a machine that's
@@ -88,10 +176,16 @@ def configure():
         print(f"\n  Tip: drag the agent's Chrome window to monitor {monitor} after it opens.")
         print("  Chrome remembers the position — you only need to do this once.")
 
-    # Update the file in place rather than replacing it — CLOUD_URL,
-    # ASGARDEO_ORG and ASGARDEO_CLIENT_ID are set by hand per the setup
-    # docs, this wizard never asks about them, and a plain write_text() of
-    # only the keys collected above used to delete them outright. See
+    # CLOUD_URL, ASGARDEO_ORG and ASGARDEO_CLIENT_ID come from --server
+    # above when it's given, and are otherwise set by hand per the setup
+    # docs — this wizard's own prompts never touch them. Merged in here,
+    # right before the single write, rather than fetched later, so a run
+    # without --server writes exactly the keys it always did.
+    updates.update(server_updates)
+
+    # Update the file in place rather than replacing it — a plain
+    # write_text() of only the keys collected above used to delete
+    # everything else in the file, including these three. See
     # write_config_file() for how the merge, the atomic write, and the file
     # permissions are handled.
     write_config_file(CONFIG_FILE, updates)
