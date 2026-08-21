@@ -1,0 +1,89 @@
+# Runner release
+#
+# This is the first GitHub Actions workflow in this repository, so here is
+# the whole mental model in one place.
+#
+# Trigger: pushing a tag that matches "runner-v*", for example "runner-v0.1.0".
+# The "runner-" prefix is deliberate. This is a monorepo: apps/grc-platform
+# also lives here and will one day want its own tags and its own releases,
+# so tags are namespaced by app rather than being bare version numbers.
+#
+# What it does: builds an sdist and a wheel from apps/evidence-app/runner
+# and attaches both files to a GitHub Release named after the tag.
+#
+# How to cut a release:
+#   1. Confirm the version in apps/evidence-app/runner/pyproject.toml is the
+#      one you want to publish. This workflow reads that file, it does not
+#      set the version for you.
+#   2. Tag that commit and push the tag, e.g.:
+#        git tag runner-v0.1.0
+#        git push origin runner-v0.1.0
+#   3. Pushing the tag triggers this workflow. It builds the package and
+#      creates a GitHub Release called "runner-v0.1.0" with the sdist and
+#      wheel attached as downloadable files.
+#
+# Only first-party GitHub actions are used here (actions/checkout,
+# actions/setup-python), plus the gh CLI that ships preinstalled on GitHub's
+# runners, authenticated with the automatic, run-scoped GITHUB_TOKEN. No
+# third-party marketplace action is used anywhere in this file. This is a
+# governance, risk and compliance tool: a third-party action would mean
+# arbitrary code, from a publisher we do not control, running with access
+# to this repository's tokens on every release, and that is a supply-chain
+# question nobody on this project has signed up to answer.
+
+name: Runner release
+
+on:
+  push:
+    tags:
+      - "runner-v*"
+
+# Explicit and minimal. This job only needs to read the repository's code
+# and create a release with files attached, so it gets exactly those two
+# permissions and nothing else.
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/evidence-app/runner
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      # Pinned to 3.11, the floor set by runner/pyproject.toml's
+      # "requires-python = >=3.11". Building on the oldest supported version
+      # is deliberate: it is the version most likely to catch a dependency
+      # or syntax choice that would break for someone on that same floor.
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install the build tool
+        run: python -m pip install --upgrade build
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      # The version is read out of pyproject.toml, never hardcoded here.
+      # Hardcoding it in the workflow would give the release a second place
+      # to go stale against the package it is supposedly describing.
+      - name: Read the version from pyproject.toml
+        id: version
+        run: |
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Create the release and upload the built files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --title "Runner v${{ steps.version.outputs.version }}" \
+            --notes "wso2-runner v${{ steps.version.outputs.version }}. Install with: uv tool install <link to this release's .whl file>. See apps/evidence-app/runner/README.md for the full install steps." \
+            dist/*
