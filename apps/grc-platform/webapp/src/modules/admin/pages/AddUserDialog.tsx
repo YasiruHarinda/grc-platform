@@ -249,13 +249,13 @@ export default function AddUserDialog({
               </ToggleButtonGroup>
               <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>
                 Internal: a WSO2-org employee, resolved via the SCIM directory below. External: not available in
-                this console yet — that provisioning flow is being built separately.
+                this console yet that provisioning flow is being built separately.
               </Typography>
             </FormControl>
 
             {userType === "EXTERNAL" ? (
               <Alert severity="info">
-                External user provisioning isn't available here yet — it's a separate flow, coming in a later
+                External user provisioning isn't available here yet - it's a separate flow, coming in a later
                 update.
               </Alert>
             ) : selected ? (
@@ -298,7 +298,7 @@ export default function AddUserDialog({
                   placeholder="Search by name or email…"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  helperText="Search the user by name or email — only WSO2-org accounts are eligible."
+                  helperText="Search the user by name or email  only WSO2-org accounts are eligible."
                 />
 
                 <Box sx={{ mt: 1.5, minHeight: 60 }}>
@@ -377,7 +377,7 @@ export default function AddUserDialog({
             </Typography>
             {!pendingGrants.length ? (
               <Typography variant="body2" color="text.secondary" fontStyle="italic">
-                No grants added yet — add at least one below before creating.
+                No grants added yet. Add at least one below before creating.
               </Typography>
             ) : (
               <Stack spacing={1}>
