@@ -49,10 +49,12 @@ type searchTeamsResponse struct {
 	Total int       `json:"total"`
 }
 
-// List mirrors the MySQL implementation: ACTIVE teams only, filtered by the
-// semantic Type value, ordered by name. The entity applies the same ORDER BY
-// name, so ordering is preserved. The entity requires pagination while the
-// MySQL query returned every match, so this pages until a short page.
+// List mirrors the MySQL implementation: ACTIVE teams only by default,
+// filtered by the semantic Type value, ordered by name — unless
+// filter.IncludeInactive is set, in which case every status is returned. The
+// entity applies the same ORDER BY name, so ordering is preserved. The entity
+// requires pagination while the MySQL query returned every match, so this
+// pages until a short page.
 func (r *teamRepository) List(ctx context.Context, filter model.ListTeamsFilter) ([]*model.Team, error) {
 	// Semantic filter values expand to the same team_type sets the MySQL
 	// implementation used; an empty Type sends no team-type filter at all.
@@ -64,11 +66,16 @@ func (r *teamRepository) List(ctx context.Context, filter model.ListTeamsFilter)
 		teamTypeKeys = []string{"ASSIGNMENT", "BOTH"}
 	}
 
+	statusKey := "ACTIVE"
+	if filter.IncludeInactive {
+		statusKey = ""
+	}
+
 	var teams []*model.Team
 	for offset := 0; ; offset += pageLimit {
 		body := map[string]any{
 			"teamTypeKeys": teamTypeKeys,
-			"statusKey":    "ACTIVE",
+			"statusKey":    statusKey,
 			"pagination":   map[string]int{"limit": pageLimit, "offset": offset},
 		}
 		var resp searchTeamsResponse
@@ -91,14 +98,37 @@ func (r *teamRepository) List(ctx context.Context, filter model.ListTeamsFilter)
 	}
 }
 
-// Create is not implemented, matching the MySQL implementation. The entity
-// exposes POST /risk/teams, but no route reaches this method today and
-// implementing it here would be a behaviour change, not a migration.
+// Create provisions a new risk team via the entity's POST /risk/teams — the
+// Admin Console's Risk Teams screen, the first real caller of this method
+// (previously errNotImplemented; nothing reached it before).
 func (r *teamRepository) Create(ctx context.Context, req model.CreateTeamRequest, createdBy string) (*model.Team, error) {
-	return nil, errNotImplemented
+	body := map[string]any{
+		"name":        req.Name,
+		"code":        req.Code,
+		"description": req.Description,
+		"teamType":    req.TeamType,
+		"status":      "ACTIVE",
+		"createdBy":   createdBy,
+	}
+	var t entTeam
+	if err := r.c.Post(ctx, "/risk/teams", body, &t); err != nil {
+		return nil, fmt.Errorf("create team: %w", err)
+	}
+	return &model.Team{ID: t.ID, Name: t.Name, Code: t.Code, Description: t.Description, TeamType: t.TeamType, Status: t.Status}, nil
 }
 
-// Update is not implemented, matching the MySQL implementation. See Create.
+// Update edits a risk team via the entity's PATCH /risk/teams/{id}.
 func (r *teamRepository) Update(ctx context.Context, id int, req model.UpdateTeamRequest, updatedBy string) error {
-	return errNotImplemented
+	body := map[string]any{
+		"name":        req.Name,
+		"code":        req.Code,
+		"description": req.Description,
+		"teamType":    req.TeamType,
+		"status":      req.Status,
+		"updatedBy":   updatedBy,
+	}
+	if err := r.c.Patch(ctx, fmt.Sprintf("/risk/teams/%d", id), body, &entTeam{}); err != nil {
+		return fmt.Errorf("update team %d: %w", id, err)
+	}
+	return nil
 }

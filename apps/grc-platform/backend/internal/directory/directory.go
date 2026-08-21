@@ -27,6 +27,7 @@ package directory
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -174,6 +175,37 @@ func (s *Service) bulkLookup(uuid string) (Person, bool) {
 	defer s.bulkMu.RUnlock()
 	p, ok := s.bulk[uuid]
 	return p, ok
+}
+
+// SearchDomain returns every bulk-snapshot person whose name or email
+// contains query, case-insensitively. Powers the Admin Console's "Add User"
+// typeahead (see ADMIN_CONSOLE_DESIGN.md §5.1) — a substring match over the
+// snapshot StartBulkRefresh already keeps warm, so this costs no directory
+// call and cannot lag by more than one refresh interval. Deliberately not a
+// live SCIM search: this is an admin-only, low-frequency lookup, not worth a
+// new dependency on the request path.
+//
+// An empty query returns nothing rather than the whole snapshot — the caller
+// is expected to enforce a minimum length before calling this, but refusing
+// "" here too means that requirement can never be silently skipped.
+//
+// Results are unordered; callers needing a stable order should sort.
+func (s *Service) SearchDomain(query string) []Person {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return []Person{}
+	}
+
+	s.bulkMu.RLock()
+	defer s.bulkMu.RUnlock()
+
+	out := make([]Person, 0, 8)
+	for _, p := range s.bulk {
+		if strings.Contains(strings.ToLower(p.DisplayName), query) || strings.Contains(strings.ToLower(p.Email), query) {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // StartBulkRefresh fetches every directory user whose email is in domain (see

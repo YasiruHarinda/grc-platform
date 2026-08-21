@@ -182,9 +182,18 @@ const (
 // shared_seed_data.sql, so they may only be granted GLOBAL, never team-scoped
 // (see shared.sql's role.module table comment).
 const (
-	// ManageUsers gates the (not yet wired up) admin grant editor — see
-	// entity/compliance-entity/internal/server/routes.go's grant routes comment.
+	// ManageUsers gates the Admin Console's Users screen: provisioning
+	// platform users and granting/revoking role grants (internal/admin/handler).
 	ManageUsers = "MANAGE_USERS"
+	// ManageRiskHub gates the Admin Console's Risk Teams/Categories/Compliance
+	// References screens (internal/risk/handler's write routes) — a separate
+	// privilege from ManageUsers so the two can diverge later even though only
+	// grc-platform-admin holds either today (see ADMIN_CONSOLE_DESIGN.md §4).
+	ManageRiskHub = "MANAGE_RISK_HUB"
+	// ManageAuditHub is the Audit Hub equivalent of ManageRiskHub. Declared now
+	// for symmetry even though no route checks it yet — the Audit Hub
+	// reference-data screens are a stubbed, later phase of this same project.
+	ManageAuditHub = "MANAGE_AUDIT_HUB"
 )
 
 // AllRiskPrivileges returns every active Risk Hub privilege.

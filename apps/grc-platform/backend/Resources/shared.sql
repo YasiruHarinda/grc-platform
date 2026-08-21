@@ -77,7 +77,7 @@ SET FOREIGN_KEY_CHECKS = 0;
 CREATE TABLE IF NOT EXISTS `user` (
   id            INT          NOT NULL AUTO_INCREMENT,
   uuid          CHAR(36)     NULL,
-  email         VARCHAR(255) NOT NULL,
+  email         VARCHAR(255) NULL,
   display_name  VARCHAR(255) NOT NULL,
   user_type     ENUM('INTERNAL','EXTERNAL') NOT NULL DEFAULT 'INTERNAL',
   status        ENUM('ACTIVE','INACTIVE','REMOVED') NOT NULL DEFAULT 'ACTIVE',
@@ -118,6 +118,29 @@ SET @add_uuid_sql = IF(@user_has_uuid = 0,
 PREPARE add_uuid_stmt FROM @add_uuid_sql;
 EXECUTE add_uuid_stmt;
 DEALLOCATE PREPARE add_uuid_stmt;
+
+-- email becomes NULLable here too: the Admin Console's "Add User" (see
+-- ADMIN_CONSOLE_DESIGN.md) provisions a platform user by uuid alone — nothing
+-- else about them is known or wanted, per the same security review noted
+-- above — and uq_user_email cannot take a second "" once the first uuid-only
+-- row has one. display_name stays NOT NULL: it already receives "" rather
+-- than a real value from every caller migrating off it (see
+-- internal/user/handler/resolve.go's comment), which satisfies NOT NULL with
+-- no schema change, so there is nothing to relax there.
+--
+-- Guarded on IS_NULLABLE rather than column existence — email has existed
+-- since before this migration started, so the existence check the uuid guard
+-- above uses would always be true and never fire.
+SET @user_email_nullable = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user' AND COLUMN_NAME = 'email' AND IS_NULLABLE = 'YES'
+);
+SET @make_email_nullable_sql = IF(@user_email_nullable = 0,
+  'ALTER TABLE `user` MODIFY COLUMN email VARCHAR(255) NULL',
+  'SELECT 1');
+PREPARE make_email_nullable_stmt FROM @make_email_nullable_sql;
+EXECUTE make_email_nullable_stmt;
+DEALLOCATE PREPARE make_email_nullable_stmt;
 
 
 -- -----------------------------------------------------------------------------

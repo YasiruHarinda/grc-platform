@@ -215,7 +215,7 @@ func (r *userRepo) CreateUser(ctx context.Context, req domain.CreateUserRequest)
 			"VALUES (?, ?, ?, ?, ?, ?, ?) "+
 			"ON DUPLICATE KEY UPDATE "+
 			"updated_by = VALUES(updated_by), uuid = COALESCE(VALUES(uuid), uuid), id = LAST_INSERT_ID(id)",
-		nullableUUID(req.UUID), req.Email, req.DisplayName, userType, status, req.CreatedBy, req.CreatedBy)
+		nullableUUID(req.UUID), nullableEmail(req.Email), req.DisplayName, userType, status, req.CreatedBy, req.CreatedBy)
 	if err != nil {
 		return nil, fmt.Errorf("user.Create: %w", err)
 	}
@@ -239,13 +239,21 @@ func (r *userRepo) CreateUser(ctx context.Context, req domain.CreateUserRequest)
 	// the deferred Rollback undoes the write. EqualFold because uq_user_email is
 	// case-insensitive (utf8mb4_unicode_ci), so the stored spelling may differ
 	// from the requested one without being a different row.
-	var storedEmail string
-	if err = tx.QueryRowContext(ctx, "SELECT email FROM `user` WHERE id = ?", id).Scan(&storedEmail); err != nil {
-		return nil, fmt.Errorf("user.Create readback: %w", err)
-	}
-	if !strings.EqualFold(strings.TrimSpace(storedEmail), strings.TrimSpace(req.Email)) {
-		return nil, &apierror.ValidationError{
-			Msg: fmt.Sprintf("uuid %q is already assigned to a different user", req.UUID),
+	//
+	// Skipped entirely when req.Email is empty (the admin console's uuid-only
+	// path): an empty email makes no claim about the row's real email to
+	// verify, and the row this upsert touched may well already have a real one
+	// from an earlier, email-keyed provision (e.g. via the Action Owner
+	// resolve flow) — that's a legitimate re-provision-by-uuid, not a hijack.
+	if req.Email != "" {
+		var storedEmail sql.NullString
+		if err = tx.QueryRowContext(ctx, "SELECT email FROM `user` WHERE id = ?", id).Scan(&storedEmail); err != nil {
+			return nil, fmt.Errorf("user.Create readback: %w", err)
+		}
+		if !strings.EqualFold(strings.TrimSpace(storedEmail.String), strings.TrimSpace(req.Email)) {
+			return nil, &apierror.ValidationError{
+				Msg: fmt.Sprintf("uuid %q is already assigned to a different user", req.UUID),
+			}
 		}
 	}
 
@@ -449,13 +457,16 @@ func scanUser(s scanner) (*domain.User, error) {
 	u.RiskTeamIDs = []int{}
 	// uuid is nullable while the identity migration is in progress — rows
 	// predating it, or whose email matched no Asgardeo account, have none.
-	// Flattened to "" so callers test one thing (empty) rather than two.
-	var uuid sql.NullString
-	if err := s.Scan(&u.ID, &uuid, &u.Email, &u.DisplayName, &u.UserType, &u.Status,
+	// email is nullable too, for uuid-only rows provisioned via the Admin
+	// Console (see nullableEmail). Both flattened to "" so callers test one
+	// thing (empty) rather than two.
+	var uuid, email sql.NullString
+	if err := s.Scan(&u.ID, &uuid, &email, &u.DisplayName, &u.UserType, &u.Status,
 		&u.CreatedOn, &u.UpdatedOn); err != nil {
 		return nil, err
 	}
 	u.UUID = uuid.String
+	u.Email = email.String
 	return &u, nil
 }
 
@@ -469,6 +480,18 @@ func nullableUUID(uuid string) any {
 		return nil
 	}
 	return uuid
+}
+
+// nullableEmail maps an absent email to SQL NULL rather than the empty
+// string — same reasoning as nullableUUID. uq_user_email permits any number
+// of NULLs but only one "", so storing "" would let the first uuid-only
+// (admin console) provision succeed and make every subsequent one a
+// duplicate-key failure.
+func nullableEmail(email string) any {
+	if strings.TrimSpace(email) == "" {
+		return nil
+	}
+	return email
 }
 
 // nullableInt converts *int to sql.NullInt64 for optional FK columns.

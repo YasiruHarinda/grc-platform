@@ -81,8 +81,13 @@ func (s *userService) GetUserByUUID(ctx context.Context, uuid string) (domain.Us
 }
 
 func (s *userService) CreateUser(ctx context.Context, req domain.CreateUserRequest) (domain.User, error) {
-	if req.Email == "" {
-		return domain.User{}, &apierror.ValidationError{Msg: "email is required"}
+	// Either identity anchor is enough: an HR-resolved employee is keyed by
+	// email (uuid may still be unknown), while the admin console's "Add User"
+	// provisions by uuid alone (email is being phased out — see the comment on
+	// CreateUserRequest.Email). Refusing both-empty is the only thing this
+	// still guards against.
+	if strings.TrimSpace(req.Email) == "" && strings.TrimSpace(req.UUID) == "" {
+		return domain.User{}, &apierror.ValidationError{Msg: "email or uuid is required"}
 	}
 	// DisplayName is deliberately not required: callers are moving off storing
 	// one at all (see risk/handler's resolve.go, which now sends "" here on

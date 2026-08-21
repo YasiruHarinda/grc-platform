@@ -135,9 +135,22 @@ type HistoryRepository interface {
 // calling it — so it was dropped rather than migrated.
 type ComplianceReferenceRepository interface {
 	List(ctx context.Context) ([]*model.ComplianceReference, error)
+	Create(ctx context.Context, req model.CreateComplianceRefRequest, createdBy string) (*model.ComplianceReference, error)
+	Update(ctx context.Context, id int, req model.UpdateComplianceRefRequest, updatedBy string) (*model.ComplianceReference, error)
+	// Delete removes a reference outright — there is no status column on this
+	// table to soft-delete instead. The entity refuses (409) when the
+	// reference is still tagged on any risk, since the junction table's FK is
+	// ON DELETE CASCADE and would otherwise silently untag it from every risk
+	// that uses it rather than erroring.
+	Delete(ctx context.Context, id int) error
 }
 
 // RiskCategoryRepository is the data-access contract for risk categories.
 type RiskCategoryRepository interface {
 	List(ctx context.Context) ([]*model.RiskCategory, error)
+	Create(ctx context.Context, req model.CreateRiskCategoryRequest, createdBy string) (*model.RiskCategory, error)
+	Update(ctx context.Context, id int, req model.UpdateRiskCategoryRequest, updatedBy string) (*model.RiskCategory, error)
+	// Delete removes a category outright — same no-status-column,
+	// refuse-if-in-use reasoning as ComplianceReferenceRepository.Delete.
+	Delete(ctx context.Context, id int) error
 }

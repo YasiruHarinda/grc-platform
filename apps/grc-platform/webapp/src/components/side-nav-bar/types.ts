@@ -33,4 +33,22 @@ export interface NavSection {
   label: string; // section heading, e.g. "Audit Hub"
   icon: ComponentType<{ size?: number }>;
   items: NavItem[];
+  // When set, the ENTIRE section is hidden until the caller holds AT LEAST
+  // ONE of these privileges (and hidden, not shown, while that is still
+  // loading — fail closed for a whole section, unlike a single item's
+  // requiredPrivilege). Any-of, not all-of: the Admin Console has three
+  // section-relevant privileges (Users/Manage Risk Hub/Manage Audit Hub) that
+  // happen to be held together by grc-platform-admin today but are declared
+  // separately so they CAN diverge later — someone holding only one should
+  // still see the section (with only their own item visible, via each
+  // NavItem's own requiredPrivilege), not have the whole section hidden.
+  //
+  // Risk Hub and Audit Hub deliberately don't set this: their sections are
+  // always visible, with each route gated individually via PrivilegeGuard,
+  // because an empty/403'd item within an otherwise-relevant section is a
+  // normal state for those hubs. The Admin Console is different — there is
+  // no safe "empty" version of an admin console for a random employee to
+  // land on, and its mere presence in the nav invites curiosity-clicking —
+  // so its whole section is withheld instead (see modules/admin/nav.ts).
+  hideSectionWithoutPrivilege?: string[];
 }

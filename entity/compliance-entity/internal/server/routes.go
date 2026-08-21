@@ -108,7 +108,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	riskAnalyticsSvc := service.NewRiskAnalyticsService(riskAnalyticsRepo)
 
 	// ── Handlers ─────────────────────────────────────────────────────────────
-	userH := handler.NewUserHandler(userSvc)
+	userH := handler.NewUserHandler(userSvc, grantSvc)
 	auditTeamH := handler.NewAuditTeamHandler(auditTeamSvc)
 	auditFrameworkH := handler.NewAuditFrameworkHandler(auditFrameworkSvc)
 	frameworkControlH := handler.NewFrameworkControlHandler(frameworkControlSvc)
@@ -192,17 +192,16 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	// backend is still live would 404 its every authenticated request.
 	mux.HandleFunc("GET /grants/by-uuid/{uuid}", grantH.GrantsByUUID)
 	mux.HandleFunc("GET /grants/candidates", grantH.Candidates)
-	// GrantsByUserID / CreateGrant / RevokeGrant are deliberately NOT wired up
-	// yet — held back rather than shipped with no caller. This service has no
-	// authorisation of its own (see internal/middleware — correlation ID,
-	// logging, recovery, timeout, and a header pass-through for attribution;
-	// nothing checks who's calling), so it trusts network/gateway placement
-	// entirely. Exposing role-mutation endpoints with zero consumer would
-	// widen that trust boundary for no product benefit. Re-add
-	// "GET /grants/user/{id}", "POST /grants/user/{id}", and
-	// "DELETE /grants/user/{id}/{grantId}?revokedBy=" (grantH.GrantsByUserID /
-	// grantH.CreateGrant / grantH.RevokeGrant) in the same PR that lands the
-	// MANAGE_USERS-gated admin grant editor that will actually call them.
+	// GrantsByUserID / CreateGrant / RevokeGrant: the Admin Console's grant
+	// editor (internal/admin/handler on the GRC backend) is that consumer now,
+	// so these are wired up. This service still has no authorisation of its
+	// own (see internal/middleware — correlation ID, logging, recovery,
+	// timeout, and a header pass-through for attribution; nothing checks who's
+	// calling), so it continues to trust network/gateway placement entirely —
+	// MANAGE_USERS is enforced by the GRC backend before it ever calls here.
+	mux.HandleFunc("GET /grants/user/{id}", grantH.GrantsByUserID)
+	mux.HandleFunc("POST /grants/user/{id}", grantH.CreateGrant)
+	mux.HandleFunc("DELETE /grants/user/{id}/{grantId}", grantH.RevokeGrant)
 	mux.HandleFunc("GET /roles", grantH.ListRoles)
 
 	// Audit teams
@@ -306,13 +305,19 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 
 	// Risk scores (reference data — read only)
 	mux.HandleFunc("GET /risk/scores", riskScoreH.ListRiskScores)
+
+	// Risk categories
 	mux.HandleFunc("GET /risk/categories", riskCategoryH.ListRiskCategories)
+	mux.HandleFunc("POST /risk/categories", riskCategoryH.CreateRiskCategory)
+	mux.HandleFunc("PATCH /risk/categories/{id}", riskCategoryH.UpdateRiskCategory)
+	mux.HandleFunc("DELETE /risk/categories/{id}", riskCategoryH.DeleteRiskCategory)
 
 	// Risk compliance references
 	mux.HandleFunc("POST /risk/compliance-references/search", riskReferenceH.SearchRiskReferences)
 	mux.HandleFunc("GET /risk/compliance-references/{id}", riskReferenceH.GetRiskReferenceByID)
 	mux.HandleFunc("POST /risk/compliance-references", riskReferenceH.CreateRiskReference)
 	mux.HandleFunc("PATCH /risk/compliance-references/{id}", riskReferenceH.UpdateRiskReference)
+	mux.HandleFunc("DELETE /risk/compliance-references/{id}", riskReferenceH.DeleteRiskReference)
 
 	// Risks
 	mux.HandleFunc("GET /risks/next-sequence-number", riskH.NextSequenceNumber)

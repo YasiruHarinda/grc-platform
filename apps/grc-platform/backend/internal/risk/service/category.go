@@ -26,6 +26,9 @@ import (
 // RiskCategoryService defines business operations for risk categories.
 type RiskCategoryService interface {
 	List(ctx context.Context) ([]*model.RiskCategory, error)
+	Create(ctx context.Context, req model.CreateRiskCategoryRequest, createdBy string) (*model.RiskCategory, error)
+	Update(ctx context.Context, id int, req model.UpdateRiskCategoryRequest, updatedBy string) (*model.RiskCategory, error)
+	Delete(ctx context.Context, id int) error
 }
 
 type riskCategoryService struct {
@@ -38,4 +41,16 @@ func NewRiskCategoryService(repo repository.RiskCategoryRepository) RiskCategory
 
 func (s *riskCategoryService) List(ctx context.Context) ([]*model.RiskCategory, error) {
 	return s.repo.List(ctx)
+}
+
+func (s *riskCategoryService) Create(ctx context.Context, req model.CreateRiskCategoryRequest, createdBy string) (*model.RiskCategory, error) {
+	return s.repo.Create(ctx, req, createdBy)
+}
+
+func (s *riskCategoryService) Update(ctx context.Context, id int, req model.UpdateRiskCategoryRequest, updatedBy string) (*model.RiskCategory, error) {
+	return s.repo.Update(ctx, id, req, updatedBy)
+}
+
+func (s *riskCategoryService) Delete(ctx context.Context, id int) error {
+	return s.repo.Delete(ctx, id)
 }

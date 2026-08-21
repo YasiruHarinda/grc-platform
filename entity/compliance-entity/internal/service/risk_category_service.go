@@ -19,6 +19,7 @@ package service
 import (
 	"context"
 
+	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/apierror"
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/domain"
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/repository"
 )
@@ -41,4 +42,42 @@ func (s *riskCategoryService) ListRiskCategories(ctx context.Context) (domain.Li
 		cats = []domain.RiskCategory{}
 	}
 	return domain.ListRiskCategoriesResponse{Categories: cats}, nil
+}
+
+func (s *riskCategoryService) CreateRiskCategory(ctx context.Context, req domain.CreateRiskCategoryRequest) (domain.RiskCategory, error) {
+	if req.Name == "" {
+		return domain.RiskCategory{}, &apierror.ValidationError{Msg: "name is required"}
+	}
+	if req.CreatedBy == "" {
+		return domain.RiskCategory{}, &apierror.ValidationError{Msg: "createdBy is required"}
+	}
+	c, err := s.repo.CreateRiskCategory(ctx, req)
+	if err != nil {
+		return domain.RiskCategory{}, err
+	}
+	return *c, nil
+}
+
+func (s *riskCategoryService) UpdateRiskCategory(ctx context.Context, id int, req domain.UpdateRiskCategoryRequest) (domain.RiskCategory, error) {
+	if id <= 0 {
+		return domain.RiskCategory{}, &apierror.ValidationError{Msg: "category id must be a positive integer"}
+	}
+	if req.UpdatedBy == "" {
+		return domain.RiskCategory{}, &apierror.ValidationError{Msg: "updatedBy is required"}
+	}
+	if req.Name != nil && *req.Name == "" {
+		return domain.RiskCategory{}, &apierror.ValidationError{Msg: "name cannot be empty"}
+	}
+	c, err := s.repo.UpdateRiskCategory(ctx, id, req)
+	if err != nil {
+		return domain.RiskCategory{}, err
+	}
+	return *c, nil
+}
+
+func (s *riskCategoryService) DeleteRiskCategory(ctx context.Context, id int) error {
+	if id <= 0 {
+		return &apierror.ValidationError{Msg: "category id must be a positive integer"}
+	}
+	return s.repo.DeleteRiskCategory(ctx, id)
 }

@@ -27,6 +27,8 @@ import (
 type ComplianceReferenceService interface {
 	List(ctx context.Context) ([]*model.ComplianceReference, error)
 	Create(ctx context.Context, req model.CreateComplianceRefRequest, createdBy string) (*model.ComplianceReference, error)
+	Update(ctx context.Context, id int, req model.UpdateComplianceRefRequest, updatedBy string) (*model.ComplianceReference, error)
+	Delete(ctx context.Context, id int) error
 }
 
 type complianceReferenceService struct {
@@ -42,6 +44,13 @@ func (s *complianceReferenceService) List(ctx context.Context) ([]*model.Complia
 }
 
 func (s *complianceReferenceService) Create(ctx context.Context, req model.CreateComplianceRefRequest, createdBy string) (*model.ComplianceReference, error) {
-	// TODO: delegate to repo
-	return nil, nil
+	return s.repo.Create(ctx, req, createdBy)
+}
+
+func (s *complianceReferenceService) Update(ctx context.Context, id int, req model.UpdateComplianceRefRequest, updatedBy string) (*model.ComplianceReference, error) {
+	return s.repo.Update(ctx, id, req, updatedBy)
+}
+
+func (s *complianceReferenceService) Delete(ctx context.Context, id int) error {
+	return s.repo.Delete(ctx, id)
 }

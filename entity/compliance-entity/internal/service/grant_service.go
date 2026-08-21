@@ -39,6 +39,11 @@ const manageUsersPrivilege = "MANAGE_USERS"
 // be stated honestly in a security review.
 type GrantService interface {
 	GrantsForUserID(ctx context.Context, userID int) (domain.UserGrantsResponse, error)
+	// GrantsForUserIDs batches GrantsForUserID for a page of users (the Admin
+	// Console's user list), so embedding grants per row costs one query, not
+	// one per row. Every id in userIDs is present in the result, even with an
+	// empty (never nil) slice.
+	GrantsForUserIDs(ctx context.Context, userIDs []int) (map[int][]domain.UserGrant, error)
 	GrantsForUserEmail(ctx context.Context, email string) (domain.UserGrantsResponse, error)
 	GrantsForUserUUID(ctx context.Context, uuid string) (domain.UserGrantsResponse, error)
 	CreateGrant(ctx context.Context, userID int, req domain.CreateUserGrantRequest) (domain.UserGrant, error)
@@ -76,6 +81,18 @@ func (s *grantService) GrantsForUserID(ctx context.Context, userID int) (domain.
 		return domain.UserGrantsResponse{}, err
 	}
 	return domain.UserGrantsResponse{UserID: userID, Grants: orEmpty(grants)}, nil
+}
+
+func (s *grantService) GrantsForUserIDs(ctx context.Context, userIDs []int) (map[int][]domain.UserGrant, error) {
+	byUser, err := s.repo.GrantsForUserIDs(ctx, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int][]domain.UserGrant, len(userIDs))
+	for _, id := range userIDs {
+		out[id] = orEmpty(byUser[id])
+	}
+	return out, nil
 }
 
 func (s *grantService) GrantsForUserEmail(ctx context.Context, email string) (domain.UserGrantsResponse, error) {

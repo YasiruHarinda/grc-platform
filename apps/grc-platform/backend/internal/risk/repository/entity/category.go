@@ -58,3 +58,44 @@ func (r *riskCategoryRepository) List(ctx context.Context) ([]*model.RiskCategor
 	}
 	return cats, nil
 }
+
+// Create adds a new risk category via the entity's POST /risk/categories.
+// name uniqueness (uq_risk_category_name) is enforced by the entity, which
+// maps a duplicate into a 409 — surfaced here as an *apierror.Error the
+// caller's response.MapServiceError already knows how to translate.
+func (r *riskCategoryRepository) Create(ctx context.Context, req model.CreateRiskCategoryRequest, createdBy string) (*model.RiskCategory, error) {
+	body := map[string]any{
+		"name":        req.Name,
+		"description": req.Description,
+		"createdBy":   createdBy,
+	}
+	var c entRiskCategory
+	if err := r.c.Post(ctx, "/risk/categories", body, &c); err != nil {
+		return nil, fmt.Errorf("create risk category: %w", err)
+	}
+	return &model.RiskCategory{ID: c.ID, Name: c.Name, Description: c.Description}, nil
+}
+
+// Update edits a risk category via the entity's PATCH /risk/categories/{id}.
+func (r *riskCategoryRepository) Update(ctx context.Context, id int, req model.UpdateRiskCategoryRequest, updatedBy string) (*model.RiskCategory, error) {
+	body := map[string]any{
+		"name":        req.Name,
+		"description": req.Description,
+		"updatedBy":   updatedBy,
+	}
+	var c entRiskCategory
+	if err := r.c.Patch(ctx, fmt.Sprintf("/risk/categories/%d", id), body, &c); err != nil {
+		return nil, fmt.Errorf("update risk category %d: %w", id, err)
+	}
+	return &model.RiskCategory{ID: c.ID, Name: c.Name, Description: c.Description}, nil
+}
+
+// Delete removes a risk category via the entity's DELETE /risk/categories/{id}.
+// The entity itself refuses (409) when the category is still used by a risk —
+// see its DeleteRiskCategory doc comment.
+func (r *riskCategoryRepository) Delete(ctx context.Context, id int) error {
+	if err := r.c.Delete(ctx, fmt.Sprintf("/risk/categories/%d", id)); err != nil {
+		return fmt.Errorf("delete risk category %d: %w", id, err)
+	}
+	return nil
+}

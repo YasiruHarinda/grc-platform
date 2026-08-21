@@ -317,6 +317,14 @@ func (s *stubGrants) Candidates(_ context.Context, _ string, _ []int) ([]grant.C
 	return nil, nil
 }
 
+func (s *stubGrants) CreateGrant(_ context.Context, _ int, _ grant.CreateGrantRequest) (grant.Grant, error) {
+	return grant.Grant{}, nil
+}
+
+func (s *stubGrants) RevokeGrant(_ context.Context, _, _ int, _ string) error {
+	return nil
+}
+
 // failingGrants fails the test if it is ever consulted.
 type failingGrants struct{ t *testing.T }
 
@@ -328,6 +336,16 @@ func (f *failingGrants) ForUUID(_ context.Context, uuid string) (int, []grant.Gr
 func (f *failingGrants) Candidates(_ context.Context, _ string, _ []int) ([]grant.Candidate, error) {
 	f.t.Errorf("candidates must not be loaded for this caller")
 	return nil, nil
+}
+
+func (f *failingGrants) CreateGrant(_ context.Context, _ int, _ grant.CreateGrantRequest) (grant.Grant, error) {
+	f.t.Errorf("CreateGrant must not be called for this caller")
+	return grant.Grant{}, nil
+}
+
+func (f *failingGrants) RevokeGrant(_ context.Context, _, _ int, _ string) error {
+	f.t.Errorf("RevokeGrant must not be called for this caller")
+	return nil
 }
 
 // grantCfg builds a full-scope config wired to the given grant repository.

@@ -100,3 +100,17 @@ func (h *RiskReferenceHandler) UpdateRiskReference(w http.ResponseWriter, r *htt
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(ref)
 }
+
+// DeleteRiskReference handles DELETE /risk/compliance-references/{id}.
+func (h *RiskReferenceHandler) DeleteRiskReference(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		writeServiceError(w, r, &apierror.ValidationError{Msg: "id must be a positive integer"})
+		return
+	}
+	if err := h.svc.DeleteRiskReference(r.Context(), id); err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

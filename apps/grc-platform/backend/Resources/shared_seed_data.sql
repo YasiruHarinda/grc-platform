@@ -163,6 +163,21 @@ WHERE  r.role_name = 'grc-platform-risk-compliance-team'
     'RISK_ESCALATE', 'RISK_MANAGE_COMPLIANCE_REFS'
   );
 
+-- grc-platform-risk-compliance-admin no longer manages Risk Teams/Scores/
+-- Compliance References directly — that moved into the Admin Console, gated
+-- on MANAGE_RISK_HUB, which only grc-platform-admin holds (see §4's "one
+-- consistent gate for the whole console" decision in ADMIN_CONSOLE_DESIGN.md).
+-- Deactivate any already-seeded grant of these three so an installation
+-- carried forward from before this change doesn't retain them — the
+-- role_privilege INSERT further below only re-activates the privileges still
+-- in its list, which these three no longer are.
+UPDATE role_privilege rp
+JOIN   `role` r      ON r.id = rp.role_id
+JOIN   privilege p   ON p.id = rp.privilege_id
+SET    rp.is_active = FALSE
+WHERE  r.role_name = 'grc-platform-risk-compliance-admin'
+  AND  p.privilege_name IN ('RISK_MANAGE_TEAMS', 'RISK_MANAGE_SCORES', 'RISK_MANAGE_COMPLIANCE_REFS');
+
 -- grc-platform-management becomes module='SHARED' below, grantable GLOBAL only.
 -- Under its pre-rename identity it could be granted scoped to a team, so an
 -- installation carried forward from before this migration may hold non-GLOBAL
@@ -222,7 +237,7 @@ INSERT INTO `role` (role_name, description, module, scope_basis, status) VALUES
    'Management approval/rejection in the Risk Hub, and org-wide read-only oversight in the Audit Hub. SHARED across both hubs, so it can only be granted GLOBAL.',
    'SHARED', NULL, 'ACTIVE'),
   ('grc-platform-admin',
-   'Platform administrator. Manages users and role grants. SHARED, so it can only be granted GLOBAL — see the bootstrap grant template at the end of this file.',
+   'Platform administrator. Manages users, role grants, and the Admin Console reference-data screens (Risk Teams/Categories/Compliance References; Audit Hub equivalents pending). SHARED, so it can only be granted GLOBAL — see the bootstrap grant template at the end of this file.',
    'SHARED', NULL, 'ACTIVE'),
   ('grc-platform-audit-compliance-admin',
    'Audit Compliance Admin - full control of the Audit Hub',
@@ -307,33 +322,64 @@ INSERT INTO privilege (privilege_name, module, status) VALUES
   -- Gates internal-only control comments (hidden from external auditors) —
   -- replaces the former hardcoded group-name check.
   ('AUDIT_VIEW_INTERNAL_COMMENTS', 'AUDIT', 'ACTIVE'),
-  -- Shared platform (1 privilege)
-  -- Gates User Management: provisioning users and granting/revoking roles.
-  -- SHARED, not AUDIT — it spans both hubs. Declared in Go long before it had a
-  -- handler; the grant editor is what finally uses it.
-  ('MANAGE_USERS',            'SHARED', 'ACTIVE')
+  -- Shared platform (3 privileges) — the Admin Console's three gates
+  -- (ADMIN_CONSOLE_DESIGN.md §4). All three are held only by
+  -- grc-platform-admin (see the role_privilege section below): one
+  -- consistent "creates authority from nothing" boundary for the whole
+  -- console, rather than three privileges that happen to end up in the same
+  -- place today but could drift apart under separate role grants later.
+  --
+  -- MANAGE_USERS gates User Management: provisioning users and
+  -- granting/revoking roles. Declared in Go long before it had a handler;
+  -- the grant editor is what finally uses it.
+  ('MANAGE_USERS',            'SHARED', 'ACTIVE'),
+  -- MANAGE_RISK_HUB gates the Risk Teams / Risk Categories / Compliance
+  -- References / Risk Scores screens. Module tagged RISK for categorisation
+  -- (grouping alongside the other Risk Hub privileges above) — this does NOT
+  -- make it grantable team-scoped in practice, because it is only ever
+  -- granted to grc-platform-admin, which is module SHARED with a NULL
+  -- scope_basis, forcing every grant of that role GLOBAL regardless of what
+  -- module its individual privileges carry (see the role table comment
+  -- below). Supersedes RISK_MANAGE_TEAMS/SCORES/COMPLIANCE_REFS for gating
+  -- purposes; those three are deactivated on
+  -- grc-platform-risk-compliance-admin below, not deleted (still
+  -- FK-referenced, and role_privilege's status pattern is deactivate, never
+  -- delete).
+  ('MANAGE_RISK_HUB',         'RISK',   'ACTIVE'),
+  -- MANAGE_AUDIT_HUB is the Audit Hub equivalent — seeded and granted now so
+  -- the console's shape is right, even though the screens it will gate
+  -- (Audit Teams/Frameworks/Products) are a stubbed, later phase of this
+  -- same project (ADMIN_CONSOLE_DESIGN.md's "out of scope, flag don't
+  -- build" list). Same GLOBAL-only-in-practice reasoning as MANAGE_RISK_HUB.
+  ('MANAGE_AUDIT_HUB',        'AUDIT',  'ACTIVE')
 ON DUPLICATE KEY UPDATE
   module = VALUES(module),
   status = VALUES(status);
 
 -- ── role_privilege ────────────────────────────────────────────────────────────
 
--- grc-platform-admin → user and role-grant management only.
--- Deliberately narrow: this is the role that hands out authority, not one that
--- does risk work. A bootstrap admin grants themselves whatever else they need.
--- MANAGE_USERS is only ever granted GLOBAL: the role is SHARED, and the grant
--- service rejects any scoped grant of a role carrying it, since a
+-- grc-platform-admin → user/role-grant management, plus the Admin Console's
+-- reference-data screens (Risk Hub, Audit Hub — the latter stubbed for now).
+-- Deliberately narrow beyond that: this is the role that hands out authority
+-- and administers the platform's own lookup tables, not one that does risk or
+-- audit work. A bootstrap admin grants themselves whatever else they need.
+-- All three privileges are only ever granted GLOBAL: the role is SHARED, and
+-- the grant service rejects any scoped grant of a role carrying it, since a
 -- register-scoped admin granting roles would need an escalation rule (a
 -- grantor may not exceed their own privileges in that scope) that does not
 -- exist yet.
 INSERT INTO role_privilege (role_id, privilege_id, is_active)
 SELECT r.id, p.id, TRUE
 FROM   `role` r
-JOIN   privilege p ON p.privilege_name IN ('MANAGE_USERS') AND p.status = 'ACTIVE'
+JOIN   privilege p ON p.privilege_name IN ('MANAGE_USERS', 'MANAGE_RISK_HUB', 'MANAGE_AUDIT_HUB') AND p.status = 'ACTIVE'
 WHERE  r.role_name = 'grc-platform-admin'
 ON DUPLICATE KEY UPDATE is_active = TRUE;
 
--- grc-platform-risk-compliance-admin → all 23 Risk Hub privileges
+-- grc-platform-risk-compliance-admin → 20 Risk Hub privileges. No longer 23:
+-- RISK_MANAGE_TEAMS/SCORES/COMPLIANCE_REFS moved to the Admin Console's
+-- MANAGE_RISK_HUB, held only by grc-platform-admin — see the deactivation
+-- block above and ADMIN_CONSOLE_DESIGN.md §4. This role keeps every other
+-- Risk Hub privilege; only reference-data management moved out.
 INSERT INTO role_privilege (role_id, privilege_id, is_active)
 SELECT r.id, p.id, TRUE
 FROM   `role` r
@@ -342,8 +388,7 @@ JOIN   privilege p ON p.privilege_name IN (
   'RISK_OWNER_APPROVE', 'RISK_MANAGEMENT_APPROVE', 'RISK_COMPLIANCE_APPROVE',
   'RISK_OWNER_REJECT', 'RISK_MANAGEMENT_REJECT', 'RISK_COMPLIANCE_REJECT',
   'RISK_COMPLETE', 'RISK_CLOSE', 'RISK_ESCALATE', 'RISK_ASSESS',
-  'RISK_MANAGE_TEAMS', 'RISK_MANAGE_SCORES', 'RISK_MANAGE_ACTION_PLANS',
-  'RISK_MANAGE_COMPLIANCE_REFS', 'RISK_VIEW_ANALYTICS'
+  'RISK_MANAGE_ACTION_PLANS', 'RISK_VIEW_ANALYTICS'
 ) AND p.status = 'ACTIVE'
 WHERE  r.role_name = 'grc-platform-risk-compliance-admin'
 ON DUPLICATE KEY UPDATE is_active = TRUE;
@@ -501,34 +546,45 @@ WHERE  module = 'RISK' AND status = 'ACTIVE' AND scope_basis IS NULL;
 -- identity-provider fallback: either would mean "SELECT * FROM user_role_grant"
 -- no longer answers "who are my admins".
 --
--- Copy the block below, set the email, and run it once per environment.
+-- Copy the block below, set the uuid (the person's Asgardeo `sub` claim —
+-- have them check their own token, or resolve it via SCIM), and run it once
+-- per environment.
 --
---   -- The explicit COLLATE is required, not decorative: a user-defined variable
---   -- takes the connection's collation (utf8mb4_0900_ai_ci by default on MySQL
---   -- 8/9), while user.email is utf8mb4_unicode_ci. Both have the same
---   -- coercibility, so comparing them without this raises "Illegal mix of
---   -- collations".
---   SET @bootstrap_admin_email = _utf8mb4'CHANGE-ME@example.com' COLLATE utf8mb4_unicode_ci;
---   SET @bootstrap_admin_name  = 'Bootstrap Admin';
+-- Stores the uuid only — nothing else — matching exactly what the Admin
+-- Console's own "Add User" does (handleCreateUser,
+-- internal/admin/handler/users.go): email is left NULL, display_name written
+-- as '' only to satisfy NOT NULL and never read back. An earlier version of
+-- this template wrote a real email/display_name here; that predated the
+-- "provision by uuid alone" design and no longer matches how the platform
+-- itself creates users.
 --
---   -- The user row is created here if absent. Nothing else creates it: users
---   -- are provisioned explicitly via POST /users/resolve, not automatically on
---   -- login, so on a fresh database there are no user rows and the grant below
---   -- would silently match nothing. display_name is a placeholder; it is
---   -- overwritten from the HR entity on first use.
---   INSERT IGNORE INTO `user` (email, display_name, user_type, status, created_by)
---   VALUES (@bootstrap_admin_email, @bootstrap_admin_name, 'INTERNAL', 'ACTIVE', 'System');
+-- If a `user` row already exists for this person from before the uuid
+-- migration (keyed on email, uuid NULL — the common case when bootstrapping
+-- an environment that already has data), fill the uuid in on that SAME row
+-- instead of the INSERT below creating a second identity for them. Uncomment
+-- and run this first if that applies, then skip the INSERT:
+--
+--   UPDATE `user` SET uuid = @bootstrap_admin_uuid, updated_by = 'System'
+--   WHERE email = _utf8mb4'CHANGE-ME@example.com' COLLATE utf8mb4_unicode_ci AND uuid IS NULL;
+--
+--   SET @bootstrap_admin_uuid = 'CHANGE-ME-uuid';
+--
+--   -- The user row is created here if absent (fresh environment, or this
+--   -- person has no prior row). No-op if the UPDATE above already matched.
+--   INSERT INTO `user` (uuid, email, display_name, user_type, status, created_by)
+--   SELECT @bootstrap_admin_uuid, NULL, '', 'INTERNAL', 'ACTIVE', 'System'
+--   WHERE NOT EXISTS (SELECT 1 FROM `user` WHERE uuid = @bootstrap_admin_uuid);
 --
 --   INSERT INTO user_role_grant (user_id, role_id, scope_type, scope_id, created_by)
 --   SELECT u.id, r.id, 'GLOBAL', 0, 'System'
 --   FROM   `user` u
 --   JOIN   `role` r ON r.role_name = 'grc-platform-admin'
---   WHERE  u.email = @bootstrap_admin_email
+--   WHERE  u.uuid = @bootstrap_admin_uuid
 --   ON DUPLICATE KEY UPDATE status = 'ACTIVE';
 --
---   -- Sanity check: 0 rows means the email matched no user, and NOBODY can
+--   -- Sanity check: 0 rows means the uuid matched no user, and NOBODY can
 --   -- grant roles in this environment. Fix before proceeding.
---   SELECT u.email AS bootstrap_admin, r.role_name, g.scope_type
+--   SELECT u.id, u.uuid, r.role_name, g.scope_type
 --   FROM   user_role_grant g
 --   JOIN   `user` u ON u.id = g.user_id
 --   JOIN   `role` r ON r.id = g.role_id

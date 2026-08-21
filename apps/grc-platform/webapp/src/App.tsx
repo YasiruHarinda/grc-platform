@@ -17,6 +17,7 @@
 import { type JSX } from "react";
 import { Route, Routes, Navigate } from "react-router";
 import AuthGuard from "@layouts/AuthGuard";
+import { adminRoutes } from "@modules/admin/routes";
 import { auditRoutes } from "@modules/audit/routes";
 import { riskRoutes } from "@modules/risk/routes";
 import Error401Page from "@components/error/Error401Page";
@@ -70,6 +71,7 @@ export default function App(): JSX.Element {
 
                 {auditRoutes}
                 {riskRoutes}
+                {adminRoutes}
               </Route>
 
               {/* Fallback */}

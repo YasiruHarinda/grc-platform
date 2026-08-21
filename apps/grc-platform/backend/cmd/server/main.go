@@ -27,6 +27,8 @@ import (
 	"syscall"
 	"time"
 
+	adminentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/admin/entity"
+	adminhandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/admin/handler"
 	audithandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/handler"
 	auditjob "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/job"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
@@ -67,6 +69,21 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Grants are read from (and, via the Admin Console, written to) the entity
+	// on every call and never cached: role→privilege changes only on a deploy
+	// (hence privStore's 15-minute refresh below), but a revoked grant must
+	// take effect immediately, and a newly-created one must be usable right
+	// away. Built unconditionally — deliberately NOT gated on
+	// TokenValidatorEnabled like privStore below: it's a plain entity HTTP
+	// client with no dependency on token verification, and the Admin
+	// Console's grant editor (internal/admin/handler) needs a working one
+	// even in local dev with TokenValidatorEnabled=false, same as it needs a
+	// working entity client for everything else it does. Gating this the
+	// same way privStore is gated silently 500s every grant create/revoke in
+	// local dev — which is exactly the mode most manual admin-console testing
+	// runs in.
+	grantRepo := grant.NewRepository(entityCli)
+
 	// Load the role→privilege mapping from the Compliance Entity. Built after
 	// entityCli because it needs it.
 	// When TokenValidatorEnabled=false (local dev), skip loading — HasPrivilege returns true for all checks.
@@ -74,7 +91,6 @@ func main() {
 	// privilege.New bounds the initial load itself; ctx here governs only the
 	// lifetime of its background refresh.
 	var privStore *privilege.Store
-	var grantRepo grant.Repository
 	if cfg.Auth.TokenValidatorEnabled {
 		privStore, err = privilege.New(ctx, entityCli)
 		if err != nil {
@@ -82,11 +98,6 @@ func main() {
 			os.Exit(1)
 		}
 		slog.Info("privilege store loaded")
-
-		// Grants are read from the entity on every request and never cached:
-		// role→privilege changes only on a deploy (hence privStore's 15-minute
-		// refresh above), but a revoked grant must take effect immediately.
-		grantRepo = grant.NewRepository(entityCli)
 	}
 
 	hrClient := hrentity.NewClient(cfg.HREntity.GraphQLURL, cfg.HREntity.TokenURL, cfg.HREntity.ClientID, cfg.HREntity.ClientSecret)
@@ -137,11 +148,16 @@ func main() {
 	userhandler.RegisterRoutes(mux, userDeps)
 	riskDeps := buildRiskDeps(entityCli, fileSvc, hrClient, grantRepo, dirSvc, scimClient, cfg.Email)
 	riskhandler.RegisterRoutes(mux, riskDeps)
-
 	auditDeps := buildAuditDeps(fileSvc, entityCli, cfg.AIValidation, cfg.Email, grantRepo)
 	reminderJob := auditjob.NewReminderJob(auditDeps.Audit, auditDeps.Control, auditDeps.Notification, auditDeps.SendReminderDigestSync)
 	auditDeps.TriggerReminderJob = reminderJob.RunOnce
 	audithandler.RegisterRoutes(mux, auditDeps)
+	adminhandler.RegisterRoutes(mux, adminhandler.Deps{
+		Admin:     adminentity.NewRepository(entityCli),
+		Users:     userDeps.Users,
+		Grants:    grantRepo,
+		Directory: dirSvc,
+	})
 
 	// Daily overdue-risk escalation. This lives here rather than in the
 	// compliance-entity because escalation now resolves line managers from the

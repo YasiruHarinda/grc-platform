@@ -43,11 +43,9 @@ func (s *teamService) List(ctx context.Context, filter model.ListTeamsFilter) ([
 }
 
 func (s *teamService) Create(ctx context.Context, req model.CreateTeamRequest, createdBy string) (*model.Team, error) {
-	// TODO: validate name/code uniqueness, delegate to repo
-	return nil, nil
+	return s.repo.Create(ctx, req, createdBy)
 }
 
 func (s *teamService) Update(ctx context.Context, id int, req model.UpdateTeamRequest, updatedBy string) error {
-	// TODO: fetch team, validate, delegate to repo
-	return nil
+	return s.repo.Update(ctx, id, req, updatedBy)
 }
