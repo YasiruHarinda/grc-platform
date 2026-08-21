@@ -72,11 +72,69 @@ jobs:
       # The version is read out of pyproject.toml, never hardcoded here.
       # Hardcoding it in the workflow would give the release a second place
       # to go stale against the package it is supposedly describing.
-      - name: Read the version from pyproject.toml
-        id: version
+      #
+      # The wheel's own filename is captured at the same time, because the
+      # release notes below need it to build a real download URL. That URL
+      # is entirely predictable once the tag and the filename are known,
+      # so the notes can carry a link the reader can actually copy rather
+      # than a placeholder telling them to go and find it themselves. A
+      # placeholder would undo the whole point of a one command install.
+      - name: Read the version and the built wheel's filename
+        id: package
         run: |
           version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          wheel=$(basename dist/*.whl)
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "wheel=$wheel" >> "$GITHUB_OUTPUT"
+
+      # Written to a file rather than passed inline, so the notes can be
+      # several paragraphs with real line breaks instead of one long
+      # sentence squeezed into a shell argument.
+      #
+      # The migration warning is repeated here even though the README also
+      # carries it. Someone arriving at a release page to download the
+      # wheel has not necessarily read the README, and if they installed
+      # with the old install.sh their stale launcher at
+      # ~/.local/bin/wso2-runner will silently shadow this one and keep
+      # running the old code. That failure is invisible and confusing, so
+      # the warning belongs where the download is.
+      - name: Write the release notes
+        id: notes
+        run: |
+          cat > "$RUNNER_TEMP/release-notes.md" <<NOTES
+          ## Install
+
+          \`\`\`bash
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          uv tool install https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.package.outputs.wheel }}
+          wso2-runner configure --server https://<portal address>
+          az login
+          wso2-runner doctor
+          wso2-runner start
+          \`\`\`
+
+          Google Chrome must be installed. The Runner drives the machine's own
+          Chrome by default. If you cannot install Chrome, set
+          \`BROWSER_CHANNEL=chromium\` and the Runner will download and use its
+          own browser instead.
+
+          ## Upgrading from the old install.sh
+
+          If you installed with \`install.sh\` before, you have a launcher at
+          \`~/.local/bin/wso2-runner\` that will shadow this one, so your
+          commands would keep running the old code. Remove it first:
+
+          \`\`\`bash
+          rm ~/.local/bin/wso2-runner
+          rm -rf ~/.wso2-runner/venv
+          \`\`\`
+
+          Your settings in \`~/.wso2-runner/.env\` are not affected. Once the old
+          launcher and venv are gone, any clone of this repository kept only for
+          running the Runner can be deleted.
+
+          Full install steps: apps/evidence-app/runner/README.md
+          NOTES
 
       - name: Create the release and upload the built files
         env:
@@ -84,6 +142,6 @@ jobs:
         run: |
           gh release create "${{ github.ref_name }}" \
             --repo "${{ github.repository }}" \
-            --title "Runner v${{ steps.version.outputs.version }}" \
-            --notes "wso2-runner v${{ steps.version.outputs.version }}. Install with: uv tool install <link to this release's .whl file>. See apps/evidence-app/runner/README.md for the full install steps." \
+            --title "Runner v${{ steps.package.outputs.version }}" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
             dist/*
