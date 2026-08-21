@@ -51,13 +51,14 @@ func (r *trailRepo) Create(ctx context.Context, auditID int, controlID, evidence
 // entTrail mirrors the entity's AuditTrail JSON. Details is a raw JSON string on
 // the wire (the column is MySQL JSON); we hand it back to the client verbatim.
 type entTrail struct {
-	ID         int64     `json:"id"`
-	ControlID  *int      `json:"controlId"`
-	EvidenceID *int      `json:"evidenceId"`
-	Action     string    `json:"action"`
-	Details    *string   `json:"details"`
-	CreatedBy  *string   `json:"createdBy"`
-	CreatedOn  time.Time `json:"createdOn"`
+	ID                int64     `json:"id"`
+	ControlID         *int      `json:"controlId"`
+	EvidenceID        *int      `json:"evidenceId"`
+	Action            string    `json:"action"`
+	Details           *string   `json:"details"`
+	CreatedBy         *string   `json:"createdBy"`
+	CreatedByUserType *string   `json:"createdByUserType"`
+	CreatedOn         time.Time `json:"createdOn"`
 }
 
 func (r *trailRepo) ListByControl(ctx context.Context, auditID, controlID, limit int) ([]*model.AuditTrailEntry, int, error) {
@@ -105,6 +106,9 @@ func (r *trailRepo) list(ctx context.Context, path string) ([]*model.AuditTrailE
 		}
 		if e.CreatedBy != nil {
 			entry.CreatedBy = *e.CreatedBy
+		}
+		if e.CreatedByUserType != nil {
+			entry.CreatedByUserType = *e.CreatedByUserType
 		}
 		if e.Details != nil && *e.Details != "" {
 			entry.Details = json.RawMessage(*e.Details)

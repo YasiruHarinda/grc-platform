@@ -46,18 +46,19 @@ type trailHandler struct {
 // is left untouched — see AuditTrailEntry.CreatedByName.
 //
 // Falls back to email, then the bare uuid, for an actor the directory can't
-// resolve. Uses the untyped Directory.LookupAll rather than the *Typed
-// variant: trail actors are always an authenticated platform caller (there is
-// no external-auditor login path yet — see notify.go's describeActor, the
-// same reasoning this mirrors), so there is no second user_type to route on.
+// resolve. Uses LookupAllTyped, routed by each entry's CreatedByUserType: an
+// external auditor (AUDIT_VALIDATE_EVIDENCE/AUDIT_REVIEW_EVIDENCE are
+// external-reachable — see evidenceHandler.requireEvidenceFileAccess) can be
+// the actor of a trail row via controlService.UpdateStatus, and the internal-
+// only Lookup could never resolve their identity.
 func (h *trailHandler) resolveTrailActors(ctx context.Context, entries []*model.AuditTrailEntry) {
-	uuids := make([]string, 0, len(entries))
+	uuidTypes := make(map[string]string, len(entries))
 	for _, e := range entries {
 		if e.CreatedBy != "" {
-			uuids = append(uuids, e.CreatedBy)
+			uuidTypes[e.CreatedBy] = e.CreatedByUserType
 		}
 	}
-	people := h.directory.LookupAll(ctx, uuids)
+	people := h.directory.LookupAllTyped(ctx, uuidTypes)
 	for _, e := range entries {
 		p, ok := people[e.CreatedBy]
 		if !ok {

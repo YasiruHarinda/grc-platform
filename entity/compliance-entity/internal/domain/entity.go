@@ -1386,15 +1386,19 @@ type ListRiskAssessmentsResponse struct {
 
 // AuditTrail is one immutable entry in the audit trail.
 type AuditTrail struct {
-	ID         int64     `json:"id"`
-	ActorID    *int      `json:"actorId"`
-	AuditID    *int      `json:"auditId"`
-	ControlID  *int      `json:"controlId"`
-	EvidenceID *int      `json:"evidenceId"`
-	Action     string    `json:"action"`  // CREATED | UPLOADED | RESUBMITTED | APPROVED | REJECTED | COMMENTED | ESCALATED | AI_VALIDATED | EXPORTED
-	Details    *string   `json:"details"` // raw JSON string
-	CreatedBy  *string   `json:"createdBy"`
-	CreatedOn  time.Time `json:"createdOn"`
+	ID         int64   `json:"id"`
+	ActorID    *int    `json:"actorId"`
+	AuditID    *int    `json:"auditId"`
+	ControlID  *int    `json:"controlId"`
+	EvidenceID *int    `json:"evidenceId"`
+	Action     string  `json:"action"`  // CREATED | UPLOADED | RESUBMITTED | APPROVED | REJECTED | COMMENTED | ESCALATED | AI_VALIDATED | EXPORTED
+	Details    *string `json:"details"` // raw JSON string
+	CreatedBy  *string `json:"createdBy"`
+	// CreatedByUserType is the actor's user.user_type (INTERNAL | EXTERNAL),
+	// joined from actor_id — nil when actor_id is NULL. See
+	// AuditComment.CreatedByUserType for the same pattern.
+	CreatedByUserType *string   `json:"createdByUserType"`
+	CreatedOn         time.Time `json:"createdOn"`
 }
 
 // CreateAuditTrailRequest is the payload for POST /audits/{auditId}/trail.

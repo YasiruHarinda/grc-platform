@@ -32,7 +32,11 @@ type AuditTrailEntry struct {
 	Action     string `json:"action"`
 	ControlID  *int   `json:"controlId"`
 	EvidenceID *int   `json:"evidenceId"`
-	CreatedBy  string `json:"createdBy"`
+	CreatedBy string `json:"createdBy"`
+	// CreatedByUserType is CreatedBy's user.user_type (INTERNAL | EXTERNAL),
+	// needed to route the directory lookup to the right identity org — see
+	// directory.Service.LookupTyped.
+	CreatedByUserType string `json:"createdByUserType"`
 	// CreatedByName is CreatedBy resolved through the identity directory —
 	// display name, falling back to email, falling back to the bare uuid
 	// (see trailHandler.resolveTrailActors). CreatedBy itself is left as the
