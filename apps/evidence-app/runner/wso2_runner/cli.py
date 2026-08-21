@@ -87,7 +87,12 @@ def configure(
     ),
 ):
     """First-time setup wizard — saves your LLM credentials to ~/.wso2-runner/.env."""
-    from wso2_runner.config import CONFIG_DIR, CONFIG_FILE
+    from wso2_runner.browser_install import (
+        MANUAL_INSTALL_COMMAND,
+        ChromiumInstallError,
+        ensure_chromium_installed,
+    )
+    from wso2_runner.config import CONFIG_DIR, CONFIG_FILE, settings
     from wso2_runner.env_file import read_env_values, write_config_file
 
     # Fetched before anything is printed or asked, deliberately. A wrong
@@ -190,6 +195,28 @@ def configure(
     # permissions are handled.
     write_config_file(CONFIG_FILE, updates)
     print(f"\nConfig saved to {CONFIG_FILE}")
+
+    # Chromium used to be installed by runner/install.sh's own step 4. That
+    # script is going away in favour of a plain wheel install, and neither
+    # `uv tool install` nor `pip install` fetches a browser binary — so this
+    # is now the only place a fresh machine gets one. See
+    # browser_install.py's module docstring for why only BROWSER_CHANNEL ==
+    # "chromium" triggers a real check here.
+    #
+    # A failed install is reported, not raised — the config above is
+    # already saved and good, so treating this the same way `start`'s
+    # guards do (exit non-zero) would make an otherwise successful
+    # `configure` look like it failed outright. `start`'s own guard below
+    # will catch this again, for real, if it's still broken by then.
+    try:
+        ensure_chromium_installed(settings.BROWSER_CHANNEL)
+    except ChromiumInstallError as exc:
+        typer.echo(
+            f"\n[runner] {exc}. Run this yourself, then try again:\n\n"
+            f"    {MANUAL_INSTALL_COMMAND}\n",
+            err=True,
+        )
+
     print("Next: wso2-runner start  (opens a browser to sign in via Asgardeo)\n")
 
 
@@ -287,6 +314,31 @@ def start(
         except Exception as exc:
             typer.echo(f"\n[runner] Azure authentication check failed: {exc}\n", err=True)
             raise typer.Exit(1)
+
+    # Guard, not just a one-time setup step: `configure` already tries this,
+    # but the browser could still be missing here -- an engineer skipping
+    # `configure`'s prompt on a flaky connection, someone else's machine
+    # image, `~/.cache` cleared by hand, etc. Checked here, before the poll
+    # loop (and therefore any browser) starts, for the same reason the
+    # Azure check above runs before the loop rather than lazily on first
+    # use: a broken environment should fail once, plainly, right here --
+    # not resurface as a cryptic Playwright exception after a task has
+    # already been pulled off the queue.
+    from wso2_runner.browser_install import (
+        MANUAL_INSTALL_COMMAND,
+        ChromiumInstallError,
+        ensure_chromium_installed,
+    )
+
+    try:
+        ensure_chromium_installed(settings.BROWSER_CHANNEL)
+    except ChromiumInstallError as exc:
+        typer.echo(
+            f"\n[runner] {exc}. Run this yourself, then try again:\n\n"
+            f"    {MANUAL_INSTALL_COMMAND}\n",
+            err=True,
+        )
+        raise typer.Exit(1)
 
     from wso2_runner.loop import run_forever
 

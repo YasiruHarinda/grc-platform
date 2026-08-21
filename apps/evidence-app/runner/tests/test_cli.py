@@ -35,10 +35,12 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
+import wso2_runner.browser_install as browser_install
 import wso2_runner.cli as cli
 import wso2_runner.config as config_mod
 from wso2_runner import oauth
 from wso2_runner.azure_credential import ClientAuthenticationError, CredentialUnavailableError
+from wso2_runner.browser_install import ChromiumInstallError
 from wso2_runner.config import settings
 
 runner = CliRunner()
@@ -1245,3 +1247,140 @@ def test_doctor_backend_unreachable_is_reported_not_raised(monkeypatch):
 
     assert result.exit_code == 0
     assert "boom" in result.output
+
+
+# ── configure / start: Chromium install guard ────────────────────────────
+#
+# Nothing here ever imports the real `playwright` package or runs a real
+# install -- browser_install.chromium_is_installed and
+# browser_install.install_chromium are monkeypatched at the module level in
+# every test below. Because cli.py imports `wso2_runner.browser_install`
+# lazily, inside the body of `configure`/`start` (matching the rest of this
+# file's lazy-import style), patching those two names on the
+# `browser_install` module itself is enough -- it doesn't matter how cli.py
+# spells the import.
+#
+# BROWSER_CHANNEL defaults to "chrome" in every other test in this file, and
+# is left untouched there -- chromium_is_installed() reports "chrome" as
+# always installed without even looking at Playwright (see
+# test_browser_install.py), so none of the pre-existing configure/start
+# tests above needed to change, or slowed down, when this guard was added.
+
+
+_CONFIGURE_INPUT = "someone@wso2.com\nanthropic\n\nsk-test-key\n1\n"
+
+
+def test_configure_installs_chromium_when_missing(monkeypatch, tmp_path):
+    cfg_dir = tmp_path / ".wso2-runner"
+    cfg_file = cfg_dir / ".env"
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
+    monkeypatch.setattr(settings, "BROWSER_CHANNEL", "chromium")
+    monkeypatch.setattr(browser_install, "chromium_is_installed", lambda channel: False)
+    calls = []
+    monkeypatch.setattr(browser_install, "install_chromium", lambda: calls.append(1))
+
+    result = runner.invoke(cli.app, ["configure"], input=_CONFIGURE_INPUT)
+
+    assert result.exit_code == 0
+    assert calls == [1]
+    assert "150" in result.output
+    assert cfg_file.exists()
+
+
+def test_configure_skips_chromium_download_when_already_present(monkeypatch, tmp_path):
+    cfg_dir = tmp_path / ".wso2-runner"
+    cfg_file = cfg_dir / ".env"
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
+    monkeypatch.setattr(settings, "BROWSER_CHANNEL", "chromium")
+    monkeypatch.setattr(browser_install, "chromium_is_installed", lambda channel: True)
+
+    def _must_not_run():
+        raise AssertionError("install_chromium must not run when already installed")
+
+    monkeypatch.setattr(browser_install, "install_chromium", lambda: _must_not_run())
+
+    result = runner.invoke(cli.app, ["configure"], input=_CONFIGURE_INPUT)
+
+    assert result.exit_code == 0
+    assert "150" not in result.output
+
+
+def test_configure_reports_manual_command_when_chromium_install_fails_but_still_saves_config(monkeypatch, tmp_path):
+    """A failed Chromium download must not look like `configure` itself
+    failed -- the config it just wrote is still good, and the engineer
+    should still see the "Config saved" / "Next: wso2-runner start"
+    messages, plus a plain pointer at the manual command to fix Chromium."""
+    cfg_dir = tmp_path / ".wso2-runner"
+    cfg_file = cfg_dir / ".env"
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
+    monkeypatch.setattr(settings, "BROWSER_CHANNEL", "chromium")
+    monkeypatch.setattr(browser_install, "chromium_is_installed", lambda channel: False)
+
+    def _boom():
+        raise ChromiumInstallError("network unreachable")
+
+    monkeypatch.setattr(browser_install, "install_chromium", _boom)
+
+    result = runner.invoke(cli.app, ["configure"], input=_CONFIGURE_INPUT)
+
+    assert result.exit_code == 0
+    assert cfg_file.exists()
+    assert "playwright install chromium" in result.output
+    assert "Config saved" in result.output
+
+
+def test_start_checks_chromium_and_installs_when_missing(fake_run_forever, monkeypatch):
+    settings.AGENT_PROVIDER = "anthropic"
+    monkeypatch.setattr(settings, "BROWSER_CHANNEL", "chromium")
+    monkeypatch.setattr(browser_install, "chromium_is_installed", lambda channel: False)
+    calls = []
+    monkeypatch.setattr(browser_install, "install_chromium", lambda: calls.append(1))
+
+    result = runner.invoke(cli.app, ["start", "someone@wso2.com"])
+
+    assert result.exit_code == 0
+    assert calls == [1]
+    assert "150" in result.output
+    assert fake_run_forever == [(None, "someone@wso2.com", None)]
+
+
+def test_start_skips_chromium_check_delay_when_already_present(fake_run_forever, monkeypatch):
+    settings.AGENT_PROVIDER = "anthropic"
+    monkeypatch.setattr(settings, "BROWSER_CHANNEL", "chromium")
+    monkeypatch.setattr(browser_install, "chromium_is_installed", lambda channel: True)
+
+    def _must_not_run():
+        raise AssertionError("install_chromium must not run when already installed")
+
+    monkeypatch.setattr(browser_install, "install_chromium", lambda: _must_not_run())
+
+    result = runner.invoke(cli.app, ["start", "someone@wso2.com"])
+
+    assert result.exit_code == 0
+    assert "150" not in result.output
+    assert fake_run_forever == [(None, "someone@wso2.com", None)]
+
+
+def test_start_exits_nonzero_and_names_manual_command_when_chromium_install_fails(fake_run_forever, monkeypatch):
+    """The whole point of this guard: a failed Chromium install must be
+    reported here, in plain language, and must stop `start` before it ever
+    reaches run_forever -- never surfacing later as a confusing exception
+    from deep inside a browser launch."""
+    settings.AGENT_PROVIDER = "anthropic"
+    monkeypatch.setattr(settings, "BROWSER_CHANNEL", "chromium")
+    monkeypatch.setattr(browser_install, "chromium_is_installed", lambda channel: False)
+
+    def _boom():
+        raise ChromiumInstallError("network unreachable")
+
+    monkeypatch.setattr(browser_install, "install_chromium", _boom)
+
+    result = runner.invoke(cli.app, ["start", "someone@wso2.com"])
+
+    assert result.exit_code == 1
+    assert "playwright install chromium" in result.output
+    # run_forever must never be reached -- no browser opens on a failed install.
+    assert fake_run_forever == []
