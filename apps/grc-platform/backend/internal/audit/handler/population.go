@@ -200,6 +200,39 @@ func canViewPopulation(r *http.Request, control *model.AuditControl) bool {
 	return control.AuditorID != nil && *control.AuditorID == actor.UserID
 }
 
+// resolvePopulationUploaders batch-resolves each file's CreatedByName from
+// CreatedBy (the uploader's raw uuid), routed to the right identity org via
+// CreatedByUserType — a SAMPLE file is uploaded by the auditor, who may be an
+// external user, so this cannot use the internal-only LookupAll that
+// resolveEvidenceSubmitters gets away with. See resolveCommentAuthors for the
+// same batched, typed pattern.
+func (h *evidenceHandler) resolvePopulationUploaders(ctx context.Context, files []*model.PopulationFile) {
+	uuidTypes := make(map[string]string, len(files))
+	for _, f := range files {
+		if f.CreatedBy != "" {
+			uuidTypes[f.CreatedBy] = f.CreatedByUserType
+		}
+	}
+	if len(uuidTypes) == 0 {
+		return
+	}
+	people := h.directory.LookupAllTyped(ctx, uuidTypes)
+	for _, f := range files {
+		if f.CreatedBy == "" {
+			continue
+		}
+		p, ok := people[f.CreatedBy]
+		switch {
+		case ok && strings.TrimSpace(p.DisplayName) != "":
+			f.CreatedByName = strings.TrimSpace(p.DisplayName)
+		case ok && p.Email != "":
+			f.CreatedByName = p.Email
+		default:
+			f.CreatedByName = f.CreatedBy
+		}
+	}
+}
+
 // withReadURLs computes the backend proxy download URL for each population file.
 func withReadURLs(files []*model.PopulationFile) []*model.PopulationFile {
 	for _, f := range files {
@@ -264,6 +297,9 @@ func (h *evidenceHandler) listPopulation(w http.ResponseWriter, r *http.Request)
 	}
 	withReadURLs(view.PopulationFiles)
 	withReadURLs(view.SampleFiles)
+	// One resolve over both slices, so a person who uploaded both a population
+	// and a sample file is looked up once.
+	h.resolvePopulationUploaders(r.Context(), append(append([]*model.PopulationFile{}, view.PopulationFiles...), view.SampleFiles...))
 
 	response.WriteJSONValue(w, http.StatusOK, view)
 }

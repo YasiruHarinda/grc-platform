@@ -128,15 +128,17 @@ func (r *populationRepo) ListByControl(ctx context.Context, auditID, controlID i
 // entPopulationFile mirrors the entity's AuditEvidenceFile JSON (shared table
 // with evidence files; populationId/fileKind are set only for population rows).
 type entPopulationFile struct {
-	ID           int       `json:"id"`
-	PopulationID *int      `json:"populationId"`
-	FileKind     *string   `json:"fileKind"`
-	FileName     string    `json:"fileName"`
-	FilePath     string    `json:"filePath"`
-	FileType     *string   `json:"fileType"`
-	FileSize     *int64    `json:"fileSize"`
-	CreatedOn    time.Time `json:"createdOn"`
-	TeamID       *int      `json:"teamId"`
+	ID                int       `json:"id"`
+	PopulationID      *int      `json:"populationId"`
+	FileKind          *string   `json:"fileKind"`
+	FileName          string    `json:"fileName"`
+	FilePath          string    `json:"filePath"`
+	FileType          *string   `json:"fileType"`
+	FileSize          *int64    `json:"fileSize"`
+	CreatedBy         *string   `json:"createdBy"`
+	CreatedByUserType *string   `json:"createdByUserType"`
+	CreatedOn         time.Time `json:"createdOn"`
+	TeamID            *int      `json:"teamId"`
 }
 
 func (f entPopulationFile) toModel() *model.PopulationFile {
@@ -148,6 +150,12 @@ func (f entPopulationFile) toModel() *model.PopulationFile {
 		FileSize:  f.FileSize,
 		CreatedAt: f.CreatedOn,
 		TeamID:    f.TeamID,
+	}
+	if f.CreatedBy != nil {
+		m.CreatedBy = *f.CreatedBy
+	}
+	if f.CreatedByUserType != nil {
+		m.CreatedByUserType = *f.CreatedByUserType
 	}
 	if f.PopulationID != nil {
 		m.PopulationID = *f.PopulationID
