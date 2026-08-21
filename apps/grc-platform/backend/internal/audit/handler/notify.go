@@ -310,6 +310,85 @@ func (d *Deps) SendReminderDigestSync(ctx context.Context, ownerUserID int, item
 	return d.sendAuditEventSync(ctx, ev, ownerUserID, info, nil, true)
 }
 
+// ReminderAdminIDs returns the platform user IDs of every Audit Compliance
+// Admin, for the reminder job's overdue escalation — the same recipient set
+// (and same Candidates lookup) that notifyAdmins already uses for the
+// per-control internal-review emails.
+//
+// Exported, and returns its error rather than swallowing it like
+// resolveAdminIDs: the job resolves this once per sweep and needs to
+// distinguish "no admins configured" from "the lookup failed", since the
+// latter would otherwise silently drop a whole day's escalations with nothing
+// in the log to say why.
+func (d *Deps) ReminderAdminIDs(ctx context.Context) ([]int, error) {
+	if d.Grants == nil {
+		return nil, nil
+	}
+	admins, err := d.Grants.Candidates(ctx, privilege.ManageControls, nil)
+	if err != nil {
+		return nil, fmt.Errorf("resolve admin recipients: %w", err)
+	}
+	ids := make([]int, 0, len(admins))
+	for _, admin := range admins {
+		ids = append(ids, admin.ID)
+	}
+	return ids, nil
+}
+
+// SendOverdueAdminAlertSync emails one admin about one overdue item. Wired to
+// job.ReminderJob at startup alongside SendReminderDigestSync (see
+// cmd/server/main.go), and synchronous for the same reason: the job counts
+// per-recipient success, and must know whether to release the item's claim.
+//
+// One email per (admin, overdue item) rather than a digest, deliberately: it
+// matches the per-control admin emails the review transitions already send, so
+// an overdue control is named in its own message with a link straight to it.
+//
+// Logs nothing itself — the job's own Claim already wrote this item's
+// audit_notification row before the send was attempted, exactly as
+// SendReminderDigestSync's does.
+func (d *Deps) SendOverdueAdminAlertSync(ctx context.Context, adminUserID int, item model.ReminderItem) error {
+	info := emailer.AuditEventInfo{
+		AuditName: item.AuditName,
+		// Not an actor — this alert has none. The template labels it "Owned by",
+		// naming who is expected to act; see AuditEventInfo.Actor.
+		Actor:     d.describeUser(ctx, item.OwnerUserID),
+		DetailURL: d.controlDetailURL(item.AuditID, item.LinkControlID),
+		Items: []emailer.AuditEventItem{{
+			ControlNumber:   item.ControlNumber,
+			Description:     item.Description,
+			DueDate:         item.DueDate,
+			Tier:            item.Tier,
+			RequirementType: item.RequirementType,
+		}},
+	}
+	return d.sendAuditEventSync(ctx, emailer.AuditEventReminderOverdueAdmin, adminUserID, info, nil, true)
+}
+
+// describeUser renders a platform user id as "Display Name (email)", the same
+// shape describeActor produces from a uuid. Separate from describeActor
+// because callers here hold an owner_id, not a token subject: the id is
+// resolved to a uuid + user_type first, so an external owner routes to the
+// right identity org (LookupTyped) instead of missing in the internal one.
+//
+// Best-effort like describeActor: any unresolvable step degrades to "" and the
+// template omits the line rather than failing the notification.
+func (d *Deps) describeUser(ctx context.Context, userID int) string {
+	if userID <= 0 {
+		return ""
+	}
+	u, err := d.Users.GetByID(ctx, userID)
+	if err != nil || u == nil {
+		slog.Warn("audit notification: failed to resolve user for display", "userId", userID, "err", err)
+		return ""
+	}
+	person, found := d.Directory.LookupTyped(ctx, u.UUID, u.UserType)
+	if !found || strings.TrimSpace(person.DisplayName) == "" || person.Email == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s (%s)", strings.TrimSpace(person.DisplayName), person.Email)
+}
+
 // notifyResubmission handles the resubmission-needed event for all four
 // reject transitions (population/evidence x internal-review/validation),
 // routed through the shared decideRound engine in review.go. control is the
