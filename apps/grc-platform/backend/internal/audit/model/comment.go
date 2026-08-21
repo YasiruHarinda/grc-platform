@@ -28,7 +28,7 @@ type AuditComment struct {
 	ParentCommentID *int   `json:"parentCommentId"`
 	Content         string `json:"content"`
 	IsInternal      bool   `json:"isInternal"`
-	CreatedBy string `json:"createdBy"`
+	CreatedBy       string `json:"createdBy"`
 	// CreatedByUserType is CreatedBy's user.user_type (INTERNAL | EXTERNAL),
 	// needed to route the directory lookup to the right identity org — see
 	// directory.Service.LookupTyped.
