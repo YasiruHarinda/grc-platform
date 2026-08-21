@@ -41,11 +41,11 @@ type Deps struct {
 	// Users provisions a platform user by uuid (Upsert with email/displayName
 	// left "" — see the uuid-identity migration and Upsert's doc comment).
 	Users userentity.Repository
-	// Grants creates/revokes (role, scope) grants. nil in local dev when no
-	// privilege store is configured (see cmd/server/main.go) — handlers must
-	// treat a nil Grants as a 500 rather than a nil-pointer panic, since a
-	// deployment gating on MANAGE_USERS with no privilege store makes no
-	// sense in the first place.
+	// Grants creates/revokes (role, scope) grants. Never nil in practice —
+	// cmd/server/main.go builds it unconditionally, unlike the privilege
+	// store, which is gated on TokenValidatorEnabled — but handlers still
+	// guard against a nil Grants and treat it as a 500 rather than risking a
+	// nil-pointer panic.
 	Grants grant.Repository
 	// Directory resolves/searches WSO2-org people by uuid. nil is tolerated
 	// (local dev without SCIM credentials) — search then returns no results
