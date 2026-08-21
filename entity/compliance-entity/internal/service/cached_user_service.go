@@ -43,17 +43,22 @@ func NewCachedUserService(inner UserService) UserService {
 }
 
 // remember caches a user under every key that identifies it, so a lookup by one
-// key warms the other.
+// key warms the other. A legacy row with no UUID is only cached by ID, so it
+// can never be served back out under the empty-UUID key.
 func (s *cachedUserService) remember(u domain.User) {
 	s.byID.Set(u.ID, u)
-	s.byUUID.Set(u.UUID, u)
+	if u.UUID != "" {
+		s.byUUID.Set(u.UUID, u)
+	}
 }
 
 // forget evicts a user from every key. Called on writes, including the ones
 // that only *might* have changed the row.
 func (s *cachedUserService) forget(u domain.User) {
 	s.byID.Delete(u.ID)
-	s.byUUID.Delete(u.UUID)
+	if u.UUID != "" {
+		s.byUUID.Delete(u.UUID)
+	}
 }
 
 func (s *cachedUserService) SearchUsers(ctx context.Context, req domain.SearchUsersRequest) (domain.SearchUsersResponse, error) {
