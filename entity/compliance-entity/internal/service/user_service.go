@@ -86,7 +86,7 @@ func (s *userService) CreateUser(ctx context.Context, req domain.CreateUserReque
 	// provisions by uuid alone (email is being phased out — see the comment on
 	// CreateUserRequest.Email). Refusing both-empty is the only thing this
 	// still guards against.
-	if req.Email == "" && strings.TrimSpace(req.UUID) == "" {
+	if strings.TrimSpace(req.Email) == "" && strings.TrimSpace(req.UUID) == "" {
 		return domain.User{}, &apierror.ValidationError{Msg: "email or uuid is required"}
 	}
 	// DisplayName is deliberately not required: callers are moving off storing
