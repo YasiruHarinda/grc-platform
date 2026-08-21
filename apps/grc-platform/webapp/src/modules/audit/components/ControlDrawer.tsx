@@ -71,7 +71,7 @@ import { useSubmitSample } from "@modules/audit/api/useSubmitSample";
 import { useRequestSampleTime } from "@modules/audit/api/useRequestSampleTime";
 import { useValidateEvidence } from "@modules/audit/api/useValidateEvidence";
 import { useReviewEvidence } from "@modules/audit/api/useReviewEvidence";
-import { useCurrentUserEmail } from "@modules/audit/hooks/useCurrentUserEmail";
+import { useCurrentUserId } from "@modules/audit/hooks/useCurrentUserId";
 import { useOverrideControlStatus } from "@modules/audit/api/useOverrideControlStatus";
 import { isAssignedAuditor } from "@modules/audit/utils/auditor";
 import type { AuditControl, ControlStatus } from "@modules/audit/types/audit";
@@ -1410,11 +1410,11 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
   const canReviewEvidence = can(AuditPrivilege.ReviewEvidence);
   const canComment = can(AuditPrivilege.AddComment);
   const canManageControls = can(AuditPrivilege.ManageControls);
-  const currentUserEmail = useCurrentUserEmail();
+  const currentUserId = useCurrentUserId();
   // The assigned auditor POC (or an admin, who bypasses every gate the same way
   // on the backend) — drives population validation, sample selection, and
   // evidence validation across both DESIGN and OE controls.
-  const isAuditor = Boolean(control) && (isAssignedAuditor(control as AuditControl, currentUserEmail) || canManageControls);
+  const isAuditor = Boolean(control) && (isAssignedAuditor(control as AuditControl, currentUserId) || canManageControls);
   const validateEvidence = useValidateEvidence();
   const reviewEvidence = useReviewEvidence();
   const overrideStatus = useOverrideControlStatus();

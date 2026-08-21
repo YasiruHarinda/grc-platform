@@ -19,17 +19,18 @@ import type { AuditControl } from "@modules/audit/types/audit";
 const isMockAuth = window.config?.GRC_PLATFORM_MOCK_AUTH === true;
 
 /**
- * True when the signed-in user is this control's assigned auditor POC — the
- * same check the backend enforces (matching control.auditorEmail against the
- * caller's token email; see requireAssignedAuditor). This is UI gating only: a
- * mismatch here just hides a card/button, it never grants access, since the
- * backend re-derives and enforces the check independently.
+ * True when the signed-in user is this control's assigned auditor POC — mirrors
+ * the backend check (matching control.AuditorID against the caller's resolved
+ * user id; see requireAssignedAuditor), but compares uuids since that's what's
+ * on the token here. This is UI gating only: a mismatch here just hides a
+ * card/button, it never grants access, since the backend re-derives and
+ * enforces the check independently.
  *
  * In mock-auth mode (no real IdP) every auditor-only surface is shown, mirroring
  * how useAuditPrivileges.can() allows everything in that mode.
  */
-export function isAssignedAuditor(control: Pick<AuditControl, "auditorEmail">, currentUserEmail: string | null): boolean {
+export function isAssignedAuditor(control: Pick<AuditControl, "auditorUuid">, currentUserId: string | null): boolean {
   if (isMockAuth) return true;
-  if (!currentUserEmail || !control.auditorEmail) return false;
-  return control.auditorEmail.toLowerCase() === currentUserEmail.toLowerCase();
+  if (!currentUserId || !control.auditorUuid) return false;
+  return control.auditorUuid === currentUserId;
 }
