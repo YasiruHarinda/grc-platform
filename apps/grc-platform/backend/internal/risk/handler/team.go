@@ -154,6 +154,15 @@ func (d *Deps) handleUpdateTeam(w http.ResponseWriter, r *http.Request) {
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
+	// UpdateTeamRequest.Name is a plain string, not a pointer — an omitted or
+	// empty name decodes to "" and the entity repository forwards it
+	// unconditionally (it doesn't support partial updates), so without this
+	// check a caller could blank out a team's name. Same guard as
+	// handleCreateTeam.
+	if req.Name == "" {
+		response.WriteError(w, http.StatusBadRequest, "name is required")
+		return
+	}
 
 	updatedBy := ""
 	if user := auth.FromContext(r.Context()); user != nil {
