@@ -48,6 +48,7 @@ import { Pencil, Plus, Trash2, X } from "@wso2/oxygen-ui-icons-react";
 import { useState, type JSX } from "react";
 import { useGetControls } from "@modules/audit/api/useGetControls";
 import { useGetUsers } from "@modules/audit/api/useGetUsers";
+import { useGetAuditorCandidates } from "@modules/audit/api/useGetAuditorCandidates";
 import { useGetTeams } from "@modules/audit/api/useGetTeams";
 import { useAddControl } from "@modules/audit/api/useAddControl";
 import { useUpdateControl } from "@modules/audit/api/useUpdateControl";
@@ -155,6 +156,7 @@ interface ControlFormDialogProps {
   title: string;
   initialValues: ControlFormState;
   users: AuditUser[];
+  auditorCandidates: AuditUser[];
   teams: AuditTeam[];
   isSaving: boolean;
   error: string | null;
@@ -168,6 +170,7 @@ function ControlFormDialog({
   title,
   initialValues,
   users,
+  auditorCandidates,
   teams,
   isSaving,
   error,
@@ -293,11 +296,7 @@ function ControlFormDialog({
               renderInput={(params) => <TextField {...params} label="Process Owner" />}
             />
             <Autocomplete
-              options={[...users].sort((a, b) => {
-                if (a.userType === b.userType) return a.displayName.localeCompare(b.displayName);
-                return a.userType === "EXTERNAL" ? -1 : 1;
-              })}
-              groupBy={(u) => u.userType === "EXTERNAL" ? "External Auditors" : "Internal"}
+              options={[...auditorCandidates].sort((a, b) => a.displayName.localeCompare(b.displayName))}
               getOptionLabel={(u) => u.displayName}
               value={form.auditor}
               onChange={(_e, val) => {
@@ -498,6 +497,7 @@ export default function ControlSettingsPanel({
 
   const { data: controlsData, isLoading: controlsLoading } = useGetControls(auditId);
   const { data: users = [] } = useGetUsers();
+  const { data: auditorCandidates = [] } = useGetAuditorCandidates();
   const { data: teams = [] } = useGetTeams();
 
   const addMutation = useAddControl();
@@ -739,6 +739,7 @@ export default function ControlSettingsPanel({
         title="Add Control"
         initialValues={EMPTY_FORM}
         users={users}
+        auditorCandidates={auditorCandidates}
         teams={teams}
         isSaving={addMutation.isPending}
         error={mutationError}
@@ -752,6 +753,7 @@ export default function ControlSettingsPanel({
         title={`Edit ${editingControl?.controlNumber ?? ""}`}
         initialValues={editingControl ? controlToForm(editingControl, users, teams) : EMPTY_FORM}
         users={users}
+        auditorCandidates={auditorCandidates}
         teams={teams}
         isSaving={updateMutation.isPending}
         error={mutationError}

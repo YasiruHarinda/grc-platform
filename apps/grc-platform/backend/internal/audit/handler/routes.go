@@ -87,7 +87,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	ch := &controlHandler{svc: deps.Control, notify: &deps}
 	tlh := &trailHandler{svc: deps.Trail, directory: deps.Directory}
 	fh := &frameworkHandler{svc: deps.Framework}
-	uh := &userHandler{svc: deps.User, directory: deps.Directory}
+	uh := &userHandler{svc: deps.User, directory: deps.Directory, grants: deps.Grants}
 	th := &teamHandler{svc: deps.Team}
 	dh := &dashboardHandler{svc: deps.Dashboard}
 	eh := &evidenceHandler{svc: deps.Evidence, controlSvc: deps.Control, popSvc: deps.Population, trailSvc: deps.Trail, aiClient: deps.AIAgent, notify: &deps, directory: deps.Directory}
@@ -111,6 +111,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/v1/audit/products", fh.listProducts)
 	mux.HandleFunc("POST /api/v1/audit/products", fh.createProduct)
 	mux.HandleFunc("GET /api/v1/audit/users", uh.listUsers)
+	mux.HandleFunc("GET /api/v1/audit/auditor-candidates", uh.listAuditorCandidates)
 	mux.HandleFunc("GET /api/v1/audit/teams", th.listTeams)
 	mux.HandleFunc("POST /api/v1/audit/teams", th.createTeam)
 	mux.HandleFunc("PUT /api/v1/audit/teams/{id}", th.updateTeam)
