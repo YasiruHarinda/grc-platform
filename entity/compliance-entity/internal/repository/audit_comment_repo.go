@@ -62,18 +62,22 @@ func (r *commentRepo) CreateComment(ctx context.Context, controlID int, req doma
 	return r.getCommentByID(ctx, int(id))
 }
 
+const commentSelectCols = `
+	        c.id, c.control_id, c.author_id, c.parent_comment_id, c.content, c.is_internal,
+	        c.created_by, u_author.user_type AS author_user_type, c.created_at, c.updated_at`
+
+const commentFromClause = `
+	 FROM audit_comment c
+	 LEFT JOIN ` + "`user`" + ` u_author ON u_author.id = c.author_id`
+
 func (r *commentRepo) getCommentByID(ctx context.Context, id int) (*domain.AuditComment, error) {
 	return scanAuditComment(r.db.QueryRowContext(ctx,
-		`SELECT id, control_id, author_id, parent_comment_id, content, is_internal,
-		        created_by, created_at, updated_at
-		 FROM audit_comment WHERE id = ?`, id))
+		`SELECT`+commentSelectCols+commentFromClause+` WHERE c.id = ?`, id))
 }
 
 func (r *commentRepo) ListCommentsByControl(ctx context.Context, controlID int) ([]domain.AuditComment, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, control_id, author_id, parent_comment_id, content, is_internal,
-		        created_by, created_at, updated_at
-		 FROM audit_comment WHERE control_id = ? ORDER BY created_at ASC`,
+		`SELECT`+commentSelectCols+commentFromClause+` WHERE c.control_id = ? ORDER BY c.created_at ASC`,
 		controlID)
 	if err != nil {
 		return nil, fmt.Errorf("comment.List: %w", err)
@@ -119,10 +123,10 @@ func (r *commentRepo) DeleteComment(ctx context.Context, commentID int) error {
 func scanAuditComment(s scanner) (*domain.AuditComment, error) {
 	var c domain.AuditComment
 	var authorID, parentID sql.NullInt64
-	var createdBy sql.NullString
+	var createdBy, authorUserType sql.NullString
 	err := s.Scan(
 		&c.ID, &c.ControlID, &authorID, &parentID,
-		&c.Content, &c.IsInternal, &createdBy, &c.CreatedOn, &c.UpdatedOn,
+		&c.Content, &c.IsInternal, &createdBy, &authorUserType, &c.CreatedOn, &c.UpdatedOn,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, &apierror.NotFoundError{Msg: "comment not found"}
@@ -140,6 +144,9 @@ func scanAuditComment(s scanner) (*domain.AuditComment, error) {
 	}
 	if createdBy.Valid {
 		c.CreatedBy = &createdBy.String
+	}
+	if authorUserType.Valid {
+		c.CreatedByUserType = &authorUserType.String
 	}
 	return &c, nil
 }

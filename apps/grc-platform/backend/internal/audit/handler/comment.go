@@ -38,13 +38,14 @@ type commentHandler struct {
 }
 
 // resolveCommentAuthor fills c.CreatedByName from c.CreatedBy (the
-// commenter's raw uuid) via a single directory lookup — see
-// AuditTrailEntry.CreatedByName for the same pattern batched across a list.
+// commenter's raw uuid), routed to the right identity org via
+// c.CreatedByUserType — see AuditTrailEntry.CreatedByName for the same
+// pattern batched across a list.
 func (h *commentHandler) resolveCommentAuthor(ctx context.Context, c *model.AuditComment) {
 	if c == nil || c.CreatedBy == "" {
 		return
 	}
-	p, found := h.directory.Lookup(ctx, c.CreatedBy)
+	p, found := h.directory.LookupTyped(ctx, c.CreatedBy, c.CreatedByUserType)
 	switch {
 	case found && strings.TrimSpace(p.DisplayName) != "":
 		c.CreatedByName = strings.TrimSpace(p.DisplayName)
@@ -58,13 +59,13 @@ func (h *commentHandler) resolveCommentAuthor(ctx context.Context, c *model.Audi
 // resolveCommentAuthors batch-resolves CreatedByName for a list of comments —
 // see resolveCommentAuthor.
 func (h *commentHandler) resolveCommentAuthors(ctx context.Context, comments []*model.AuditComment) {
-	uuids := make([]string, 0, len(comments))
+	uuidTypes := make(map[string]string, len(comments))
 	for _, c := range comments {
 		if c.CreatedBy != "" {
-			uuids = append(uuids, c.CreatedBy)
+			uuidTypes[c.CreatedBy] = c.CreatedByUserType
 		}
 	}
-	people := h.directory.LookupAll(ctx, uuids)
+	people := h.directory.LookupAllTyped(ctx, uuidTypes)
 	for _, c := range comments {
 		p, ok := people[c.CreatedBy]
 		if !ok {

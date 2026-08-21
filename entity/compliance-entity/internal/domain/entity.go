@@ -1675,15 +1675,20 @@ type ListRiskChangeLogResponse struct {
 // is opened. Threaded via ParentCommentID; IsInternal hides it from the
 // external auditor.
 type AuditComment struct {
-	ID              int       `json:"id"`
-	ControlID       int       `json:"controlId"`
-	AuthorID        *int      `json:"authorId"`
-	ParentCommentID *int      `json:"parentCommentId"`
-	Content         string    `json:"content"`
-	IsInternal      bool      `json:"isInternal"`
-	CreatedBy       *string   `json:"createdBy"`
-	CreatedOn       time.Time `json:"createdOn"`
-	UpdatedOn       time.Time `json:"updatedOn"`
+	ID              int     `json:"id"`
+	ControlID       int     `json:"controlId"`
+	AuthorID        *int    `json:"authorId"`
+	ParentCommentID *int    `json:"parentCommentId"`
+	Content         string  `json:"content"`
+	IsInternal      bool    `json:"isInternal"`
+	CreatedBy       *string `json:"createdBy"`
+	// CreatedByUserType is the author's user.user_type (INTERNAL | EXTERNAL),
+	// joined from author_id — nil when author_id is NULL (author since
+	// deleted). Lets a caller route CreatedBy through the right identity org,
+	// same as OwnerUserType/AuditorUserType on AuditControl.
+	CreatedByUserType *string   `json:"createdByUserType"`
+	CreatedOn         time.Time `json:"createdOn"`
+	UpdatedOn         time.Time `json:"updatedOn"`
 }
 
 // CreateAuditCommentRequest is the payload for POST /audits/{auditId}/controls/{controlId}/comments.

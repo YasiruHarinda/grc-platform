@@ -28,7 +28,11 @@ type AuditComment struct {
 	ParentCommentID *int   `json:"parentCommentId"`
 	Content         string `json:"content"`
 	IsInternal      bool   `json:"isInternal"`
-	CreatedBy       string `json:"createdBy"`
+	CreatedBy string `json:"createdBy"`
+	// CreatedByUserType is CreatedBy's user.user_type (INTERNAL | EXTERNAL),
+	// needed to route the directory lookup to the right identity org — see
+	// directory.Service.LookupTyped.
+	CreatedByUserType string `json:"createdByUserType"`
 	// CreatedByName is CreatedBy resolved through the identity directory, for
 	// display — see AuditTrailEntry.CreatedByName. CreatedBy stays the raw
 	// uuid; the frontend's "is this my comment" check compares against it,
