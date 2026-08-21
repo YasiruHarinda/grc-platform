@@ -155,7 +155,8 @@ func (r *userRepo) CreateUser(ctx context.Context, req domain.CreateUserRequest)
 		userType = "INTERNAL"
 	}
 
-	if strings.TrimSpace(req.UUID) == "" {
+	uuid := strings.TrimSpace(req.UUID)
+	if uuid == "" {
 		return nil, &apierror.ValidationError{Msg: "uuid is required"}
 	}
 
@@ -180,7 +181,7 @@ func (r *userRepo) CreateUser(ctx context.Context, req domain.CreateUserRequest)
 			"VALUES (?, ?, ?, ?, ?) "+
 			"ON DUPLICATE KEY UPDATE "+
 			"updated_by = VALUES(updated_by), id = LAST_INSERT_ID(id)",
-		req.UUID, userType, status, req.CreatedBy, req.CreatedBy)
+		uuid, userType, status, req.CreatedBy, req.CreatedBy)
 	if err != nil {
 		return nil, fmt.Errorf("user.Create: %w", err)
 	}
