@@ -316,7 +316,6 @@ DEALLOCATE PREPARE add_pop_attestation_stmt;
 CREATE TABLE IF NOT EXISTS audit_evidence (
   id                      INT          NOT NULL AUTO_INCREMENT,
   control_id              INT          NOT NULL,
-  submitted_by            INT          NULL,
   status                  ENUM(
                             'SUBMITTED',
                             'COMPLIANCE_APPROVED',
@@ -335,7 +334,6 @@ CREATE TABLE IF NOT EXISTS audit_evidence (
   KEY idx_evidence_control (control_id),
   KEY idx_evidence_status  (status),
   CONSTRAINT fk_evidence_control   FOREIGN KEY (control_id)              REFERENCES audit_control(id)  ON DELETE CASCADE,
-  CONSTRAINT fk_evidence_submitter FOREIGN KEY (submitted_by)            REFERENCES `user`(id)         ON DELETE SET NULL,
   CONSTRAINT fk_evidence_reused    FOREIGN KEY (reused_from_evidence_id) REFERENCES audit_evidence(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -366,7 +364,6 @@ CREATE TABLE IF NOT EXISTS audit_evidence_file (
   evidence_id   INT          NULL,
   population_id INT          NULL,
   file_kind     ENUM('POPULATION','SAMPLE') NULL,
-  uploaded_by   INT          NULL,
   file_name     VARCHAR(255) NOT NULL,
   file_path     TEXT         NOT NULL,
   file_type     VARCHAR(100) NULL,
@@ -380,7 +377,6 @@ CREATE TABLE IF NOT EXISTS audit_evidence_file (
   KEY idx_file_population (population_id),
   CONSTRAINT fk_file_evidence   FOREIGN KEY (evidence_id)   REFERENCES audit_evidence(id)   ON DELETE CASCADE,
   CONSTRAINT fk_file_population FOREIGN KEY (population_id) REFERENCES audit_population(id) ON DELETE CASCADE,
-  CONSTRAINT fk_file_uploader   FOREIGN KEY (uploaded_by)   REFERENCES `user`(id)           ON DELETE SET NULL,
   CONSTRAINT chk_file_owner CHECK ((evidence_id IS NOT NULL) <> (population_id IS NOT NULL)),
   CONSTRAINT chk_file_kind  CHECK ((population_id IS NULL) = (file_kind IS NULL))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
