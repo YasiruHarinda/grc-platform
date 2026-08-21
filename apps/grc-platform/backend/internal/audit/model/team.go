@@ -30,7 +30,8 @@ type AuditTeam struct {
 // Audit Hub "Add Team" dialog. No team_type/code, unlike Risk's teams: a
 // audit_team is just a name and a status.
 type CreateTeamRequest struct {
-	Name string `json:"name"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
 }
 
 // UpdateTeamRequest is the payload for PUT /api/v1/audit/teams/{id}. Both

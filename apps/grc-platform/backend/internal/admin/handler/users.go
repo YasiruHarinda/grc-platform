@@ -81,16 +81,16 @@ func fillNamesFromDirectory(ctx context.Context, dir *directory.Service, users [
 	if dir == nil {
 		return
 	}
-	var uuids []string
+	uuidTypes := make(map[string]string)
 	for _, u := range users {
 		if (u.DisplayName == "" || u.Email == "") && u.UUID != "" {
-			uuids = append(uuids, u.UUID)
+			uuidTypes[u.UUID] = u.UserType
 		}
 	}
-	if len(uuids) == 0 {
+	if len(uuidTypes) == 0 {
 		return
 	}
-	people := dir.LookupAll(ctx, uuids)
+	people := dir.LookupAllTyped(ctx, uuidTypes)
 	for i := range users {
 		p, ok := people[users[i].UUID]
 		if !ok {

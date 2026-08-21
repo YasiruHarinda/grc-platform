@@ -19,6 +19,7 @@ package handler
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
@@ -80,8 +81,15 @@ func (h *teamHandler) createTeam(w http.ResponseWriter, r *http.Request) {
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
+	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
 		response.WriteError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if req.Status == "" {
+		req.Status = "ACTIVE"
+	} else if req.Status != "ACTIVE" && req.Status != "INACTIVE" {
+		response.WriteError(w, http.StatusBadRequest, "status must be ACTIVE or INACTIVE")
 		return
 	}
 
@@ -114,6 +122,7 @@ func (h *teamHandler) updateTeam(w http.ResponseWriter, r *http.Request) {
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
+	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
 		response.WriteError(w, http.StatusBadRequest, "name is required")
 		return

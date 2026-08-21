@@ -237,7 +237,7 @@ func (r *teamRepo) ListAll(ctx context.Context) ([]*model.AuditTeam, error) {
 }
 
 func (r *teamRepo) Create(ctx context.Context, req model.CreateTeamRequest, createdBy string) (*model.AuditTeam, error) {
-	body := map[string]any{"name": req.Name, "status": "ACTIVE", "createdBy": createdBy}
+	body := map[string]any{"name": req.Name, "status": req.Status, "createdBy": createdBy}
 	var t model.AuditTeam
 	if err := r.c.Post(ctx, "/audit/teams", body, &t); err != nil {
 		return nil, err

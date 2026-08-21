@@ -488,20 +488,43 @@ JOIN   privilege p ON p.privilege_name IN (
 WHERE  r.role_name = 'grc-platform-audit-management'
 ON DUPLICATE KEY UPDATE is_active = TRUE;
 
--- Every ACTIVE grant of the old shared role is, post-rename, a grant of
--- grc-platform-risk-management — correct for Risk, but it silently drops the
--- Audit-side org-wide read the same grant used to confer, now that those
--- privileges live on a different role. Backfill a matching GLOBAL grant of
--- grc-platform-audit-management for every such holder, preserving today's
--- behaviour across the split. Idempotent: ON DUPLICATE KEY UPDATE reactivates
--- rather than duplicating. Must run after both roles above exist.
+-- ONE-TIME BACKFILL. Every ACTIVE grant of the old shared role is, post-rename,
+-- a grant of grc-platform-risk-management — correct for Risk, but it silently
+-- drops the Audit-side org-wide read the same grant used to confer, now that
+-- those privileges live on a different role. Backfill a matching GLOBAL grant
+-- of grc-platform-audit-management for every such HISTORICAL holder, preserving
+-- today's behaviour across the split. Must run after both roles above exist.
+--
+-- WHY THE created_at WATERMARK — this file is re-run in full on every deploy,
+-- and there is no migration-marker table in this repo, so the statement must
+-- carry its own one-time marker. The grc-platform-audit-management role row
+-- IS that marker: it is created by this split and by nothing else, so its
+-- created_at is the instant the split ran. Only grants that predate it are
+-- eligible.
+--
+-- Without the watermark this is not a backfill but a standing rule: a
+-- grc-platform-risk-management grant an admin makes NEXT MONTH — deliberately
+-- Risk-only, since the split is what made that distinction expressible — would
+-- be handed GLOBAL Audit Hub read on the next seed run, by nobody's decision.
+--
+-- `<` (not `<=`) because role.created_at is second-resolution DATETIME: a grant
+-- landing in the same second as the marker is excluded rather than guessed at,
+-- which fails closed.
+--
+-- ON DUPLICATE KEY UPDATE is a deliberate NO-OP, not a reactivation. Re-running
+-- must not resurrect a backfilled grant an administrator has since revoked —
+-- that is the same unauthorised-privilege problem in a different disguise. The
+-- assignment exists only to swallow the duplicate-key error; the row is left
+-- exactly as the administrator last set it. It is table-qualified because the
+-- SELECT's own user_role_grant alias makes a bare column name ambiguous.
 INSERT INTO user_role_grant (user_id, role_id, scope_type, scope_id, created_by)
 SELECT g.user_id, ar.id, 'GLOBAL', 0, 'system:grc-platform-management-split'
 FROM   user_role_grant g
 JOIN   `role` rm ON rm.id = g.role_id AND rm.role_name = 'grc-platform-risk-management'
 JOIN   `role` ar ON ar.role_name = 'grc-platform-audit-management'
 WHERE  g.status = 'ACTIVE'
-ON DUPLICATE KEY UPDATE status = 'ACTIVE';
+  AND  g.created_at < ar.created_at
+ON DUPLICATE KEY UPDATE user_role_grant.user_id = user_role_grant.user_id;
 
 -- grc-platform-audit-compliance-admin — everything (12)
 INSERT INTO role_privilege (role_id, privilege_id, is_active)
