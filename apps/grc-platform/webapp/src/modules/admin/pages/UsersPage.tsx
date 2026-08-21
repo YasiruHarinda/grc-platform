@@ -21,7 +21,10 @@ import {
   Chip,
   CircularProgress,
   IconButton,
+  MenuItem,
   Paper,
+  Select,
+  type SelectChangeEvent,
   Stack,
   Table,
   TableBody,
@@ -35,9 +38,17 @@ import {
 import { Pencil, Plus, Search } from "@wso2/oxygen-ui-icons-react";
 import { type JSX, useEffect, useMemo, useState } from "react";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
-import { fetchAdminUsers, fetchRoles, type AdminUser, type Role } from "../api/adminApi";
+import { fetchAdminUsers, fetchRoles, updateUserStatus, type AdminUser, type Role } from "../api/adminApi";
 import AddUserDialog from "./AddUserDialog";
 import GrantEditorDialog from "./GrantEditorDialog";
+
+type UserStatus = AdminUser["status"];
+
+const statusColor: Record<UserStatus, "success" | "default" | "error"> = {
+  ACTIVE: "success",
+  INACTIVE: "default",
+  REMOVED: "error",
+};
 
 export default function UsersPage(): JSX.Element {
   const authFetch = useAuthApiClient();
@@ -48,6 +59,9 @@ export default function UsersPage(): JSX.Element {
   const [search, setSearch] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [grantEditorUser, setGrantEditorUser] = useState<AdminUser | null>(null);
+  // Tracks the one row whose status change is in flight, so only that row's
+  // Select disables rather than the whole table.
+  const [statusUpdatingId, setStatusUpdatingId] = useState<number | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -83,6 +97,23 @@ export default function UsersPage(): JSX.Element {
     if (fresh) setGrantEditorUser(fresh);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [users]);
+
+  // REMOVED is the more final state (an ex-employee, gone for good) — confirm
+  // before applying it rather than letting the same control used for routine
+  // ACTIVE/INACTIVE toggling trigger it on a misclick. The server separately
+  // refuses a caller changing their own status (self-lockout guard); that
+  // failure surfaces through the ordinary error alert below.
+  const handleStatusChange = (user: AdminUser, next: UserStatus) => {
+    if (next === "REMOVED" && !window.confirm(`Mark ${user.displayName || user.email || user.uuid} as Removed?`)) {
+      return;
+    }
+    setError(null);
+    setStatusUpdatingId(user.id);
+    updateUserStatus(authFetch, user.id, next)
+      .then(load)
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to update status"))
+      .finally(() => setStatusUpdatingId(null));
+  };
 
   return (
     <Box>
@@ -156,11 +187,25 @@ export default function UsersPage(): JSX.Element {
                   <TableCell sx={{ fontWeight: 600 }}>{u.displayName || "—"}</TableCell>
                   <TableCell>{u.email || "—"}</TableCell>
                   <TableCell>
-                    <Chip
+                    <Select
                       size="small"
-                      label={u.status === "ACTIVE" ? "Active" : u.status === "INACTIVE" ? "Inactive" : "Removed"}
-                      color={u.status === "ACTIVE" ? "success" : "default"}
-                    />
+                      variant="standard"
+                      disableUnderline
+                      value={u.status}
+                      disabled={statusUpdatingId === u.id}
+                      onChange={(e: SelectChangeEvent) => handleStatusChange(u, e.target.value as UserStatus)}
+                      renderValue={(value) => (
+                        <Chip
+                          size="small"
+                          label={value === "ACTIVE" ? "Active" : value === "INACTIVE" ? "Inactive" : "Removed"}
+                          color={statusColor[value as UserStatus]}
+                        />
+                      )}
+                    >
+                      <MenuItem value="ACTIVE">Active</MenuItem>
+                      <MenuItem value="INACTIVE">Inactive</MenuItem>
+                      <MenuItem value="REMOVED">Removed</MenuItem>
+                    </Select>
                   </TableCell>
                   <TableCell>{u.createdOn ? new Date(u.createdOn).toLocaleDateString() : "—"}</TableCell>
                   <TableCell>

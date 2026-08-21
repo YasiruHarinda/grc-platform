@@ -40,6 +40,9 @@ type GrantRepository interface {
 	TeamExists(ctx context.Context, scopeType string, scopeID int) (bool, error)
 	RoleCarriesPrivilege(ctx context.Context, roleID int, privilegeName string) (bool, error)
 	CandidatesForPrivilege(ctx context.Context, privilegeName string, teamIDs []int) ([]domain.GrantCandidate, error)
+	// UserType returns the target user's user_type (INTERNAL/EXTERNAL), for
+	// validateScope's assignable_user_type check.
+	UserType(ctx context.Context, userID int) (string, error)
 }
 
 type grantRepo struct{ db *sql.DB }
@@ -273,9 +276,10 @@ func (r *grantRepo) RevokeGrant(ctx context.Context, userID, grantID int, revoke
 func (r *grantRepo) GetRoleByID(ctx context.Context, roleID int) (*domain.Role, error) {
 	var role domain.Role
 	err := r.db.QueryRowContext(ctx,
-		"SELECT id, role_name, COALESCE(description,''), module, COALESCE(scope_basis,''), status "+
+		"SELECT id, role_name, COALESCE(description,''), module, COALESCE(scope_basis,''), assignable_user_type, status "+
 			"FROM `role` WHERE id = ?",
-		roleID).Scan(&role.ID, &role.RoleName, &role.Description, &role.Module, &role.ScopeBasis, &role.Status)
+		roleID).Scan(&role.ID, &role.RoleName, &role.Description, &role.Module, &role.ScopeBasis,
+		&role.AssignableUserType, &role.Status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, &apierror.NotFoundError{Msg: "role not found"}
 	}
@@ -288,7 +292,7 @@ func (r *grantRepo) GetRoleByID(ctx context.Context, roleID int) (*domain.Role, 
 // ListRoles returns every active role, for populating a grant editor.
 func (r *grantRepo) ListRoles(ctx context.Context) ([]domain.Role, error) {
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, role_name, COALESCE(description,''), module, COALESCE(scope_basis,''), status "+
+		"SELECT id, role_name, COALESCE(description,''), module, COALESCE(scope_basis,''), assignable_user_type, status "+
 			"FROM `role` WHERE status = 'ACTIVE' ORDER BY module, role_name")
 	if err != nil {
 		return nil, fmt.Errorf("grant.ListRoles: %w", err)
@@ -299,12 +303,28 @@ func (r *grantRepo) ListRoles(ctx context.Context) ([]domain.Role, error) {
 	for rows.Next() {
 		var role domain.Role
 		if err := rows.Scan(&role.ID, &role.RoleName, &role.Description, &role.Module,
-			&role.ScopeBasis, &role.Status); err != nil {
+			&role.ScopeBasis, &role.AssignableUserType, &role.Status); err != nil {
 			return nil, fmt.Errorf("grant.ListRoles scan: %w", err)
 		}
 		out = append(out, role)
 	}
 	return out, rows.Err()
+}
+
+// UserType returns the target user's user_type (INTERNAL/EXTERNAL), for
+// validateScope's assignable_user_type check. NotFound mirrors CreateGrant's
+// existing FK-violation handling — an unknown userID is a validation error,
+// not a server error.
+func (r *grantRepo) UserType(ctx context.Context, userID int) (string, error) {
+	var userType string
+	err := r.db.QueryRowContext(ctx, "SELECT user_type FROM `user` WHERE id = ?", userID).Scan(&userType)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", &apierror.NotFoundError{Msg: "user not found"}
+	}
+	if err != nil {
+		return "", fmt.Errorf("grant.UserType: %w", err)
+	}
+	return userType, nil
 }
 
 // TeamExists reports whether an active team of the given scope kind exists.

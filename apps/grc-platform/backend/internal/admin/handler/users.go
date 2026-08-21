@@ -107,6 +107,10 @@ func fillNamesFromDirectory(ctx context.Context, dir *directory.Service, users [
 
 type createUserRequest struct {
 	UUID string `json:"uuid"`
+	// UserType — INTERNAL or EXTERNAL. Empty defaults to INTERNAL (the
+	// entity's own default), matching every caller before External
+	// provisioning existed.
+	UserType string `json:"userType"`
 }
 
 // createUserResponse mirrors just enough of the entity's User for the "Add
@@ -121,16 +125,22 @@ type createUserResponse struct {
 	Email       string `json:"email"`
 }
 
-// handleCreateUser serves POST /api/v1/admin/users, body {"uuid": "..."}.
+// validUserTypes mirrors user.user_type's enum — the only two values this
+// endpoint (or the column) ever accepts.
+var validUserTypes = map[string]bool{"": true, "INTERNAL": true, "EXTERNAL": true}
+
+// handleCreateUser serves POST /api/v1/admin/users, body
+// {"uuid": "...", "userType": "INTERNAL" | "EXTERNAL"}.
 //
-// Provisions by uuid alone: "available in the WSO2 organization" is checked
-// against the identity directory, which is also where the created row's
-// display name/email are sourced for the response — nothing is stored beyond
-// the uuid itself (see internal/shared/entity's CreateUserRequest.Email
-// comment for why). This is stricter than the Risk module's Action Owner
-// resolve flow, which accepts an unprovisioned email: this endpoint is
-// granting platform authority to someone, so a directory match is required,
-// not merely accepted when available.
+// Provisions by uuid alone: "available in the WSO2 organization" (or, for
+// EXTERNAL, the external auditor organization) is checked against the
+// identity directory, which is also where the created row's display
+// name/email are sourced for the response — nothing is stored beyond the
+// uuid itself (see internal/shared/entity's CreateUserRequest.Email comment
+// for why). This is stricter than the Risk module's Action Owner resolve
+// flow, which accepts an unprovisioned email: this endpoint is granting
+// platform authority to someone, so a directory match is required, not
+// merely accepted when available.
 func (d *Deps) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageUsers) {
 		return
@@ -145,19 +155,27 @@ func (d *Deps) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		response.WriteError(w, http.StatusBadRequest, "uuid is required")
 		return
 	}
+	req.UserType = strings.ToUpper(strings.TrimSpace(req.UserType))
+	if !validUserTypes[req.UserType] {
+		response.WriteError(w, http.StatusBadRequest, "userType must be INTERNAL or EXTERNAL")
+		return
+	}
 
 	if d.Directory == nil {
 		response.WriteError(w, http.StatusUnprocessableEntity, "identity directory is not configured")
 		return
 	}
-	person, found := d.Directory.Lookup(r.Context(), req.UUID)
+	// LookupTyped treats anything but the literal "EXTERNAL" as INTERNAL,
+	// matching the empty-string-defaults-to-INTERNAL contract validated
+	// above.
+	person, found := d.Directory.LookupTyped(r.Context(), req.UUID, req.UserType)
 	if !found {
 		response.WriteError(w, http.StatusUnprocessableEntity, "uuid does not match a WSO2-org account")
 		return
 	}
 
 	createdBy := actor(r)
-	u, err := d.Users.Upsert(r.Context(), req.UUID, createdBy)
+	u, err := d.Users.UpsertTyped(r.Context(), req.UUID, req.UserType, createdBy)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
@@ -166,6 +184,60 @@ func (d *Deps) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	response.WriteJSONValue(w, http.StatusCreated, createUserResponse{
 		ID: u.ID, UUID: u.UUID, DisplayName: person.DisplayName, Email: person.Email,
 	})
+}
+
+// validUserStatuses mirrors user.status's enum.
+var validUserStatuses = map[string]bool{"ACTIVE": true, "INACTIVE": true, "REMOVED": true}
+
+type updateUserStatusRequest struct {
+	Status string `json:"status"`
+}
+
+// handleUpdateUserStatus serves PATCH /api/v1/admin/users/{id}/status.
+//
+// Self-lockout guard: a caller may not change their own status. Status is a
+// bigger hammer than a role change — it zeroes ALL of a user's privileges
+// outright (grant resolution already filters on user.status = 'ACTIVE', see
+// CONTEXT.md's Grant entry) — so a misclick here could not just demote but
+// fully lock out the only person who could undo it. Same reasoning as, and
+// deliberately consistent with, the self-demotion guard on role changes.
+func (d *Deps) handleUpdateUserStatus(w http.ResponseWriter, r *http.Request) {
+	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageUsers) {
+		return
+	}
+
+	userID, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || userID <= 0 {
+		response.WriteError(w, http.StatusBadRequest, "id must be a positive integer")
+		return
+	}
+
+	if caller := auth.FromContext(r.Context()); caller != nil && caller.UserID == userID {
+		response.WriteError(w, http.StatusUnprocessableEntity,
+			"you cannot change your own status — ask another admin to do it")
+		return
+	}
+
+	var req updateUserStatusRequest
+	if err := response.DecodeJSON(w, r, &req); err != nil {
+		return
+	}
+	req.Status = strings.ToUpper(strings.TrimSpace(req.Status))
+	if !validUserStatuses[req.Status] {
+		response.WriteError(w, http.StatusBadRequest, "status must be ACTIVE, INACTIVE, or REMOVED")
+		return
+	}
+
+	u, err := d.Users.UpdateStatus(r.Context(), userID, req.Status, actor(r))
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	if u == nil {
+		response.WriteError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type createGrantRequest struct {

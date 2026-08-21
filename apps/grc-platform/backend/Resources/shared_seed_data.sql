@@ -132,6 +132,18 @@ UPDATE `role` SET role_name = 'grc-platform-management'            WHERE role_na
 -- directly.
 UPDATE `role` SET role_name = 'grc-platform-risk-compliance-team'  WHERE role_name = 'grc-platform-compliance-team';
 
+-- grc-platform-management is being split the same way, for the same reason
+-- (see ADR-0007 in docs/adr, outside this repo): SHARED forces every grant of
+-- it to GLOBAL, so a team-scoped "management lead" was never expressible
+-- through it. Reclaims the grc-platform-risk-management name it held before
+-- the original merge above; the Audit Hub gets its own
+-- grc-platform-audit-management, inserted below with module='AUDIT'. Renamed
+-- in place for the same reason as the other renames in this block — existing
+-- role_privilege/user_role_grant rows keep referencing the same role_id.
+-- No-op on a fresh DB, since the INSERT below creates the row with the new
+-- name directly.
+UPDATE `role` SET role_name = 'grc-platform-risk-management' WHERE role_name = 'grc-platform-management';
+
 -- Retire the pre-migration "-stg" Audit Hub role rows. They matched an
 -- Asgardeo group string that nothing reads anymore (see middleware/auth.go's
 -- grant resolution); leaving them ACTIVE would let them keep showing up as
@@ -208,54 +220,57 @@ WHERE  r.role_name = 'grc-platform-management'
 -- not by holding a role. An Action Owner may be any employee, including one with
 -- no grants at all, which a role-based model could not express.
 --
--- grc-platform-management is SHARED (settled here, see the role_privilege
--- section below for the "before this migration" open question): one role,
--- held by the same people in both hubs, granted GLOBAL only. The cost is
--- explicit — SHARED cannot be granted AUDIT_TEAM or RISK_TEAM, so a
--- team/register-scoped management "lead" is not expressible through this
--- role. Nothing in either hub grants it team-scoped today, so this is not a
--- regression against current behaviour, only against a capability once
--- planned for the Audit Hub and never shipped.
+-- grc-platform-risk-management (renamed above, split from the old shared
+-- role — see ADR-0007) is RISK-only now: management approval/rejection in
+-- the Risk Hub. grc-platform-audit-management is its Audit Hub counterpart,
+-- module='AUDIT', so — unlike the old SHARED role — it can be granted
+-- AUDIT_TEAM-scoped, not just GLOBAL. Same precedent as
+-- grc-platform-risk-compliance-team / grc-platform-audit-compliance-team.
 --
--- The four grc-platform-audit-* roles below are module='AUDIT' and stay
--- distinct per hub, same precedent as grc-platform-risk-compliance-team /
--- grc-platform-audit-compliance-team.
-INSERT INTO `role` (role_name, description, module, scope_basis, status) VALUES
+-- assignable_user_type declares which kind of person a role may be granted
+-- to (INTERNAL/EXTERNAL identities live in separate Asgardeo organisations —
+-- see CONTEXT.md's Assignable user type entry). Every role here is INTERNAL
+-- except grc-platform-audit-external-auditor.
+INSERT INTO `role` (role_name, description, module, scope_basis, assignable_user_type, status) VALUES
   ('grc-platform-risk-compliance-admin',
    'Risk Hub administrator. Full access to all risk privileges, including final compliance approval, rejection, and closure.',
-   'RISK', 'SOURCE_REGISTER', 'ACTIVE'),
+   'RISK', 'SOURCE_REGISTER', 'INTERNAL', 'ACTIVE'),
   ('grc-platform-risk-assigner',
    'Creates risks, drives them through the workflow, submits for approval, and records assessments.',
-   'RISK', 'SOURCE_REGISTER', 'ACTIVE'),
+   'RISK', 'SOURCE_REGISTER', 'INTERNAL', 'ACTIVE'),
   ('grc-platform-risk-owner',
    'Approves or rejects risks at the owner stage and records residual assessments.',
-   'RISK', 'ASSIGNMENT_TEAM', 'ACTIVE'),
+   'RISK', 'ASSIGNMENT_TEAM', 'INTERNAL', 'ACTIVE'),
   ('grc-platform-risk-compliance-team',
    'Read-only oversight for the Risk Hub: views dashboards, analytics, and risk registers. Grant GLOBAL for org-wide oversight, or scope to specific registers. Audit Hub has its own counterpart, grc-platform-audit-compliance-team.',
-   'RISK', 'SOURCE_REGISTER', 'ACTIVE'),
-  ('grc-platform-management',
-   'Management approval/rejection in the Risk Hub, and org-wide read-only oversight in the Audit Hub. SHARED across both hubs, so it can only be granted GLOBAL.',
-   'SHARED', NULL, 'ACTIVE'),
+   'RISK', 'SOURCE_REGISTER', 'INTERNAL', 'ACTIVE'),
+  ('grc-platform-risk-management',
+   'Management approval/rejection in the Risk Hub. Grant GLOBAL for org-wide, or scope to a register. Audit Hub has its own counterpart, grc-platform-audit-management.',
+   'RISK', 'SOURCE_REGISTER', 'INTERNAL', 'ACTIVE'),
   ('grc-platform-admin',
    'Platform administrator. Manages users, role grants, and the Admin Console reference-data screens (Risk Teams/Categories/Compliance References; Audit Hub equivalents pending). SHARED, so it can only be granted GLOBAL — see the bootstrap grant template at the end of this file.',
-   'SHARED', NULL, 'ACTIVE'),
+   'SHARED', NULL, 'INTERNAL', 'ACTIVE'),
   ('grc-platform-audit-compliance-admin',
    'Audit Compliance Admin - full control of the Audit Hub',
-   'AUDIT', NULL, 'ACTIVE'),
+   'AUDIT', NULL, 'INTERNAL', 'ACTIVE'),
   ('grc-platform-audit-compliance-team',
    'Audit Compliance Team - submit (any) + internal review, org-wide read',
-   'AUDIT', NULL, 'ACTIVE'),
+   'AUDIT', NULL, 'INTERNAL', 'ACTIVE'),
   ('grc-platform-audit-internal-team',
    'Audit Internal Team - submit evidence for own team only',
-   'AUDIT', NULL, 'ACTIVE'),
+   'AUDIT', NULL, 'INTERNAL', 'ACTIVE'),
+  ('grc-platform-audit-management',
+   'Audit Management - org-wide or team-scoped read-only oversight. Grant GLOBAL for org-wide, or scope to one audit team for a team-scoped read-only lead.',
+   'AUDIT', NULL, 'INTERNAL', 'ACTIVE'),
   ('grc-platform-audit-external-auditor',
    'Audit External Auditor - validate + select sample for assigned controls',
-   'AUDIT', NULL, 'ACTIVE')
+   'AUDIT', NULL, 'EXTERNAL', 'ACTIVE')
 ON DUPLICATE KEY UPDATE
-  description = VALUES(description),
-  module      = VALUES(module),
-  scope_basis = VALUES(scope_basis),
-  status      = VALUES(status);
+  description           = VALUES(description),
+  module                 = VALUES(module),
+  scope_basis            = VALUES(scope_basis),
+  assignable_user_type   = VALUES(assignable_user_type),
+  status                 = VALUES(status);
 
 -- ── privilege ─────────────────────────────────────────────────────────────────
 -- privilege_name must match the constants in
@@ -429,23 +444,64 @@ JOIN   privilege p ON p.privilege_name IN (
 WHERE  r.role_name = 'grc-platform-risk-compliance-team'
 ON DUPLICATE KEY UPDATE is_active = TRUE;
 
--- grc-platform-management → Risk Hub: management approval/rejection. Plus
--- Audit Hub: org-wide read-only oversight (+ comment). Module is SHARED (see
--- the role INSERT above), so every grant on it is GLOBAL — there is no
--- AUDIT_TEAM- or RISK_TEAM-scoped "management lead" through this role.
--- Commenting on an escalated high risk carries no privilege of its own:
--- handleEscalationComment authorises on being the risk's named
--- management_approver_id, so nothing is granted here for that.
+-- grc-platform-risk-management → Risk Hub: management approval/rejection
+-- only, now that the Audit-side privileges below move to the new
+-- grc-platform-audit-management. Commenting on an escalated high risk carries
+-- no privilege of its own: handleEscalationComment authorises on being the
+-- risk's named management_approver_id, so nothing is granted here for that.
 INSERT INTO role_privilege (role_id, privilege_id, is_active)
 SELECT r.id, p.id, TRUE
 FROM   `role` r
 JOIN   privilege p ON p.privilege_name IN (
   'RISK_VIEW_RISKS', 'RISK_VIEW_DASHBOARD', 'RISK_MANAGEMENT_APPROVE', 'RISK_MANAGEMENT_REJECT',
-  'RISK_VIEW_ANALYTICS',
+  'RISK_VIEW_ANALYTICS'
+) AND p.status = 'ACTIVE'
+WHERE  r.role_name = 'grc-platform-risk-management'
+ON DUPLICATE KEY UPDATE is_active = TRUE;
+
+-- The renamed role no longer carries the Audit-side privileges the old
+-- shared grc-platform-management held — those move to
+-- grc-platform-audit-management below. Deactivate rather than leave them:
+-- the INSERT above only re-activates the privileges still in its list, which
+-- these four no longer are (same pattern as the compliance-team/
+-- compliance-admin deactivations above).
+UPDATE role_privilege rp
+JOIN   `role` r      ON r.id = rp.role_id
+JOIN   privilege p   ON p.id = rp.privilege_id
+SET    rp.is_active = FALSE
+WHERE  r.role_name = 'grc-platform-risk-management'
+  AND  p.privilege_name IN (
+    'AUDIT_VIEW_AUDITS', 'AUDIT_VIEW_ALL_AUDITS', 'AUDIT_ADD_COMMENT', 'AUDIT_VIEW_INTERNAL_COMMENTS'
+  );
+
+-- grc-platform-audit-management → Audit Hub: org-wide (or, once granted
+-- AUDIT_TEAM-scoped, team-wide) read-only oversight + comment. module='AUDIT'
+-- (see the role INSERT above) is what makes AUDIT_TEAM scoping possible —
+-- the old SHARED role could never be granted anything but GLOBAL. See
+-- ADR-0007.
+INSERT INTO role_privilege (role_id, privilege_id, is_active)
+SELECT r.id, p.id, TRUE
+FROM   `role` r
+JOIN   privilege p ON p.privilege_name IN (
   'AUDIT_VIEW_AUDITS', 'AUDIT_VIEW_ALL_AUDITS', 'AUDIT_ADD_COMMENT', 'AUDIT_VIEW_INTERNAL_COMMENTS'
 ) AND p.status = 'ACTIVE'
-WHERE  r.role_name = 'grc-platform-management'
+WHERE  r.role_name = 'grc-platform-audit-management'
 ON DUPLICATE KEY UPDATE is_active = TRUE;
+
+-- Every ACTIVE grant of the old shared role is, post-rename, a grant of
+-- grc-platform-risk-management — correct for Risk, but it silently drops the
+-- Audit-side org-wide read the same grant used to confer, now that those
+-- privileges live on a different role. Backfill a matching GLOBAL grant of
+-- grc-platform-audit-management for every such holder, preserving today's
+-- behaviour across the split. Idempotent: ON DUPLICATE KEY UPDATE reactivates
+-- rather than duplicating. Must run after both roles above exist.
+INSERT INTO user_role_grant (user_id, role_id, scope_type, scope_id, created_by)
+SELECT g.user_id, ar.id, 'GLOBAL', 0, 'system:grc-platform-management-split'
+FROM   user_role_grant g
+JOIN   `role` rm ON rm.id = g.role_id AND rm.role_name = 'grc-platform-risk-management'
+JOIN   `role` ar ON ar.role_name = 'grc-platform-audit-management'
+WHERE  g.status = 'ACTIVE'
+ON DUPLICATE KEY UPDATE status = 'ACTIVE';
 
 -- grc-platform-audit-compliance-admin — everything (12)
 INSERT INTO role_privilege (role_id, privilege_id, is_active)

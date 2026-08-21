@@ -23,9 +23,13 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/repository"
 )
 
-// TeamService exposes the team list for control assignment dropdowns.
+// TeamService exposes the team list for control assignment dropdowns, plus
+// CRUD for the Manage Audit Hub admin screen.
 type TeamService interface {
 	List(ctx context.Context) ([]*model.AuditTeam, error)
+	ListAll(ctx context.Context) ([]*model.AuditTeam, error)
+	Create(ctx context.Context, req model.CreateTeamRequest, createdBy string) (*model.AuditTeam, error)
+	Update(ctx context.Context, id int, req model.UpdateTeamRequest, updatedBy string) (*model.AuditTeam, error)
 }
 
 type teamService struct {
@@ -38,4 +42,16 @@ func NewTeamService(repo repository.TeamRepository) TeamService {
 
 func (s *teamService) List(ctx context.Context) ([]*model.AuditTeam, error) {
 	return s.repo.List(ctx)
+}
+
+func (s *teamService) ListAll(ctx context.Context) ([]*model.AuditTeam, error) {
+	return s.repo.ListAll(ctx)
+}
+
+func (s *teamService) Create(ctx context.Context, req model.CreateTeamRequest, createdBy string) (*model.AuditTeam, error) {
+	return s.repo.Create(ctx, req, createdBy)
+}
+
+func (s *teamService) Update(ctx context.Context, id int, req model.UpdateTeamRequest, updatedBy string) (*model.AuditTeam, error) {
+	return s.repo.Update(ctx, id, req, updatedBy)
 }

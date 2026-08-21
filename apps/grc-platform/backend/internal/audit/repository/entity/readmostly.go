@@ -215,6 +215,45 @@ func (r *teamRepo) List(ctx context.Context) ([]*model.AuditTeam, error) {
 	}
 }
 
+// ListAll is List without the ACTIVE-only filter — an empty statusKey means
+// every status (see the entity's SearchAuditTeamsRequest doc comment) — and
+// with Status carried through on each row, which List's dropdown callers have
+// no use for and so leave unpopulated.
+func (r *teamRepo) ListAll(ctx context.Context) ([]*model.AuditTeam, error) {
+	var all []*model.AuditTeam
+	for offset := 0; ; offset += pageLimit {
+		var resp struct {
+			Teams []*model.AuditTeam `json:"teams"`
+		}
+		body := map[string]any{"pagination": map[string]int{"limit": pageLimit, "offset": offset}}
+		if err := r.c.Post(ctx, "/audit/teams/search", body, &resp); err != nil {
+			return nil, err
+		}
+		all = append(all, resp.Teams...)
+		if len(resp.Teams) < pageLimit {
+			return all, nil
+		}
+	}
+}
+
+func (r *teamRepo) Create(ctx context.Context, req model.CreateTeamRequest, createdBy string) (*model.AuditTeam, error) {
+	body := map[string]any{"name": req.Name, "status": "ACTIVE", "createdBy": createdBy}
+	var t model.AuditTeam
+	if err := r.c.Post(ctx, "/audit/teams", body, &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (r *teamRepo) Update(ctx context.Context, id int, req model.UpdateTeamRequest, updatedBy string) (*model.AuditTeam, error) {
+	body := map[string]any{"name": req.Name, "status": req.Status, "updatedBy": updatedBy}
+	var t model.AuditTeam
+	if err := r.c.Patch(ctx, fmt.Sprintf("/audit/teams/%d", id), body, &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
 // ── Framework Controls ────────────────────────────────────────────────────────
 
 type frameworkControlRepo struct{ c *entityclient.Client }

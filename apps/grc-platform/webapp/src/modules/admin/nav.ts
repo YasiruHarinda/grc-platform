@@ -27,9 +27,9 @@ import { AdminPrivilege } from "./privileges";
 // this console's default is the opposite of Risk Hub's, and for why it's an
 // any-of list rather than a single privilege.
 //
-// "Manage Audit Hub" routes to a stub page — its real reference-data screens
-// (audit teams/frameworks/products) are a later phase; see
-// ADMIN_CONSOLE_DESIGN.md and ManageAuditHubPage.tsx.
+// "Manage Audit Hub" covers Audit Teams only for now — frameworks/products
+// stay inline in the Create Audit flow, a later phase; see
+// ManageAuditHubPage.tsx.
 export const adminNav: NavSection = {
   id: "admin",
   label: "Admin Console",

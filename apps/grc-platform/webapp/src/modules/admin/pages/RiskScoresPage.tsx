@@ -22,8 +22,7 @@ import { fetchRiskScores, type RiskScore } from "../api/adminApi";
 // Read-only, deliberately — no add/edit UI at all, not even for color. The
 // 3x3 likelihood x impact matrix is a fixed set of 9 load-bearing constants
 // (risk-level thresholds referenced throughout the risk workflow); free-form
-// CRUD here could produce an invalid matrix with no natural validation. See
-// ADMIN_CONSOLE_DESIGN.md §8.1.
+// CRUD here could produce an invalid matrix with no natural validation.
 export default function RiskScoresPage(): JSX.Element {
   const authFetch = useAuthApiClient();
   const [scores, setScores] = useState<RiskScore[]>([]);

@@ -113,6 +113,42 @@ func (r *repository) Upsert(ctx context.Context, uuid, actor string) (*user.User
 	return u.toModel(), nil
 }
 
+// UpsertTyped is Upsert plus an explicit userType — see the Repository
+// interface doc. An empty userType behaves exactly like Upsert (the entity
+// defaults it to INTERNAL), so this subsumes Upsert's contract rather than
+// diverging from it.
+func (r *repository) UpsertTyped(ctx context.Context, uuid, userType, actor string) (*user.User, error) {
+	body := map[string]any{
+		"uuid":      uuid,
+		"userType":  userType,
+		"createdBy": actor,
+	}
+	var u entUser
+	if err := r.c.Post(ctx, "/users", body, &u); err != nil {
+		return nil, fmt.Errorf("upsert user (typed): %w", err)
+	}
+	return u.toModel(), nil
+}
+
+// UpdateStatus sets a user's status via the entity's existing PATCH
+// /users/{id} — AuditTeamIDs is left nil (unspecified), which the entity
+// treats as "leave audit team membership alone" (see UpdateUserRequest's doc
+// comment on the entity side), so this touches status only.
+func (r *repository) UpdateStatus(ctx context.Context, id int, status, actor string) (*user.User, error) {
+	body := map[string]any{
+		"status":    status,
+		"updatedBy": actor,
+	}
+	var u entUser
+	if err := r.c.Patch(ctx, fmt.Sprintf("/users/%d", id), body, &u); err != nil {
+		if notFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("update user status: %w", err)
+	}
+	return u.toModel(), nil
+}
+
 // List returns every active user, paging through the entity's search endpoint.
 func (r *repository) List(ctx context.Context) ([]*user.User, error) {
 	var all []*user.User

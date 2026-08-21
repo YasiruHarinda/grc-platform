@@ -325,6 +325,28 @@ func (s *Service) SearchDomain(query string) []Person {
 	return out
 }
 
+// SearchExternal is SearchDomain's counterpart for the external Asgardeo org —
+// the Add User dialog's External typeahead. Unlike SearchDomain, this is a
+// live SCIM call (scim.Client.SearchByQuery), not a snapshot match: the
+// external org has no bulk-fetch equivalent to keep warm (see
+// NewWithExternal). Returns nil when externalSCIM is unset (local dev without
+// credentials for that org), the same degrade-rather-than-fail contract as
+// every other external lookup here.
+func (s *Service) SearchExternal(ctx context.Context, query string) ([]Person, error) {
+	if s.externalSCIM == nil {
+		return nil, nil
+	}
+	users, err := s.externalSCIM.SearchByQuery(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Person, 0, len(users))
+	for _, u := range users {
+		out = append(out, Person{UUID: u.UUID, Email: u.Email, DisplayName: u.DisplayName})
+	}
+	return out, nil
+}
+
 // StartBulkRefresh fetches every directory user whose email is in domain (see
 // scim.Client.ListUsersByDomain) and keeps that snapshot current in the
 // background, replacing it every interval. Lookup and LookupAll check this

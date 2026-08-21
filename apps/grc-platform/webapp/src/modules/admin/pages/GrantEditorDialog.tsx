@@ -16,6 +16,7 @@
 
 import {
   Alert,
+  Avatar,
   Box,
   Button,
   Chip,
@@ -23,7 +24,9 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  Divider,
   IconButton,
+  Paper,
   Stack,
   Typography,
 } from "@wso2/oxygen-ui";
@@ -80,56 +83,108 @@ export default function GrantEditorDialog({ open, user, roles, onClose, onChange
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth PaperProps={{ sx: dialogPaperSx }}>
-      <DialogTitle>
-        Manage Grants
-        <Typography variant="body2" color="text.secondary">
-          {user ? `${user.displayName || user.email || user.uuid}` : ""}
-        </Typography>
+      <DialogTitle sx={{ pb: 1.5 }}>
+        <Stack direction="row" spacing={1} alignItems="center">
+          <Typography variant="h6" component="span" fontWeight={700} lineHeight={1.3} sx={{ flex: 1, minWidth: 0 }}>
+            Manage Grants
+          </Typography>
+          <IconButton size="small" onClick={onClose} aria-label="Close" sx={{ mr: -0.5 }}>
+            <X size={16} />
+          </IconButton>
+        </Stack>
       </DialogTitle>
-      <DialogContent>
+      <Divider />
+
+      <DialogContent sx={{ pt: 2.5 }}>
         {error && (
           <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
             {error}
           </Alert>
         )}
 
-        {!user?.grants.length ? (
-          <Typography variant="body2" color="text.secondary" fontStyle="italic">
-            No grants yet — add one below.
+        {user && (
+          <Paper
+            variant="outlined"
+            sx={{ display: "flex", alignItems: "center", gap: 1.5, borderRadius: 1.5, p: 1.5, bgcolor: "action.hover" }}
+          >
+            <Avatar sx={{ width: 36, height: 36, fontSize: 13, flexShrink: 0 }}>
+              {initials(user.displayName || user.email || "?")}
+            </Avatar>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Typography variant="body2" fontWeight={700} noWrap>
+                {user.displayName || user.email || user.uuid}
+              </Typography>
+              {user.email && (
+                <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block" }}>
+                  {user.email}
+                </Typography>
+              )}
+            </Box>
+          </Paper>
+        )}
+
+        <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 2.5, mb: 1.25 }}>
+          <Typography variant="body2" fontWeight={700}>
+            Current grants
           </Typography>
+          {!!user?.grants.length && <Chip size="small" label={user.grants.length} />}
+        </Stack>
+
+        {!user?.grants.length ? (
+          <Box
+            sx={{
+              border: "1px dashed",
+              borderColor: "divider",
+              borderRadius: 1.5,
+              px: 2,
+              py: 2.25,
+              textAlign: "center",
+            }}
+          >
+            <Typography variant="body2" color="text.secondary">
+              No grants yet
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Pick a role and scope below, then select Add.
+            </Typography>
+          </Box>
         ) : (
-          <Stack spacing={1}>
+          <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
             {user.grants.map((g) => (
-              <Box
+              <Chip
                 key={g.id}
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  py: 0.5,
-                  borderBottom: "1px solid",
-                  borderColor: "divider",
-                }}
-              >
-                <Chip
-                  size="small"
-                  label={`${g.roleName} @ ${g.scopeType === "GLOBAL" ? "Global (ALL)" : g.scopeName || g.scopeType}`}
-                  color={g.module === "SHARED" ? "default" : "primary"}
-                  variant="outlined"
-                />
-                <IconButton size="small" onClick={() => handleRevoke(g.id)} disabled={busy} aria-label="Revoke grant">
-                  <X size={16} />
-                </IconButton>
-              </Box>
+                size="small"
+                variant="outlined"
+                color={g.module === "SHARED" ? "default" : "primary"}
+                label={`${g.roleName} @ ${g.scopeType === "GLOBAL" ? "Global (ALL)" : g.scopeName || g.scopeType}`}
+                disabled={busy}
+                onDelete={() => handleRevoke(g.id)}
+              />
             ))}
           </Stack>
         )}
 
-        <GrantPicker roles={roles} onAdd={handleAdd} />
+        <Divider sx={{ mt: 2.5, mb: 1.5 }} />
+        <Typography variant="body2" fontWeight={700} sx={{ mb: 0.5 }}>
+          Add a grant
+        </Typography>
+        <GrantPicker roles={roles} onAdd={handleAdd} userType={user?.userType} />
       </DialogContent>
-      <DialogActions>
+
+      <Divider />
+      <DialogActions sx={{ px: 3, py: 2 }}>
         <Button onClick={onClose}>Close</Button>
       </DialogActions>
     </Dialog>
   );
+}
+
+function initials(name: string): string {
+  return name
+    .split(" ")
+    .filter(Boolean)
+    .map((s) => s[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
 }

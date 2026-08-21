@@ -15,6 +15,7 @@
 // under the License.
 
 import {
+  alpha,
   Alert,
   Avatar,
   Box,
@@ -25,26 +26,42 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  FormControl,
+  Divider,
   FormLabel,
+  IconButton,
+  InputAdornment,
   List,
   ListItemButton,
   ListItemText,
+  Paper,
+  Skeleton,
   Stack,
   Step,
   StepLabel,
   Stepper,
+  type SxProps,
   TextField,
+  type Theme,
   ToggleButton,
   ToggleButtonGroup,
   Typography,
 } from "@wso2/oxygen-ui";
-import { type JSX, useEffect, useState } from "react";
+import {
+  Building2,
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  Search,
+  SearchX,
+  X,
+} from "@wso2/oxygen-ui-icons-react";
+import { type JSX, type ReactNode, useEffect, useState } from "react";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import {
   createGrant,
   createAdminUser,
   searchDirectory,
+  searchExternalDirectory,
   type AdminUser,
   type DirectoryPerson,
   type Role,
@@ -74,8 +91,7 @@ interface PendingGrantEntry extends PendingGrant {
 // Two-stage flow: find a WSO2-org person, then assign one or more initial
 // grants. Two separate API calls under the hood (provision, then grant per
 // pending entry) — not one combined payload, matching the entity's own
-// separation of "create the user" from "grant a role" (see
-// ADMIN_CONSOLE_DESIGN.md §2).
+// separation of "create the user" from "grant a role".
 export default function AddUserDialog({
   open,
   roles,
@@ -85,11 +101,8 @@ export default function AddUserDialog({
 }: AddUserDialogProps): JSX.Element {
   const authFetch = useAuthApiClient();
   const [stage, setStage] = useState<1 | 2>(1);
-  // Internal is the only wired path today — External accounts aren't
-  // resolvable via the WSO2-org SCIM directory this search hits, and
-  // provisioning them is a separate, not-yet-built flow (owned by the
-  // Audit module's own onboarding work). Defaulting to Internal keeps the
-  // common case a zero-click experience rather than forcing a choice first.
+  // Internal is the common case — most people added here are WSO2-org
+  // employees — so it's the zero-click default rather than forcing a choice.
   const [userType, setUserType] = useState<"INTERNAL" | "EXTERNAL">("INTERNAL");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<DirectoryPerson[]>([]);
@@ -129,11 +142,13 @@ export default function AddUserDialog({
     setSelected(null);
   };
 
-  // Debounced directory search — searchDirectory itself already refuses a
-  // query under 2 characters, so the debounce timer is the only thing
-  // guarding against a request per keystroke.
+  // Debounced directory search — Internal hits the cached WSO2-org snapshot,
+  // External is a live call against the external auditor organization (see
+  // searchExternalDirectory's doc comment for why it can't be cached the same
+  // way). Both already refuse a query under 2 characters, so the debounce
+  // timer is the only thing guarding against a request per keystroke.
   useEffect(() => {
-    if (stage !== 1 || userType !== "INTERNAL" || query.trim().length < 2) {
+    if (stage !== 1 || query.trim().length < 2) {
       setResults([]);
       setSearching(false);
       return;
@@ -143,9 +158,10 @@ export default function AddUserDialog({
     // stops a request that hasn't fired yet, not one already in flight when
     // the query changes again.
     let cancelled = false;
+    const search = userType === "EXTERNAL" ? searchExternalDirectory : searchDirectory;
     setSearching(true);
     const t = setTimeout(() => {
-      searchDirectory(authFetch, query)
+      search(authFetch, query)
         .then((r) => {
           if (!cancelled) setResults(r);
         })
@@ -178,7 +194,7 @@ export default function AddUserDialog({
     let userId = createdUserId;
     try {
       if (userId === null) {
-        const created = await createAdminUser(authFetch, selected.uuid);
+        const created = await createAdminUser(authFetch, selected.uuid, userType);
         userId = created.id;
         setCreatedUserId(userId);
       }
@@ -206,16 +222,24 @@ export default function AddUserDialog({
     }
   };
 
+  const trimmed = query.trim();
+  const hasRegisteredResult = results.some((p) => existingUsers.some((u) => u.uuid === p.uuid));
+
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth PaperProps={{ sx: dialogPaperSx }}>
-      <DialogTitle>
-        Add User
-        <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 400 }}>
-          Provision someone from the WSO2 organization, then grant them a role.
-        </Typography>
+      <DialogTitle sx={{ pb: 1.5 }}>
+        <Stack direction="row" spacing={1} alignItems="center">
+          <Typography variant="h6" component="span" fontWeight={700} lineHeight={1.3} sx={{ flex: 1, minWidth: 0 }}>
+            Add User
+          </Typography>
+          <IconButton size="small" onClick={onClose} aria-label="Close" sx={{ mr: -0.5 }}>
+            <X size={16} />
+          </IconButton>
+        </Stack>
       </DialogTitle>
-      <Box sx={{ px: 3 }}>
-        <Stepper activeStep={stage - 1} sx={{ mb: 1 }}>
+
+      <Box sx={{ px: 3, pb: 2 }}>
+        <Stepper activeStep={stage - 1}>
           {STEPS.map((label) => (
             <Step key={label}>
               <StepLabel>{label}</StepLabel>
@@ -223,10 +247,12 @@ export default function AddUserDialog({
           ))}
         </Stepper>
       </Box>
+      <Divider />
+
       {/* Fixed height so the dialog doesn't grow/shrink as content changes —
           picking a person, switching stages, or a long results/grants list
           all scroll inside this box instead of resizing the dialog itself. */}
-      <DialogContent sx={{ height: 300, overflowY: "auto" }}>
+      <DialogContent sx={{ height: 360, overflowY: "auto", pt: 2.5 }}>
         {error && (
           <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
             {error}
@@ -235,109 +261,167 @@ export default function AddUserDialog({
 
         {stage === 1 && (
           <Box>
-            <FormControl sx={{ mb: 2 }}>
-              <FormLabel sx={{ mb: 0.75, fontWeight: 600, fontSize: "0.8rem" }}>User type</FormLabel>
-              <ToggleButtonGroup
-                value={userType}
-                exclusive
-                size="small"
-                onChange={(_, next: "INTERNAL" | "EXTERNAL" | null) => next && handleUserTypeChange(next)}
-                aria-label="User type"
-              >
-                <ToggleButton value="INTERNAL">Internal</ToggleButton>
-                <ToggleButton value="EXTERNAL">External</ToggleButton>
-              </ToggleButtonGroup>
-              <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>
-                Internal: a WSO2-org employee, resolved via the SCIM directory below. External: not available in
-                this console yet that provisioning flow is being built separately.
-              </Typography>
-            </FormControl>
+            <FormLabel component="legend" sx={{ mb: 1, fontWeight: 700, fontSize: "0.75rem", display: "block" }}>
+              User type
+            </FormLabel>
+            <ToggleButtonGroup
+              value={userType}
+              exclusive
+              fullWidth
+              size="small"
+              onChange={(_, next: "INTERNAL" | "EXTERNAL" | null) => next && handleUserTypeChange(next)}
+              aria-label="User type"
+              sx={{ mb: 2.5 }}
+            >
+              <ToggleButton value="INTERNAL" sx={userTypeButtonSx}>
+                <Stack direction="row" spacing={0.75} alignItems="center">
+                  <Building2 size={14} />
+                  <Typography variant="body2" fontWeight={700}>
+                    Internal
+                  </Typography>
+                </Stack>
+                <Typography variant="caption" color="text.secondary">
+                  A WSO2-org employee.
+                </Typography>
+              </ToggleButton>
+              <ToggleButton value="EXTERNAL" sx={userTypeButtonSx}>
+                <Stack direction="row" spacing={0.75} alignItems="center">
+                  <ExternalLink size={14} />
+                  <Typography variant="body2" fontWeight={700}>
+                    External
+                  </Typography>
+                </Stack>
+                <Typography variant="caption" color="text.secondary">
+                  An external auditor.
+                </Typography>
+              </ToggleButton>
+            </ToggleButtonGroup>
 
-            {userType === "EXTERNAL" ? (
-              <Alert severity="info">
-                External user provisioning isn't available here yet - it's a separate flow, coming in a later
-                update.
-              </Alert>
-            ) : selected ? (
+            {selected ? (
               // Once someone is picked, the search box's own spot shows who —
               // no separate colored callout, just a neutral recap (matching
               // stage 2's look) with a way to search again.
-              <Box
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  bgcolor: "action.hover",
-                  borderRadius: 1,
-                  p: 1.25,
-                  gap: 1,
-                }}
-              >
-                <Avatar sx={{ width: 28, height: 28, fontSize: 12 }}>{initials(selected.displayName)}</Avatar>
-                <Box sx={{ flex: 1 }}>
-                  <Typography variant="body2" fontWeight={700}>
-                    {selected.displayName}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {selected.email}
-                  </Typography>
-                </Box>
-                {/* Disabled once the user is actually created (createdUserId set) —
-                    swapping the selection at that point would leave a retry
-                    granting roles to the wrong, already-provisioned person. */}
-                <Button size="small" disabled={createdUserId !== null} onClick={() => setSelected(null)}>
-                  Change
-                </Button>
-              </Box>
+              <PersonCard
+                person={selected}
+                trailing={
+                  // Disabled once the user is actually created (createdUserId
+                  // set) — swapping the selection at that point would leave a
+                  // retry granting roles to the wrong, already-provisioned
+                  // person.
+                  <Button size="small" disabled={createdUserId !== null} onClick={() => setSelected(null)}>
+                    Change
+                  </Button>
+                }
+              />
             ) : (
               <>
                 <TextField
                   autoFocus
                   fullWidth
                   size="small"
-                  label="User"
-                  placeholder="Search by name or email…"
+                  type="search"
+                  name="directory-search"
+                  autoComplete="off"
+                  sx={searchFieldSx}
+                  placeholder={
+                    userType === "INTERNAL"
+                      ? "Search the internal user directory by name or email…"
+                      : "Search the external user directory by name or email…"
+                  }
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  helperText="Search the user by name or email  only WSO2-org accounts are eligible."
+                  helperText={
+                    userType === "INTERNAL"
+                      ? "Only accounts in the internal organization are eligible."
+                      : "Only accounts in the external organization are eligible."
+                  }
+                  slotProps={{
+                    input: {
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <Search size={15} />
+                        </InputAdornment>
+                      ),
+                      endAdornment: query ? (
+                        <InputAdornment position="end">
+                          <IconButton size="small" aria-label="Clear search" onClick={() => setQuery("")}>
+                            <X size={14} />
+                          </IconButton>
+                        </InputAdornment>
+                      ) : undefined,
+                    },
+                  }}
                 />
 
-                <Box sx={{ mt: 1.5, minHeight: 60 }}>
-                  {searching && (
-                    <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
-                      <CircularProgress size={20} />
-                    </Box>
-                  )}
-                  {!searching && query.trim().length >= 2 && results.length === 0 && (
-                    <Typography variant="body2" color="text.secondary" fontStyle="italic">
-                      No matches in the WSO2 organization.
-                    </Typography>
-                  )}
-                  <List
-                    sx={{ border: results.length ? "1px solid" : "none", borderColor: "divider", borderRadius: 1 }}
-                  >
-                    {results.map((p) => {
-                      const alreadyRegistered = existingUsers.some((u) => u.uuid === p.uuid);
-                      return (
-                        <ListItemButton
-                          key={p.uuid}
-                          disabled={alreadyRegistered}
-                          onClick={() => setSelected(p)}
-                        >
-                          <Avatar sx={{ width: 28, height: 28, mr: 1.5, fontSize: 12 }}>
-                            {initials(p.displayName)}
-                          </Avatar>
-                          <ListItemText primary={p.displayName} secondary={p.email} />
-                          {alreadyRegistered && (
-                            <Chip size="small" label="Already registered" color="default" variant="outlined" />
-                          )}
-                        </ListItemButton>
-                      );
-                    })}
-                  </List>
-                  {results.some((p) => existingUsers.some((u) => u.uuid === p.uuid)) && (
-                    <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>
-                      "Already registered" means this person is already a platform user — open Manage Grants for
-                      them from the Users list instead of adding them again here.
+                <Box sx={{ mt: 1.5 }}>
+                  <Paper variant="outlined" sx={{ borderRadius: 1.5, maxHeight: 224, overflowY: "auto" }}>
+                    {searching ? (
+                      <Stack divider={<Divider />}>
+                        {[0, 1, 2].map((i) => (
+                          <Stack key={i} direction="row" spacing={1.5} alignItems="center" sx={{ px: 1.75, py: 1.25 }}>
+                            <Skeleton variant="circular" width={32} height={32} />
+                            <Box sx={{ flex: 1 }}>
+                              <Skeleton variant="text" width="42%" height={14} />
+                              <Skeleton variant="text" width="62%" height={12} />
+                            </Box>
+                          </Stack>
+                        ))}
+                      </Stack>
+                    ) : trimmed.length < 2 ? (
+                      <EmptyPanel
+                        icon={<Search size={20} />}
+                        title="Search the directory"
+                        detail="Type at least two characters to look someone up."
+                      />
+                    ) : results.length === 0 ? (
+                      <EmptyPanel
+                        icon={<SearchX size={20} />}
+                        title={`No matches for “${trimmed}”`}
+                        detail="Check the spelling, or try an email address instead."
+                      />
+                    ) : (
+                      <List
+                        component="div"
+                        disablePadding
+                      >
+                        {results.map((p, i) => {
+                          const alreadyRegistered = existingUsers.some((u) => u.uuid === p.uuid);
+                          return (
+                            <Box key={p.uuid}>
+                              {i > 0 && <Divider />}
+                              <ListItemButton
+                                disabled={alreadyRegistered}
+                                onClick={() => setSelected(p)}
+                                sx={{ px: 1.75, py: 1.25, gap: 1.5 }}
+                              >
+                                <Avatar sx={{ width: 32, height: 32, fontSize: 12, flexShrink: 0 }}>
+                                  {initials(p.displayName)}
+                                </Avatar>
+                                <ListItemText
+                                  primary={p.displayName}
+                                  secondary={p.email}
+                                  slotProps={{
+                                    primary: { variant: "body2", fontWeight: 600, noWrap: true },
+                                    secondary: { variant: "caption", noWrap: true },
+                                  }}
+                                  sx={{ my: 0, minWidth: 0 }}
+                                />
+                                {alreadyRegistered ? (
+                                  <Chip size="small" label="Already registered" variant="outlined" />
+                                ) : (
+                                  <ChevronRight size={15} opacity={0.4} />
+                                )}
+                              </ListItemButton>
+                            </Box>
+                          );
+                        })}
+                      </List>
+                    )}
+                  </Paper>
+                  {hasRegisteredResult && (
+                    <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.75 }}>
+                      The user is already a platform user. Open Manage Grants for them from the Users list
+                      instead of adding them again here.
                     </Typography>
                   )}
                 </Box>
@@ -348,59 +432,82 @@ export default function AddUserDialog({
 
         {stage === 2 && selected && (
           <Box>
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                bgcolor: "action.hover",
-                borderRadius: 1,
-                p: 1.5,
-                mb: 2,
-              }}
-            >
-              <Avatar sx={{ width: 28, height: 28, mr: 1.5, fontSize: 12 }}>{initials(selected.displayName)}</Avatar>
-              <Box sx={{ flex: 1 }}>
-                <Typography variant="body2" fontWeight={700}>
-                  {selected.displayName}
+            <PersonCard
+              person={selected}
+              trailing={
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  icon={userType === "INTERNAL" ? <Building2 size={12} /> : <ExternalLink size={12} />}
+                  label={userType === "INTERNAL" ? "Internal" : "External"}
+                />
+              }
+            />
+
+            <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 2.5, mb: 1.25 }}>
+              <Typography variant="body2" fontWeight={700}>
+                Grants to assign
+              </Typography>
+              {pendingGrants.length > 0 && <Chip size="small" label={pendingGrants.length} />}
+            </Stack>
+
+            {!pendingGrants.length ? (
+              <Box
+                sx={{
+                  border: "1px dashed",
+                  borderColor: "divider",
+                  borderRadius: 1.5,
+                  px: 2,
+                  py: 2.25,
+                  textAlign: "center",
+                }}
+              >
+                <Typography variant="body2" color="text.secondary">
+                  No grants yet
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  {selected.email}
+                  Pick a role and scope below, then select Add. At least one is required.
                 </Typography>
               </Box>
-            </Box>
-
-            <Typography variant="body2" fontWeight={700} sx={{ mb: 0.25 }}>
-              Grants to assign
-            </Typography>
-            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
-              At least one role is required before this person can be created.
-            </Typography>
-            {!pendingGrants.length ? (
-              <Typography variant="body2" color="text.secondary" fontStyle="italic">
-                No grants added yet. Add at least one below before creating.
-              </Typography>
             ) : (
-              <Stack spacing={1}>
+              <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
                 {pendingGrants.map((g, i) => (
-                  <Box key={i} sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <Chip size="small" label={g.label} variant="outlined" />
-                    <Button size="small" color="error" onClick={() => handleRemoveGrant(i)}>
-                      Remove
-                    </Button>
-                  </Box>
+                  <Chip
+                    key={i}
+                    size="small"
+                    variant="outlined"
+                    label={g.label}
+                    onDelete={() => handleRemoveGrant(i)}
+                  />
                 ))}
               </Stack>
             )}
-            <GrantPicker roles={roles} onAdd={handleAddGrant} />
+
+            <Divider sx={{ mt: 2.5, mb: 1.5 }} />
+            <Typography variant="body2" fontWeight={700} sx={{ mb: 0.5 }}>
+              Add a grant
+            </Typography>
+            <GrantPicker roles={roles} onAdd={handleAddGrant} userType={userType} />
           </Box>
         )}
       </DialogContent>
-      <DialogActions>
-        {stage === 2 && <Button onClick={() => setStage(1)} sx={{ mr: "auto" }}>← Back</Button>}
+
+      <Divider />
+      <DialogActions sx={{ px: 3, py: 2 }}>
+        {stage === 2 && (
+          <Button startIcon={<ChevronLeft size={14} />} onClick={() => setStage(1)} sx={{ mr: "auto" }}>
+            Back
+          </Button>
+        )}
         <Button onClick={onClose}>Cancel</Button>
         {stage === 1 && (
-          <Button variant="contained" disabled={!selected} onClick={() => setStage(2)}>
-            Next →
+          <Button
+            variant="contained"
+            endIcon={<ChevronRight size={14} />}
+            disabled={!selected}
+            onClick={() => setStage(2)}
+          >
+            Next
           </Button>
         )}
         {stage === 2 && (
@@ -408,12 +515,86 @@ export default function AddUserDialog({
             variant="contained"
             disabled={!pendingGrants.length || submitting}
             onClick={handleFinish}
+            startIcon={submitting ? <CircularProgress size={14} color="inherit" /> : undefined}
           >
             {submitting ? "Creating…" : createdUserId !== null ? "Retry remaining grants" : "Create User & Grant"}
           </Button>
         )}
       </DialogActions>
     </Dialog>
+  );
+}
+
+// Two things wash the search box in colour mid-typing, and neither is wanted
+// here: the browser paints its own yellow/blue fill over any field it guesses
+// is a username (autoComplete="off" alone doesn't stop the tint — only holding
+// the transition off does), and the theme's focus state jumps the outline to a
+// hard 2px orange. Focus stays visible as a 1px primary border with a soft
+// tint ring instead.
+// Keeps the browser from painting its own blue autofill wash over the value.
+const searchFieldSx: SxProps<Theme> = {
+  "& input[type='search']::-webkit-search-cancel-button": { display: "none" },
+  "& input:-webkit-autofill, & input:-webkit-autofill:hover, & input:-webkit-autofill:focus": {
+    WebkitTextFillColor: "inherit",
+    WebkitBoxShadow: "none",
+    transition: "background-color 600000s 0s",
+  },
+  "& input:-internal-autofill-selected": {
+    WebkitTextFillColor: "inherit",
+    WebkitBoxShadow: "none",
+    backgroundColor: "transparent !important",
+  },
+  "& input::selection": {
+    backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.3),
+  },
+  "& .MuiOutlinedInput-root": {
+    transition: "box-shadow 120ms ease",
+    "&.Mui-focused": {
+      boxShadow: (theme) => `0 0 0 3px ${alpha(theme.palette.primary.main, 0.14)}`,
+      "& .MuiOutlinedInput-notchedOutline": { borderWidth: 1, borderColor: "primary.main" },
+    },
+  },
+};
+
+const userTypeButtonSx = {
+  flexDirection: "column",
+  alignItems: "flex-start",
+  textAlign: "left",
+  textTransform: "none",
+  gap: 0.25,
+  px: 1.5,
+  py: 1,
+};
+
+function PersonCard({ person, trailing }: { person: DirectoryPerson; trailing?: ReactNode }): JSX.Element {
+  return (
+    <Paper
+      variant="outlined"
+      sx={{ display: "flex", alignItems: "center", gap: 1.5, borderRadius: 1.5, p: 1.5, bgcolor: "action.hover" }}
+    >
+      <Avatar sx={{ width: 36, height: 36, fontSize: 13, flexShrink: 0 }}>{initials(person.displayName)}</Avatar>
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        <Typography variant="body2" fontWeight={700} noWrap>
+          {person.displayName}
+        </Typography>
+        <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block" }}>
+          {person.email}
+        </Typography>
+      </Box>
+      {trailing}
+    </Paper>
+  );
+}
+
+function EmptyPanel({ icon, title, detail }: { icon: ReactNode; title: string; detail: string }): JSX.Element {
+  return (
+    <Stack alignItems="center" spacing={0.5} sx={{ px: 3, py: 3.5, textAlign: "center", color: "text.secondary" }}>
+      <Box sx={{ display: "flex", opacity: 0.5 }}>{icon}</Box>
+      <Typography variant="body2" fontWeight={600}>
+        {title}
+      </Typography>
+      <Typography variant="caption">{detail}</Typography>
+    </Stack>
   );
 }
 

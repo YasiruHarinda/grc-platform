@@ -196,6 +196,7 @@ CREATE TABLE IF NOT EXISTS `role` (
   description  TEXT         NULL,
   module       ENUM('RISK','AUDIT','SHARED') NOT NULL,
   scope_basis  ENUM('SOURCE_REGISTER','ASSIGNMENT_TEAM') NULL COMMENT 'Which risk column a grant on this role scopes by; NULL for GLOBAL-only roles. See table comment',
+  assignable_user_type ENUM('INTERNAL','EXTERNAL') NOT NULL DEFAULT 'INTERNAL' COMMENT 'Which kind of person this role may be granted to. INTERNAL/EXTERNAL identities live in separate Asgardeo organisations, so a role never spans both — no EITHER value',
   status       ENUM('ACTIVE','INACTIVE') NOT NULL DEFAULT 'ACTIVE',
   created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by   VARCHAR(255) NULL,
@@ -245,6 +246,25 @@ SET @add_scope_basis_sql = IF(@role_has_scope_basis = 0,
 PREPARE add_scope_basis_stmt FROM @add_scope_basis_sql;
 EXECUTE add_scope_basis_stmt;
 DEALLOCATE PREPARE add_scope_basis_stmt;
+
+-- assignable_user_type gets a DEFAULT ('INTERNAL') so existing rows backfill
+-- immediately — every pre-existing role is in fact INTERNAL-only today, so
+-- the default is also the correct final value for all of them except
+-- grc-platform-audit-external-auditor, which shared_seed_data.sql's role
+-- INSERT (ON DUPLICATE KEY UPDATE assignable_user_type = VALUES(...))
+-- corrects to EXTERNAL right after this runs.
+SET @role_has_assignable_user_type = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'role' AND COLUMN_NAME = 'assignable_user_type'
+);
+SET @add_assignable_user_type_sql = IF(@role_has_assignable_user_type = 0,
+  'ALTER TABLE `role` ADD COLUMN assignable_user_type ENUM(''INTERNAL'',''EXTERNAL'') NOT NULL DEFAULT ''INTERNAL'' '
+  'COMMENT ''Which kind of person this role may be granted to. See table comment'' '
+  'AFTER scope_basis',
+  'SELECT 1');
+PREPARE add_assignable_user_type_stmt FROM @add_assignable_user_type_sql;
+EXECUTE add_assignable_user_type_stmt;
+DEALLOCATE PREPARE add_assignable_user_type_stmt;
 
 
 -- -----------------------------------------------------------------------------

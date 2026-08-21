@@ -62,8 +62,10 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	d := &deps
 
 	mux.HandleFunc("GET /api/v1/admin/directory/search", d.handleSearchDirectory)
+	mux.HandleFunc("GET /api/v1/admin/directory/search-external", d.handleSearchExternalDirectory)
 	mux.HandleFunc("POST /api/v1/admin/users", d.handleCreateUser)
 	mux.HandleFunc("GET /api/v1/admin/users", d.handleListUsers)
+	mux.HandleFunc("PATCH /api/v1/admin/users/{id}/status", d.handleUpdateUserStatus)
 	mux.HandleFunc("POST /api/v1/admin/users/{id}/grants", d.handleCreateGrant)
 	mux.HandleFunc("DELETE /api/v1/admin/users/{id}/grants/{grantId}", d.handleRevokeGrant)
 	mux.HandleFunc("GET /api/v1/admin/roles", d.handleListRoles)

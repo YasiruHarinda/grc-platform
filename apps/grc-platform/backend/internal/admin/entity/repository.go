@@ -27,14 +27,6 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
 )
 
-// moduleRisk/moduleShared mirror domain.ModuleRisk/domain.ModuleShared on the
-// entity side. moduleAudit is deliberately never included in the returned
-// role list — see admin.Repository.ListRoles.
-const (
-	moduleRisk   = "RISK"
-	moduleShared = "SHARED"
-)
-
 // pageLimit is the entity's maximum page size; SearchUsers pages through all
 // results.
 const pageLimit = 100
@@ -75,6 +67,7 @@ func (r *repository) SearchUsers(ctx context.Context, query string) ([]admin.Use
 		UUID        string     `json:"uuid"`
 		Email       string     `json:"email"`
 		DisplayName string     `json:"displayName"`
+		UserType    string     `json:"userType"`
 		Status      string     `json:"status"`
 		CreatedOn   time.Time  `json:"createdOn"`
 		Grants      []entGrant `json:"grants"`
@@ -110,14 +103,15 @@ func (r *repository) SearchUsers(ctx context.Context, query string) ([]admin.Use
 		}
 		out = append(out, admin.User{
 			ID: u.ID, UUID: u.UUID, DisplayName: u.DisplayName, Email: u.Email,
-			Status: u.Status, CreatedOn: u.CreatedOn, Grants: grants,
+			UserType: u.UserType, Status: u.Status, CreatedOn: u.CreatedOn, Grants: grants,
 		})
 	}
 	return out, nil
 }
 
-// ListRoles calls the entity's GET /roles and drops every AUDIT-module row —
-// see admin.Repository.ListRoles for why.
+// ListRoles calls the entity's GET /roles — every active role, RISK, AUDIT,
+// and SHARED alike. See admin.Repository.ListRoles for why AUDIT roles are no
+// longer withheld.
 func (r *repository) ListRoles(ctx context.Context) ([]admin.Role, error) {
 	var resp struct {
 		Roles []admin.Role `json:"roles"`
@@ -125,13 +119,5 @@ func (r *repository) ListRoles(ctx context.Context) ([]admin.Role, error) {
 	if err := r.c.Get(ctx, "/roles", &resp); err != nil {
 		return nil, fmt.Errorf("list roles: %w", err)
 	}
-
-	out := make([]admin.Role, 0, len(resp.Roles))
-	for _, role := range resp.Roles {
-		if role.Module != moduleRisk && role.Module != moduleShared {
-			continue
-		}
-		out = append(out, role)
-	}
-	return out, nil
+	return resp.Roles, nil
 }

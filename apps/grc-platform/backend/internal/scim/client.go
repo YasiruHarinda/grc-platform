@@ -219,6 +219,41 @@ type userSearchResult struct {
 	Resources    []scimUser `json:"Resources"`
 }
 
+// SearchByQuery finds people whose userName (email), given name, or family
+// name contains query — a live SCIM call, single page, capped at
+// searchPageSize results.
+//
+// This is the external-org counterpart to directory.Service.SearchDomain,
+// which searches a bulk snapshot instead: the external org has no
+// ListUsersByDomain equivalent to build one from (NewExternalClient's doc
+// comment), so every external search hits Asgardeo directly. Fine for an
+// admin-only, low-frequency lookup (the Add User dialog's External search),
+// same reasoning as LookupByEmail/LookupByUUID — not worth a caching layer
+// for how rarely this is called.
+//
+// %q quotes and escapes query the same way LookupByEmail's filter does,
+// which is what keeps a query containing a literal `"` from breaking out of
+// the SCIM filter string.
+func (c *Client) SearchByQuery(ctx context.Context, query string) ([]DirectoryUser, error) {
+	if c == nil {
+		return nil, nil
+	}
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, nil
+	}
+	filter := fmt.Sprintf(`userName co %q or name.givenName co %q or name.familyName co %q`, query, query, query)
+	users, _, err := c.searchUsersPage(ctx, filter, 0, searchPageSize)
+	if err != nil {
+		return nil, fmt.Errorf("scim search: %w", err)
+	}
+	return users, nil
+}
+
+// searchPageSize caps SearchByQuery's single page — an admin typing a query
+// into the Add User dialog needs a short, scannable list, not every match.
+const searchPageSize = 20
+
 // LookupByEmail resolves an email to that person's directory record — their
 // Asgardeo id and display name.
 //

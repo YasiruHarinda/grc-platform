@@ -30,14 +30,12 @@ type Repository interface {
 	// SearchUsers returns platform users (optionally filtered by a
 	// name/email substring) with their active grants embedded.
 	SearchUsers(ctx context.Context, query string) ([]User, error)
-	// ListRoles returns every RISK- and SHARED-module role — never AUDIT.
+	// ListRoles returns every active role — RISK, AUDIT, and SHARED alike.
 	//
-	// AUDIT roles are real and already grantable elsewhere in the platform,
-	// but are deliberately withheld from this console's picker: Audit Hub
-	// still resolves identity by email in several places, and a user
-	// provisioned here has no email (see the uuid-identity migration and
-	// ADMIN_CONSOLE_DESIGN.md). Granting them an AUDIT role today would look
-	// like it worked and then silently misbehave in Audit Hub. Revisit once
-	// Audit Hub completes its own uuid migration.
+	// AUDIT roles used to be withheld here because Audit Hub resolved
+	// identity by email, and a user provisioned through this console has
+	// none. That blocker closed with the uuid-identity migration (Audit Hub's
+	// auditor checks, comments, and dashboards are all uuid-keyed now), so
+	// AUDIT roles are ordinary roles from this console's point of view.
 	ListRoles(ctx context.Context) ([]Role, error)
 }

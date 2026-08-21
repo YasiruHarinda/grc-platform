@@ -147,6 +147,10 @@ func (s *grantService) CreateGrant(ctx context.Context, userID int, req domain.C
 			Msg: "role " + role.RoleName + " is inactive and cannot be granted"}
 	}
 
+	if err := s.validateUserType(ctx, userID, role); err != nil {
+		return domain.UserGrant{}, err
+	}
+
 	if err := s.validateScope(ctx, role, &req); err != nil {
 		return domain.UserGrant{}, err
 	}
@@ -156,6 +160,25 @@ func (s *grantService) CreateGrant(ctx context.Context, userID int, req domain.C
 		return domain.UserGrant{}, err
 	}
 	return *grant, nil
+}
+
+// validateUserType enforces role.assignable_user_type: an EXTERNAL-only role
+// (external-auditor) may only be granted to an EXTERNAL user, and — the other
+// direction, equally load-bearing — an INTERNAL-only role may never be
+// granted to an EXTERNAL user. This is the actual gate; a role picker that
+// filters by this column client-side is a convenience on top, never a
+// substitute for it.
+func (s *grantService) validateUserType(ctx context.Context, userID int, role *domain.Role) error {
+	userType, err := s.repo.UserType(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if userType != role.AssignableUserType {
+		return &apierror.ValidationError{
+			Msg: role.RoleName + " may only be granted to an " + role.AssignableUserType +
+				" user, and this user is " + userType}
+	}
+	return nil
 }
 
 // validateScope enforces the three rules the schema cannot, mutating req's

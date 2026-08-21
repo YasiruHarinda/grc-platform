@@ -125,7 +125,7 @@ func main() {
 
 	// One directory for the whole process, so its cache is shared across every
 	// request rather than rebuilt per call site.
-	dirSvc := directory.NewWithExternal(scimClient, scimExternalClient, directory.DefaultTTL)
+	dirSvc := directory.NewWithExternal(scimClient, scimExternalClient, directory.DefaultTTL, directory.DefaultExternalTTL)
 	if scimClient != nil && cfg.SCIM.UserDomain != "" {
 		// Warms a bulk snapshot of everyone in the domain so Lookup/LookupAll
 		// serve them without a per-uuid SCIM call, refreshing it every 12h.
