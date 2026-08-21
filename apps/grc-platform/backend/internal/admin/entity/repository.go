@@ -35,6 +35,10 @@ const (
 	moduleShared = "SHARED"
 )
 
+// pageLimit is the entity's maximum page size; SearchUsers pages through all
+// results.
+const pageLimit = 100
+
 type repository struct{ c *entityclient.Client }
 
 // NewRepository returns a Compliance Entity-backed admin.Repository.
@@ -59,28 +63,37 @@ type entGrant struct {
 // to see (and reactivate) an INACTIVE user too, unlike the Risk module's
 // dropdowns, which only ever want ACTIVE ones.
 func (r *repository) SearchUsers(ctx context.Context, query string) ([]admin.User, error) {
-	body := map[string]any{
-		"searchQuery":   query,
-		"includeGrants": true,
-		"pagination":    map[string]int{"limit": 100, "offset": 0},
-	}
-	var resp struct {
-		Users []struct {
-			ID          int        `json:"id"`
-			UUID        string     `json:"uuid"`
-			Email       string     `json:"email"`
-			DisplayName string     `json:"displayName"`
-			Status      string     `json:"status"`
-			CreatedOn   time.Time  `json:"createdOn"`
-			Grants      []entGrant `json:"grants"`
-		} `json:"users"`
-	}
-	if err := r.c.Post(ctx, "/users/search", body, &resp); err != nil {
-		return nil, fmt.Errorf("search users: %w", err)
+	type entUser struct {
+		ID          int        `json:"id"`
+		UUID        string     `json:"uuid"`
+		Email       string     `json:"email"`
+		DisplayName string     `json:"displayName"`
+		Status      string     `json:"status"`
+		CreatedOn   time.Time  `json:"createdOn"`
+		Grants      []entGrant `json:"grants"`
 	}
 
-	out := make([]admin.User, 0, len(resp.Users))
-	for _, u := range resp.Users {
+	var users []entUser
+	for offset := 0; ; offset += pageLimit {
+		body := map[string]any{
+			"searchQuery":   query,
+			"includeGrants": true,
+			"pagination":    map[string]int{"limit": pageLimit, "offset": offset},
+		}
+		var resp struct {
+			Users []entUser `json:"users"`
+		}
+		if err := r.c.Post(ctx, "/users/search", body, &resp); err != nil {
+			return nil, fmt.Errorf("search users: %w", err)
+		}
+		users = append(users, resp.Users...)
+		if len(resp.Users) < pageLimit {
+			break
+		}
+	}
+
+	out := make([]admin.User, 0, len(users))
+	for _, u := range users {
 		grants := make([]admin.Grant, 0, len(u.Grants))
 		for _, g := range u.Grants {
 			grants = append(grants, admin.Grant{

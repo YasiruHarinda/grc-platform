@@ -265,9 +265,25 @@ CREATE TABLE IF NOT EXISTS risk (
   CONSTRAINT fk_risk_action_plan         FOREIGN KEY (action_plan_id)         REFERENCES risk_action_plan(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Resolve circular dependency: risk_action_plan ↔ risk
-ALTER TABLE risk_action_plan
-  ADD CONSTRAINT fk_action_plan_risk FOREIGN KEY (risk_id) REFERENCES risk(id) ON DELETE CASCADE;
+-- Resolve circular dependency: risk_action_plan ↔ risk. Guarded on
+-- information_schema rather than a bare ALTER: on an existing database this
+-- FK was already added the first time this file ran, and MySQL has no
+-- `ADD CONSTRAINT IF NOT EXISTS` — re-running the bare form fails with
+-- "Error Code: 1826. Duplicate foreign key constraint name" (found running
+-- this against staging, 2026-08-21). Same guard pattern as every other
+-- migration block in this file.
+SET @action_plan_has_risk_fk = (
+  SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'risk_action_plan'
+    AND CONSTRAINT_NAME = 'fk_action_plan_risk' AND CONSTRAINT_TYPE = 'FOREIGN KEY'
+);
+SET @add_action_plan_risk_fk_sql = IF(@action_plan_has_risk_fk = 0,
+  'ALTER TABLE risk_action_plan '
+  'ADD CONSTRAINT fk_action_plan_risk FOREIGN KEY (risk_id) REFERENCES risk(id) ON DELETE CASCADE',
+  'SELECT 1');
+PREPARE add_action_plan_risk_fk_stmt FROM @add_action_plan_risk_fk_sql;
+EXECUTE add_action_plan_risk_fk_stmt;
+DEALLOCATE PREPARE add_action_plan_risk_fk_stmt;
 
 
 -- -----------------------------------------------------------------------------
@@ -325,6 +341,25 @@ CREATE TABLE IF NOT EXISTS risk_evidence (
   CONSTRAINT fk_risk_evidence_risk FOREIGN KEY (risk_id) REFERENCES risk(id) ON DELETE CASCADE,
   CONSTRAINT fk_risk_evidence_plan FOREIGN KEY (action_plan_id) REFERENCES risk_action_plan(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- action_plan_id: added by the risk-evidence-per-plan change. risk_evidence
+-- pre-dates it (evidence upload shipped before a risk could carry more than
+-- one STANDARD action plan), so CREATE TABLE IF NOT EXISTS above is a no-op
+-- against an existing database and this column would otherwise never appear —
+-- same guard pattern as user.uuid and role.module above.
+SET @evidence_has_action_plan_id = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'risk_evidence' AND COLUMN_NAME = 'action_plan_id'
+);
+SET @add_evidence_action_plan_id_sql = IF(@evidence_has_action_plan_id = 0,
+  'ALTER TABLE risk_evidence '
+  'ADD COLUMN action_plan_id INT NULL AFTER risk_id, '
+  'ADD KEY idx_risk_evidence_plan (action_plan_id), '
+  'ADD CONSTRAINT fk_risk_evidence_plan FOREIGN KEY (action_plan_id) REFERENCES risk_action_plan(id) ON DELETE CASCADE',
+  'SELECT 1');
+PREPARE add_evidence_action_plan_id_stmt FROM @add_evidence_action_plan_id_sql;
+EXECUTE add_evidence_action_plan_id_stmt;
+DEALLOCATE PREPARE add_evidence_action_plan_id_stmt;
 
 
 -- -----------------------------------------------------------------------------
