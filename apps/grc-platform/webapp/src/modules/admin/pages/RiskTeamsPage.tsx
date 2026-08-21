@@ -137,6 +137,14 @@ export default function RiskTeamsPage(): JSX.Element {
       setDialogError("Code is required for a Register team.");
       return;
     }
+    // The entity's PATCH treats a null code as "leave unchanged" (there's no
+    // way to distinguish "clear it" from "not sent" over the wire), so an
+    // edit that empties an already-set code would silently no-op. Block it
+    // here instead of sending an update that can't take effect.
+    if (editing?.code && !code.trim()) {
+      setDialogError("Code cannot be cleared once set.");
+      return;
+    }
     setSaving(true);
     setDialogError(null);
     try {
