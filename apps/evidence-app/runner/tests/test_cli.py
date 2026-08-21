@@ -33,9 +33,11 @@ from pathlib import Path
 
 import httpx
 import pytest
+from PIL import Image
 from typer.testing import CliRunner
 
 import wso2_runner.browser_install as browser_install
+import wso2_runner.capture_check as capture_check
 import wso2_runner.cli as cli
 import wso2_runner.config as config_mod
 from wso2_runner import oauth
@@ -1247,6 +1249,114 @@ def test_doctor_backend_unreachable_is_reported_not_raised(monkeypatch):
 
     assert result.exit_code == 0
     assert "boom" in result.output
+
+
+# ── doctor: blank screen capture check ────────────────────────────────────
+#
+# `capture_check.capture_test_screenshot` is stubbed in every test below --
+# nothing here ever calls the real `mss`, let alone takes a real
+# screenshot. The pure blank-or-not analysis (`looks_blank`) and the wording
+# of the advice message are covered directly, against synthetic images,
+# in tests/test_capture_check.py; these tests only cover doctor's own
+# wiring: does it call the capture, does it print the right thing for each
+# outcome, and does it still exit zero every time.
+
+
+def _varied_test_image():
+    """A synthetic stand-in for a normal, non-blank screen -- see
+    tests/test_capture_check.py for why this shape has high variation."""
+    img = Image.new("RGB", (40, 30))
+    pixels = img.load()
+    for x in range(40):
+        for y in range(30):
+            pixels[x, y] = (255, 255, 255) if (x // 5 + y // 5) % 2 == 0 else (10, 10, 10)
+    return img
+
+
+def test_doctor_warns_on_blank_capture_but_still_exits_zero(monkeypatch):
+    """The key scenario this ticket exists for: a wallpaper-like capture --
+    not black, just flat -- must be reported as a warning, and must never
+    turn `doctor` itself into a failure."""
+    def fake_get(url, *a, **k):
+        return _FakeResponse({"status": "ok"})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(settings, "ASGARDEO_CLIENT_ID", "")
+    monkeypatch.setattr(settings, "AGENT_PROVIDER", "anthropic")
+    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "sk-x")
+
+    wallpaper = Image.new("RGB", (40, 30), (60, 90, 160))
+    monkeypatch.setattr(capture_check, "capture_test_screenshot", lambda: wallpaper)
+
+    result = runner.invoke(cli.app, ["doctor", "--server", "http://cloud.test"])
+
+    assert result.exit_code == 0
+    assert "blank" in result.output.lower()
+    # All three details from the ticket must reach the terminal, not just
+    # live in the module as an unused constant.
+    assert "TERMINAL APP" in result.output
+    assert "Cmd+Q" in result.output
+    assert "by hand" in result.output
+    assert "Wayland" in result.output or "wayland" in result.output
+
+
+def test_doctor_reports_capture_looks_fine_for_a_varied_screen(monkeypatch):
+    """A normal, varied capture must not trip the warning at all -- doctor
+    should report success plainly, the same ✓ convention every other
+    check uses."""
+    def fake_get(url, *a, **k):
+        return _FakeResponse({"status": "ok"})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(settings, "ASGARDEO_CLIENT_ID", "")
+    monkeypatch.setattr(settings, "AGENT_PROVIDER", "anthropic")
+    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "sk-x")
+    monkeypatch.setattr(capture_check, "capture_test_screenshot", _varied_test_image)
+
+    result = runner.invoke(cli.app, ["doctor", "--server", "http://cloud.test"])
+
+    assert result.exit_code == 0
+    assert "blank" not in result.output.lower()
+    assert "✓" in result.output
+
+
+def test_doctor_reports_capture_failure_without_raising(monkeypatch):
+    """No display, `mss` missing, whatever the reason -- if the capture
+    itself blows up, doctor must say so plainly and keep going, exactly
+    like every other check in this command."""
+    def fake_get(url, *a, **k):
+        return _FakeResponse({"status": "ok"})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(settings, "ASGARDEO_CLIENT_ID", "")
+    monkeypatch.setattr(settings, "AGENT_PROVIDER", "anthropic")
+    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "sk-x")
+
+    def _boom():
+        raise RuntimeError("no display available")
+
+    monkeypatch.setattr(capture_check, "capture_test_screenshot", _boom)
+
+    result = runner.invoke(cli.app, ["doctor", "--server", "http://cloud.test"])
+
+    assert result.exit_code == 0
+    assert "no display available" in result.output
+
+
+def test_start_never_touches_the_blank_capture_check(fake_run_forever, monkeypatch):
+    """This heuristic is only ever a `doctor` diagnostic. `start` must never
+    call it -- a false alarm here must not be able to block a real run."""
+    settings.AGENT_PROVIDER = "anthropic"
+
+    def _must_not_run():
+        raise AssertionError("start must never take a test screenshot")
+
+    monkeypatch.setattr(capture_check, "capture_test_screenshot", _must_not_run)
+
+    result = runner.invoke(cli.app, ["start", "someone@wso2.com"])
+
+    assert result.exit_code == 0
+    assert fake_run_forever == [(None, "someone@wso2.com", None)]
 
 
 # ── configure / start: Chromium install guard ────────────────────────────

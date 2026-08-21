@@ -490,4 +490,33 @@ def doctor(
     else:
         print("    ✓ Key present")
 
+    # Its own numbered section rather than folded into [3]: [3] is about
+    # whether a browser can launch at all, which is a Chromium/Playwright
+    # concern. This is about whether the OS is willing to hand the Runner
+    # real pixels once something IS on screen -- a completely different
+    # failure mode (a missing OS permission, not a missing browser), with
+    # its own separate fix. Keeping them apart means a ✓ on [3] can never
+    # be misread as "screenshots will work too".
+    print("\n[5] Screen capture sanity check")
+    from wso2_runner import capture_check
+
+    try:
+        test_capture = capture_check.capture_test_screenshot()
+    except Exception as exc:
+        # Not this check's problem to diagnose further -- [3] above already
+        # covers a broken browser/display loudly. This is just "couldn't
+        # even try", reported plainly like every other check here.
+        print(f"    ✗ Could not take a test capture: {exc}")
+    else:
+        if capture_check.looks_blank(test_capture):
+            # This is a heuristic, not a permission API call — see
+            # capture_check.py's module docstring. It must only ever warn:
+            # a legitimately plain screen would trip it too, so this can
+            # never be treated as a hard failure of `doctor`, and nothing
+            # about it ever gates `start`.
+            print("    ✗ Test capture looks blank (almost no colour variation)")
+            print(capture_check.BLANK_CAPTURE_ADVICE)
+        else:
+            print("    ✓ Test capture looks fine")
+
     print()
