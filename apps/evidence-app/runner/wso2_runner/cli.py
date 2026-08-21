@@ -12,12 +12,25 @@ app = typer.Typer(help="WSO2 Compliance Evidence Runner — polls cloud backend 
 def configure():
     """First-time setup wizard — saves your LLM credentials to ~/.wso2-runner/.env."""
     from wso2_runner.config import CONFIG_DIR, CONFIG_FILE
+    from wso2_runner.env_file import read_env_values, write_config_file
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     print("\nWSO2 Compliance Runner — setup wizard")
     print("=" * 42)
     print("This saves your config to ~/.wso2-runner/.env\n")
+
+    # Read what's already on disk before asking anything, so a value this
+    # wizard already knows (e.g. re-running configure on a machine that's
+    # been set up before) can be offered back as the default — pressing
+    # Enter keeps it instead of the engineer having to retype it.
+    current = read_env_values(CONFIG_FILE)
+
+    email = typer.prompt(
+        "Your WSO2 email",
+        default=current.get("USER_EMAIL", ""),
+        prompt_suffix=" (used to sign in via Asgardeo, and so `wso2-runner start` needs no argument): ",
+    )
 
     provider = typer.prompt(
         "LLM provider",
@@ -33,22 +46,22 @@ def configure():
     }
     model = typer.prompt("Model name", default=model_defaults.get(provider, ""))
 
-    lines = [f"AGENT_PROVIDER={provider}", f"AGENT_MODEL={model}"]
+    updates = {"USER_EMAIL": email, "AGENT_PROVIDER": provider, "AGENT_MODEL": model}
 
     if provider == "azure":
         # No API key prompt here, deliberately — the Runner authorises Azure
         # OpenAI calls with the engineer's own Entra identity (az login),
         # not a shared secret written to disk. See azure_credential.py.
-        lines.append("AZURE_OPENAI_ENDPOINT=" + typer.prompt("Azure OpenAI endpoint (https://...)"))
-        lines.append("AZURE_OPENAI_DEPLOYMENT=" + typer.prompt("Deployment name", default=model))
-        lines.append("AZURE_OPENAI_API_VERSION=2024-10-21")
-        lines.append("AZURE_TENANT_ID=" + typer.prompt("Azure tenant ID"))
+        updates["AZURE_OPENAI_ENDPOINT"] = typer.prompt("Azure OpenAI endpoint (https://...)")
+        updates["AZURE_OPENAI_DEPLOYMENT"] = typer.prompt("Deployment name", default=model)
+        updates["AZURE_OPENAI_API_VERSION"] = "2024-10-21"
+        updates["AZURE_TENANT_ID"] = typer.prompt("Azure tenant ID")
         print("\n  Next: run `az login` to sign in with your own Azure identity.")
         print("  The Runner uses that session to call Azure OpenAI — no key is stored.")
     elif provider == "anthropic":
-        lines.append("ANTHROPIC_API_KEY=" + typer.prompt("Anthropic API key", hide_input=True))
+        updates["ANTHROPIC_API_KEY"] = typer.prompt("Anthropic API key", hide_input=True)
     elif provider == "gemini":
-        lines.append("GEMINI_API_KEY=" + typer.prompt("Gemini API key", hide_input=True))
+        updates["GEMINI_API_KEY"] = typer.prompt("Gemini API key", hide_input=True)
     elif provider == "ollama":
         print("  (Ollama uses no API key — make sure it's running on localhost:11434)")
 
@@ -69,15 +82,21 @@ def configure():
     print("  1 = laptop/primary screen (default)")
     print("  2 = external monitor (plug it in before running the agent)")
     monitor = typer.prompt("Which monitor should the agent use for screenshots?", default=1, type=int)
-    lines.append(f"SCREENSHOT_MONITOR={monitor}")
+    updates["SCREENSHOT_MONITOR"] = str(monitor)
 
     if monitor > 1:
         print(f"\n  Tip: drag the agent's Chrome window to monitor {monitor} after it opens.")
         print("  Chrome remembers the position — you only need to do this once.")
 
-    CONFIG_FILE.write_text("\n".join(lines) + "\n")
+    # Update the file in place rather than replacing it — CLOUD_URL,
+    # ASGARDEO_ORG and ASGARDEO_CLIENT_ID are set by hand per the setup
+    # docs, this wizard never asks about them, and a plain write_text() of
+    # only the keys collected above used to delete them outright. See
+    # write_config_file() for how the merge, the atomic write, and the file
+    # permissions are handled.
+    write_config_file(CONFIG_FILE, updates)
     print(f"\nConfig saved to {CONFIG_FILE}")
-    print("Next: wso2-runner start your@wso2.com  (opens a browser to sign in via Asgardeo)\n")
+    print("Next: wso2-runner start  (opens a browser to sign in via Asgardeo)\n")
 
 
 @app.command()

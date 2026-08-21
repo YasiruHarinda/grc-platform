@@ -25,6 +25,7 @@ exactly as it did before this gate existed. The dedicated Azure gate tests
 further down override that stub to exercise the failure paths.
 """
 import os
+import stat
 import subprocess
 import sys
 import types
@@ -383,8 +384,8 @@ def test_configure_writes_config_file_from_prompts(monkeypatch, tmp_path):
     monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
     monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
 
-    # provider=anthropic, model=<accept default>, api key, monitor=<accept default>
-    input_text = "anthropic\n\nsk-test-key\n1\n"
+    # email, provider=anthropic, model=<accept default>, api key, monitor=<accept default>
+    input_text = "someone@wso2.com\nanthropic\n\nsk-test-key\n1\n"
 
     result = runner.invoke(cli.app, ["configure"], input=input_text)
 
@@ -394,6 +395,7 @@ def test_configure_writes_config_file_from_prompts(monkeypatch, tmp_path):
     assert "AGENT_PROVIDER=anthropic" in content
     assert "ANTHROPIC_API_KEY=sk-test-key" in content
     assert "SCREENSHOT_MONITOR=1" in content
+    assert "USER_EMAIL=someone@wso2.com" in content
 
 
 def test_configure_azure_provider_writes_endpoint_deployment_and_tenant(monkeypatch, tmp_path):
@@ -405,9 +407,9 @@ def test_configure_azure_provider_writes_endpoint_deployment_and_tenant(monkeypa
     monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
     monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
 
-    # provider=azure (default, just press enter), model=<default>,
+    # email, provider=azure (default, just press enter), model=<default>,
     # endpoint, deployment=<default>, tenant ID, monitor=<default>
-    input_text = "\n\nhttps://myorg.openai.azure.com\n\nsome-tenant-id\n1\n"
+    input_text = "someone@wso2.com\n\n\nhttps://myorg.openai.azure.com\n\nsome-tenant-id\n1\n"
 
     result = runner.invoke(cli.app, ["configure"], input=input_text)
 
@@ -426,8 +428,8 @@ def test_configure_ollama_provider_needs_no_api_key(monkeypatch, tmp_path):
     monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
     monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
 
-    # provider=ollama, model=<default>, monitor=<default>
-    input_text = "ollama\n\n1\n"
+    # email, provider=ollama, model=<default>, monitor=<default>
+    input_text = "someone@wso2.com\nollama\n\n1\n"
 
     result = runner.invoke(cli.app, ["configure"], input=input_text)
 
@@ -443,9 +445,9 @@ def test_configure_gemini_provider_writes_api_key(monkeypatch, tmp_path):
     monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
     monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
 
-    # provider=gemini, model=<default>, api key, monitor=2 (triggers the
-    # "drag the agent's Chrome window" tip branch)
-    input_text = "gemini\n\nsk-gemini-key\n2\n"
+    # email, provider=gemini, model=<default>, api key, monitor=2 (triggers
+    # the "drag the agent's Chrome window" tip branch)
+    input_text = "someone@wso2.com\ngemini\n\nsk-gemini-key\n2\n"
 
     result = runner.invoke(cli.app, ["configure"], input=input_text)
 
@@ -480,12 +482,12 @@ def test_configure_runs_on_a_brand_new_machine(tmp_path):
     }
     env.pop("ASGARDEO_ORG", None)
 
-    # provider=ollama, model=<default>, monitor=<default> — needs no API key.
+    # email, provider=ollama, model=<default>, monitor=<default> — needs no API key.
     result = subprocess.run(
         [sys.executable, "-c", "import sys; sys.argv = ['wso2-runner', 'configure']; from wso2_runner.cli import app; app()"],
         cwd=_RUNNER_ROOT,
         env=env,
-        input="ollama\n\n1\n",
+        input="someone@wso2.com\nollama\n\n1\n",
         capture_output=True,
         text=True,
     )
@@ -494,6 +496,132 @@ def test_configure_runs_on_a_brand_new_machine(tmp_path):
     config_file = tmp_path / ".wso2-runner" / ".env"
     assert config_file.exists()
     assert "AGENT_PROVIDER=ollama" in config_file.read_text()
+
+
+# ── configure: in-place update, not replace ─────────────────────────────
+#
+# The bug this whole ticket exists for: `configure` used to build its
+# output from scratch and call CONFIG_FILE.write_text(...), which replaces
+# the entire file. CLOUD_URL, ASGARDEO_ORG, ASGARDEO_CLIENT_ID and
+# USER_EMAIL are never in the list it builds, so a second run of a
+# documented command silently deleted them, with no warning and no backup.
+
+
+def test_configure_twice_leaves_hand_set_fields_and_email_intact(monkeypatch, tmp_path):
+    """Runs the wizard twice against a file that already has settings the
+    wizard itself never asks about (CLOUD_URL, ASGARDEO_ORG,
+    ASGARDEO_CLIENT_ID — set by hand per the setup docs) plus a USER_EMAIL
+    from a previous `configure` run. All four must survive both runs."""
+    cfg_dir = tmp_path / ".wso2-runner"
+    cfg_file = cfg_dir / ".env"
+    cfg_dir.mkdir()
+    cfg_file.write_text(
+        "CLOUD_URL=https://cloud.example.com\n"
+        "ASGARDEO_ORG=wso2\n"
+        "ASGARDEO_CLIENT_ID=abc123\n"
+        "USER_EMAIL=first@wso2.com\n"
+    )
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
+
+    # email=<accept default: first@wso2.com>, provider=ollama, model=<default>, monitor=<default>
+    input_text = "\nollama\n\n1\n"
+
+    first = runner.invoke(cli.app, ["configure"], input=input_text)
+    assert first.exit_code == 0, first.output
+
+    second = runner.invoke(cli.app, ["configure"], input=input_text)
+    assert second.exit_code == 0, second.output
+
+    content = cfg_file.read_text()
+    assert "CLOUD_URL=https://cloud.example.com" in content
+    assert "ASGARDEO_ORG=wso2" in content
+    assert "ASGARDEO_CLIENT_ID=abc123" in content
+    assert "USER_EMAIL=first@wso2.com" in content
+
+
+def test_configure_preserves_a_hand_added_key_it_never_asks_about(monkeypatch, tmp_path):
+    cfg_dir = tmp_path / ".wso2-runner"
+    cfg_file = cfg_dir / ".env"
+    cfg_dir.mkdir()
+    cfg_file.write_text("MY_HAND_ADDED_NOTE=do-not-touch\n")
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
+
+    input_text = "me@wso2.com\nollama\n\n1\n"
+    result = runner.invoke(cli.app, ["configure"], input=input_text)
+
+    assert result.exit_code == 0, result.output
+    assert "MY_HAND_ADDED_NOTE=do-not-touch" in cfg_file.read_text()
+
+
+def test_configure_preserves_comments_and_blank_lines(monkeypatch, tmp_path):
+    cfg_dir = tmp_path / ".wso2-runner"
+    cfg_file = cfg_dir / ".env"
+    cfg_dir.mkdir()
+    cfg_file.write_text(
+        "# personal notes, do not delete\n"
+        "\n"
+        "AGENT_PROVIDER=azure\n"
+        "\n"
+        "# end of file\n"
+    )
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
+
+    input_text = "me@wso2.com\nollama\n\n1\n"
+    result = runner.invoke(cli.app, ["configure"], input=input_text)
+
+    assert result.exit_code == 0, result.output
+    lines = cfg_file.read_text().splitlines()
+    assert "# personal notes, do not delete" in lines
+    assert "# end of file" in lines
+    assert lines.count("") >= 2
+
+
+def test_configure_updates_an_existing_key_in_place_without_duplicating_it(monkeypatch, tmp_path):
+    cfg_dir = tmp_path / ".wso2-runner"
+    cfg_file = cfg_dir / ".env"
+    cfg_dir.mkdir()
+    cfg_file.write_text("AGENT_PROVIDER=azure\nAGENT_MODEL=old-model\n")
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
+
+    input_text = "me@wso2.com\nollama\n\n1\n"
+    result = runner.invoke(cli.app, ["configure"], input=input_text)
+
+    assert result.exit_code == 0, result.output
+    content = cfg_file.read_text()
+    assert content.count("AGENT_PROVIDER=") == 1
+    assert "AGENT_PROVIDER=ollama" in content
+
+
+def test_configure_sets_file_mode_to_owner_read_write_only(monkeypatch, tmp_path):
+    cfg_dir = tmp_path / ".wso2-runner"
+    cfg_file = cfg_dir / ".env"
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
+
+    input_text = "me@wso2.com\nanthropic\n\nsk-test-key\n1\n"
+    result = runner.invoke(cli.app, ["configure"], input=input_text)
+
+    assert result.exit_code == 0, result.output
+    mode = stat.S_IMODE(cfg_file.stat().st_mode)
+    assert mode == 0o600
+
+
+def test_configure_prompts_for_and_writes_user_email(monkeypatch, tmp_path):
+    cfg_dir = tmp_path / ".wso2-runner"
+    cfg_file = cfg_dir / ".env"
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
+
+    input_text = "engineer@wso2.com\nollama\n\n1\n"
+    result = runner.invoke(cli.app, ["configure"], input=input_text)
+
+    assert result.exit_code == 0, result.output
+    assert "USER_EMAIL=engineer@wso2.com" in cfg_file.read_text()
+    assert "email" in result.output.lower()
 
 
 # ── doctor ───────────────────────────────────────────────────────────────
