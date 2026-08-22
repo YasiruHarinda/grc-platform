@@ -495,6 +495,10 @@ ON DUPLICATE KEY UPDATE is_active = TRUE;
 -- of grc-platform-audit-management for every such HISTORICAL holder, preserving
 -- today's behaviour across the split. Must run after both roles above exist.
 --
+-- g.scope_type = 'GLOBAL' — only GLOBAL grants of the old shared role conferred
+-- org-wide Audit read; a non-GLOBAL one (possible under its pre-rename identity,
+-- see the deactivation above) must not be promoted into a GLOBAL Audit grant.
+--
 -- WHY THE created_at WATERMARK — this file is re-run in full on every deploy,
 -- and there is no migration-marker table in this repo, so the statement must
 -- carry its own one-time marker. The grc-platform-audit-management role row
@@ -523,6 +527,7 @@ FROM   user_role_grant g
 JOIN   `role` rm ON rm.id = g.role_id AND rm.role_name = 'grc-platform-risk-management'
 JOIN   `role` ar ON ar.role_name = 'grc-platform-audit-management'
 WHERE  g.status = 'ACTIVE'
+  AND  g.scope_type = 'GLOBAL'
   AND  g.created_at < ar.created_at
 ON DUPLICATE KEY UPDATE user_role_grant.user_id = user_role_grant.user_id;
 

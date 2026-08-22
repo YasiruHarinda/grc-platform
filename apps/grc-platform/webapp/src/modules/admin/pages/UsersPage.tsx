@@ -36,7 +36,7 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { Pencil, Plus, Search } from "@wso2/oxygen-ui-icons-react";
-import { type JSX, useEffect, useMemo, useState } from "react";
+import { type JSX, useEffect, useMemo, useRef, useState } from "react";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { fetchAdminUsers, fetchRoles, updateUserStatus, type AdminUser, type Role } from "../api/adminApi";
 import AddUserDialog from "./AddUserDialog";
@@ -59,20 +59,34 @@ export default function UsersPage(): JSX.Element {
   const [search, setSearch] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [grantEditorUser, setGrantEditorUser] = useState<AdminUser | null>(null);
-  // Tracks the one row whose status change is in flight, so only that row's
-  // Select disables rather than the whole table.
-  const [statusUpdatingId, setStatusUpdatingId] = useState<number | null>(null);
+  // Tracks every row whose status change is in flight, so overlapping updates
+  // on different rows (or a second update on the same row) each disable only
+  // their own Select rather than sharing one slot that clears on whichever
+  // request finishes first.
+  const [statusUpdatingIds, setStatusUpdatingIds] = useState<Set<number>>(new Set());
+  // Guards against a stale load() response (from an earlier status change)
+  // overwriting the state set by a load() that started later but resolved
+  // first.
+  const loadSeqRef = useRef(0);
 
   const load = (): Promise<void> => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     setError(null);
     return Promise.all([fetchAdminUsers(authFetch), fetchRoles(authFetch)])
       .then(([u, r]) => {
+        if (seq !== loadSeqRef.current) return;
         setUsers(u);
         setRoles(r);
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load users"))
-      .finally(() => setLoading(false));
+      .catch((e) => {
+        if (seq !== loadSeqRef.current) return;
+        setError(e instanceof Error ? e.message : "Failed to load users");
+      })
+      .finally(() => {
+        if (seq !== loadSeqRef.current) return;
+        setLoading(false);
+      });
   };
 
   useEffect(() => {
@@ -108,11 +122,17 @@ export default function UsersPage(): JSX.Element {
       return;
     }
     setError(null);
-    setStatusUpdatingId(user.id);
+    setStatusUpdatingIds((prev) => new Set(prev).add(user.id));
     updateUserStatus(authFetch, user.id, next)
       .then(load)
       .catch((e) => setError(e instanceof Error ? e.message : "Failed to update status"))
-      .finally(() => setStatusUpdatingId(null));
+      .finally(() =>
+        setStatusUpdatingIds((prev) => {
+          const nextIds = new Set(prev);
+          nextIds.delete(user.id);
+          return nextIds;
+        }),
+      );
   };
 
   return (
@@ -192,7 +212,7 @@ export default function UsersPage(): JSX.Element {
                       variant="standard"
                       disableUnderline
                       value={u.status}
-                      disabled={statusUpdatingId === u.id}
+                      disabled={statusUpdatingIds.has(u.id)}
                       onChange={(e: SelectChangeEvent) => handleStatusChange(u, e.target.value as UserStatus)}
                       renderValue={(value) => (
                         <Chip
