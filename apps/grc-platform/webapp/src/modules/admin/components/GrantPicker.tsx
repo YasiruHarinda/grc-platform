@@ -41,9 +41,12 @@ interface GrantPickerProps {
   roles: Role[];
   onAdd: (grant: PendingGrant, label: string) => void;
   // userType narrows the Role dropdown to roles assignable to that kind of
-  // person (Role.assignableUserType) — e.g. once a person is External, only
-  // external-auditor is offered. Omit while the person's type isn't chosen
-  // yet; the backend enforces the same rule regardless of what this offers.
+  // person (Role.assignableUserType). The rule is asymmetric, mirroring the
+  // backend (validateUserType): an External person is offered only
+  // EXTERNAL-assignable roles (currently just external-auditor), while an
+  // Internal person is offered everything, including external-auditor.
+  // Omit while the person's type isn't chosen yet; the backend enforces the
+  // same rule regardless of what this offers.
   userType?: "INTERNAL" | "EXTERNAL";
 }
 
@@ -83,7 +86,7 @@ export default function GrantPicker({ roles, onAdd, userType }: GrantPickerProps
   const [teams, setTeams] = useState<ScopeTeam[]>([]);
   const [teamsLoading, setTeamsLoading] = useState(false);
 
-  const offeredRoles = userType ? roles.filter((r) => r.assignableUserType === userType) : roles;
+  const offeredRoles = userType === "EXTERNAL" ? roles.filter((r) => r.assignableUserType === "EXTERNAL") : roles;
   const selectedRole = offeredRoles.find((r) => r.id === roleId);
 
   // Reset a selection that's no longer offered (e.g. the person's type just
