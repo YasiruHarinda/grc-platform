@@ -445,6 +445,13 @@ func (d *Deps) notifyResubmission(ctx context.Context, control *model.AuditContr
 		PopulationID: logPopID,
 	}}
 	d.notifyAuditEvent(emailer.AuditEventResubmissionNeeded, *ownerID, info, logItems)
+
+	// External-auditor rejections also go to admins, same email as the owner gets.
+	if controlStatus == "EVIDENCE_NEED_CLARIFICATION" || controlStatus == "POPULATION_NEED_CLARIFICATION" {
+		for _, adminID := range d.resolveAdminIDs(ctx, emailer.AuditEventResubmissionNeeded) {
+			d.notifyAuditEvent(emailer.AuditEventResubmissionNeeded, adminID, info, logItems)
+		}
+	}
 }
 
 // notifyControlStatusReached fires whatever email (if any) is mapped to
