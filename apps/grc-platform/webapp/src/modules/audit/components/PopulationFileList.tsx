@@ -32,41 +32,14 @@ function sizeLabel(bytes: number | null): string {
 }
 
 /**
- * Splits the files (newest first, as the backend returns them) into contiguous
- * runs by uploader, so each run can carry its own "Submitted <when> · <who>"
- * header — the same attribution SubmittedEvidenceList shows per round.
- *
- * Population has one round for the control's whole lifecycle, so unlike
- * evidence there is no round boundary to hang that header on; the files' own
- * created_by/created_at are the only record of who submitted what and when. A
- * single submit lands as one run and reads exactly like the evidence header;
- * files added later (a resubmission, or the team topping up during internal
- * review) start a new run rather than being silently attributed to the newest
- * uploader.
- */
-function groupByUploader(files: PopulationFile[]): PopulationFile[][] {
-  const groups: PopulationFile[][] = [];
-  for (const f of files) {
-    const current = groups[groups.length - 1];
-    if (current && current[0].createdBy === f.createdBy) {
-      current.push(f);
-    } else {
-      groups.push([f]);
-    }
-  }
-  return groups;
-}
-
-/**
  * List of population/sample files — view and download always; pass
  * `onDelete` (with `auditId`/`controlId`) to also show a per-file remove
  * button, for the states where the caller is still editing the round
  * (resubmission, or the auditor updating a submitted sample).
  *
- * `attributionLabel` opens the header line above each uploader's files
- * ("Submitted" for team population files, "Uploaded" for the auditor's
- * sample). Files predating this attribution have no uploader on record and
- * simply render without a header.
+ * `attributionLabel` opens each file's own header line ("Submitted" for team
+ * population files, "Uploaded" for the auditor's sample) — per file, not
+ * batched, since there's no persisted submission id to group by.
  */
 export default function PopulationFileList({
   files,
@@ -138,64 +111,59 @@ export default function PopulationFileList({
           {downloadError ?? deleteError}
         </Alert>
       )}
-      {groupByUploader(files).map((group) => (
-        <Box key={group[0].id} sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
-          {/* The group's files are newest first, so group[0] carries the most
-              recent upload time — the moment this batch landed. */}
-          {(group[0].createdByName || group[0].createdBy) && (
+      {files.map((f) => (
+        <Box key={f.id} sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+          {(f.createdByName || f.createdBy) && (
             <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
-              {attributionLabel} {formatTimestamp(group[0].createdAt)} · {group[0].createdByName || group[0].createdBy}
+              {attributionLabel} {formatTimestamp(f.createdAt)} · {f.createdByName || f.createdBy}
             </Typography>
           )}
-          {group.map((f) => (
-            <Box
-              key={f.id}
-              sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.25, py: 0.85, borderRadius: 1, border: "1px solid", borderColor: "divider", bgcolor: "action.hover" }}
-            >
-              <FileText size={15} />
-              <Typography variant="body2" sx={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {f.fileName}
-              </Typography>
-              {f.fileSize !== null && (
-                <Typography variant="caption" color="text.secondary">{sizeLabel(f.fileSize)}</Typography>
-              )}
-              {f.readUrl ? (
-                <>
-                  <Button
-                    size="small"
-                    onClick={() => { void handleView(f.readUrl as string, f.fileName); }}
-                    startIcon={<ExternalLink size={13} />}
-                    sx={{ textTransform: "none", minWidth: 0 }}
-                  >
-                    View
-                  </Button>
-                  <IconButton
-                    size="small"
-                    aria-label={`Download ${f.fileName}`}
-                    onClick={() => { void handleDownload(f.readUrl as string, f.fileName); }}
-                    sx={{ p: 0.5 }}
-                  >
-                    <Download size={14} />
-                  </IconButton>
-                </>
-              ) : (
-                <Typography variant="caption" color="text.disabled">unavailable</Typography>
-              )}
-              {canRemove && (
+          <Box
+            sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.25, py: 0.85, borderRadius: 1, border: "1px solid", borderColor: "divider", bgcolor: "action.hover" }}
+          >
+            <FileText size={15} />
+            <Typography variant="body2" sx={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {f.fileName}
+            </Typography>
+            {f.fileSize !== null && (
+              <Typography variant="caption" color="text.secondary">{sizeLabel(f.fileSize)}</Typography>
+            )}
+            {f.readUrl ? (
+              <>
+                <Button
+                  size="small"
+                  onClick={() => { void handleView(f.readUrl as string, f.fileName); }}
+                  startIcon={<ExternalLink size={13} />}
+                  sx={{ textTransform: "none", minWidth: 0 }}
+                >
+                  View
+                </Button>
                 <IconButton
                   size="small"
-                  aria-label={`Remove ${f.fileName}`}
-                  disabled={deleteFile.isPending}
-                  onClick={() => handleDelete(f.id)}
-                  sx={{ p: 0.5, color: "error.main", "&:hover": { bgcolor: "rgba(220,38,38,0.06)" } }}
+                  aria-label={`Download ${f.fileName}`}
+                  onClick={() => { void handleDownload(f.readUrl as string, f.fileName); }}
+                  sx={{ p: 0.5 }}
                 >
-                  {deleteFile.isPending && deleteFile.variables?.fileId === f.id
-                    ? <CircularProgress size={13} color="inherit" />
-                    : <Trash2 size={14} />}
+                  <Download size={14} />
                 </IconButton>
-              )}
-            </Box>
-          ))}
+              </>
+            ) : (
+              <Typography variant="caption" color="text.disabled">unavailable</Typography>
+            )}
+            {canRemove && (
+              <IconButton
+                size="small"
+                aria-label={`Remove ${f.fileName}`}
+                disabled={deleteFile.isPending}
+                onClick={() => handleDelete(f.id)}
+                sx={{ p: 0.5, color: "error.main", "&:hover": { bgcolor: "rgba(220,38,38,0.06)" } }}
+              >
+                {deleteFile.isPending && deleteFile.variables?.fileId === f.id
+                  ? <CircularProgress size={13} color="inherit" />
+                  : <Trash2 size={14} />}
+              </IconButton>
+            )}
+          </Box>
         </Box>
       ))}
     </Box>
