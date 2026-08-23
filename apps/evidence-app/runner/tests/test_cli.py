@@ -1524,6 +1524,18 @@ def test_start_exits_nonzero_and_names_manual_command_when_chromium_install_fail
     assert fake_run_forever == []
 
 
+def _block_real_playwright(monkeypatch):
+    """Force `from playwright.sync_api import ...` to raise ImportError, the
+    same way it does on a machine that never ran `playwright install`. Setting
+    a name to None in sys.modules is the documented way to force that.
+
+    Same helper as the one in test_browser_install.py, kept local rather than
+    shared: these two files stub different things for different reasons, and a
+    shared import would tie them together for no gain."""
+    monkeypatch.setitem(sys.modules, "playwright", None)
+    monkeypatch.delitem(sys.modules, "playwright.sync_api", raising=False)
+
+
 def test_doctor_browser_failure_does_not_advise_playwright_on_the_chrome_channel(monkeypatch):
     """`doctor` used to print "Try: playwright install chromium" whenever a
     browser failed to launch, whatever the channel was.
@@ -1534,9 +1546,14 @@ def test_doctor_browser_failure_does_not_advise_playwright_on_the_chrome_channel
     a browser the Runner is not going to launch, after which the original
     failure was still there. The advice now has to match the channel.
 
-    Playwright is genuinely absent in this environment, so the command's own
-    try/except is what produces the failure branch, no stubbing needed.
+    The failure branch is forced by making `import playwright` raise, the way
+    it does on a machine that never installed it. This used to be left to the
+    environment, on the assumption playwright was simply absent -- but it is a
+    declared dependency, so anywhere the package is actually installed (a
+    release runner, a fresh venv) the launch can succeed and this test quietly
+    stops testing anything.
     """
+    _block_real_playwright(monkeypatch)
 
     def fake_get(url, *a, **k):
         return _FakeResponse({"status": "ok"})
@@ -1559,6 +1576,7 @@ def test_doctor_browser_failure_still_advises_playwright_on_the_chromium_channel
     Runner really does launch Playwright's bundled binary, so
     `playwright install chromium` is the correct thing to type and must
     still be printed."""
+    _block_real_playwright(monkeypatch)
 
     def fake_get(url, *a, **k):
         return _FakeResponse({"status": "ok"})
