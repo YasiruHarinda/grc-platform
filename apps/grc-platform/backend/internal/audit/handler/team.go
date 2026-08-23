@@ -127,6 +127,10 @@ func (h *teamHandler) updateTeam(w http.ResponseWriter, r *http.Request) {
 		response.WriteError(w, http.StatusBadRequest, "name is required")
 		return
 	}
+	if req.Status != "ACTIVE" && req.Status != "INACTIVE" {
+		response.WriteError(w, http.StatusBadRequest, "status must be ACTIVE or INACTIVE")
+		return
+	}
 
 	updatedBy := ""
 	if user := auth.FromContext(r.Context()); user != nil {
