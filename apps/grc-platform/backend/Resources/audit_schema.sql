@@ -352,6 +352,19 @@ PREPARE add_evidence_attestation_stmt FROM @add_evidence_attestation_sql;
 EXECUTE add_evidence_attestation_stmt;
 DEALLOCATE PREPARE add_evidence_attestation_stmt;
 
+-- submitted_by/fk_evidence_submitter were dropped from the CREATE TABLE above;
+-- this drops them from a database that still has them.
+SET @evidence_has_submitted_by = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_evidence' AND COLUMN_NAME = 'submitted_by'
+);
+SET @drop_evidence_submitted_by_sql = IF(@evidence_has_submitted_by > 0,
+  'ALTER TABLE audit_evidence DROP FOREIGN KEY fk_evidence_submitter, DROP COLUMN submitted_by',
+  'SELECT 1');
+PREPARE drop_evidence_submitted_by_stmt FROM @drop_evidence_submitted_by_sql;
+EXECUTE drop_evidence_submitted_by_stmt;
+DEALLOCATE PREPARE drop_evidence_submitted_by_stmt;
+
 -- =============================================================================
 -- audit_evidence_file  (files attached to evidence or population)
 --
@@ -380,6 +393,19 @@ CREATE TABLE IF NOT EXISTS audit_evidence_file (
   CONSTRAINT chk_file_owner CHECK ((evidence_id IS NOT NULL) <> (population_id IS NOT NULL)),
   CONSTRAINT chk_file_kind  CHECK ((population_id IS NULL) = (file_kind IS NULL))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- uploaded_by/fk_file_uploader were dropped from the CREATE TABLE above; this
+-- drops them from a database that still has them.
+SET @file_has_uploaded_by = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_evidence_file' AND COLUMN_NAME = 'uploaded_by'
+);
+SET @drop_file_uploaded_by_sql = IF(@file_has_uploaded_by > 0,
+  'ALTER TABLE audit_evidence_file DROP FOREIGN KEY fk_file_uploader, DROP COLUMN uploaded_by',
+  'SELECT 1');
+PREPARE drop_file_uploaded_by_stmt FROM @drop_file_uploaded_by_sql;
+EXECUTE drop_file_uploaded_by_stmt;
+DEALLOCATE PREPARE drop_file_uploaded_by_stmt;
 
 -- =============================================================================
 -- audit_comment  (threaded comments on a control — one thread per control,

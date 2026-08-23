@@ -117,14 +117,14 @@ DEALLOCATE PREPARE add_uuid_stmt;
 -- internal/user/handler/resolve.go's comment), which satisfies NOT NULL with
 -- no schema change, so there is nothing to relax there.
 --
--- Guarded on IS_NULLABLE rather than column existence — email has existed
--- since before this migration started, so the existence check the uuid guard
--- above uses would always be true and never fire.
-SET @user_email_nullable = (
+-- Guarded on email existing AND still NOT NULL — a fresh database has no
+-- email column at all, and running MODIFY COLUMN against a column that
+-- doesn't exist errors out rather than no-opping.
+SET @user_email_not_nullable = (
   SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user' AND COLUMN_NAME = 'email' AND IS_NULLABLE = 'YES'
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user' AND COLUMN_NAME = 'email' AND IS_NULLABLE = 'NO'
 );
-SET @make_email_nullable_sql = IF(@user_email_nullable = 0,
+SET @make_email_nullable_sql = IF(@user_email_not_nullable > 0,
   'ALTER TABLE `user` MODIFY COLUMN email VARCHAR(255) NULL',
   'SELECT 1');
 PREPARE make_email_nullable_stmt FROM @make_email_nullable_sql;
