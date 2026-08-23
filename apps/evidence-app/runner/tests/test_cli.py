@@ -663,6 +663,34 @@ def test_configure_with_server_writes_cloud_url_org_and_client_id(monkeypatch, t
     assert "ASGARDEO_CLIENT_ID=abc-123" in content
 
 
+def test_configure_with_server_follows_redirects(monkeypatch, tmp_path):
+    """A --server given on http://, or a host that redirects to its canonical
+    address, has to be followed. httpx.get does not follow redirects unless
+    asked, and an unfollowed 301 here surfaces as "the backend there may be too
+    old to have this endpoint" -- the wrong problem, on the operator's very
+    first command."""
+    cfg_dir = tmp_path / ".wso2-runner"
+    cfg_file = cfg_dir / ".env"
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", cfg_file)
+
+    seen_kwargs = {}
+
+    def fake_get(url, *a, **k):
+        seen_kwargs.update(k)
+        return _FakeResponse({"asgardeo_org": "wso2", "asgardeo_client_id": "abc-123"})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    input_text = "someone@wso2.com\nollama\n\n1\n"
+    result = runner.invoke(
+        cli.app, ["configure", "--server", "http://cloud.example.com"], input=input_text
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen_kwargs.get("follow_redirects") is True
+
+
 def test_configure_server_values_come_from_response_not_a_stale_file(monkeypatch, tmp_path):
     """The org and client ID written must be whatever the endpoint just
     returned, not whatever happened to already be on disk -- proves the

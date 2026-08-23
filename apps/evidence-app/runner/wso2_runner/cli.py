@@ -32,7 +32,11 @@ def _fetch_server_config(server: str) -> dict[str, str]:
     url = f"{server.rstrip('/')}/api/runner-config"
 
     try:
-        response = httpx.get(url, timeout=5)
+        # follow_redirects is not httpx's default. Without it a --server given
+        # on http://, or a host that redirects to its canonical address, comes
+        # back as a bare 301 and gets reported below as "the backend there may
+        # be too old" -- the wrong problem, on the operator's first command.
+        response = httpx.get(url, timeout=5, follow_redirects=True)
     except Exception as exc:
         typer.echo(f"\nCould not reach {url}: {exc}\n", err=True)
         raise typer.Exit(1)
