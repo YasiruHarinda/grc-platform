@@ -56,6 +56,10 @@ type ReminderItem struct {
 	// control's owner, or the population's. Carried so the overdue admin alert
 	// can name them; the owner digest doesn't need it (it IS their email).
 	OwnerUserID int
+	// OwnerName is OwnerUserID's resolved "Display Name (email)", filled in by
+	// the job once per sweep (deduped across every escalated item) rather than
+	// once per (admin, item) email — see ReminderJob.resolveOwnerNames.
+	OwnerName string
 	// DedupSnapshot is the date written to audit_notification.due_date_snapshot
 	// for this item's log row — distinct from DueDate (which is always the
 	// item's real due date, for display). For the DUE_10/DUE_5 tiers it's the

@@ -602,6 +602,16 @@ func adminsFn(ids ...int) func(context.Context) ([]int, error) {
 	return func(context.Context) ([]int, error) { return ids, nil }
 }
 
+// ownerNamesFn returns a resolveOwnerNames stub that also records every call
+// (and the ids it was asked to resolve), so tests can assert the escalation
+// resolves owners once per sweep rather than once per email.
+func ownerNamesFn(names map[int]string, calls *[][]int) func(context.Context, []int) map[int]string {
+	return func(_ context.Context, ownerIDs []int) map[int]string {
+		*calls = append(*calls, append([]int(nil), ownerIDs...))
+		return names
+	}
+}
+
 func TestRunOnceEscalatesOverdueToEveryAdmin(t *testing.T) {
 	// Every admin gets their own email per overdue item — one per (admin,
 	// item), not a digest — and the item carries what the email needs: the
@@ -619,9 +629,11 @@ func TestRunOnceEscalatesOverdueToEveryAdmin(t *testing.T) {
 	}}
 	dedup := &fakeClaimer{claimed: map[string]bool{}}
 	sink := &adminSink{}
+	var resolveCalls [][]int
+	resolve := ownerNamesFn(map[int]string{700: "Owner 700 (o700@x.com)", 701: "Owner 701 (o701@x.com)"}, &resolveCalls)
 
 	j := NewReminderJob(audits, controls, dedup, func(context.Context, int, []model.ReminderItem) error { return nil }).
-		WithAdminAlerts(adminsFn(900, 901), sink.notify)
+		WithAdminAlerts(adminsFn(900, 901), sink.notify, resolve)
 	if err := j.runOnce(context.Background()); err != nil {
 		t.Fatalf("runOnce: %v", err)
 	}
@@ -652,9 +664,27 @@ func TestRunOnceEscalatesOverdueToEveryAdmin(t *testing.T) {
 	owners := map[int]bool{}
 	for _, a := range sink.alerts {
 		owners[a.item.OwnerUserID] = true
+		wantName := map[int]string{700: "Owner 700 (o700@x.com)", 701: "Owner 701 (o701@x.com)"}[a.item.OwnerUserID]
+		if a.item.OwnerName != wantName {
+			t.Errorf("alert OwnerName for owner %d = %q, want %q", a.item.OwnerUserID, a.item.OwnerName, wantName)
+		}
 	}
 	if !owners[700] || !owners[701] {
 		t.Errorf("alert OwnerUserIDs = %v, want both the control owner (700) and the population owner (701)", owners)
+	}
+
+	// 4 alerts (2 owners x 2 admins) must still resolve owner names in exactly
+	// one deduped call — the bug this test guards against re-resolved the
+	// owner once per admin per item.
+	if len(resolveCalls) != 1 {
+		t.Fatalf("resolveOwnerNames calls = %d, want 1 (resolved once per sweep, not per alert)", len(resolveCalls))
+	}
+	gotIDs := map[int]bool{}
+	for _, id := range resolveCalls[0] {
+		gotIDs[id] = true
+	}
+	if len(resolveCalls[0]) != 2 || !gotIDs[700] || !gotIDs[701] {
+		t.Errorf("resolveOwnerNames called with ids %v, want exactly [700 701] (deduped)", resolveCalls[0])
 	}
 }
 
@@ -674,7 +704,7 @@ func TestRunOnceDoesNotEscalateNonOverdueTiers(t *testing.T) {
 	sink := &adminSink{}
 
 	j := NewReminderJob(audits, controls, dedup, func(context.Context, int, []model.ReminderItem) error { return nil }).
-		WithAdminAlerts(adminsFn(900), sink.notify)
+		WithAdminAlerts(adminsFn(900), sink.notify, nil)
 	if err := j.runOnce(context.Background()); err != nil {
 		t.Fatalf("runOnce: %v", err)
 	}
@@ -700,7 +730,7 @@ func TestRunOnceSkipsAdminWhoOwnsTheOverdueItem(t *testing.T) {
 	j := NewReminderJob(audits, controls, dedup, func(_ context.Context, ownerID int, items []model.ReminderItem) error {
 		digested[ownerID] = len(items)
 		return nil
-	}).WithAdminAlerts(adminsFn(900, 901), sink.notify)
+	}).WithAdminAlerts(adminsFn(900, 901), sink.notify, nil)
 	if err := j.runOnce(context.Background()); err != nil {
 		t.Fatalf("runOnce: %v", err)
 	}
@@ -735,7 +765,7 @@ func TestRunOnceAdminAlertReFiresDailyAndDedupsWithinADay(t *testing.T) {
 	sink := &adminSink{}
 
 	j := NewReminderJob(audits, controls, dedup, func(context.Context, int, []model.ReminderItem) error { return nil }).
-		WithAdminAlerts(adminsFn(901), sink.notify)
+		WithAdminAlerts(adminsFn(901), sink.notify, nil)
 	if err := j.runOnce(context.Background()); err != nil {
 		t.Fatalf("runOnce: %v", err)
 	}
@@ -770,7 +800,7 @@ func TestRunOnceReleasesOnlyTheFailedAdminAlert(t *testing.T) {
 	sink := &adminSink{err: fmt.Errorf("email service down")}
 
 	j := NewReminderJob(audits, controls, dedup, func(context.Context, int, []model.ReminderItem) error { return nil }).
-		WithAdminAlerts(adminsFn(902), sink.notify)
+		WithAdminAlerts(adminsFn(902), sink.notify, nil)
 	if err := j.runOnce(context.Background()); err != nil {
 		t.Fatalf("runOnce: %v", err)
 	}
@@ -803,6 +833,7 @@ func TestRunOnceStillSendsOwnerDigestsWhenAdminLookupFails(t *testing.T) {
 	}).WithAdminAlerts(
 		func(context.Context) ([]int, error) { return nil, fmt.Errorf("grant store unreachable") },
 		sink.notify,
+		nil,
 	)
 	if err := j.runOnce(context.Background()); err != nil {
 		t.Fatalf("runOnce: %v", err)

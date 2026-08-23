@@ -94,6 +94,10 @@ type ReminderJob struct {
 	// handler.Deps.ReminderAdminIDs / SendOverdueAdminAlertSync at startup.
 	admins      func(ctx context.Context) ([]int, error)
 	notifyAdmin func(ctx context.Context, adminUserID int, item model.ReminderItem) error
+	// resolveOwnerNames looks up a batch of owner ids in one call, so the
+	// escalation resolves each owner once per sweep instead of once per
+	// (admin, item) email — wired to handler.Deps.ResolveOwnerNames.
+	resolveOwnerNames func(ctx context.Context, ownerIDs []int) map[int]string
 	// running serializes runOnce against itself: Start's daily ticker and the
 	// manual-trigger endpoint (handler.reminderJobHandler.run) both end up
 	// calling runOnce on this same instance. This guards a same-process
@@ -122,9 +126,11 @@ func NewReminderJob(
 func (j *ReminderJob) WithAdminAlerts(
 	admins func(ctx context.Context) ([]int, error),
 	notifyAdmin func(ctx context.Context, adminUserID int, item model.ReminderItem) error,
+	resolveOwnerNames func(ctx context.Context, ownerIDs []int) map[int]string,
 ) *ReminderJob {
 	j.admins = admins
 	j.notifyAdmin = notifyAdmin
+	j.resolveOwnerNames = resolveOwnerNames
 	return j
 }
 
@@ -455,6 +461,24 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 		}
 		sent++
 		delete(byOwner, ownerID) // resolved (sent) — must never be released, even if a later owner's notify panics
+	}
+
+	// Resolved once per sweep, deduped across every escalated item, so an
+	// owner with several overdue items (or several admins) is looked up once
+	// instead of once per email.
+	if len(adminAlerts) > 0 && j.resolveOwnerNames != nil {
+		ownerIDSet := map[int]bool{}
+		for _, a := range adminAlerts {
+			ownerIDSet[a.item.OwnerUserID] = true
+		}
+		ownerIDs := make([]int, 0, len(ownerIDSet))
+		for id := range ownerIDSet {
+			ownerIDs = append(ownerIDs, id)
+		}
+		ownerNames := j.resolveOwnerNames(ctx, ownerIDs)
+		for i := range adminAlerts {
+			adminAlerts[i].item.OwnerName = ownerNames[adminAlerts[i].item.OwnerUserID]
+		}
 	}
 
 	// Overdue escalations, one email per (admin, item). Each stands alone, so

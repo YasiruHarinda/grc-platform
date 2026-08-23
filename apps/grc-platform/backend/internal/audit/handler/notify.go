@@ -351,8 +351,9 @@ func (d *Deps) SendOverdueAdminAlertSync(ctx context.Context, adminUserID int, i
 	info := emailer.AuditEventInfo{
 		AuditName: item.AuditName,
 		// Not an actor — this alert has none. The template labels it "Owned by",
-		// naming who is expected to act; see AuditEventInfo.Actor.
-		Actor:     d.describeUser(ctx, item.OwnerUserID),
+		// naming who is expected to act; see AuditEventInfo.Actor. Pre-resolved
+		// by the job (once per sweep) into item.OwnerName — see ResolveOwnerNames.
+		Actor:     item.OwnerName,
 		DetailURL: d.controlDetailURL(item.AuditID, item.LinkControlID),
 		Items: []emailer.AuditEventItem{{
 			ControlNumber:   item.ControlNumber,
@@ -387,6 +388,17 @@ func (d *Deps) describeUser(ctx context.Context, userID int) string {
 		return ""
 	}
 	return fmt.Sprintf("%s (%s)", strings.TrimSpace(person.DisplayName), person.Email)
+}
+
+// ResolveOwnerNames batches describeUser across a deduped set of owner ids —
+// wired to job.ReminderJob.WithAdminAlerts so the overdue escalation looks
+// each owner up once per sweep instead of once per (admin, item) email.
+func (d *Deps) ResolveOwnerNames(ctx context.Context, ownerIDs []int) map[int]string {
+	names := make(map[int]string, len(ownerIDs))
+	for _, id := range ownerIDs {
+		names[id] = d.describeUser(ctx, id)
+	}
+	return names
 }
 
 // notifyResubmission handles the resubmission-needed event for all four
