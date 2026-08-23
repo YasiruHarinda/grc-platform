@@ -192,7 +192,7 @@ CREATE TABLE IF NOT EXISTS `role` (
   description  TEXT         NULL,
   module       ENUM('RISK','AUDIT','SHARED') NOT NULL,
   scope_basis  ENUM('SOURCE_REGISTER','ASSIGNMENT_TEAM') NULL COMMENT 'Which risk column a grant on this role scopes by; NULL for GLOBAL-only roles. See table comment',
-  assignable_user_type ENUM('INTERNAL','EXTERNAL') NOT NULL DEFAULT 'INTERNAL' COMMENT 'Which kind of person this role may be granted to. INTERNAL/EXTERNAL identities live in separate Asgardeo organisations, so a role never spans both — no EITHER value',
+  assignable_user_type ENUM('INTERNAL','EXTERNAL') NOT NULL DEFAULT 'INTERNAL' COMMENT 'Which kind of person this role may be granted to. Asymmetric: INTERNAL-only roles never go to an EXTERNAL user, but an EXTERNAL-assignable role may go to either — see grantService.validateUserType',
   status       ENUM('ACTIVE','INACTIVE') NOT NULL DEFAULT 'ACTIVE',
   created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by   VARCHAR(255) NULL,
