@@ -603,7 +603,7 @@ func (d *Deps) notifyControlComplete(ctx context.Context, control *model.AuditCo
 // uuid) here — the caller already has it, and it is what self-exclusion below
 // compares against directly, with no directory round trip needed.
 func (d *Deps) notifyCommentAdded(reqCtx context.Context, control *model.AuditControl, comment *model.AuditComment, actor string, actorUserID int) {
-	go func() {
+	go func() { // #nosec G118 -- deliberately detached from reqCtx: must survive past the handler returning, same reasoning as notifyAuditEvent
 		defer func() {
 			if p := recover(); p != nil {
 				slog.Error("audit notification: panic", "event", emailer.AuditEventCommentAdded, "controlId", control.ID, "panic", p)

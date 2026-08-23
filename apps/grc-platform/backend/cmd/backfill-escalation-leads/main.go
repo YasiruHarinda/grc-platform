@@ -197,7 +197,7 @@ func main() {
 // rows where that column is set but the matching uuid column is not — i.e.
 // the ones this tool still needs to resolve.
 func distinctUnbackfilled(ctx context.Context, db *sql.DB, role leadRole) ([]string, error) {
-	query := fmt.Sprintf(
+	query := fmt.Sprintf( // #nosec G201 -- column names come from the fixed leadRoles literal above, never from user/network input
 		"SELECT DISTINCT %s FROM risk_escalation WHERE %s IS NOT NULL AND %s IS NULL",
 		role.emailColumn, role.emailColumn, role.uuidColumn)
 	rows, err := db.QueryContext(ctx, query)
