@@ -30,7 +30,7 @@ import (
 // minSearchLen keeps this from ever answering an empty/near-empty query with
 // (effectively) the whole ~23-person snapshot — cheap to allow today, but the
 // right shape regardless of how small the WSO2-org snapshot happens to be
-// right now (see ADMIN_CONSOLE_DESIGN.md §5.1).
+// right now.
 const minSearchLen = 2
 
 // handleSearchDirectory serves GET /api/v1/admin/directory/search?q=. Powers

@@ -188,7 +188,7 @@ const (
 	// ManageRiskHub gates the Admin Console's Risk Teams/Categories/Compliance
 	// References screens (internal/risk/handler's write routes) — a separate
 	// privilege from ManageUsers so the two can diverge later even though only
-	// grc-platform-admin holds either today (see ADMIN_CONSOLE_DESIGN.md §4).
+	// grc-platform-admin holds either today.
 	ManageRiskHub = "MANAGE_RISK_HUB"
 	// ManageAuditHub is the Audit Hub equivalent of ManageRiskHub. Declared now
 	// for symmetry even though no route checks it yet — the Audit Hub

@@ -176,13 +176,10 @@ WHERE  r.role_name = 'grc-platform-risk-compliance-team'
   );
 
 -- grc-platform-risk-compliance-admin no longer manages Risk Teams/Scores/
--- Compliance References directly — that moved into the Admin Console, gated
--- on MANAGE_RISK_HUB, which only grc-platform-admin holds (see §4's "one
--- consistent gate for the whole console" decision in ADMIN_CONSOLE_DESIGN.md).
--- Deactivate any already-seeded grant of these three so an installation
--- carried forward from before this change doesn't retain them — the
--- role_privilege INSERT further below only re-activates the privileges still
--- in its list, which these three no longer are.
+-- Compliance References directly — moved to MANAGE_RISK_HUB, held only by
+-- grc-platform-admin. Deactivate any already-seeded grant of these three so
+-- older installations don't retain them; role_privilege below only
+-- re-activates privileges still in its list.
 UPDATE role_privilege rp
 JOIN   `role` r      ON r.id = rp.role_id
 JOIN   privilege p   ON p.id = rp.privilege_id
@@ -228,9 +225,8 @@ WHERE  r.role_name = 'grc-platform-management'
 -- grc-platform-risk-compliance-team / grc-platform-audit-compliance-team.
 --
 -- assignable_user_type declares which kind of person a role may be granted
--- to (INTERNAL/EXTERNAL identities live in separate Asgardeo organisations —
--- see CONTEXT.md's Assignable user type entry). Every role here is INTERNAL
--- except grc-platform-audit-external-auditor.
+-- to (INTERNAL/EXTERNAL identities live in separate Asgardeo organisations).
+-- Every role here is INTERNAL except grc-platform-audit-external-auditor.
 INSERT INTO `role` (role_name, description, module, scope_basis, assignable_user_type, status) VALUES
   ('grc-platform-risk-compliance-admin',
    'Risk Hub administrator. Full access to all risk privileges, including final compliance approval, rejection, and closure.',
@@ -337,12 +333,9 @@ INSERT INTO privilege (privilege_name, module, status) VALUES
   -- Gates internal-only control comments (hidden from external auditors) —
   -- replaces the former hardcoded group-name check.
   ('AUDIT_VIEW_INTERNAL_COMMENTS', 'AUDIT', 'ACTIVE'),
-  -- Shared platform (3 privileges) — the Admin Console's three gates
-  -- (ADMIN_CONSOLE_DESIGN.md §4). All three are held only by
-  -- grc-platform-admin (see the role_privilege section below): one
-  -- consistent "creates authority from nothing" boundary for the whole
-  -- console, rather than three privileges that happen to end up in the same
-  -- place today but could drift apart under separate role grants later.
+  -- Shared platform (3 privileges) — Admin Console's gates, all held only
+  -- by grc-platform-admin (see role_privilege below): one consistent
+  -- authority boundary for the whole console.
   --
   -- MANAGE_USERS gates User Management: provisioning users and
   -- granting/revoking roles. Declared in Go long before it had a handler;
@@ -364,8 +357,8 @@ INSERT INTO privilege (privilege_name, module, status) VALUES
   -- MANAGE_AUDIT_HUB is the Audit Hub equivalent — seeded and granted now so
   -- the console's shape is right, even though the screens it will gate
   -- (Audit Teams/Frameworks/Products) are a stubbed, later phase of this
-  -- same project (ADMIN_CONSOLE_DESIGN.md's "out of scope, flag don't
-  -- build" list). Same GLOBAL-only-in-practice reasoning as MANAGE_RISK_HUB.
+  -- same project (the "out of scope, flag don't build" list). Same
+  -- GLOBAL-only-in-practice reasoning as MANAGE_RISK_HUB.
   ('MANAGE_AUDIT_HUB',        'AUDIT',  'ACTIVE')
 ON DUPLICATE KEY UPDATE
   module = VALUES(module),
@@ -393,8 +386,8 @@ ON DUPLICATE KEY UPDATE is_active = TRUE;
 -- grc-platform-risk-compliance-admin → 20 Risk Hub privileges. No longer 23:
 -- RISK_MANAGE_TEAMS/SCORES/COMPLIANCE_REFS moved to the Admin Console's
 -- MANAGE_RISK_HUB, held only by grc-platform-admin — see the deactivation
--- block above and ADMIN_CONSOLE_DESIGN.md §4. This role keeps every other
--- Risk Hub privilege; only reference-data management moved out.
+-- block above. This role keeps every other Risk Hub privilege; only
+-- reference-data management moved out.
 INSERT INTO role_privilege (role_id, privilege_id, is_active)
 SELECT r.id, p.id, TRUE
 FROM   `role` r

@@ -15,7 +15,7 @@
 // under the License.
 
 // Package handler contains the HTTP handlers for the Admin Console's Users
-// screen (ADMIN_CONSOLE_DESIGN.md). Kept separate from internal/user/handler
+// screen. Kept separate from internal/user/handler
 // and internal/risk/handler: every route here is gated on MANAGE_USERS GLOBAL
 // specifically — never RequirePrivilegeIn, there is no scoped variant — which
 // is a distinct enough authorization boundary from either module to warrant

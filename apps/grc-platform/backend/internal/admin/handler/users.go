@@ -194,12 +194,9 @@ type updateUserStatusRequest struct {
 
 // handleUpdateUserStatus serves PATCH /api/v1/admin/users/{id}/status.
 //
-// Self-lockout guard: a caller may not change their own status. Status is a
-// bigger hammer than a role change — it zeroes ALL of a user's privileges
-// outright (grant resolution already filters on user.status = 'ACTIVE', see
-// CONTEXT.md's Grant entry) — so a misclick here could not just demote but
-// fully lock out the only person who could undo it. Same reasoning as, and
-// deliberately consistent with, the self-demotion guard on role changes.
+// Self-lockout guard: a caller may not change their own status, since that
+// would zero all of their privileges outright. Same reasoning as the
+// self-demotion guard on role changes.
 func (d *Deps) handleUpdateUserStatus(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageUsers) {
 		return

@@ -81,9 +81,9 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /api/v1/teams", d.handleCreateTeam)
 	mux.HandleFunc("PUT /api/v1/teams/{id}", d.handleUpdateTeam)
 
-	// Risk scores — read-only by design (see ADMIN_CONSOLE_DESIGN.md §8.1):
-	// the 3x3 likelihood x impact matrix is a fixed set of load-bearing
-	// constants, not a freely editable table. No write route exists.
+	// Risk scores — read-only by design: the 3x3 likelihood x impact matrix
+	// is a fixed set of load-bearing constants, not a freely editable
+	// table. No write route exists.
 	mux.HandleFunc("GET /api/v1/risk-scores", d.handleListRiskScores)
 
 	// Compliance references
