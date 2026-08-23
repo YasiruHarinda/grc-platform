@@ -42,17 +42,16 @@ func actor(r *http.Request) string {
 	return ""
 }
 
-// handleListUsers serves GET /api/v1/admin/users?q=. q is accepted for
-// backward compatibility but currently unused: the entity has no
-// name/email left to filter on server-side since the uuid-identity
-// migration, so name/email filtering happens client-side instead (see
-// SearchUsers's doc comment).
+// handleListUsers serves GET /api/v1/admin/users. There is no server-side
+// name/email filter: the entity has no name/email left to filter on since
+// the uuid-identity migration, so name/email filtering happens client-side
+// instead (see SearchUsers's doc comment).
 func (d *Deps) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageUsers) {
 		return
 	}
 
-	users, err := d.Admin.SearchUsers(r.Context(), r.URL.Query().Get("q"))
+	users, err := d.Admin.SearchUsers(r.Context())
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return

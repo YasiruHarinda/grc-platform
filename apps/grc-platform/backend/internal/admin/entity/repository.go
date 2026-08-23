@@ -55,13 +55,12 @@ type entGrant struct {
 // to see (and reactivate) an INACTIVE user too, unlike the Risk module's
 // dropdowns, which only ever want ACTIVE ones.
 //
-// query is unused: the entity's SearchUsersRequest dropped free-text search
-// (no email/display name left to search once the uuid-identity migration
-// removed them from the user table — see its own doc comment). The one
-// caller of this method never passes a non-empty query either; filtering by
-// name/email happens client-side in UsersPage against directory-resolved
-// names instead.
-func (r *repository) SearchUsers(ctx context.Context, query string) ([]admin.User, error) {
+// There is no query/filter parameter: the entity's SearchUsersRequest dropped
+// free-text search (no email/display name left to search once the
+// uuid-identity migration removed them from the user table — see its own doc
+// comment). Filtering by name/email happens client-side in UsersPage against
+// directory-resolved names instead.
+func (r *repository) SearchUsers(ctx context.Context) ([]admin.User, error) {
 	type entUser struct {
 		ID          int        `json:"id"`
 		UUID        string     `json:"uuid"`

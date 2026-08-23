@@ -27,9 +27,10 @@ import "context"
 // interface is deliberately small rather than a second, overlapping user/grant
 // abstraction.
 type Repository interface {
-	// SearchUsers returns platform users (optionally filtered by a
-	// name/email substring) with their active grants embedded.
-	SearchUsers(ctx context.Context, query string) ([]User, error)
+	// SearchUsers returns every platform user with their active grants
+	// embedded. See the entity implementation's doc comment for why there is
+	// no server-side name/email filter.
+	SearchUsers(ctx context.Context) ([]User, error)
 	// ListRoles returns every active role — RISK, AUDIT, and SHARED alike.
 	//
 	// AUDIT roles used to be withheld here because Audit Hub resolved
