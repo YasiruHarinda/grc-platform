@@ -125,9 +125,18 @@ type UserRepository interface {
 	GetByID(ctx context.Context, id int) (*model.UserRef, error)
 }
 
-// TeamRepository is the data-access contract for the audit team list.
+// TeamRepository is the data-access contract for audit teams.
 type TeamRepository interface {
+	// List returns every ACTIVE team — the control-assignment dropdown's
+	// contract, unchanged.
 	List(ctx context.Context) ([]*model.AuditTeam, error)
+	// ListAll returns every team regardless of status, each with Status
+	// populated. The Manage Audit Hub admin table's contract — it needs
+	// inactive teams too, so they can be reactivated rather than
+	// disappearing the moment they're deactivated.
+	ListAll(ctx context.Context) ([]*model.AuditTeam, error)
+	Create(ctx context.Context, req model.CreateTeamRequest, createdBy string) (*model.AuditTeam, error)
+	Update(ctx context.Context, id int, req model.UpdateTeamRequest, updatedBy string) (*model.AuditTeam, error)
 }
 
 // DashboardRepository aggregates cross-cutting dashboard stats and action items.

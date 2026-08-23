@@ -147,6 +147,10 @@ func (s *grantService) CreateGrant(ctx context.Context, userID int, req domain.C
 			Msg: "role " + role.RoleName + " is inactive and cannot be granted"}
 	}
 
+	if err := s.validateUserType(ctx, userID, role); err != nil {
+		return domain.UserGrant{}, err
+	}
+
 	if err := s.validateScope(ctx, role, &req); err != nil {
 		return domain.UserGrant{}, err
 	}
@@ -158,7 +162,26 @@ func (s *grantService) CreateGrant(ctx context.Context, userID int, req domain.C
 	return *grant, nil
 }
 
-// validateScope enforces the three rules the schema cannot, mutating req's
+// validateUserType enforces role.assignable_user_type: an EXTERNAL-only role
+// (external-auditor) may only be granted to an EXTERNAL user, and — the other
+// direction, equally load-bearing — an INTERNAL-only role may never be
+// granted to an EXTERNAL user. This is the actual gate; a role picker that
+// filters by this column client-side is a convenience on top, never a
+// substitute for it.
+func (s *grantService) validateUserType(ctx context.Context, userID int, role *domain.Role) error {
+	userType, err := s.repo.UserType(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if userType != role.AssignableUserType {
+		return &apierror.ValidationError{
+			Msg: role.RoleName + " may only be granted to an " + role.AssignableUserType +
+				" user, and this user is " + userType}
+	}
+	return nil
+}
+
+// validateScope enforces the four rules the schema cannot, mutating req's
 // ScopeID to the sentinel where required.
 func (s *grantService) validateScope(ctx context.Context, role *domain.Role, req *domain.CreateUserGrantRequest) error {
 	// 1. The scope kind must be one the role's module admits.
@@ -172,7 +195,19 @@ func (s *grantService) validateScope(ctx context.Context, role *domain.Role, req
 				strings.Join(allowed, " or ") + ", not " + req.ScopeType}
 	}
 
-	// 2. Grant-management is never handed out scoped. A register-scoped admin
+	// 2. An EXTERNAL-assignable role is GLOBAL-only. Its effective scope is the
+	// set of controls the person is assigned to (see requireAssignedAuditor in
+	// the platform backend), so a team on it is inert data that nonetheless
+	// reads as a real restriction wherever grants are displayed. GrantPicker
+	// locks the scope picker for these roles; this is the enforcement, on the
+	// same footing as validateUserType.
+	if role.AssignableUserType == domain.UserTypeExternal && req.ScopeType != domain.ScopeGlobal {
+		return &apierror.ValidationError{
+			Msg: role.RoleName + " may only be granted GLOBAL: its scope comes from the controls " +
+				"assigned to the person, not from a team"}
+	}
+
+	// 3. Grant-management is never handed out scoped. A register-scoped admin
 	// granting roles would need the escalation rule that a grantor may not
 	// exceed their own privileges in that scope — subtle, and silent when
 	// wrong — so it is deliberately not permitted yet. Relaxing this later
@@ -189,7 +224,7 @@ func (s *grantService) validateScope(ctx context.Context, role *domain.Role, req
 		}
 	}
 
-	// 3. The scope must exist. GLOBAL is a wildcard and takes the sentinel;
+	// 4. The scope must exist. GLOBAL is a wildcard and takes the sentinel;
 	// anything else must name a live team, since scope_id has no FK to enforce it.
 	if req.ScopeType == domain.ScopeGlobal {
 		req.ScopeID = domain.GlobalScopeID

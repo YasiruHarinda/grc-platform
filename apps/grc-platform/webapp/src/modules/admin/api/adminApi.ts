@@ -41,20 +41,23 @@ export interface AdminUser {
   uuid: string;
   displayName: string;
   email: string;
+  userType: "INTERNAL" | "EXTERNAL";
   status: "ACTIVE" | "INACTIVE" | "REMOVED";
   createdOn: string;
   grants: Grant[];
 }
 
-// Role, as offered by the grant editor's picker — RISK and SHARED modules
-// only. See the backend's admin.Repository.ListRoles doc comment for why
-// AUDIT roles are withheld from this console for now.
+// Role, as offered by the grant editor's picker — every module now (RISK,
+// AUDIT, SHARED). assignableUserType governs which roles are offered once a
+// person's user type (INTERNAL/EXTERNAL) is known; the backend enforces it
+// regardless of what this picker offers.
 export interface Role {
   id: number;
   roleName: string;
   description?: string;
-  module: "RISK" | "SHARED";
+  module: "RISK" | "AUDIT" | "SHARED";
   scopeBasis?: "SOURCE_REGISTER" | "ASSIGNMENT_TEAM";
+  assignableUserType: "INTERNAL" | "EXTERNAL";
   status: string;
 }
 
@@ -87,6 +90,19 @@ export async function searchDirectory(authFetch: AuthFetch, query: string): Prom
   return handleResponse<DirectoryPerson[]>(res);
 }
 
+// searchExternalDirectory is searchDirectory's counterpart for the "Add User"
+// typeahead once External is selected — a live call against the external
+// Asgardeo org (no cached snapshot backs it, so each keystroke round-trips).
+export async function searchExternalDirectory(authFetch: AuthFetch, query: string): Promise<DirectoryPerson[]> {
+  if (query.trim().length < 2) {
+    return [];
+  }
+  const res = await authFetch(
+    `${BACKEND_BASE_URL}/api/v1/admin/directory/search-external?q=${encodeURIComponent(query)}`,
+  );
+  return handleResponse<DirectoryPerson[]>(res);
+}
+
 // fetchUsers lists platform users with their grants embedded. query is an
 // optional name/email substring filter; omitted or empty returns everyone.
 export async function fetchAdminUsers(authFetch: AuthFetch, query?: string): Promise<AdminUser[]> {
@@ -95,22 +111,36 @@ export async function fetchAdminUsers(authFetch: AuthFetch, query?: string): Pro
   return handleResponse<AdminUser[]>(res);
 }
 
-// createAdminUser provisions a platform user by uuid alone — see
-// ADMIN_CONSOLE_DESIGN.md and the uuid-identity migration for why no email or
-// display name is sent.
+// createAdminUser provisions a platform user by uuid alone — the uuid-identity
+// migration is why no email or display name is sent. userType defaults
+// server-side to INTERNAL when omitted.
 export async function createAdminUser(
   authFetch: AuthFetch,
   uuid: string,
+  userType?: "INTERNAL" | "EXTERNAL",
 ): Promise<{ id: number; uuid: string; displayName: string; email: string }> {
   const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/admin/users`, {
     method: "POST",
-    body: JSON.stringify({ uuid }),
+    body: JSON.stringify({ uuid, userType }),
   });
   return handleResponse(res);
 }
 
-// fetchRoles returns the grant editor's role picker options (RISK + SHARED
-// only, server-filtered).
+// updateUserStatus sets a platform user's status. The server rejects a
+// caller trying to change their own status (self-lockout guard) with a 422.
+export async function updateUserStatus(
+  authFetch: AuthFetch,
+  userId: number,
+  status: "ACTIVE" | "INACTIVE" | "REMOVED",
+): Promise<void> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/admin/users/${userId}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+  await handleResponse(res);
+}
+
+// fetchRoles returns the grant editor's role picker options — every module.
 export async function fetchRoles(authFetch: AuthFetch): Promise<Role[]> {
   const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/admin/roles`);
   return handleResponse<Role[]>(res);
@@ -147,7 +177,7 @@ export interface ScopeTeam {
 }
 
 // fetchScopeTeams populates the grant editor's scope picker for a
-// SOURCE_REGISTER- or ASSIGNMENT_TEAM-scoped role. Calls the same
+// SOURCE_REGISTER- or ASSIGNMENT_TEAM-scoped RISK role. Calls the same
 // GET /api/v1/teams the Risk module's own pickers use directly (rather than
 // importing modules/risk/api/riskApi.ts's equivalent) — the two modules stay
 // independent of each other's internals even though they happen to read the
@@ -158,6 +188,14 @@ export async function fetchScopeTeams(
   type: "SOURCE_REGISTER" | "ASSIGNMENT",
 ): Promise<ScopeTeam[]> {
   const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/teams?type=${type}`);
+  return handleResponse<ScopeTeam[]>(res);
+}
+
+// fetchAuditScopeTeams is fetchScopeTeams' counterpart for an AUDIT role's
+// scope picker — a different backend route (audit_team, not risk_team), same
+// ScopeTeam shape the picker already renders either kind through.
+export async function fetchAuditScopeTeams(authFetch: AuthFetch): Promise<ScopeTeam[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audit/teams`);
   return handleResponse<ScopeTeam[]>(res);
 }
 
@@ -321,9 +359,51 @@ export interface RiskScore {
 }
 
 // No add/edit UI at all, not even for color — a locked decision (the 3x3
-// matrix is a fixed set of load-bearing constants; see ADMIN_CONSOLE_DESIGN.md
-// §8.1). This console only ever reads it.
+// matrix is a fixed set of load-bearing constants). This console only reads it.
 export async function fetchRiskScores(authFetch: AuthFetch): Promise<RiskScore[]> {
   const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk-scores`);
   return handleResponse<RiskScore[]>(res);
+}
+
+// ── Manage Audit Hub — Audit Teams ──────────────────────────────────────────────
+// Deliberately not the same shape as Risk's AdminTeam — audit_team has no
+// code or team_type, just a name and a status.
+
+export interface AdminAuditTeam {
+  id: number;
+  name: string;
+  status: "ACTIVE" | "INACTIVE";
+}
+
+export interface AuditTeamPayload {
+  name: string;
+  status: "ACTIVE" | "INACTIVE";
+}
+
+// fetchAllAuditTeams lists every team regardless of status (?includeInactive=true),
+// unlike fetchAuditScopeTeams, which the grant picker uses and which implicitly
+// means ACTIVE only. Same reasoning as fetchAllTeams vs fetchScopeTeams.
+export async function fetchAllAuditTeams(authFetch: AuthFetch): Promise<AdminAuditTeam[]> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audit/teams?includeInactive=true`);
+  return handleResponse<AdminAuditTeam[]>(res);
+}
+
+export async function createAuditTeam(authFetch: AuthFetch, payload: AuditTeamPayload): Promise<AdminAuditTeam> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audit/teams`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<AdminAuditTeam>(res);
+}
+
+export async function updateAuditTeam(
+  authFetch: AuthFetch,
+  id: number,
+  payload: AuditTeamPayload,
+): Promise<AdminAuditTeam> {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audit/teams/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<AdminAuditTeam>(res);
 }

@@ -21,7 +21,10 @@ import {
   Chip,
   CircularProgress,
   IconButton,
+  MenuItem,
   Paper,
+  Select,
+  type SelectChangeEvent,
   Stack,
   Table,
   TableBody,
@@ -33,11 +36,19 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { Pencil, Plus, Search } from "@wso2/oxygen-ui-icons-react";
-import { type JSX, useEffect, useMemo, useState } from "react";
+import { type JSX, useEffect, useMemo, useRef, useState } from "react";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
-import { fetchAdminUsers, fetchRoles, type AdminUser, type Role } from "../api/adminApi";
+import { fetchAdminUsers, fetchRoles, updateUserStatus, type AdminUser, type Role } from "../api/adminApi";
 import AddUserDialog from "./AddUserDialog";
 import GrantEditorDialog from "./GrantEditorDialog";
+
+type UserStatus = AdminUser["status"];
+
+const statusColor: Record<UserStatus, "success" | "default" | "error"> = {
+  ACTIVE: "success",
+  INACTIVE: "default",
+  REMOVED: "error",
+};
 
 export default function UsersPage(): JSX.Element {
   const authFetch = useAuthApiClient();
@@ -48,17 +59,34 @@ export default function UsersPage(): JSX.Element {
   const [search, setSearch] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [grantEditorUser, setGrantEditorUser] = useState<AdminUser | null>(null);
+  // Tracks every row whose status change is in flight, so overlapping updates
+  // on different rows (or a second update on the same row) each disable only
+  // their own Select rather than sharing one slot that clears on whichever
+  // request finishes first.
+  const [statusUpdatingIds, setStatusUpdatingIds] = useState<Set<number>>(new Set());
+  // Guards against a stale load() response (from an earlier status change)
+  // overwriting the state set by a load() that started later but resolved
+  // first.
+  const loadSeqRef = useRef(0);
 
-  const load = () => {
+  const load = (): Promise<void> => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     setError(null);
-    Promise.all([fetchAdminUsers(authFetch), fetchRoles(authFetch)])
+    return Promise.all([fetchAdminUsers(authFetch), fetchRoles(authFetch)])
       .then(([u, r]) => {
+        if (seq !== loadSeqRef.current) return;
         setUsers(u);
         setRoles(r);
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load users"))
-      .finally(() => setLoading(false));
+      .catch((e) => {
+        if (seq !== loadSeqRef.current) return;
+        setError(e instanceof Error ? e.message : "Failed to load users");
+      })
+      .finally(() => {
+        if (seq !== loadSeqRef.current) return;
+        setLoading(false);
+      });
   };
 
   useEffect(() => {
@@ -83,6 +111,29 @@ export default function UsersPage(): JSX.Element {
     if (fresh) setGrantEditorUser(fresh);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [users]);
+
+  // REMOVED is the more final state (an ex-employee, gone for good) — confirm
+  // before applying it rather than letting the same control used for routine
+  // ACTIVE/INACTIVE toggling trigger it on a misclick. The server separately
+  // refuses a caller changing their own status (self-lockout guard); that
+  // failure surfaces through the ordinary error alert below.
+  const handleStatusChange = (user: AdminUser, next: UserStatus) => {
+    if (next === "REMOVED" && !window.confirm(`Mark ${user.displayName || user.email || user.uuid} as Removed?`)) {
+      return;
+    }
+    setError(null);
+    setStatusUpdatingIds((prev) => new Set(prev).add(user.id));
+    updateUserStatus(authFetch, user.id, next)
+      .then(load)
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to update status"))
+      .finally(() =>
+        setStatusUpdatingIds((prev) => {
+          const nextIds = new Set(prev);
+          nextIds.delete(user.id);
+          return nextIds;
+        }),
+      );
+  };
 
   return (
     <Box>
@@ -156,11 +207,25 @@ export default function UsersPage(): JSX.Element {
                   <TableCell sx={{ fontWeight: 600 }}>{u.displayName || "—"}</TableCell>
                   <TableCell>{u.email || "—"}</TableCell>
                   <TableCell>
-                    <Chip
+                    <Select
                       size="small"
-                      label={u.status === "ACTIVE" ? "Active" : u.status === "INACTIVE" ? "Inactive" : "Removed"}
-                      color={u.status === "ACTIVE" ? "success" : "default"}
-                    />
+                      variant="standard"
+                      disableUnderline
+                      value={u.status}
+                      disabled={statusUpdatingIds.has(u.id)}
+                      onChange={(e: SelectChangeEvent) => handleStatusChange(u, e.target.value as UserStatus)}
+                      renderValue={(value) => (
+                        <Chip
+                          size="small"
+                          label={value === "ACTIVE" ? "Active" : value === "INACTIVE" ? "Inactive" : "Removed"}
+                          color={statusColor[value as UserStatus]}
+                        />
+                      )}
+                    >
+                      <MenuItem value="ACTIVE">Active</MenuItem>
+                      <MenuItem value="INACTIVE">Inactive</MenuItem>
+                      <MenuItem value="REMOVED">Removed</MenuItem>
+                    </Select>
                   </TableCell>
                   <TableCell>{u.createdOn ? new Date(u.createdOn).toLocaleDateString() : "—"}</TableCell>
                   <TableCell>

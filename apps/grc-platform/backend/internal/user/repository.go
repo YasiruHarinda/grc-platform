@@ -40,5 +40,15 @@ type Repository interface {
 	// is unreachable) must refuse the provision rather than calling this with
 	// an empty string.
 	Upsert(ctx context.Context, uuid, actor string) (*User, error)
+	// UpsertTyped is Upsert with an explicit user_type (INTERNAL/EXTERNAL) —
+	// the Admin Console's Add User flow, which is the only caller that ever
+	// provisions an EXTERNAL person. Upsert itself stays INTERNAL-only
+	// (its callers never resolve an external identity).
+	UpsertTyped(ctx context.Context, uuid, userType, actor string) (*User, error)
+	// UpdateStatus sets a user's status (ACTIVE/INACTIVE/REMOVED) — the Admin
+	// Console's Users table status control. The entity has supported this on
+	// UpdateUserRequest since before this method existed; nothing else in the
+	// GRC backend exposed it.
+	UpdateStatus(ctx context.Context, id int, status, actor string) (*User, error)
 	List(ctx context.Context) ([]*User, error)
 }

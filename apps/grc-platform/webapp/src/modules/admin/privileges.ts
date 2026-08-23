@@ -18,10 +18,8 @@
 // Values must match privilege_name in the privilege table and the constants
 // in backend/internal/shared/privilege/privilege.go exactly.
 //
-// Not re-exported from modules/audit/privileges — despite what
-// ADMIN_CONSOLE_DESIGN.md's handover notes assumed, MANAGE_USERS was not
-// actually defined anywhere in the webapp yet (grepped before writing this;
-// it exists only in the Go privilege package). Declared fresh here instead.
+// Not re-exported from modules/audit/privileges — MANAGE_USERS isn't defined
+// anywhere else in the webapp; it exists only in the Go privilege package.
 export const AdminPrivilege = {
   ManageUsers: "MANAGE_USERS",
   // Gates /admin/risk-hub — Risk Teams/Categories/Compliance References/Risk

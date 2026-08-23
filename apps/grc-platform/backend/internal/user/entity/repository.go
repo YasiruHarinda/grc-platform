@@ -91,24 +91,43 @@ func (r *repository) GetByUUID(ctx context.Context, uuid string) (*user.User, er
 	return u.toModel(), nil
 }
 
-// Upsert provisions an account for an employee picked from an HR entity search
-// (e.g. as a risk's Action Owner) who may never have signed in to grc-platform.
-// POST /users is an upsert on the entity side, keyed on uuid — it inserts when
-// the uuid is new and just refreshes updated_by when it isn't — so this is a
-// single round trip with no read-then-write race. userType/status are left
-// empty so the entity applies its own defaults (INTERNAL / ACTIVE).
-//
-// uuid is required — see the Repository interface doc for why: the caller
-// must have already resolved one (e.g. against the identity directory)
-// before calling this.
+// Upsert provisions an account for an employee picked from an HR entity
+// search. See the Repository interface doc for the uuid-required contract.
 func (r *repository) Upsert(ctx context.Context, uuid, actor string) (*user.User, error) {
+	return r.UpsertTyped(ctx, uuid, "", actor)
+}
+
+// UpsertTyped is Upsert with an explicit userType; POST /users is an upsert
+// on the entity side keyed on uuid, and an empty userType defaults to
+// INTERNAL there.
+func (r *repository) UpsertTyped(ctx context.Context, uuid, userType, actor string) (*user.User, error) {
 	body := map[string]any{
 		"uuid":      uuid,
+		"userType":  userType,
 		"createdBy": actor,
 	}
 	var u entUser
 	if err := r.c.Post(ctx, "/users", body, &u); err != nil {
 		return nil, fmt.Errorf("upsert user: %w", err)
+	}
+	return u.toModel(), nil
+}
+
+// UpdateStatus sets a user's status via the entity's existing PATCH
+// /users/{id} — AuditTeamIDs is left nil (unspecified), which the entity
+// treats as "leave audit team membership alone" (see UpdateUserRequest's doc
+// comment on the entity side), so this touches status only.
+func (r *repository) UpdateStatus(ctx context.Context, id int, status, actor string) (*user.User, error) {
+	body := map[string]any{
+		"status":    status,
+		"updatedBy": actor,
+	}
+	var u entUser
+	if err := r.c.Patch(ctx, fmt.Sprintf("/users/%d", id), body, &u); err != nil {
+		if notFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("update user status: %w", err)
 	}
 	return u.toModel(), nil
 }

@@ -40,6 +40,12 @@ func (s stubUsers) GetByUUID(_ context.Context, uuid string) (*userentity.User, 
 func (s stubUsers) Upsert(context.Context, string, string) (*userentity.User, error) {
 	return nil, nil
 }
+func (s stubUsers) UpsertTyped(context.Context, string, string, string) (*userentity.User, error) {
+	return nil, nil
+}
+func (s stubUsers) UpdateStatus(context.Context, int, string, string) (*userentity.User, error) {
+	return nil, nil
+}
 func (s stubUsers) List(context.Context) ([]*userentity.User, error) { return nil, nil }
 
 func strp(s string) *string { return &s }

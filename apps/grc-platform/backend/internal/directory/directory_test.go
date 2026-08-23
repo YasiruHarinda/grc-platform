@@ -128,10 +128,13 @@ func (f *fakeDirectory) service(ttl time.Duration) *directory.Service {
 
 // serviceWithExternal is service plus an external-org client pointed at the
 // same fake server's external-org path, for LookupTyped/LookupAllTyped tests.
+// Both the internal-fallback and external caches share ttl here — tests using
+// this helper assert call counts within a single TTL window, not expiry, so a
+// single knob is enough.
 func (f *fakeDirectory) serviceWithExternal(ttl time.Duration) *directory.Service {
 	c := scim.NewClient(f.srv.URL, f.srv.URL+"/oauth2/token", "id", "secret", "scope")
 	ec := scim.NewExternalClient(f.srv.URL, f.srv.URL+"/oauth2/token", "id", "secret", "scope")
-	return directory.NewWithExternal(c, ec, ttl)
+	return directory.NewWithExternal(c, ec, ttl, ttl)
 }
 
 func TestLookup_ResolvesAndCaches(t *testing.T) {
@@ -314,7 +317,7 @@ func TestLookupTyped_CrossOrgUUIDFailsRatherThanResolving(t *testing.T) {
 // TestLookup_NilClientIsUnresolvedNotAPanic for the external path — local
 // development without external-org credentials must degrade, not crash.
 func TestLookupTyped_NilExternalClientIsUnresolvedNotAPanic(t *testing.T) {
-	svc := directory.NewWithExternal(nil, nil, time.Hour)
+	svc := directory.NewWithExternal(nil, nil, time.Hour, time.Hour)
 	if _, ok := svc.LookupTyped(context.Background(), testExternalUUID, "EXTERNAL"); ok {
 		t.Error("a nil external client must not resolve anybody")
 	}

@@ -43,6 +43,12 @@ func (f *fakeUserRepo) GetByUUID(ctx context.Context, uuid string) (*userentity.
 func (f *fakeUserRepo) Upsert(ctx context.Context, uuid, actor string) (*userentity.User, error) {
 	panic("not used by handleListUsers")
 }
+func (f *fakeUserRepo) UpsertTyped(ctx context.Context, uuid, userType, actor string) (*userentity.User, error) {
+	panic("not used by handleListUsers")
+}
+func (f *fakeUserRepo) UpdateStatus(ctx context.Context, id int, status, actor string) (*userentity.User, error) {
+	panic("not used by handleListUsers")
+}
 
 // TestHandleListUsers_LocalDevWithoutDirectory covers the review comment: with
 // no SCIM configured (dir == nil), the handler used to always return [],

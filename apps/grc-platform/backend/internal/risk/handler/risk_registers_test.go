@@ -236,6 +236,12 @@ func (f fakeUserRepo) GetByID(context.Context, int) (*user.User, error) { return
 func (f fakeUserRepo) Upsert(context.Context, string, string) (*user.User, error) {
 	return nil, nil
 }
+func (f fakeUserRepo) UpsertTyped(context.Context, string, string, string) (*user.User, error) {
+	return nil, nil
+}
+func (f fakeUserRepo) UpdateStatus(context.Context, int, string, string) (*user.User, error) {
+	return nil, nil
+}
 func (f fakeUserRepo) List(context.Context) ([]*user.User, error) { return nil, nil }
 
 // The role-name-keyed TestCanOverrideAssignee that lived here is superseded by

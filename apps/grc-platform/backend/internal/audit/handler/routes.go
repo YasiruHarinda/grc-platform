@@ -112,6 +112,8 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /api/v1/audit/products", fh.createProduct)
 	mux.HandleFunc("GET /api/v1/audit/users", uh.listUsers)
 	mux.HandleFunc("GET /api/v1/audit/teams", th.listTeams)
+	mux.HandleFunc("POST /api/v1/audit/teams", th.createTeam)
+	mux.HandleFunc("PUT /api/v1/audit/teams/{id}", th.updateTeam)
 
 	// Manual trigger for the daily due-date reminder digest — QA/ops
 	// convenience so the job can be tested/re-run without waiting for its

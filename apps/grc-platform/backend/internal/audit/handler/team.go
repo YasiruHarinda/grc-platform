@@ -18,6 +18,8 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
@@ -31,12 +33,32 @@ type teamHandler struct {
 }
 
 // listTeams handles GET /api/v1/audit/teams.
-// Returns all active teams for the team assignment dropdown in the control table.
+//
+// Gated on ViewAudits OR ManageAuditHub: every audit user needs this for the
+// dropdown, and grc-platform-admin (ManageAuditHub only, no ViewAudits) needs
+// it for the Manage Audit Hub page and the grant editor's scope picker.
+//
+// ?includeInactive=true switches to the Manage Audit Hub admin table's
+// contract instead — every status, Status populated on each row — and is
+// additionally gated on ManageAuditHub, since an inactive team list is
+// reference-data administration, not everyday Audit Hub use.
 func (h *teamHandler) listTeams(w http.ResponseWriter, r *http.Request) {
-	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAudits) {
+	if !auth.HasPrivilege(r.Context(), privilege.ViewAudits) && !auth.RequirePrivilege(r.Context(), w, privilege.ManageAuditHub) {
 		return
 	}
-	teams, err := h.svc.List(r.Context())
+
+	includeInactive := r.URL.Query().Get("includeInactive") == "true"
+	if includeInactive && !auth.RequirePrivilege(r.Context(), w, privilege.ManageAuditHub) {
+		return
+	}
+
+	var teams []*model.AuditTeam
+	var err error
+	if includeInactive {
+		teams, err = h.svc.ListAll(r.Context())
+	} else {
+		teams, err = h.svc.List(r.Context())
+	}
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
@@ -45,4 +67,81 @@ func (h *teamHandler) listTeams(w http.ResponseWriter, r *http.Request) {
 		teams = []*model.AuditTeam{}
 	}
 	response.WriteJSONValue(w, http.StatusOK, teams)
+}
+
+// createTeam handles POST /api/v1/audit/teams — the Manage Audit Hub "Add
+// Team" dialog. Gated on ManageAuditHub, not ManageUsers: reference-data
+// management, a separate authorisation boundary from user provisioning, same
+// precedent as Risk Teams' MANAGE_RISK_HUB gate.
+func (h *teamHandler) createTeam(w http.ResponseWriter, r *http.Request) {
+	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageAuditHub) {
+		return
+	}
+
+	var req model.CreateTeamRequest
+	if err := response.DecodeJSON(w, r, &req); err != nil {
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		response.WriteError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if req.Status == "" {
+		req.Status = "ACTIVE"
+	} else if req.Status != "ACTIVE" && req.Status != "INACTIVE" {
+		response.WriteError(w, http.StatusBadRequest, "status must be ACTIVE or INACTIVE")
+		return
+	}
+
+	createdBy := ""
+	if user := auth.FromContext(r.Context()); user != nil {
+		createdBy = user.Subject
+	}
+
+	t, err := h.svc.Create(r.Context(), req, createdBy)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	response.WriteJSONValue(w, http.StatusCreated, t)
+}
+
+// updateTeam handles PUT /api/v1/audit/teams/{id}.
+func (h *teamHandler) updateTeam(w http.ResponseWriter, r *http.Request) {
+	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageAuditHub) {
+		return
+	}
+
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || id <= 0 {
+		response.WriteError(w, http.StatusBadRequest, "id must be a positive integer")
+		return
+	}
+
+	var req model.UpdateTeamRequest
+	if err := response.DecodeJSON(w, r, &req); err != nil {
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		response.WriteError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if req.Status != "ACTIVE" && req.Status != "INACTIVE" {
+		response.WriteError(w, http.StatusBadRequest, "status must be ACTIVE or INACTIVE")
+		return
+	}
+
+	updatedBy := ""
+	if user := auth.FromContext(r.Context()); user != nil {
+		updatedBy = user.Subject
+	}
+
+	t, err := h.svc.Update(r.Context(), id, req, updatedBy)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	response.WriteJSONValue(w, http.StatusOK, t)
 }

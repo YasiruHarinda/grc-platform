@@ -46,6 +46,14 @@ const DefaultTTL = time.Hour
 // whole directory snapshot.
 const DefaultBulkRefreshInterval = 12 * time.Hour
 
+// DefaultExternalTTL is how long a resolved external-org person is reused
+// before being refreshed (see lookupExternal). Longer than DefaultTTL: the
+// external org has no bulk snapshot to fall back on, so this per-uuid entry
+// is the only cache external lookups get, and names/emails there are exactly
+// as stable as internal ones — no reason to re-ask more often just because
+// this path happens to be per-uuid instead of bulk.
+const DefaultExternalTTL = 24 * time.Hour
+
 // Person is a resolved identity.
 type Person struct {
 	UUID        string
@@ -74,6 +82,9 @@ type Service struct {
 	// every external lookup then answers "unknown" rather than panicking.
 	externalSCIM *scim.Client
 	ttl          time.Duration
+	// externalTTL governs the external per-uuid cache (see lookupExternal).
+	// See DefaultExternalTTL for why it defaults higher than ttl.
+	externalTTL time.Duration
 
 	mu    sync.RWMutex
 	items map[string]entry
@@ -102,9 +113,16 @@ func New(client *scim.Client, ttl time.Duration) *Service {
 // be nil (local development without credentials for that org), in which case
 // every external lookup answers "unknown" — the same degrade-rather-than-fail
 // contract client's own nil-tolerance already gives internal lookups.
-func NewWithExternal(client, externalClient *scim.Client, ttl time.Duration) *Service {
+//
+// externalTTL governs the external per-uuid cache; externalTTL <= 0 uses
+// DefaultExternalTTL, not DefaultTTL — see the field comment on why.
+func NewWithExternal(client, externalClient *scim.Client, ttl, externalTTL time.Duration) *Service {
 	s := New(client, ttl)
 	s.externalSCIM = externalClient
+	if externalTTL <= 0 {
+		externalTTL = DefaultExternalTTL
+	}
+	s.externalTTL = externalTTL
 	return s
 }
 
@@ -251,14 +269,14 @@ func (s *Service) lookupExternal(ctx context.Context, uuid string) (Person, bool
 	if err != nil {
 		if cachedOK && cached.found {
 			slog.WarnContext(ctx, "directory: external lookup failed, serving the last known value",
-				"ageLimit", s.ttl, "err", err)
+				"ageLimit", s.externalTTL, "err", err)
 			return cached.person, true
 		}
 		slog.WarnContext(ctx, "directory: external lookup failed and nothing cached", "err", err)
 		return Person{}, false
 	}
 
-	e := entry{refreshAt: time.Now().Add(s.ttl)}
+	e := entry{refreshAt: time.Now().Add(s.externalTTL)}
 	if dirUser != nil {
 		e.person = Person{UUID: dirUser.UUID, Email: dirUser.Email, DisplayName: dirUser.DisplayName}
 		e.found = true
@@ -305,6 +323,28 @@ func (s *Service) SearchDomain(query string) []Person {
 		}
 	}
 	return out
+}
+
+// SearchExternal is SearchDomain's counterpart for the external Asgardeo org —
+// the Add User dialog's External typeahead. Unlike SearchDomain, this is a
+// live SCIM call (scim.Client.SearchByQuery), not a snapshot match: the
+// external org has no bulk-fetch equivalent to keep warm (see
+// NewWithExternal). Returns nil when externalSCIM is unset (local dev without
+// credentials for that org), the same degrade-rather-than-fail contract as
+// every other external lookup here.
+func (s *Service) SearchExternal(ctx context.Context, query string) ([]Person, error) {
+	if s.externalSCIM == nil {
+		return nil, nil
+	}
+	users, err := s.externalSCIM.SearchByQuery(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Person, 0, len(users))
+	for _, u := range users {
+		out = append(out, Person{UUID: u.UUID, Email: u.Email, DisplayName: u.DisplayName})
+	}
+	return out, nil
 }
 
 // StartBulkRefresh fetches every directory user whose email is in domain (see

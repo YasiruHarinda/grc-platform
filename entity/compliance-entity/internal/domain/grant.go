@@ -43,6 +43,15 @@ const (
 	ModuleShared = "SHARED"
 )
 
+// User types, mirroring both role.assignable_user_type and user.user_type.
+// Internal and external identities live in genuinely separate Asgardeo
+// organisations, so there is no third "either" value — a role assignable to
+// one is never assignable to the other.
+const (
+	UserTypeInternal = "INTERNAL"
+	UserTypeExternal = "EXTERNAL"
+)
+
 // UserGrant is one row of user_role_grant, resolved to names the caller can use
 // without a second lookup.
 //
@@ -115,7 +124,12 @@ type Role struct {
 	Module      string `json:"module"`
 	// ScopeBasis — see UserGrant.ScopeBasis. Empty for GLOBAL-only roles.
 	ScopeBasis string `json:"scopeBasis,omitempty"`
-	Status     string `json:"status"`
+	// AssignableUserType — INTERNAL or EXTERNAL, which kind of person this role
+	// may be granted to. Checked in CreateGrant against the target user's own
+	// user_type; a UI role picker filtering by this is a convenience, not the
+	// enforcement.
+	AssignableUserType string `json:"assignableUserType"`
+	Status             string `json:"status"`
 }
 
 // ListRolesResponse is returned by GET /roles.

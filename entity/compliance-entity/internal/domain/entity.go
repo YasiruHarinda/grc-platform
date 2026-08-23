@@ -897,7 +897,6 @@ type OverrideControlStatusRequest struct {
 type AuditEvidence struct {
 	ID                   int     `json:"id"`
 	ControlID            int     `json:"controlId"`
-	SubmittedBy          *int    `json:"submittedBy"`
 	Status               string  `json:"status"`
 	FolderPath           *string `json:"folderPath"`
 	ReusedFromEvidenceID *int    `json:"reusedFromEvidenceId"`
@@ -911,7 +910,6 @@ type AuditEvidence struct {
 
 // CreateEvidenceRequest is the payload for POST /audits/{auditId}/controls/{controlId}/evidence.
 type CreateEvidenceRequest struct {
-	SubmittedBy          *int    `json:"submittedBy"`
 	FolderPath           *string `json:"folderPath"`
 	ReusedFromEvidenceID *int    `json:"reusedFromEvidenceId"`
 	Attestation          *string `json:"attestation"`
@@ -931,7 +929,6 @@ type AuditEvidenceFile struct {
 	EvidenceID   *int      `json:"evidenceId"`
 	PopulationID *int      `json:"populationId"`
 	FileKind     *string   `json:"fileKind"` // POPULATION | SAMPLE (only when populationId is set)
-	UploadedBy   *int      `json:"uploadedBy"`
 	FileName     string    `json:"fileName"`
 	FilePath     string    `json:"filePath"`
 	FileType     *string   `json:"fileType"`
@@ -952,12 +949,11 @@ type AuditEvidenceFile struct {
 
 // CreateEvidenceFileRequest is the payload for POST /evidence/{evidenceId}/files.
 type CreateEvidenceFileRequest struct {
-	FileName   string  `json:"fileName"`
-	FilePath   string  `json:"filePath"` // Azure Blob URL
-	FileType   *string `json:"fileType"`
-	FileSize   *int64  `json:"fileSize"`
-	UploadedBy *int    `json:"uploadedBy"`
-	CreatedBy  string  `json:"createdBy"`
+	FileName  string  `json:"fileName"`
+	FilePath  string  `json:"filePath"` // Azure Blob URL
+	FileType  *string `json:"fileType"`
+	FileSize  *int64  `json:"fileSize"`
+	CreatedBy string  `json:"createdBy"`
 }
 
 // ListEvidenceFilesResponse is returned by GET /evidence/{evidenceId}/files.
@@ -1045,13 +1041,12 @@ type UpdatePopulationRequest struct {
 // CreatePopulationFileRequest attaches a file to a population record.
 // FileKind must be POPULATION (team upload) or SAMPLE (auditor sample).
 type CreatePopulationFileRequest struct {
-	FileKind   string  `json:"fileKind"` // POPULATION | SAMPLE
-	FileName   string  `json:"fileName"`
-	FilePath   string  `json:"filePath"` // Azure Blob URL
-	FileType   *string `json:"fileType"`
-	FileSize   *int64  `json:"fileSize"`
-	UploadedBy *int    `json:"uploadedBy"`
-	CreatedBy  string  `json:"createdBy"`
+	FileKind  string  `json:"fileKind"` // POPULATION | SAMPLE
+	FileName  string  `json:"fileName"`
+	FilePath  string  `json:"filePath"` // Azure Blob URL
+	FileType  *string `json:"fileType"`
+	FileSize  *int64  `json:"fileSize"`
+	CreatedBy string  `json:"createdBy"`
 }
 
 // =============================================================================

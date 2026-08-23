@@ -52,15 +52,47 @@ func (d *Deps) handleSearchDirectory(w http.ResponseWriter, r *http.Request) {
 		people = d.Directory.SearchDomain(q)
 	}
 	sort.Slice(people, func(i, j int) bool { return people[i].DisplayName < people[j].DisplayName })
+	response.WriteJSONValue(w, http.StatusOK, toSearchResults(people))
+}
 
-	type result struct {
-		UUID        string `json:"uuid"`
-		Email       string `json:"email"`
-		DisplayName string `json:"displayName"`
+// handleSearchExternalDirectory serves GET /api/v1/admin/directory/search-external?q=.
+// Powers the "Add User" typeahead once External is selected — a live SCIM
+// call against the external org (see directory.Service.SearchExternal for why
+// this can't be a snapshot match the way the internal search is).
+func (d *Deps) handleSearchExternalDirectory(w http.ResponseWriter, r *http.Request) {
+	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageUsers) {
+		return
 	}
-	out := make([]result, 0, len(people))
+
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len(q) < minSearchLen {
+		response.WriteError(w, http.StatusBadRequest, "q must be at least 2 characters")
+		return
+	}
+
+	var people []directory.Person
+	if d.Directory != nil {
+		found, err := d.Directory.SearchExternal(r.Context(), q)
+		if err != nil {
+			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+			return
+		}
+		people = found
+	}
+	sort.Slice(people, func(i, j int) bool { return people[i].DisplayName < people[j].DisplayName })
+	response.WriteJSONValue(w, http.StatusOK, toSearchResults(people))
+}
+
+type directorySearchResult struct {
+	UUID        string `json:"uuid"`
+	Email       string `json:"email"`
+	DisplayName string `json:"displayName"`
+}
+
+func toSearchResults(people []directory.Person) []directorySearchResult {
+	out := make([]directorySearchResult, 0, len(people))
 	for _, p := range people {
-		out = append(out, result{UUID: p.UUID, Email: p.Email, DisplayName: p.DisplayName})
+		out = append(out, directorySearchResult{UUID: p.UUID, Email: p.Email, DisplayName: p.DisplayName})
 	}
-	response.WriteJSONValue(w, http.StatusOK, out)
+	return out
 }

@@ -185,13 +185,12 @@ func (r *populationRepo) AddPopulationFile(ctx context.Context, populationID int
 		return nil, fmt.Errorf("population_file.Add parent check: %w", err)
 	}
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO audit_evidence_file (population_id, file_kind, file_name, file_path, file_type, file_size, uploaded_by, created_by)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO audit_evidence_file (population_id, file_kind, file_name, file_path, file_type, file_size, created_by)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		populationID,
 		req.FileKind, req.FileName, req.FilePath,
 		nullableString(req.FileType),
 		req.FileSize,
-		nullableInt(req.UploadedBy),
 		req.CreatedBy)
 	if err != nil {
 		return nil, fmt.Errorf("population_file.Add: %w", err)
@@ -208,7 +207,7 @@ func (r *populationRepo) GetPopulationFileByID(ctx context.Context, fileID int) 
 
 func (r *populationRepo) getPopulationFileByID(ctx context.Context, fileID int) (*domain.AuditEvidenceFile, error) {
 	var f domain.AuditEvidenceFile
-	var evidenceID, populationID, uploadedBy, controlTeamID sql.NullInt64
+	var evidenceID, populationID, controlTeamID sql.NullInt64
 	var fileKind, fileType sql.NullString
 	var fileSize sql.NullInt64
 	// LEFT JOINed through to the owning control's team so the GRC Backend can
@@ -216,14 +215,14 @@ func (r *populationRepo) getPopulationFileByID(ctx context.Context, fileID int) 
 	// union, mirroring audit_evidence_repo.go's getEvidenceFileByID. Misses
 	// cleanly for a control with no team — control_team_id just comes back NULL.
 	err := r.db.QueryRowContext(ctx, `
-		SELECT f.id, f.evidence_id, f.population_id, f.file_kind, f.uploaded_by,
+		SELECT f.id, f.evidence_id, f.population_id, f.file_kind,
 		       f.file_name, f.file_path, f.file_type, f.file_size, f.created_at,
 		       c.team_id AS control_team_id
 		FROM audit_evidence_file f
 		LEFT JOIN audit_population p ON p.id = f.population_id
 		LEFT JOIN audit_control    c ON c.id = p.control_id
 		WHERE f.id = ?`,
-		fileID).Scan(&f.ID, &evidenceID, &populationID, &fileKind, &uploadedBy, &f.FileName, &f.FilePath, &fileType, &fileSize, &f.CreatedOn, &controlTeamID)
+		fileID).Scan(&f.ID, &evidenceID, &populationID, &fileKind, &f.FileName, &f.FilePath, &fileType, &fileSize, &f.CreatedOn, &controlTeamID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, &apierror.NotFoundError{Msg: fmt.Sprintf("population file %d not found", fileID)}
 	}
@@ -241,10 +240,6 @@ func (r *populationRepo) getPopulationFileByID(ctx context.Context, fileID int) 
 	if fileKind.Valid {
 		f.FileKind = &fileKind.String
 	}
-	if uploadedBy.Valid {
-		v := int(uploadedBy.Int64)
-		f.UploadedBy = &v
-	}
 	if fileType.Valid {
 		f.FileType = &fileType.String
 	}
@@ -260,7 +255,7 @@ func (r *populationRepo) getPopulationFileByID(ctx context.Context, fileID int) 
 
 func (r *populationRepo) ListPopulationFiles(ctx context.Context, populationID int) ([]domain.AuditEvidenceFile, error) {
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, evidence_id, population_id, file_kind, uploaded_by, file_name, file_path, file_type, file_size, created_at "+
+		"SELECT id, evidence_id, population_id, file_kind, file_name, file_path, file_type, file_size, created_at "+
 			"FROM audit_evidence_file WHERE population_id = ? ORDER BY created_at DESC",
 		populationID)
 	if err != nil {
@@ -271,10 +266,10 @@ func (r *populationRepo) ListPopulationFiles(ctx context.Context, populationID i
 	var files []domain.AuditEvidenceFile
 	for rows.Next() {
 		var f domain.AuditEvidenceFile
-		var evID, popID, uploadedBy sql.NullInt64
+		var evID, popID sql.NullInt64
 		var fileKind, fileType sql.NullString
 		var fileSize sql.NullInt64
-		if err := rows.Scan(&f.ID, &evID, &popID, &fileKind, &uploadedBy, &f.FileName, &f.FilePath, &fileType, &fileSize, &f.CreatedOn); err != nil {
+		if err := rows.Scan(&f.ID, &evID, &popID, &fileKind, &f.FileName, &f.FilePath, &fileType, &fileSize, &f.CreatedOn); err != nil {
 			return nil, fmt.Errorf("population_file.List scan: %w", err)
 		}
 		if evID.Valid {
@@ -287,10 +282,6 @@ func (r *populationRepo) ListPopulationFiles(ctx context.Context, populationID i
 		}
 		if fileKind.Valid {
 			f.FileKind = &fileKind.String
-		}
-		if uploadedBy.Valid {
-			v := int(uploadedBy.Int64)
-			f.UploadedBy = &v
 		}
 		if fileType.Valid {
 			f.FileType = &fileType.String

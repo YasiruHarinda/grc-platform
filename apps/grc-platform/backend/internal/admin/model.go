@@ -35,12 +35,15 @@ import "time"
 // every grant they currently hold, fetched together in a single entity round
 // trip (POST /users/search with includeGrants=true) rather than N+1.
 type User struct {
-	ID          int       `json:"id"`
-	UUID        string    `json:"uuid"`
-	DisplayName string    `json:"displayName"`
-	Email       string    `json:"email"`
-	Status      string    `json:"status"`
-	CreatedOn   time.Time `json:"createdOn"`
+	ID          int    `json:"id"`
+	UUID        string `json:"uuid"`
+	DisplayName string `json:"displayName"`
+	Email       string `json:"email"`
+	// UserType — INTERNAL or EXTERNAL. The grant editor filters its role
+	// picker by this against each candidate role's AssignableUserType.
+	UserType  string    `json:"userType"`
+	Status    string    `json:"status"`
+	CreatedOn time.Time `json:"createdOn"`
 	// Grants is always a slice, never null — a freshly provisioned user
 	// legitimately holds none yet.
 	Grants []Grant `json:"grants"`
@@ -61,14 +64,18 @@ type Grant struct {
 }
 
 // Role is a row of the shared role table, for populating the grant editor's
-// role picker. Only RISK- and SHARED-module roles are ever returned by
-// Repository.ListRoles — see its doc comment for why AUDIT roles are
-// deliberately excluded from this console for now.
+// role picker. Every active role is returned by Repository.ListRoles — RISK,
+// AUDIT, and SHARED alike.
 type Role struct {
 	ID          int    `json:"id"`
 	RoleName    string `json:"roleName"`
 	Description string `json:"description,omitempty"`
 	Module      string `json:"module"`
 	ScopeBasis  string `json:"scopeBasis,omitempty"`
-	Status      string `json:"status"`
+	// AssignableUserType — INTERNAL or EXTERNAL, which kind of person this
+	// role may be granted to. The grant editor filters its role picker by
+	// this once a person's user type is known; the entity's CreateGrant
+	// enforces it regardless of what the UI offers.
+	AssignableUserType string `json:"assignableUserType"`
+	Status             string `json:"status"`
 }
