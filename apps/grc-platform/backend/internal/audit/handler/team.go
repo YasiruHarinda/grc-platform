@@ -34,15 +34,16 @@ type teamHandler struct {
 
 // listTeams handles GET /api/v1/audit/teams.
 //
-// Gated on ViewAudits (not ManageAuditHub) by default: every audit user needs
-// this for the control assignment dropdown, and it returns ACTIVE teams only.
+// Gated on ViewAudits OR ManageAuditHub: every audit user needs this for the
+// dropdown, and grc-platform-admin (ManageAuditHub only, no ViewAudits) needs
+// it for the Manage Audit Hub page and the grant editor's scope picker.
 //
 // ?includeInactive=true switches to the Manage Audit Hub admin table's
 // contract instead — every status, Status populated on each row — and is
 // additionally gated on ManageAuditHub, since an inactive team list is
 // reference-data administration, not everyday Audit Hub use.
 func (h *teamHandler) listTeams(w http.ResponseWriter, r *http.Request) {
-	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAudits) {
+	if !auth.HasPrivilege(r.Context(), privilege.ViewAudits) && !auth.RequirePrivilege(r.Context(), w, privilege.ManageAuditHub) {
 		return
 	}
 
