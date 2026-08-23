@@ -162,21 +162,25 @@ func (s *grantService) CreateGrant(ctx context.Context, userID int, req domain.C
 	return *grant, nil
 }
 
-// validateUserType enforces role.assignable_user_type: an EXTERNAL-only role
-// (external-auditor) may only be granted to an EXTERNAL user, and — the other
-// direction, equally load-bearing — an INTERNAL-only role may never be
-// granted to an EXTERNAL user. This is the actual gate; a role picker that
-// filters by this column client-side is a convenience on top, never a
-// substitute for it.
+// validateUserType enforces role.assignable_user_type: an INTERNAL-only role
+// may never be granted to an EXTERNAL user. The other direction is
+// deliberately open — an EXTERNAL-assignable role (currently only
+// external-auditor) may be granted to an INTERNAL person too, since its
+// authorisation is derived from control assignment (requireAssignedAuditor),
+// not from the grantee's own identity type. This is the actual gate; a role
+// picker that filters by this column client-side is a convenience on top,
+// never a substitute for it.
 func (s *grantService) validateUserType(ctx context.Context, userID int, role *domain.Role) error {
+	if role.AssignableUserType == domain.UserTypeExternal {
+		return nil
+	}
 	userType, err := s.repo.UserType(ctx, userID)
 	if err != nil {
 		return err
 	}
-	if userType != role.AssignableUserType {
+	if userType != domain.UserTypeInternal {
 		return &apierror.ValidationError{
-			Msg: role.RoleName + " may only be granted to an " + role.AssignableUserType +
-				" user, and this user is " + userType}
+			Msg: role.RoleName + " may only be granted to an INTERNAL user, and this user is " + userType}
 	}
 	return nil
 }

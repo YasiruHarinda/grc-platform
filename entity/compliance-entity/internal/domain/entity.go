@@ -933,7 +933,19 @@ type AuditEvidenceFile struct {
 	FilePath     string    `json:"filePath"`
 	FileType     *string   `json:"fileType"`
 	FileSize     *int64    `json:"fileSize"`
-	CreatedOn    time.Time `json:"createdOn"`
+	// CreatedBy is the raw uuid of whoever uploaded this file — the submitting
+	// team member for a POPULATION file, the auditor for a SAMPLE one. Only
+	// populated by the population file reads (ListPopulationFiles /
+	// GetPopulationFileByID), which is where the GRC Backend needs it to name
+	// the uploader; the evidence file reads leave it nil.
+	CreatedBy *string `json:"createdBy"`
+	// CreatedByUserType is CreatedBy's user.user_type (INTERNAL | EXTERNAL), nil
+	// when the uuid has no `user` row (never registered, or since deleted). Lets
+	// a caller route CreatedBy through the right identity org — see
+	// AuditComment.CreatedByUserType for the same pattern. Populated alongside
+	// CreatedBy, and only there.
+	CreatedByUserType *string   `json:"createdByUserType"`
+	CreatedOn         time.Time `json:"createdOn"`
 	// AuditorID is the user.id of the auditor assigned to the file's owning
 	// control (nil if the control has no auditor or the file has no evidence_id,
 	// e.g. a population file). Only populated by GetEvidenceFileByID, for the

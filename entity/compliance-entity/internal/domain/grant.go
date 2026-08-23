@@ -45,8 +45,10 @@ const (
 
 // User types, mirroring both role.assignable_user_type and user.user_type.
 // Internal and external identities live in genuinely separate Asgardeo
-// organisations, so there is no third "either" value — a role assignable to
-// one is never assignable to the other.
+// organisations, so there is no third "either" value. The two are not
+// symmetric, though: an INTERNAL-only role may never go to an EXTERNAL user,
+// but an EXTERNAL-assignable role may be granted to either — see
+// grantService.validateUserType.
 const (
 	UserTypeInternal = "INTERNAL"
 	UserTypeExternal = "EXTERNAL"
@@ -124,10 +126,12 @@ type Role struct {
 	Module      string `json:"module"`
 	// ScopeBasis — see UserGrant.ScopeBasis. Empty for GLOBAL-only roles.
 	ScopeBasis string `json:"scopeBasis,omitempty"`
-	// AssignableUserType — INTERNAL or EXTERNAL, which kind of person this role
-	// may be granted to. Checked in CreateGrant against the target user's own
-	// user_type; a UI role picker filtering by this is a convenience, not the
-	// enforcement.
+	// AssignableUserType — INTERNAL or EXTERNAL. INTERNAL means the role is
+	// restricted to INTERNAL people only; EXTERNAL means it may be granted to
+	// either an INTERNAL or an EXTERNAL person (see validateUserType — not a
+	// third "either" value, just an asymmetric rule). Checked in CreateGrant
+	// against the target user's own user_type; a UI role picker filtering by
+	// this is a convenience, not the enforcement.
 	AssignableUserType string `json:"assignableUserType"`
 	Status             string `json:"status"`
 }

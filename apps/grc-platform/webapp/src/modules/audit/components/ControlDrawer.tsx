@@ -45,6 +45,7 @@ import {
   FileText,
   FileUp,
   History,
+  Link as LinkIcon,
   MessageSquare,
   RotateCcw,
   Trash2,
@@ -124,6 +125,11 @@ function InfoTile({
         display: "flex",
         flexDirection: "column",
         gap: 0.4,
+        // Grid items default to min-width: auto, which lets an unbreakable
+        // long string (e.g. a pasted URL) grow the tile past its 1fr track
+        // instead of respecting it — min-width: 0 lets it shrink so the
+        // ellipsis truncation on long values actually has room to kick in.
+        minWidth: 0,
       }}
     >
       <Typography
@@ -160,6 +166,58 @@ function DueDateTile({
         </Typography>
       </Box>
     </InfoTile>
+  );
+}
+
+// isHttpUrl checks for http(s) links only — an auditor's sample reference is
+// free text by default (e.g. "invoices #4021-4030"), and only becomes
+// clickable when it actually resolves somewhere.
+function isHttpUrl(value: string): boolean {
+  try {
+    return ["http:", "https:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+
+// SampleReferenceValue renders the auditor's sample reference as a clickable
+// link when it's a URL, and as plain text otherwise — used both in the
+// Overview info tile (truncate: the tile is a fixed-width grid cell, so a
+// long URL must ellipsize instead of stretching the row) and the "Sample
+// Selected by Auditor" card (wraps instead, since that box has room).
+function SampleReferenceValue({ value, truncate = false }: { value: string; truncate?: boolean }): JSX.Element {
+  if (!isHttpUrl(value)) {
+    return <>{value}</>;
+  }
+  return (
+    <Box
+      component="a"
+      href={value}
+      target="_blank"
+      rel="noopener noreferrer"
+      sx={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 0.4,
+        maxWidth: "100%",
+        minWidth: 0,
+        color: "primary.main",
+        textDecoration: "none",
+        "&:hover": { textDecoration: "underline" },
+      }}
+    >
+      <LinkIcon size={12} style={{ flexShrink: 0 }} />
+      <Box
+        component="span"
+        sx={
+          truncate
+            ? { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }
+            : { wordBreak: "break-word" }
+        }
+      >
+        {value}
+      </Box>
+    </Box>
   );
 }
 
@@ -617,13 +675,17 @@ function SampleSelectionCard({
             <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, display: "block" }}>
               Auditor Note
             </Typography>
-            <Typography variant="body2" sx={{ lineHeight: 1.6 }}>{sampleReference}</Typography>
+            <Typography variant="body2" sx={{ lineHeight: 1.6, wordBreak: "break-word" }}>
+              {sampleReference && <SampleReferenceValue value={sampleReference} />}
+            </Typography>
           </Box>
         </Box>
       )}
 
       {population.isLoading && <Skeleton variant="rounded" height={44} />}
-      {sampleFiles.length > 0 && <PopulationFileList files={sampleFiles} emptyText="" />}
+      {sampleFiles.length > 0 && (
+        <PopulationFileList files={sampleFiles} emptyText="" attributionLabel="Selected" />
+      )}
     </SectionCard>
   );
 }
@@ -804,7 +866,14 @@ function SampleUploadCard({
 
       {existingFiles.length > 0 && (
         <Box sx={{ mb: 1.5 }}>
-          <PopulationFileList files={existingFiles} emptyText="" auditId={auditId} controlId={controlId} canDelete />
+          <PopulationFileList
+            files={existingFiles}
+            emptyText=""
+            auditId={auditId}
+            controlId={controlId}
+            canDelete
+            attributionLabel="Selected"
+          />
         </Box>
       )}
 
@@ -844,7 +913,7 @@ function SampleUploadCard({
       <TextField
         multiline
         minRows={2}
-        placeholder="Sample note (e.g. which items to provide evidence for)"
+        placeholder="Sample note or reference (e.g. which items to provide evidence for, or a link to the sampled record)"
         value={note}
         onChange={(e) => { setNote(e.target.value); setNoteDirty(true); }}
         disabled={busy}
@@ -1600,8 +1669,12 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
                 </InfoTile>
 
                 <InfoTile label="Sample Reference">
-                  <Typography variant="body2" fontWeight={600} fontSize="0.8rem" noWrap>
-                    {control.sampleReference ?? "—"}
+                  <Typography variant="body2" fontWeight={600} fontSize="0.8rem" noWrap sx={{ minWidth: 0 }}>
+                    {control.sampleReference ? (
+                      <SampleReferenceValue value={control.sampleReference} truncate />
+                    ) : (
+                      "—"
+                    )}
                   </Typography>
                 </InfoTile>
 
@@ -1684,29 +1757,30 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
               </SectionCard>
             )}
 
-            {/* Requirement text — for Design controls this is always the
-                Evidence Requirement. For OE controls it shows the Population
-                Requirement while the control is still in the population phase,
-                then switches to the Evidence Requirement once the auditor has
-                submitted the sample (the team's job has moved from describing
-                the population to providing evidence). Kept here in Overview
-                rather than the Evidence tab, which already has a lot going on. */}
+            {/* Requirement text — for Design controls this is always just the
+                Evidence Requirement. For OE controls, Population Requirement
+                stays visible for the control's entire lifecycle (the
+                population that was tested doesn't stop being relevant once
+                a sample is drawn from it), and Evidence Requirement joins it
+                once the auditor has submitted the sample (the team's job has
+                now also expanded to providing evidence). Kept here in
+                Overview rather than the Evidence tab, which already has a
+                lot going on. */}
+            {control.requirementType === "OE" && control.populationDescription && (
+              <SectionCard icon={<FileText size={16} />} iconBg="transparent" title="Population Requirement">
+                <Typography variant="body2" sx={{ lineHeight: 1.8 }}>
+                  {control.populationDescription}
+                </Typography>
+              </SectionCard>
+            )}
             {(() => {
               const status = displayStatus ?? control.status;
-              const showPopulationRequirement =
-                control.requirementType === "OE" && OE_POPULATION_PHASE_STATUSES.has(status);
-              const requirementText = showPopulationRequirement
-                ? control.populationDescription
-                : control.evidenceRequirement;
-              if (!requirementText) return null;
+              const inPopulationPhase = control.requirementType === "OE" && OE_POPULATION_PHASE_STATUSES.has(status);
+              if (inPopulationPhase || !control.evidenceRequirement) return null;
               return (
-                <SectionCard
-                  icon={<FileText size={16} />}
-                  iconBg="transparent"
-                  title={showPopulationRequirement ? "Population Requirement" : "Evidence Requirement"}
-                >
+                <SectionCard icon={<FileText size={16} />} iconBg="transparent" title="Evidence Requirement">
                   <Typography variant="body2" sx={{ lineHeight: 1.8 }}>
-                    {requirementText}
+                    {control.evidenceRequirement}
                   </Typography>
                 </SectionCard>
               );

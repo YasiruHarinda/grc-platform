@@ -40,6 +40,26 @@ type ReminderItem struct {
 	DueDate         string
 	Tier            string
 	RequirementType string // "Evidence Requirement" | "Population Requirement"
+	// AuditName is the item's audit, for the "Audit: ..." line on the overdue
+	// admin alert (the owner digest can span audits, so it shows no such line
+	// and leaves this unused). Filled by the reminder job from the audit list
+	// it already fetches to decide which audits are in scope, so naming the
+	// audit on every alert costs no extra lookups.
+	AuditName string
+	// LinkControlID is the owning control's id, used only to deep-link the
+	// admin alert at that control. Distinct from ControlID, which is the
+	// audit_notification.control_id value and must stay nil for a population
+	// item (the table treats control_id/population_id as mutually exclusive) —
+	// this is always set, for both item kinds.
+	LinkControlID int
+	// OwnerUserID is the platform user id of whoever owns this item — the
+	// control's owner, or the population's. Carried so the overdue admin alert
+	// can name them; the owner digest doesn't need it (it IS their email).
+	OwnerUserID int
+	// OwnerName is OwnerUserID's resolved "Display Name (email)", filled in by
+	// the job once per sweep (deduped across every escalated item) rather than
+	// once per (admin, item) email — see ReminderJob.resolveOwnerNames.
+	OwnerName string
 	// DedupSnapshot is the date written to audit_notification.due_date_snapshot
 	// for this item's log row — distinct from DueDate (which is always the
 	// item's real due date, for display). For the DUE_10/DUE_5 tiers it's the

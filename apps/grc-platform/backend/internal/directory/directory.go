@@ -296,9 +296,9 @@ func (s *Service) bulkLookup(uuid string) (Person, bool) {
 
 // SearchDomain returns every bulk-snapshot person whose name or email
 // contains query, case-insensitively. Powers the Admin Console's "Add User"
-// typeahead (see ADMIN_CONSOLE_DESIGN.md §5.1) — a substring match over the
-// snapshot StartBulkRefresh already keeps warm, so this costs no directory
-// call and cannot lag by more than one refresh interval. Deliberately not a
+// typeahead — a substring match over the snapshot StartBulkRefresh already
+// keeps warm, so this costs no directory call and cannot lag by more than
+// one refresh interval. Deliberately not a
 // live SCIM search: this is an admin-only, low-frequency lookup, not worth a
 // new dependency on the request path.
 //

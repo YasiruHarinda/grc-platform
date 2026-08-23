@@ -64,6 +64,7 @@ import { useGetFrameworkControls } from "@modules/audit/api/useGetFrameworkContr
 import { useGetFrameworks } from "@modules/audit/api/useGetFrameworks";
 import { useGetProducts } from "@modules/audit/api/useGetProducts";
 import { useGetUsers } from "@modules/audit/api/useGetUsers";
+import { useGetAuditorCandidates } from "@modules/audit/api/useGetAuditorCandidates";
 import { useGetTeams } from "@modules/audit/api/useGetTeams";
 import { useCreateAudit } from "@modules/audit/api/useCreateAudit";
 import { useCreateFramework } from "@modules/audit/api/useCreateFramework";
@@ -335,11 +336,12 @@ interface PopulationDialogProps {
   onChangePopulation: (p: PopulationDraft) => void;
   onChangeAuditor: (val: number | null) => void;
   users: AuditUser[];
+  auditorCandidates: AuditUser[];
   teams: AuditTeam[];
 }
 
 function PopulationDialog({
-  open, controlDraft, onClose, onChangePopulation, onChangeAuditor, users, teams,
+  open, controlDraft, onClose, onChangePopulation, onChangeAuditor, users, auditorCandidates, teams,
 }: PopulationDialogProps): JSX.Element {
   const pop = controlDraft.population ?? blankPopulation();
   const paperProps = DROPDOWN_PAPER_PROPS;
@@ -411,13 +413,9 @@ function PopulationDialog({
             slotProps={{ paper: paperProps }}
             renderInput={(params) => <TextField {...params} label="Process Owner (Population)" />}
           />
-          {/* Auditor POC — shared with control */}
+          {/* Auditor POC — shared with control; only external auditors */}
           <Autocomplete
-            options={[...users].sort((a, b) => {
-              if (a.userType === b.userType) return a.displayName.localeCompare(b.displayName);
-              return a.userType === "EXTERNAL" ? -1 : 1;
-            })}
-            groupBy={(u) => u.userType === "EXTERNAL" ? "External Auditors" : "Internal"}
+            options={[...auditorCandidates].sort((a, b) => a.displayName.localeCompare(b.displayName))}
             getOptionLabel={(u) => u.displayName}
             isOptionEqualToValue={(a, b) => a.id === b.id}
             value={users.find((u) => u.id === controlDraft.auditorId) ?? null}
@@ -464,6 +462,7 @@ interface EditableControlsTableProps {
   drafts: DraftControl[];
   onChange: (drafts: DraftControl[]) => void;
   users: AuditUser[];
+  auditorCandidates: AuditUser[];
   teams: AuditTeam[];
   // Shows the "also add/update framework library" column. Only meaningful
   // under the "Copy from Framework" top source — Copy from Previous
@@ -471,7 +470,7 @@ interface EditableControlsTableProps {
   showPushColumn: boolean;
 }
 
-function EditableControlsTable({ drafts, onChange, users, teams, showPushColumn }: EditableControlsTableProps): JSX.Element {
+function EditableControlsTable({ drafts, onChange, users, auditorCandidates, teams, showPushColumn }: EditableControlsTableProps): JSX.Element {
   const [populationDialogId, setPopulationDialogId] = useState<string | null>(null);
   const dialogDraft = drafts.find((d) => d.localId === populationDialogId);
 
@@ -684,15 +683,11 @@ function EditableControlsTable({ drafts, onChange, users, teams, showPushColumn 
                   slotProps={{ paper: paperProps }}
                 />
               </TableCell>
-              {/* Auditor POC — external auditors first, then internal */}
+              {/* Auditor POC — only external auditors */}
               <TableCell>
                 <Autocomplete
                   size="small"
-                  options={[...users].sort((a, b) => {
-                    if (a.userType === b.userType) return a.displayName.localeCompare(b.displayName);
-                    return a.userType === "EXTERNAL" ? -1 : 1;
-                  })}
-                  groupBy={(u) => u.userType === "EXTERNAL" ? "External Auditors" : "Internal"}
+                  options={[...auditorCandidates].sort((a, b) => a.displayName.localeCompare(b.displayName))}
                   getOptionLabel={(u) => u.displayName}
                   isOptionEqualToValue={(a, b) => a.id === b.id}
                   value={users.find((u) => u.id === d.auditorId) ?? null}
@@ -813,6 +808,7 @@ function EditableControlsTable({ drafts, onChange, users, teams, showPushColumn 
           ));
         }}
         users={users}
+        auditorCandidates={auditorCandidates}
         teams={teams}
       />
     )}
@@ -1314,8 +1310,10 @@ function Step2Controls({
     fwSubTab === "clone" ? cloneFrameworkId : null,
   );
   const { data: usersData } = useGetUsers();
+  const { data: auditorCandidatesData } = useGetAuditorCandidates();
   const { data: teamsData } = useGetTeams();
   const users = usersData ?? [];
+  const auditorCandidates = auditorCandidatesData ?? [];
   const teams = teamsData ?? [];
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Tracks which auditId we've already seeded into drafts, so that a
@@ -1754,6 +1752,7 @@ function Step2Controls({
             drafts={drafts}
             onChange={onDraftsChange}
             users={users}
+            auditorCandidates={auditorCandidates}
             teams={teams}
             showPushColumn={topSource === "framework"}
           />

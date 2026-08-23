@@ -47,6 +47,12 @@ const (
 	AuditEventResubmissionNeeded AuditEvent = "AUDIT_RESUBMISSION_NEEDED"
 	AuditEventSampleSubmitted    AuditEvent = "AUDIT_SAMPLE_SUBMITTED"
 
+	// AuditEventReminderOverdueAdmin escalates every overdue item in one audit
+	// to its Audit Compliance Admins, one digest per (admin, audit) per day —
+	// alongside the owner's own AuditEventReminderOverdue digest entry. Each
+	// row names its own owner (ShowOwner) and links straight to its control.
+	AuditEventReminderOverdueAdmin AuditEvent = "AUDIT_REMINDER_OVERDUE_ADMIN"
+
 	// The six below notify admin/auditor recipients when a control reaches a
 	// given status, regardless of which endpoint produced the transition —
 	// see handler/notify.go's notifyControlStatusReached. None ever populate
@@ -78,6 +84,13 @@ type AuditEventItem struct {
 	// RequirementType is "Evidence Requirement" | "Population Requirement" —
 	// labels which requirement this item is about.
 	RequirementType string
+	// DetailURL, when set, turns the row's control number into a link straight
+	// to that control — used by the overdue admin digest, which covers many
+	// controls in one email.
+	DetailURL string
+	// Owner is this item's owner display name, shown when Info.ShowOwner is
+	// set — the overdue admin digest's per-row "who owns this" column.
+	Owner string
 }
 
 // AuditEventInfo carries everything any audit template might render. Unlike
@@ -86,9 +99,13 @@ type AuditEventItem struct {
 // reaches SendAuditEvent — Items is that recipient's personalized batch.
 type AuditEventInfo struct {
 	AuditName string
-	// Actor is whoever triggered this event — who assigned the owner, who
-	// rejected, who submitted the sample. Empty for the system-generated
-	// reminder digest, which has no actor.
+	// Actor is the person this email's header line names, labelled by the
+	// template's actorLabel: normally whoever triggered the event — who
+	// assigned the owner, who rejected, who submitted the sample. The
+	// system-generated overdue admin alert has no actor and reuses this to name
+	// the item's owner instead ("Owned by ..."), which is the one fact an admin
+	// needs that the item table doesn't already carry. Empty for the owner
+	// reminder digest, which has neither.
 	Actor string
 	// Comment carries a rejection reason. Omitted from the body when empty.
 	Comment   string
@@ -102,6 +119,11 @@ type AuditEventInfo struct {
 	// would just be dead width — see the "Status column only used in overdue
 	// ones" note.
 	ShowStatus bool
+	// ShowOwner renders the table's Owner column instead of Status — the
+	// overdue admin digest's items can each have a different owner, so it's
+	// per-row rather than the single Actor field. Never true alongside
+	// ShowStatus; both share the same column width budget.
+	ShowOwner bool
 }
 
 // auditEventTemplate is the per-event copy — the audit equivalent of
@@ -140,6 +162,15 @@ func reminderSubject(tier string) func(AuditEventInfo) string {
 	}
 }
 
+// overdueAdminSubject is the admin escalation digest's subject: one per
+// (admin, audit) per day. Deliberately NOT controlThreadSubject and
+// deliberately not per-control: it re-sends every day and can cover several
+// controls in that audit, so a stable audit-only string threads each day's
+// digest with the previous ones instead of splintering per control.
+func overdueAdminSubject(i AuditEventInfo) string {
+	return fmt.Sprintf("[GRC Platform] Overdue — %s", i.AuditName)
+}
+
 // auditEventTemplates is the single place to see everything the audit module
 // sends. An AuditEvent with no entry here is a programming error and
 // SendAuditEvent rejects it rather than sending a blank email.
@@ -167,6 +198,11 @@ var auditEventTemplates = map[AuditEvent]auditEventTemplate{
 	AuditEventReminderOverdue: {
 		subject:    reminderSubject("Overdue"),
 		lead:       "The following item(s) you own are overdue.",
+		actorLabel: "",
+	},
+	AuditEventReminderOverdueAdmin: {
+		subject:    overdueAdminSubject,
+		lead:       "The following item(s) are overdue and have not been completed.",
 		actorLabel: "",
 	},
 	AuditEventResubmissionNeeded: {
@@ -239,16 +275,18 @@ var auditBodyTemplate = template.Must(template.New("auditEvent").Parse(`<html>
 <tr style="color:#57606a; text-align:left;">
 <td width="29%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Requirement Type</td>
 <td width="14%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Control No</td>
-<td width="{{if .Info.ShowStatus}}23{{else}}42{{end}}%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Description</td>
+<td width="{{if or .Info.ShowStatus .Info.ShowOwner}}23{{else}}42{{end}}%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Description</td>
 <td width="15%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Due Date</td>
 {{if .Info.ShowStatus}}<td width="19%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Status</td>{{end}}
+{{if .Info.ShowOwner}}<td width="19%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Owner</td>{{end}}
 </tr>
 {{range .Info.Items}}<tr>
 <td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; word-break:break-word;">{{.RequirementType}}</td>
-<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; font-weight:bold; word-break:break-word;">{{.ControlNumber}}</td>
+<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; font-weight:bold; word-break:break-word;">{{if .DetailURL}}<a href="{{.DetailURL}}" style="color:#ff7300; text-decoration:none;">{{.ControlNumber}}</a>{{else}}{{.ControlNumber}}{{end}}</td>
 <td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; word-break:break-word; overflow-wrap:break-word;">{{.Description}}</td>
 <td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; white-space:nowrap;">{{.DueDate}}</td>
 {{if $.Info.ShowStatus}}<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; white-space:nowrap;">{{.Tier}}</td>{{end}}
+{{if $.Info.ShowOwner}}<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; word-break:break-word;">{{.Owner}}</td>{{end}}
 </tr>{{end}}
 </table>
 </td></tr>{{end}}

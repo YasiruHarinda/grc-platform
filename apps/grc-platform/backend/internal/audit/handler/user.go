@@ -24,12 +24,17 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
 type userHandler struct {
 	svc       service.UserService
 	directory *directory.Service
+	// grants resolves which users hold AUDIT_SELECT_SAMPLE for
+	// listAuditorCandidates. Nil in local dev (no privilege store
+	// configured) — that path falls back to every EXTERNAL user instead.
+	grants grant.Repository
 }
 
 // listUsers handles GET /api/v1/audit/users.
@@ -64,4 +69,55 @@ func (h *userHandler) listUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.WriteJSONValue(w, http.StatusOK, users)
+}
+
+// listAuditorCandidates handles GET /api/v1/audit/auditor-candidates.
+// Returns all users who hold AUDIT_SELECT_SAMPLE (INTERNAL or EXTERNAL —
+// the role is assignable to either) for the Auditor POC picker in Create
+// Audit / Manage Controls.
+func (h *userHandler) listAuditorCandidates(w http.ResponseWriter, r *http.Request) {
+	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAudits) {
+		return
+	}
+	users, err := h.svc.List(r.Context())
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+
+	var allowed map[int]bool
+	// Local dev (no privilege store configured): no grants to query, so
+	// every user is offered rather than silently emptying the picker.
+	if h.grants != nil && !auth.AllowAll(r.Context()) {
+		candidates, err := h.grants.Candidates(r.Context(), privilege.SelectSample, nil)
+		if err != nil {
+			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+			return
+		}
+		allowed = make(map[int]bool, len(candidates))
+		for _, c := range candidates {
+			allowed[c.ID] = true
+		}
+	}
+
+	filtered := make([]*model.UserRef, 0, len(users))
+	uuidTypes := make(map[string]string, len(users))
+	for _, u := range users {
+		if allowed != nil && !allowed[u.ID] {
+			continue
+		}
+		filtered = append(filtered, u)
+		if u.UUID != "" {
+			uuidTypes[u.UUID] = u.UserType
+		}
+	}
+	people := h.directory.LookupAllTyped(r.Context(), uuidTypes)
+	for _, u := range filtered {
+		if p, ok := people[u.UUID]; ok {
+			u.DisplayName = p.DisplayName
+			u.Email = p.Email
+		}
+	}
+
+	response.WriteJSONValue(w, http.StatusOK, filtered)
 }

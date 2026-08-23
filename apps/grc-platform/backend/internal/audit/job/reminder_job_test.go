@@ -577,6 +577,280 @@ func TestRunOnceSkipsItemOnClaimErrorFailClosed(t *testing.T) {
 	}
 }
 
+// adminSink collects the overdue digests a job hands to notifyAdmin — one
+// entry per (admin, audit), each carrying every overdue item in that audit.
+type adminSink struct {
+	mu     sync.Mutex
+	alerts []struct {
+		adminID int
+		items   []model.ReminderItem
+	}
+	// err, if set, fails every send — for the release-on-failure test.
+	err error
+}
+
+func (s *adminSink) notify(_ context.Context, adminID int, items []model.ReminderItem) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.alerts = append(s.alerts, struct {
+		adminID int
+		items   []model.ReminderItem
+	}{adminID, items})
+	return s.err
+}
+
+func adminsFn(ids ...int) func(context.Context) ([]int, error) {
+	return func(context.Context) ([]int, error) { return ids, nil }
+}
+
+// ownerNamesFn returns a resolveOwnerNames stub that also records every call
+// (and the ids it was asked to resolve), so tests can assert the escalation
+// resolves owners once per sweep rather than once per email.
+func ownerNamesFn(names map[int]string, calls *[][]int) func(context.Context, []int) map[int]string {
+	return func(_ context.Context, ownerIDs []int) map[int]string {
+		*calls = append(*calls, append([]int(nil), ownerIDs...))
+		return names
+	}
+}
+
+func TestRunOnceEscalatesOverdueToEveryAdmin(t *testing.T) {
+	// Every admin gets one digest email per audit that has overdue items —
+	// not one email per item — and each item in it carries what the row
+	// needs: the audit name, a control id to deep-link, and the owner to name.
+	today := time.Now().UTC()
+	overdue := today.AddDate(0, 0, -2).Format("2006-01-02")
+
+	audits := &fakeAudits{audits: []*model.Audit{{ID: 1, Status: "ACTIVE", Name: "SOC2 Asgardeo 2026"}}}
+	controls := &fakeControls{controls: []*model.AuditControl{
+		{
+			ID: 30, AuditID: 1, ControlNumber: "C-30", Description: "Access reviews",
+			OwnerID: intPtr(700), Status: "EVIDENCE_PENDING", DueDate: strPtr(overdue),
+			PopulationID: intPtr(970), PopulationOwnerID: intPtr(701), PopulationStatus: strPtr("PENDING"), PopulationDueDate: strPtr(overdue),
+		},
+	}}
+	dedup := &fakeClaimer{claimed: map[string]bool{}}
+	sink := &adminSink{}
+	var resolveCalls [][]int
+	resolve := ownerNamesFn(map[int]string{700: "Owner 700 (o700@x.com)", 701: "Owner 701 (o701@x.com)"}, &resolveCalls)
+
+	j := NewReminderJob(audits, controls, dedup, func(context.Context, int, []model.ReminderItem) error { return nil }).
+		WithAdminAlerts(adminsFn(900, 901), sink.notify, resolve)
+	if err := j.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce: %v", err)
+	}
+
+	// Both overdue items (control + population) share audit 1, so each of the
+	// 2 admins gets exactly one digest, not one email per item.
+	if len(sink.alerts) != 2 {
+		t.Fatalf("admin digests = %d, want 2 (1 per admin)", len(sink.alerts))
+	}
+	wantOwnerNames := map[int]string{700: "Owner 700 (o700@x.com)", 701: "Owner 701 (o701@x.com)"}
+	perAdmin := map[int]int{}
+	owners := map[int]bool{}
+	for _, a := range sink.alerts {
+		perAdmin[a.adminID] = len(a.items)
+		if len(a.items) != 2 {
+			t.Errorf("admin %d digest items = %d, want 2 (the control and its population)", a.adminID, len(a.items))
+		}
+		for _, it := range a.items {
+			if it.Type != "REMINDER_OVERDUE" {
+				t.Errorf("item Type = %q, want REMINDER_OVERDUE", it.Type)
+			}
+			if it.AuditName != "SOC2 Asgardeo 2026" {
+				t.Errorf("item AuditName = %q, want the audit's name", it.AuditName)
+			}
+			// LinkControlID must be set for BOTH kinds — a population item's
+			// ControlID stays nil (it's the log row's mutually-exclusive
+			// column), but the email still deep-links to the owning control.
+			if it.LinkControlID != 30 {
+				t.Errorf("item LinkControlID = %d, want 30", it.LinkControlID)
+			}
+			owners[it.OwnerUserID] = true
+			if it.OwnerName != wantOwnerNames[it.OwnerUserID] {
+				t.Errorf("item OwnerName for owner %d = %q, want %q", it.OwnerUserID, it.OwnerName, wantOwnerNames[it.OwnerUserID])
+			}
+		}
+	}
+	if perAdmin[900] != 2 || perAdmin[901] != 2 {
+		t.Errorf("items per admin digest = %v, want 2 each", perAdmin)
+	}
+	if !owners[700] || !owners[701] {
+		t.Errorf("item OwnerUserIDs = %v, want both the control owner (700) and the population owner (701)", owners)
+	}
+
+	// 2 digests x 2 items each must still resolve owner names in exactly one
+	// deduped call — the bug this test guards against re-resolved the owner
+	// once per admin per item.
+	if len(resolveCalls) != 1 {
+		t.Fatalf("resolveOwnerNames calls = %d, want 1 (resolved once per sweep, not per digest)", len(resolveCalls))
+	}
+	gotIDs := map[int]bool{}
+	for _, id := range resolveCalls[0] {
+		gotIDs[id] = true
+	}
+	if len(resolveCalls[0]) != 2 || !gotIDs[700] || !gotIDs[701] {
+		t.Errorf("resolveOwnerNames called with ids %v, want exactly [700 701] (deduped)", resolveCalls[0])
+	}
+}
+
+func TestRunOnceDoesNotEscalateNonOverdueTiers(t *testing.T) {
+	// Only the overdue tier escalates: due-in-10 and due-in-5 stay between the
+	// job and the owner.
+	today := time.Now().UTC()
+	due10 := today.AddDate(0, 0, 10).Format("2006-01-02")
+	due5 := today.AddDate(0, 0, 5).Format("2006-01-02")
+
+	audits := &fakeAudits{audits: []*model.Audit{{ID: 1, Status: "ACTIVE"}}}
+	controls := &fakeControls{controls: []*model.AuditControl{
+		{ID: 40, AuditID: 1, ControlNumber: "C-40", OwnerID: intPtr(800), Status: "EVIDENCE_PENDING", DueDate: strPtr(due10)},
+		{ID: 41, AuditID: 1, ControlNumber: "C-41", OwnerID: intPtr(801), Status: "EVIDENCE_PENDING", DueDate: strPtr(due5)},
+	}}
+	dedup := &fakeClaimer{claimed: map[string]bool{}}
+	sink := &adminSink{}
+
+	j := NewReminderJob(audits, controls, dedup, func(context.Context, int, []model.ReminderItem) error { return nil }).
+		WithAdminAlerts(adminsFn(900), sink.notify, nil)
+	if err := j.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce: %v", err)
+	}
+	if len(sink.alerts) != 0 {
+		t.Errorf("admin alerts = %d, want 0 (only the overdue tier escalates)", len(sink.alerts))
+	}
+}
+
+func TestRunOnceSkipsAdminWhoOwnsTheOverdueItem(t *testing.T) {
+	// An admin who owns the overdue item already hears about it in their own
+	// digest; they must not also get an escalation about themselves.
+	today := time.Now().UTC()
+	overdue := today.AddDate(0, 0, -1).Format("2006-01-02")
+
+	audits := &fakeAudits{audits: []*model.Audit{{ID: 1, Status: "ACTIVE"}}}
+	controls := &fakeControls{controls: []*model.AuditControl{
+		{ID: 50, AuditID: 1, ControlNumber: "C-50", OwnerID: intPtr(900), Status: "EVIDENCE_PENDING", DueDate: strPtr(overdue)},
+	}}
+	dedup := &fakeClaimer{claimed: map[string]bool{}}
+	sink := &adminSink{}
+	digested := map[int]int{}
+
+	j := NewReminderJob(audits, controls, dedup, func(_ context.Context, ownerID int, items []model.ReminderItem) error {
+		digested[ownerID] = len(items)
+		return nil
+	}).WithAdminAlerts(adminsFn(900, 901), sink.notify, nil)
+	if err := j.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce: %v", err)
+	}
+
+	if digested[900] != 1 {
+		t.Errorf("owner 900 digest items = %d, want 1 — they still get it as the owner", digested[900])
+	}
+	if len(sink.alerts) != 1 {
+		t.Fatalf("admin alerts = %d, want 1 (only the non-owner admin)", len(sink.alerts))
+	}
+	if sink.alerts[0].adminID != 901 {
+		t.Errorf("escalated to admin %d, want 901 — 900 owns the item", sink.alerts[0].adminID)
+	}
+}
+
+func TestRunOnceAdminAlertReFiresDailyAndDedupsWithinADay(t *testing.T) {
+	// The escalation follows the owner reminder's overdue cadence: keyed on
+	// today's date, so it re-sends daily but never twice in one day.
+	today := time.Now().UTC()
+	overdue := today.AddDate(0, 0, -4).Format("2006-01-02")
+	todayStr := today.Format("2006-01-02")
+
+	audits := &fakeAudits{audits: []*model.Audit{{ID: 1, Status: "ACTIVE"}}}
+	controls := &fakeControls{controls: []*model.AuditControl{
+		{ID: 60, AuditID: 1, ControlNumber: "C-60", OwnerID: intPtr(1000), Status: "EVIDENCE_PENDING", DueDate: strPtr(overdue)},
+	}}
+	// Yesterday's escalation to this admin is on record; today's must still fire.
+	yesterday := today.AddDate(0, 0, -1).Format("2006-01-02")
+	dedup := &fakeClaimer{claimed: map[string]bool{
+		dedupKey(901, "REMINDER_OVERDUE", intPtr(60), nil, &yesterday): true,
+	}}
+	sink := &adminSink{}
+
+	j := NewReminderJob(audits, controls, dedup, func(context.Context, int, []model.ReminderItem) error { return nil }).
+		WithAdminAlerts(adminsFn(901), sink.notify, nil)
+	if err := j.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce: %v", err)
+	}
+	if len(sink.alerts) != 1 {
+		t.Fatalf("admin alerts = %d, want 1 — yesterday's row must not suppress today's", len(sink.alerts))
+	}
+
+	// A second sweep the same day must find today's claim already taken.
+	if err := j.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce (second): %v", err)
+	}
+	if len(sink.alerts) != 1 {
+		t.Errorf("admin alerts after a same-day re-run = %d, want still 1", len(sink.alerts))
+	}
+	if !dedup.claimed[dedupKey(901, "REMINDER_OVERDUE", intPtr(60), nil, &todayStr)] {
+		t.Error("today's admin claim should be on record after a successful send")
+	}
+}
+
+func TestRunOnceReleasesOnlyTheFailedAdminAlert(t *testing.T) {
+	// Each escalation is its own email, so one failing must release only its
+	// own claim — the owner's digest claim, already sent, must survive.
+	today := time.Now().UTC()
+	overdue := today.AddDate(0, 0, -6).Format("2006-01-02")
+	todayStr := today.Format("2006-01-02")
+
+	audits := &fakeAudits{audits: []*model.Audit{{ID: 1, Status: "ACTIVE"}}}
+	controls := &fakeControls{controls: []*model.AuditControl{
+		{ID: 70, AuditID: 1, ControlNumber: "C-70", OwnerID: intPtr(1100), Status: "EVIDENCE_PENDING", DueDate: strPtr(overdue)},
+	}}
+	dedup := &fakeClaimer{claimed: map[string]bool{}}
+	sink := &adminSink{err: fmt.Errorf("email service down")}
+
+	j := NewReminderJob(audits, controls, dedup, func(context.Context, int, []model.ReminderItem) error { return nil }).
+		WithAdminAlerts(adminsFn(902), sink.notify, nil)
+	if err := j.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce: %v", err)
+	}
+
+	if dedup.claimed[dedupKey(902, "REMINDER_OVERDUE", intPtr(70), nil, &todayStr)] {
+		t.Error("a failed admin alert must release its claim so a later run retries it")
+	}
+	if !dedup.claimed[dedupKey(1100, "REMINDER_OVERDUE", intPtr(70), nil, &todayStr)] {
+		t.Error("the owner's digest sent fine — its claim must NOT be released by the admin alert's failure")
+	}
+}
+
+func TestRunOnceStillSendsOwnerDigestsWhenAdminLookupFails(t *testing.T) {
+	// The owner reminders are the primary delivery: a failed admin lookup
+	// drops the escalation for that run, never the digests.
+	today := time.Now().UTC()
+	overdue := today.AddDate(0, 0, -3).Format("2006-01-02")
+
+	audits := &fakeAudits{audits: []*model.Audit{{ID: 1, Status: "ACTIVE"}}}
+	controls := &fakeControls{controls: []*model.AuditControl{
+		{ID: 80, AuditID: 1, ControlNumber: "C-80", OwnerID: intPtr(1200), Status: "EVIDENCE_PENDING", DueDate: strPtr(overdue)},
+	}}
+	dedup := &fakeClaimer{claimed: map[string]bool{}}
+	sink := &adminSink{}
+	digested := 0
+
+	j := NewReminderJob(audits, controls, dedup, func(context.Context, int, []model.ReminderItem) error {
+		digested++
+		return nil
+	}).WithAdminAlerts(
+		func(context.Context) ([]int, error) { return nil, fmt.Errorf("grant store unreachable") },
+		sink.notify,
+		nil,
+	)
+	if err := j.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce: %v", err)
+	}
+	if digested != 1 {
+		t.Errorf("owner digests sent = %d, want 1 despite the admin lookup failing", digested)
+	}
+	if len(sink.alerts) != 0 {
+		t.Errorf("admin alerts = %d, want 0 when the lookup failed", len(sink.alerts))
+	}
+}
+
 func TestRunOnceRecoversFromPanic(t *testing.T) {
 	today := time.Now().UTC()
 	dueSoon := today.AddDate(0, 0, 10).Format("2006-01-02")

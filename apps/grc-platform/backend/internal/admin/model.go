@@ -15,8 +15,8 @@
 // under the License.
 
 // Package admin defines the types and data-access contract for the Admin
-// Console's Users screen (see ADMIN_CONSOLE_DESIGN.md). Kept separate from
-// internal/user and internal/shared/grant rather than extending either:
+// Console's Users screen. Kept separate from internal/user and
+// internal/shared/grant rather than extending either:
 //
 //   - internal/user.User deliberately carries no creation timestamp (nothing
 //     else needed one), but the Users screen's "Date Added" column does.

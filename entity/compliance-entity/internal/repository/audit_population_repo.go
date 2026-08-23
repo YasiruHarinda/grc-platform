@@ -208,21 +208,29 @@ func (r *populationRepo) GetPopulationFileByID(ctx context.Context, fileID int) 
 func (r *populationRepo) getPopulationFileByID(ctx context.Context, fileID int) (*domain.AuditEvidenceFile, error) {
 	var f domain.AuditEvidenceFile
 	var evidenceID, populationID, controlTeamID sql.NullInt64
-	var fileKind, fileType sql.NullString
+	var fileKind, fileType, createdBy, createdByUserType sql.NullString
 	var fileSize sql.NullInt64
 	// LEFT JOINed through to the owning control's team so the GRC Backend can
 	// gate downloads to a team-scoped grant instead of an unscoped privilege
 	// union, mirroring audit_evidence_repo.go's getEvidenceFileByID. Misses
 	// cleanly for a control with no team — control_team_id just comes back NULL.
+	//
+	// The `user` join resolves created_by's user_type so the GRC Backend can
+	// route the uploader's uuid to the right identity org (a SAMPLE file's
+	// uploader is the auditor, who may be EXTERNAL) — see
+	// AuditEvidenceFile.CreatedByUserType. It misses cleanly for a uuid with no
+	// `user` row, which the caller then treats as INTERNAL.
 	err := r.db.QueryRowContext(ctx, `
 		SELECT f.id, f.evidence_id, f.population_id, f.file_kind,
-		       f.file_name, f.file_path, f.file_type, f.file_size, f.created_at,
+		       f.file_name, f.file_path, f.file_type, f.file_size,
+		       f.created_by, u_creator.user_type AS creator_user_type, f.created_at,
 		       c.team_id AS control_team_id
 		FROM audit_evidence_file f
 		LEFT JOIN audit_population p ON p.id = f.population_id
 		LEFT JOIN audit_control    c ON c.id = p.control_id
+		LEFT JOIN `+"`user`"+` u_creator ON u_creator.uuid = f.created_by
 		WHERE f.id = ?`,
-		fileID).Scan(&f.ID, &evidenceID, &populationID, &fileKind, &f.FileName, &f.FilePath, &fileType, &fileSize, &f.CreatedOn, &controlTeamID)
+		fileID).Scan(&f.ID, &evidenceID, &populationID, &fileKind, &f.FileName, &f.FilePath, &fileType, &fileSize, &createdBy, &createdByUserType, &f.CreatedOn, &controlTeamID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, &apierror.NotFoundError{Msg: fmt.Sprintf("population file %d not found", fileID)}
 	}
@@ -246,6 +254,12 @@ func (r *populationRepo) getPopulationFileByID(ctx context.Context, fileID int) 
 	if fileSize.Valid {
 		f.FileSize = &fileSize.Int64
 	}
+	if createdBy.Valid {
+		f.CreatedBy = &createdBy.String
+	}
+	if createdByUserType.Valid {
+		f.CreatedByUserType = &createdByUserType.String
+	}
 	if controlTeamID.Valid {
 		v := int(controlTeamID.Int64)
 		f.TeamID = &v
@@ -254,9 +268,14 @@ func (r *populationRepo) getPopulationFileByID(ctx context.Context, fileID int) 
 }
 
 func (r *populationRepo) ListPopulationFiles(ctx context.Context, populationID int) ([]domain.AuditEvidenceFile, error) {
+	// The `user` join carries the uploader's user_type alongside created_by — see
+	// getPopulationFileByID for why the GRC Backend needs it.
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, evidence_id, population_id, file_kind, file_name, file_path, file_type, file_size, created_at "+
-			"FROM audit_evidence_file WHERE population_id = ? ORDER BY created_at DESC",
+		"SELECT f.id, f.evidence_id, f.population_id, f.file_kind, f.file_name, f.file_path, "+
+			"f.file_type, f.file_size, f.created_by, u_creator.user_type AS creator_user_type, f.created_at "+
+			"FROM audit_evidence_file f "+
+			"LEFT JOIN `user` u_creator ON u_creator.uuid = f.created_by "+
+			"WHERE f.population_id = ? ORDER BY f.created_at DESC",
 		populationID)
 	if err != nil {
 		return nil, fmt.Errorf("population_file.List: %w", err)
@@ -267,9 +286,9 @@ func (r *populationRepo) ListPopulationFiles(ctx context.Context, populationID i
 	for rows.Next() {
 		var f domain.AuditEvidenceFile
 		var evID, popID sql.NullInt64
-		var fileKind, fileType sql.NullString
+		var fileKind, fileType, createdBy, createdByUserType sql.NullString
 		var fileSize sql.NullInt64
-		if err := rows.Scan(&f.ID, &evID, &popID, &fileKind, &f.FileName, &f.FilePath, &fileType, &fileSize, &f.CreatedOn); err != nil {
+		if err := rows.Scan(&f.ID, &evID, &popID, &fileKind, &f.FileName, &f.FilePath, &fileType, &fileSize, &createdBy, &createdByUserType, &f.CreatedOn); err != nil {
 			return nil, fmt.Errorf("population_file.List scan: %w", err)
 		}
 		if evID.Valid {
@@ -288,6 +307,12 @@ func (r *populationRepo) ListPopulationFiles(ctx context.Context, populationID i
 		}
 		if fileSize.Valid {
 			f.FileSize = &fileSize.Int64
+		}
+		if createdBy.Valid {
+			f.CreatedBy = &createdBy.String
+		}
+		if createdByUserType.Valid {
+			f.CreatedByUserType = &createdByUserType.String
 		}
 		files = append(files, f)
 	}

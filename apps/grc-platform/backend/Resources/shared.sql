@@ -108,14 +108,10 @@ PREPARE add_uuid_stmt FROM @add_uuid_sql;
 EXECUTE add_uuid_stmt;
 DEALLOCATE PREPARE add_uuid_stmt;
 
--- email becomes NULLable here first: the Admin Console's "Add User" (see
--- ADMIN_CONSOLE_DESIGN.md) provisions a platform user by uuid alone — nothing
--- else about them is known or wanted, per the same security review noted
--- above — and uq_user_email cannot take a second "" once the first uuid-only
--- row has one. display_name stays NOT NULL: it already receives "" rather
--- than a real value from every caller migrating off it (see
--- internal/user/handler/resolve.go's comment), which satisfies NOT NULL with
--- no schema change, so there is nothing to relax there.
+-- email becomes NULLable: "Add User" provisions a user by uuid alone, and
+-- uq_user_email can't take a second "" once one uuid-only row has it.
+-- display_name stays NOT NULL — it already gets "" from every caller
+-- migrating off it, so no schema change is needed there.
 --
 -- Guarded on email existing AND still NOT NULL — a fresh database has no
 -- email column at all, and running MODIFY COLUMN against a column that
@@ -196,7 +192,7 @@ CREATE TABLE IF NOT EXISTS `role` (
   description  TEXT         NULL,
   module       ENUM('RISK','AUDIT','SHARED') NOT NULL,
   scope_basis  ENUM('SOURCE_REGISTER','ASSIGNMENT_TEAM') NULL COMMENT 'Which risk column a grant on this role scopes by; NULL for GLOBAL-only roles. See table comment',
-  assignable_user_type ENUM('INTERNAL','EXTERNAL') NOT NULL DEFAULT 'INTERNAL' COMMENT 'Which kind of person this role may be granted to. INTERNAL/EXTERNAL identities live in separate Asgardeo organisations, so a role never spans both — no EITHER value',
+  assignable_user_type ENUM('INTERNAL','EXTERNAL') NOT NULL DEFAULT 'INTERNAL' COMMENT 'Which kind of person this role may be granted to. Asymmetric: INTERNAL-only roles never go to an EXTERNAL user, but an EXTERNAL-assignable role may go to either — see grantService.validateUserType',
   status       ENUM('ACTIVE','INACTIVE') NOT NULL DEFAULT 'ACTIVE',
   created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by   VARCHAR(255) NULL,
