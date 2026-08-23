@@ -22,7 +22,7 @@ import type { AuditUser } from "@modules/audit/types/user";
 export const AUDIT_AUDITOR_CANDIDATES_QUERY_KEY = ["audit", "auditor-candidates"] as const;
 
 // Users eligible for the "Auditor POC" picker in Create Audit / Manage
-// Controls — EXTERNAL users who hold AUDIT_SELECT_SAMPLE (the
+// Controls — users (INTERNAL or EXTERNAL) who hold AUDIT_SELECT_SAMPLE (the
 // external-auditor role's privilege), not every user like useGetUsers.
 export function useGetAuditorCandidates() {
   const authFetch = useAuthApiClient();
