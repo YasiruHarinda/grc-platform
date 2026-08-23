@@ -335,33 +335,41 @@ func (d *Deps) ReminderAdminIDs(ctx context.Context) ([]int, error) {
 	return ids, nil
 }
 
-// SendOverdueAdminAlertSync emails one admin about one overdue item. Wired to
-// job.ReminderJob at startup alongside SendReminderDigestSync (see
+// SendOverdueAdminDigestSync emails one admin every overdue item in one
+// audit — one digest per (admin, audit) per day, not one email per item.
+// Wired to job.ReminderJob at startup alongside SendReminderDigestSync (see
 // cmd/server/main.go), and synchronous for the same reason: the job counts
-// per-recipient success, and must know whether to release the item's claim.
+// per-recipient success, and must know whether to release each item's claim.
 //
-// One email per (admin, overdue item) rather than a digest, deliberately: it
-// matches the per-control admin emails the review transitions already send, so
-// an overdue control is named in its own message with a link straight to it.
+// items must all share one AuditID — the job groups them that way before
+// calling this, since the subject names the audit and there's no single
+// audit to name otherwise.
 //
-// Logs nothing itself — the job's own Claim already wrote this item's
+// Logs nothing itself — the job's own Claim already wrote each item's
 // audit_notification row before the send was attempted, exactly as
 // SendReminderDigestSync's does.
-func (d *Deps) SendOverdueAdminAlertSync(ctx context.Context, adminUserID int, item model.ReminderItem) error {
+func (d *Deps) SendOverdueAdminDigestSync(ctx context.Context, adminUserID int, items []model.ReminderItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+	emailItems := make([]emailer.AuditEventItem, 0, len(items))
+	for _, it := range items {
+		emailItems = append(emailItems, emailer.AuditEventItem{
+			ControlNumber:   it.ControlNumber,
+			Description:     it.Description,
+			DueDate:         it.DueDate,
+			RequirementType: it.RequirementType,
+			DetailURL:       d.controlDetailURL(it.AuditID, it.LinkControlID),
+			// Pre-resolved by the job (once per sweep, not per item) — see
+			// ResolveOwnerNames.
+			Owner: it.OwnerName,
+		})
+	}
 	info := emailer.AuditEventInfo{
-		AuditName: item.AuditName,
-		// Not an actor — this alert has none. The template labels it "Owned by",
-		// naming who is expected to act; see AuditEventInfo.Actor. Pre-resolved
-		// by the job (once per sweep) into item.OwnerName — see ResolveOwnerNames.
-		Actor:     item.OwnerName,
-		DetailURL: d.controlDetailURL(item.AuditID, item.LinkControlID),
-		Items: []emailer.AuditEventItem{{
-			ControlNumber:   item.ControlNumber,
-			Description:     item.Description,
-			DueDate:         item.DueDate,
-			Tier:            item.Tier,
-			RequirementType: item.RequirementType,
-		}},
+		AuditName: items[0].AuditName,
+		DetailURL: d.detailURL(items[0].AuditID),
+		Items:     emailItems,
+		ShowOwner: true,
 	}
 	return d.sendAuditEventSync(ctx, emailer.AuditEventReminderOverdueAdmin, adminUserID, info, nil, true)
 }

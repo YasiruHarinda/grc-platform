@@ -577,24 +577,25 @@ func TestRunOnceSkipsItemOnClaimErrorFailClosed(t *testing.T) {
 	}
 }
 
-// adminSink collects the overdue escalations a job hands to notifyAdmin.
+// adminSink collects the overdue digests a job hands to notifyAdmin — one
+// entry per (admin, audit), each carrying every overdue item in that audit.
 type adminSink struct {
 	mu     sync.Mutex
 	alerts []struct {
 		adminID int
-		item    model.ReminderItem
+		items   []model.ReminderItem
 	}
 	// err, if set, fails every send — for the release-on-failure test.
 	err error
 }
 
-func (s *adminSink) notify(_ context.Context, adminID int, item model.ReminderItem) error {
+func (s *adminSink) notify(_ context.Context, adminID int, items []model.ReminderItem) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.alerts = append(s.alerts, struct {
 		adminID int
-		item    model.ReminderItem
-	}{adminID, item})
+		items   []model.ReminderItem
+	}{adminID, items})
 	return s.err
 }
 
@@ -613,9 +614,9 @@ func ownerNamesFn(names map[int]string, calls *[][]int) func(context.Context, []
 }
 
 func TestRunOnceEscalatesOverdueToEveryAdmin(t *testing.T) {
-	// Every admin gets their own email per overdue item — one per (admin,
-	// item), not a digest — and the item carries what the email needs: the
-	// audit name, a control id to deep-link, and the owner to name.
+	// Every admin gets one digest email per audit that has overdue items —
+	// not one email per item — and each item in it carries what the row
+	// needs: the audit name, a control id to deep-link, and the owner to name.
 	today := time.Now().UTC()
 	overdue := today.AddDate(0, 0, -2).Format("2006-01-02")
 
@@ -638,46 +639,50 @@ func TestRunOnceEscalatesOverdueToEveryAdmin(t *testing.T) {
 		t.Fatalf("runOnce: %v", err)
 	}
 
-	// 2 overdue items (control + population) x 2 admins.
-	if len(sink.alerts) != 4 {
-		t.Fatalf("admin alerts = %d, want 4 (2 overdue items x 2 admins)", len(sink.alerts))
+	// Both overdue items (control + population) share audit 1, so each of the
+	// 2 admins gets exactly one digest, not one email per item.
+	if len(sink.alerts) != 2 {
+		t.Fatalf("admin digests = %d, want 2 (1 per admin)", len(sink.alerts))
 	}
+	wantOwnerNames := map[int]string{700: "Owner 700 (o700@x.com)", 701: "Owner 701 (o701@x.com)"}
 	perAdmin := map[int]int{}
+	owners := map[int]bool{}
 	for _, a := range sink.alerts {
-		perAdmin[a.adminID]++
-		if a.item.Type != "REMINDER_OVERDUE" {
-			t.Errorf("alert Type = %q, want REMINDER_OVERDUE", a.item.Type)
+		perAdmin[a.adminID] = len(a.items)
+		if len(a.items) != 2 {
+			t.Errorf("admin %d digest items = %d, want 2 (the control and its population)", a.adminID, len(a.items))
 		}
-		if a.item.AuditName != "SOC2 Asgardeo 2026" {
-			t.Errorf("alert AuditName = %q, want the audit's name", a.item.AuditName)
-		}
-		// LinkControlID must be set for BOTH kinds — a population item's
-		// ControlID stays nil (it's the log row's mutually-exclusive column),
-		// but the email still deep-links to the owning control.
-		if a.item.LinkControlID != 30 {
-			t.Errorf("alert LinkControlID = %d, want 30", a.item.LinkControlID)
+		for _, it := range a.items {
+			if it.Type != "REMINDER_OVERDUE" {
+				t.Errorf("item Type = %q, want REMINDER_OVERDUE", it.Type)
+			}
+			if it.AuditName != "SOC2 Asgardeo 2026" {
+				t.Errorf("item AuditName = %q, want the audit's name", it.AuditName)
+			}
+			// LinkControlID must be set for BOTH kinds — a population item's
+			// ControlID stays nil (it's the log row's mutually-exclusive
+			// column), but the email still deep-links to the owning control.
+			if it.LinkControlID != 30 {
+				t.Errorf("item LinkControlID = %d, want 30", it.LinkControlID)
+			}
+			owners[it.OwnerUserID] = true
+			if it.OwnerName != wantOwnerNames[it.OwnerUserID] {
+				t.Errorf("item OwnerName for owner %d = %q, want %q", it.OwnerUserID, it.OwnerName, wantOwnerNames[it.OwnerUserID])
+			}
 		}
 	}
 	if perAdmin[900] != 2 || perAdmin[901] != 2 {
-		t.Errorf("alerts per admin = %v, want 2 each", perAdmin)
-	}
-	owners := map[int]bool{}
-	for _, a := range sink.alerts {
-		owners[a.item.OwnerUserID] = true
-		wantName := map[int]string{700: "Owner 700 (o700@x.com)", 701: "Owner 701 (o701@x.com)"}[a.item.OwnerUserID]
-		if a.item.OwnerName != wantName {
-			t.Errorf("alert OwnerName for owner %d = %q, want %q", a.item.OwnerUserID, a.item.OwnerName, wantName)
-		}
+		t.Errorf("items per admin digest = %v, want 2 each", perAdmin)
 	}
 	if !owners[700] || !owners[701] {
-		t.Errorf("alert OwnerUserIDs = %v, want both the control owner (700) and the population owner (701)", owners)
+		t.Errorf("item OwnerUserIDs = %v, want both the control owner (700) and the population owner (701)", owners)
 	}
 
-	// 4 alerts (2 owners x 2 admins) must still resolve owner names in exactly
-	// one deduped call — the bug this test guards against re-resolved the
-	// owner once per admin per item.
+	// 2 digests x 2 items each must still resolve owner names in exactly one
+	// deduped call — the bug this test guards against re-resolved the owner
+	// once per admin per item.
 	if len(resolveCalls) != 1 {
-		t.Fatalf("resolveOwnerNames calls = %d, want 1 (resolved once per sweep, not per alert)", len(resolveCalls))
+		t.Fatalf("resolveOwnerNames calls = %d, want 1 (resolved once per sweep, not per digest)", len(resolveCalls))
 	}
 	gotIDs := map[int]bool{}
 	for _, id := range resolveCalls[0] {

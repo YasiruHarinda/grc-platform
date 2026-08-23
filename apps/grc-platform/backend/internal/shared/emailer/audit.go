@@ -47,13 +47,10 @@ const (
 	AuditEventResubmissionNeeded AuditEvent = "AUDIT_RESUBMISSION_NEEDED"
 	AuditEventSampleSubmitted    AuditEvent = "AUDIT_SAMPLE_SUBMITTED"
 
-	// AuditEventReminderOverdueAdmin escalates a single overdue item to every
-	// Audit Compliance Admin, alongside the owner's own AuditEventReminderOverdue
-	// digest entry. Unlike the three owner reminder tiers above it is one email
-	// per overdue item rather than a digest, so an admin sees each overdue
-	// control named in its own message (mirroring the per-control admin emails
-	// notifyControlStatusReached already sends), and it names the owner rather
-	// than an actor — see auditEventTemplates' "Owned by" label.
+	// AuditEventReminderOverdueAdmin escalates every overdue item in one audit
+	// to its Audit Compliance Admins, one digest per (admin, audit) per day —
+	// alongside the owner's own AuditEventReminderOverdue digest entry. Each
+	// row names its own owner (ShowOwner) and links straight to its control.
 	AuditEventReminderOverdueAdmin AuditEvent = "AUDIT_REMINDER_OVERDUE_ADMIN"
 
 	// The six below notify admin/auditor recipients when a control reaches a
@@ -87,6 +84,13 @@ type AuditEventItem struct {
 	// RequirementType is "Evidence Requirement" | "Population Requirement" —
 	// labels which requirement this item is about.
 	RequirementType string
+	// DetailURL, when set, turns the row's control number into a link straight
+	// to that control — used by the overdue admin digest, which covers many
+	// controls in one email.
+	DetailURL string
+	// Owner is this item's owner display name, shown when Info.ShowOwner is
+	// set — the overdue admin digest's per-row "who owns this" column.
+	Owner string
 }
 
 // AuditEventInfo carries everything any audit template might render. Unlike
@@ -115,6 +119,11 @@ type AuditEventInfo struct {
 	// would just be dead width — see the "Status column only used in overdue
 	// ones" note.
 	ShowStatus bool
+	// ShowOwner renders the table's Owner column instead of Status — the
+	// overdue admin digest's items can each have a different owner, so it's
+	// per-row rather than the single Actor field. Never true alongside
+	// ShowStatus; both share the same column width budget.
+	ShowOwner bool
 }
 
 // auditEventTemplate is the per-event copy — the audit equivalent of
@@ -153,21 +162,13 @@ func reminderSubject(tier string) func(AuditEventInfo) string {
 	}
 }
 
-// overdueAdminSubject is the admin escalation's subject. Deliberately NOT
-// controlThreadSubject: this alert re-sends every day the item stays overdue,
-// so threading it into the control's ordinary workflow conversation would bury
-// a growing pile of escalations under whatever else happened on that control.
-// Keeping it its own stable string instead threads each day's escalation with
-// the previous ones, which is the conversation an admin actually wants.
-//
-// Info is always about exactly one item here (one email per overdue item), so
-// Items[0] is safe — but fall back to the audit name alone rather than
-// panicking if that ever stops holding.
+// overdueAdminSubject is the admin escalation digest's subject: one per
+// (admin, audit) per day. Deliberately NOT controlThreadSubject and
+// deliberately not per-control: it re-sends every day and can cover several
+// controls in that audit, so a stable audit-only string threads each day's
+// digest with the previous ones instead of splintering per control.
 func overdueAdminSubject(i AuditEventInfo) string {
-	if len(i.Items) != 1 {
-		return fmt.Sprintf("[GRC Platform] Overdue — %s", i.AuditName)
-	}
-	return fmt.Sprintf("[GRC Platform] Overdue — %s - %s", i.AuditName, i.Items[0].ControlNumber)
+	return fmt.Sprintf("[GRC Platform] Overdue — %s", i.AuditName)
 }
 
 // auditEventTemplates is the single place to see everything the audit module
@@ -201,8 +202,8 @@ var auditEventTemplates = map[AuditEvent]auditEventTemplate{
 	},
 	AuditEventReminderOverdueAdmin: {
 		subject:    overdueAdminSubject,
-		lead:       "The following item is overdue and has not been completed.",
-		actorLabel: "Owned by",
+		lead:       "The following item(s) are overdue and have not been completed.",
+		actorLabel: "",
 	},
 	AuditEventResubmissionNeeded: {
 		subject:    controlThreadSubject,
@@ -274,16 +275,18 @@ var auditBodyTemplate = template.Must(template.New("auditEvent").Parse(`<html>
 <tr style="color:#57606a; text-align:left;">
 <td width="29%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Requirement Type</td>
 <td width="14%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Control No</td>
-<td width="{{if .Info.ShowStatus}}23{{else}}42{{end}}%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Description</td>
+<td width="{{if or .Info.ShowStatus .Info.ShowOwner}}23{{else}}42{{end}}%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Description</td>
 <td width="15%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Due Date</td>
 {{if .Info.ShowStatus}}<td width="19%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Status</td>{{end}}
+{{if .Info.ShowOwner}}<td width="19%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Owner</td>{{end}}
 </tr>
 {{range .Info.Items}}<tr>
 <td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; word-break:break-word;">{{.RequirementType}}</td>
-<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; font-weight:bold; word-break:break-word;">{{.ControlNumber}}</td>
+<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; font-weight:bold; word-break:break-word;">{{if .DetailURL}}<a href="{{.DetailURL}}" style="color:#ff7300; text-decoration:none;">{{.ControlNumber}}</a>{{else}}{{.ControlNumber}}{{end}}</td>
 <td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; word-break:break-word; overflow-wrap:break-word;">{{.Description}}</td>
 <td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; white-space:nowrap;">{{.DueDate}}</td>
 {{if $.Info.ShowStatus}}<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; white-space:nowrap;">{{.Tier}}</td>{{end}}
+{{if $.Info.ShowOwner}}<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; word-break:break-word;">{{.Owner}}</td>{{end}}
 </tr>{{end}}
 </table>
 </td></tr>{{end}}
