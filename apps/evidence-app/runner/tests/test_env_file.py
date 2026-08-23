@@ -58,6 +58,18 @@ def test_merge_env_lines_never_duplicates_an_updated_key():
     assert not any(line.startswith("AGENT_PROVIDER=azure") for line in merged)
 
 
+def test_merge_env_lines_drops_a_stale_duplicate_of_an_updated_key():
+    # Hand-editing the file is documented in the setup docs, so the same key
+    # landing on two lines is an easy mistake to make. python-dotenv keeps the
+    # LAST value it sees, so leaving the second line behind would mean
+    # `configure` prints "Saved" while the old value is what actually loads.
+    existing = "USER_EMAIL=new@wso2.com\nCLOUD_URL=https://x\nUSER_EMAIL=stale@wso2.com\n"
+
+    merged = merge_env_lines(existing, {"USER_EMAIL": "me@wso2.com"})
+
+    assert merged == ["USER_EMAIL=me@wso2.com", "CLOUD_URL=https://x"]
+
+
 # ── read_env_values ──────────────────────────────────────────────────────
 
 

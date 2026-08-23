@@ -27,8 +27,17 @@ def merge_env_lines(existing_text: str, updates: dict[str, str]) -> list[str]:
     original line, so the key never ends up duplicated. Every other line —
     including a user's hand-added notes — passes through untouched. A key
     in `updates` that isn't already in the file is appended at the end.
+
+    A key the file already lists TWICE — easy to end up with, since the setup
+    docs describe hand-editing this file — is updated on its first line and
+    its later lines are dropped. python-dotenv keeps the LAST value it reads,
+    so a stale duplicate left further down would win over the value just
+    written, and `configure` would report "Saved" while the old setting was
+    the one still loading. Only duplicates of keys being updated are removed;
+    lines for keys this call wasn't asked about are left exactly as they are.
     """
     remaining = dict(updates)
+    written: set[str] = set()
     merged_lines = []
     for raw_line in existing_text.splitlines():
         stripped = raw_line.strip()
@@ -36,6 +45,9 @@ def merge_env_lines(existing_text: str, updates: dict[str, str]) -> list[str]:
             key = stripped.split("=", 1)[0].strip()
             if key in remaining:
                 merged_lines.append(f"{key}={remaining.pop(key)}")
+                written.add(key)
+                continue
+            if key in written:
                 continue
         merged_lines.append(raw_line)
 
