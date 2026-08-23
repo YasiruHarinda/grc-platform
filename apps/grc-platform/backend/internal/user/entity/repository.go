@@ -91,32 +91,15 @@ func (r *repository) GetByUUID(ctx context.Context, uuid string) (*user.User, er
 	return u.toModel(), nil
 }
 
-// Upsert provisions an account for an employee picked from an HR entity search
-// (e.g. as a risk's Action Owner) who may never have signed in to grc-platform.
-// POST /users is an upsert on the entity side, keyed on uuid — it inserts when
-// the uuid is new and just refreshes updated_by when it isn't — so this is a
-// single round trip with no read-then-write race. userType/status are left
-// empty so the entity applies its own defaults (INTERNAL / ACTIVE).
-//
-// uuid is required — see the Repository interface doc for why: the caller
-// must have already resolved one (e.g. against the identity directory)
-// before calling this.
+// Upsert provisions an account for an employee picked from an HR entity
+// search. See the Repository interface doc for the uuid-required contract.
 func (r *repository) Upsert(ctx context.Context, uuid, actor string) (*user.User, error) {
-	body := map[string]any{
-		"uuid":      uuid,
-		"createdBy": actor,
-	}
-	var u entUser
-	if err := r.c.Post(ctx, "/users", body, &u); err != nil {
-		return nil, fmt.Errorf("upsert user: %w", err)
-	}
-	return u.toModel(), nil
+	return r.UpsertTyped(ctx, uuid, "", actor)
 }
 
-// UpsertTyped is Upsert plus an explicit userType — see the Repository
-// interface doc. An empty userType behaves exactly like Upsert (the entity
-// defaults it to INTERNAL), so this subsumes Upsert's contract rather than
-// diverging from it.
+// UpsertTyped is Upsert with an explicit userType; POST /users is an upsert
+// on the entity side keyed on uuid, and an empty userType defaults to
+// INTERNAL there.
 func (r *repository) UpsertTyped(ctx context.Context, uuid, userType, actor string) (*user.User, error) {
 	body := map[string]any{
 		"uuid":      uuid,
@@ -125,7 +108,7 @@ func (r *repository) UpsertTyped(ctx context.Context, uuid, userType, actor stri
 	}
 	var u entUser
 	if err := r.c.Post(ctx, "/users", body, &u); err != nil {
-		return nil, fmt.Errorf("upsert user (typed): %w", err)
+		return nil, fmt.Errorf("upsert user: %w", err)
 	}
 	return u.toModel(), nil
 }
