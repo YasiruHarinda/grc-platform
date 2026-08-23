@@ -323,7 +323,7 @@ func (r *userRepo) loadAuditTeamIDsBatch(ctx context.Context, userIDs []int) (ma
 		args[i] = id
 	}
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT user_id, audit_team_id FROM user_audit_team WHERE user_id IN ("+ph[:len(ph)-1]+") AND is_active = TRUE ORDER BY user_id, audit_team_id",
+		"SELECT user_id, audit_team_id FROM user_audit_team WHERE user_id IN ("+ph[:len(ph)-1]+") AND is_active = TRUE ORDER BY user_id, audit_team_id", // #nosec G202 -- concatenated part is only "?" placeholders (count-derived), values go through args
 		args...)
 	if err != nil {
 		return nil, fmt.Errorf("user_audit_team.loadBatch: %w", err)
@@ -357,7 +357,7 @@ func (r *userRepo) attachRiskTeams(ctx context.Context, users []domain.User) err
 	}
 
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT user_id, risk_team_id FROM user_risk_team WHERE user_id IN ("+strings.Join(placeholders, ",")+")",
+		"SELECT user_id, risk_team_id FROM user_risk_team WHERE user_id IN ("+strings.Join(placeholders, ",")+")", // #nosec G202 -- concatenated part is only "?" placeholders (count-derived), values go through args
 		args...)
 	if err != nil {
 		return fmt.Errorf("attachRiskTeams: %w", err)

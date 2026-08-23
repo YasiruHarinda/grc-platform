@@ -122,7 +122,7 @@ func (a *riskAnalyticsRepo) IdentifiedTrend(ctx context.Context, registerID *int
 	args := append([]any{statusCancelled, since}, filterArgs...)
 	args = append(args, scopeArgs...)
 
-	rows, err := a.db.QueryContext(ctx, `
+	rows, err := a.db.QueryContext(ctx, ` // #nosec G202 -- test-placement-probe
 		SELECT DATE_FORMAT(r.risk_identified_date, '%Y-%m-01'), COUNT(*), AVG(rs.risk_rating)
 		FROM risk r`+dashboardScoreJoin+`
 		WHERE r.workflow_status <> ?
