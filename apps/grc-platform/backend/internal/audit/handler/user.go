@@ -72,12 +72,9 @@ func (h *userHandler) listUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 // listAuditorCandidates handles GET /api/v1/audit/auditor-candidates.
-// Returns only EXTERNAL users who hold AUDIT_SELECT_SAMPLE — the privilege
-// unique to the external-auditor role (see shared_seed_data.sql's
-// grc-platform-audit-external-auditor grant) — for the Auditor POC picker in
-// Create Audit / Manage Controls. Same privilege-derived-candidates mechanism
-// resolveAdminIDs (notify.go) already uses for admin recipients, exposed here
-// as an endpoint instead of consumed internally.
+// Returns all users who hold AUDIT_SELECT_SAMPLE (INTERNAL or EXTERNAL —
+// the role is assignable to either) for the Auditor POC picker in Create
+// Audit / Manage Controls.
 func (h *userHandler) listAuditorCandidates(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAudits) {
 		return
@@ -89,10 +86,8 @@ func (h *userHandler) listAuditorCandidates(w http.ResponseWriter, r *http.Reque
 	}
 
 	var allowed map[int]bool
-	// Local dev (no privilege store configured): there are no grants to
-	// query, and every check elsewhere in this mode allows everything — so
-	// every EXTERNAL user is offered (the same set the previous, unfiltered
-	// dropdown showed) rather than silently emptying the picker.
+	// Local dev (no privilege store configured): no grants to query, so
+	// every user is offered rather than silently emptying the picker.
 	if h.grants != nil && !auth.AllowAll(r.Context()) {
 		candidates, err := h.grants.Candidates(r.Context(), privilege.SelectSample, nil)
 		if err != nil {
@@ -108,9 +103,6 @@ func (h *userHandler) listAuditorCandidates(w http.ResponseWriter, r *http.Reque
 	filtered := make([]*model.UserRef, 0, len(users))
 	uuidTypes := make(map[string]string, len(users))
 	for _, u := range users {
-		if u.UserType != "EXTERNAL" {
-			continue
-		}
 		if allowed != nil && !allowed[u.ID] {
 			continue
 		}
