@@ -29,12 +29,9 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 )
 
-// auditLister and controlLister are the only two read capabilities this job
-// needs, kept as narrow local interfaces (not the full
-// repository.AuditRepository/ControlRepository) so this package doesn't
-// import internal/audit/repository or internal/audit/service — which would
-// import back into internal/audit/handler (via the notify function field
-// below) and cycle. Same reasoning as internal/risk/job.
+// auditLister and controlLister are narrow local interfaces, not the full
+// repository types — importing those would cycle back through
+// internal/audit/handler. Same reasoning as internal/risk/job.
 type auditLister interface {
 	List(ctx context.Context) ([]*model.Audit, error)
 }
@@ -43,12 +40,9 @@ type controlLister interface {
 	ListAllForReminders(ctx context.Context) ([]*model.AuditControl, error)
 }
 
-// claimer is the reminder job's own de-dup gate — structurally satisfied by
-// auditservice.NotificationService.Claim/ReleaseClaim without this package
-// importing that package. The insert Claim triggers is the atomic de-dup
-// decision; ReleaseClaim undoes it when the owner's digest then fails to
-// send, so the item is retried on a future run instead of staying claimed
-// forever.
+// claimer is the reminder job's de-dup gate, structurally satisfied by
+// NotificationService.Claim/ReleaseClaim without importing that package.
+// Claim is the atomic de-dup decision; ReleaseClaim undoes it on a failed send.
 type claimer interface {
 	Claim(ctx context.Context, recipientID, auditID int, notifType string, controlID, populationID *int, dueDateSnapshot *string) (claimed bool, notificationID int64, err error)
 	ReleaseClaim(ctx context.Context, notificationID int64) error
@@ -60,13 +54,9 @@ const (
 	reminderHourUTC = 8
 	// runTimeout bounds a single sweep.
 	runTimeout = 30 * time.Minute
-	// releaseTimeout bounds a claim release. Deliberately its own short
-	// deadline on a context.WithoutCancel(ctx) rather than reusing the sweep's
-	// ctx: the likeliest reason a release is needed at all is that runTimeout
-	// just expired mid-send, and releasing on that same expired ctx would fail
-	// immediately, leaving the claim (and thus that owner's reminder) stuck
-	// forever — a DUE_10/DUE_5 claim's dedup key is the due date, so a stuck
-	// claim means that reminder never fires again.
+	// releaseTimeout bounds a claim release, on its own short deadline instead
+	// of the sweep's ctx — a release is often needed because runTimeout just
+	// expired, and reusing that same expired ctx would fail immediately.
 	releaseTimeout = 10 * time.Second
 )
 
@@ -77,21 +67,13 @@ type ReminderJob struct {
 	audits   auditLister
 	controls controlLister
 	claim    claimer
-	// notify delivers one owner's full daily digest synchronously. A plain
-	// function (not a handler dependency) so this package doesn't import
-	// internal/audit/handler (which imports service → would cycle) — wired to
-	// handler.Deps.SendReminderDigestSync at startup, exactly as
-	// internal/risk/job.EscalationJob is wired to NotifyEscalationSync. Unlike
-	// every other notify path, this one does NOT log audit_notification rows
-	// on success — the claim already did, before the send was even attempted
-	// (see claimer's doc comment).
+	// notify delivers one owner's full daily digest synchronously — a plain
+	// function, not a handler dependency, to avoid an import cycle. Wired to
+	// handler.Deps.SendReminderDigestSync; doesn't log on success since Claim already did.
 	notify func(ctx context.Context, ownerUserID int, items []model.ReminderItem) error
-	// admins resolves the Audit Compliance Admin recipient set once per sweep,
-	// and notifyAdmin delivers one admin's digest of every overdue item in one
-	// audit. Both nil unless WithAdminAlerts wired them, which disables the
-	// escalation entirely — the owner reminders are unaffected either way.
-	// Plain functions for the same import-cycle reason as notify above; wired
-	// to handler.Deps.ReminderAdminIDs / SendOverdueAdminDigestSync at startup.
+	// admins resolves the admin recipient set once per sweep; notifyAdmin
+	// sends one admin's digest of overdue items in one audit. Both nil unless
+	// WithAdminAlerts wired them — wired to ReminderAdminIDs / SendOverdueAdminDigestSync.
 	admins      func(ctx context.Context) ([]int, error)
 	notifyAdmin func(ctx context.Context, adminUserID int, items []model.ReminderItem) error
 	// resolveOwnerNames looks up a batch of owner ids in one call, so the
@@ -116,14 +98,9 @@ func NewReminderJob(
 	return &ReminderJob{audits: audits, controls: controls, claim: claim, notify: notify}
 }
 
-// WithAdminAlerts turns on the overdue admin escalation: on top of the
-// owner's own digest, every admin `admins` returns gets one digest email per
-// audit that has overdue items, naming every one of them. Returns j so it can
-// be chained onto NewReminderJob.
-//
-// Opt-in via a setter rather than more constructor parameters so a job built
-// without it (and every existing caller) keeps working unchanged — with
-// either function nil the escalation is simply skipped.
+// WithAdminAlerts turns on the overdue admin escalation: every admin
+// `admins` returns gets one digest email per audit with overdue items.
+// Opt-in setter (nil functions skip it) so existing callers stay unchanged.
 func (j *ReminderJob) WithAdminAlerts(
 	admins func(ctx context.Context) ([]int, error),
 	notifyAdmin func(ctx context.Context, adminUserID int, items []model.ReminderItem) error,
@@ -142,14 +119,9 @@ type adminAuditKey struct {
 	auditID int
 }
 
-// Start waits until the next occurrence of reminderHourUTC, runs the sweep,
-// then repeats daily, until ctx is cancelled. Intended to be launched in its
-// own goroutine from main.
-//
-// Deliberately not a ticker fired immediately at boot (unlike
-// internal/risk/job.EscalationJob): a reminder digest wants a predictable,
-// fixed send time regardless of when the server last restarted, not "24h
-// since whenever the process happened to start."
+// Start waits until the next reminderHourUTC, runs the sweep, then repeats
+// daily until ctx is cancelled. Not a ticker fired at boot: the digest wants
+// a fixed daily send time, not "24h since whenever the process started."
 func (j *ReminderJob) Start(ctx context.Context) {
 	for {
 		timer := time.NewTimer(durationUntilNext(reminderHourUTC, time.Now().UTC()))
@@ -297,16 +269,9 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 				"reason", why, "notificationId", notificationID, "recipientId", recipientID, "type", notifType, "err", relErr)
 		}
 	}
-	// Release every still-pending claim before letting a panic reach the
-	// top-level recover above — otherwise those items would stay claimed
-	// forever with nothing sent, the same stuck-claim outcome the ordinary
-	// release-on-failed-send path (below) exists to avoid. Registered here
-	// (after byOwner/byAdmin exist, so it can reference them) rather than
-	// with the top-level recover: defers run LIFO, so this one fires first
-	// and can still re-panic for the top-level recover to log and convert to
-	// an error, same as any other panic. The send loops below delete each
-	// resolved entry from byOwner/byAdmin, so whatever remains here is
-	// exactly the unresolved set.
+	// Releases every still-pending claim before a panic reaches the top-level
+	// recover, so nothing stays claimed forever with nothing sent. Whatever
+	// remains in byOwner/byAdmin here is exactly the unresolved set.
 	defer func() {
 		if r := recover(); r != nil {
 			for ownerID, items := range byOwner {
@@ -326,12 +291,8 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 	queue := func(ownerID int, item model.ReminderItem, controlID, populationID *int) {
 		claimed, notificationID, err := j.claim.Claim(ctx, ownerID, item.AuditID, item.Type, controlID, populationID, &item.DedupSnapshot)
 		if err != nil {
-			// Fail CLOSED, unlike the old Exists-based check's fail-open
-			// ("sending anyway"): once a claim call itself errors, this run
-			// can't tell whether it actually holds the claim or not, so
-			// sending anyway risks exactly the unguarded duplicate this
-			// mechanism exists to prevent. Skipping costs one day's delay —
-			// tomorrow's run retries it.
+			// Fail CLOSED: a claim error means we can't tell if we hold it, so
+			// sending anyway risks a duplicate. Skipping costs one day's delay.
 			slog.Warn("reminder job: claim failed, skipping this run (fail closed)", "ownerId", ownerID, "type", item.Type, "err", err)
 			skippedErr++
 			return
@@ -345,22 +306,9 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 		queued++
 	}
 
-	// queueAdmins escalates one overdue item to every admin, grouping into
-	// that admin's digest for the item's audit (byAdmin). It still claims per
-	// admin per item, so each gets their own de-dup row and a failed digest
-	// send releases only that admin's claims for that audit.
-	//
-	// Claims under the item's own REMINDER_OVERDUE type rather than a type of
-	// its own: the de-dup key already includes the recipient, so an admin's row
-	// can't collide with the owner's, and the daily re-fire falls out of the
-	// same today-dated snapshot with no schema change. The one consequence is
-	// that an admin who also OWNS an overdue item shares a key between their
-	// digest entry and their escalation — which is why they're skipped here
-	// explicitly: the owner claim is always made first (queue is called just
-	// above), so relying on the collision would silently drop the escalation
-	// anyway, and being explicit says that's intended rather than incidental.
-	// Either way they hear about it exactly once, in the digest they get as its
-	// owner.
+	// queueAdmins escalates one overdue item to every admin (grouped into
+	// that admin's digest per audit), claiming per admin per item. An admin
+	// who owns the item is skipped — they already hear about it in their own digest.
 	queueAdmins := func(item model.ReminderItem, controlID, populationID *int) {
 		for _, adminID := range adminIDs {
 			if adminID == item.OwnerUserID {
@@ -446,10 +394,8 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 	for ownerID, items := range byOwner {
 		if err := j.notify(ctx, ownerID, items); err != nil {
 			slog.Warn("reminder job: notification failed", "ownerId", ownerID, "items", len(items), "err", err)
-			// The digest didn't go out, so every item it would have covered
-			// must give up its claim — otherwise they'd stay claimed forever
-			// with nothing ever sent, silently starving that owner of
-			// reminders.
+			// The digest failed, so every item it covered must give up its
+			// claim — otherwise it stays claimed forever with nothing sent.
 			for _, it := range items {
 				release(it.NotificationID, ownerID, it.Type, "failed send")
 			}
