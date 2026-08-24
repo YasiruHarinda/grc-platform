@@ -42,7 +42,9 @@ tags:
 - name: Risk Action Steps
 - name: Risk Escalations
 - name: Risk History
+- name: Risk Evidence
 - name: Users
+- name: Admin
 security:
 - bearerAuth: []
 paths:
@@ -319,12 +321,43 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/audit/auditor-candidates:
+    get:
+      tags:
+      - Audit Users
+      summary: List users holding AUDIT_SELECT_SAMPLE for the Auditor POC picker
+      description: Returns all users who hold AUDIT_SELECT_SAMPLE (INTERNAL or EXTERNAL) — used by the Auditor POC picker in Create Audit / Manage Controls.
+      operationId: listAuditorCandidates
+      responses:
+        '200':
+          description: List of candidate users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserRef'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /api/v1/audit/teams:
     get:
       tags:
       - Audit Teams
       summary: List active audit teams for the team assignment dropdown
+      description: '?includeInactive=true returns every status (Manage Audit Hub admin table only) — additionally gated on ManageAuditHub.'
       operationId: listAuditTeams
+      parameters:
+      - name: includeInactive
+        in: query
+        schema:
+          type: string
+          enum:
+          - 'true'
+          - 'false'
       responses:
         '200':
           description: List of teams
@@ -338,6 +371,68 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+      - Audit Teams
+      summary: Create an audit team
+      description: The Manage Audit Hub "Add Team" dialog. Gated on ManageAuditHub.
+      operationId: createAuditTeam
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAuditTeamRequest'
+      responses:
+        '201':
+          description: Team created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditTeam'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/audit/teams/{id}:
+    put:
+      tags:
+      - Audit Teams
+      summary: Update an audit team
+      operationId: updateAuditTeam
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAuditTeamRequest'
+      responses:
+        '200':
+          description: Team updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditTeam'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/audits:
@@ -787,6 +882,32 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/audits/reminders/run:
+    post:
+      tags:
+      - Audits
+      summary: Manually trigger the daily due-date reminder digest sweep
+      description: QA/ops convenience so the reminder job can be tested/re-run without waiting for its fixed daily time or restarting the server. The sweep runs detached; the response is returned immediately once it has started.
+      operationId: runReminderJob
+      responses:
+        '202':
+          description: Sweep started
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: A sweep is already running
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: The reminder job is not configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/audits/{id}/controls/{controlId}/evidence/upload-link:
     get:
       tags:
@@ -1768,6 +1889,64 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+      - Risk Teams
+      summary: Create a risk team
+      description: The Admin Console's Risk Teams "Add Team" dialog. Gated on MANAGE_RISK_HUB.
+      operationId: createRiskTeam
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRiskTeamRequest'
+      responses:
+        '201':
+          description: Team created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Team'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/teams/{id}:
+    put:
+      tags:
+      - Risk Teams
+      summary: Update a risk team
+      operationId: updateRiskTeam
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRiskTeamRequest'
+      responses:
+        '204':
+          description: Team updated
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /api/v1/risk-scores:
     get:
       tags:
@@ -1807,6 +1986,95 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+      - Risk Compliance References
+      summary: Create a compliance reference
+      description: The Admin Console's Compliance References "Add Reference" dialog. Gated on MANAGE_RISK_HUB.
+      operationId: createRiskComplianceReference
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateComplianceReferenceRequest'
+      responses:
+        '201':
+          description: Reference created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComplianceReference'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/compliance-references/{id}:
+    put:
+      tags:
+      - Risk Compliance References
+      summary: Update a compliance reference
+      operationId: updateRiskComplianceReference
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateComplianceReferenceRequest'
+      responses:
+        '200':
+          description: Reference updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComplianceReference'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+      - Risk Compliance References
+      summary: Delete a compliance reference
+      description: The entity refuses (409) when the reference is still tagged on a risk.
+      operationId: deleteRiskComplianceReference
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      responses:
+        '204':
+          description: Reference deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /api/v1/risk-categories:
     get:
       tags:
@@ -1825,6 +2093,95 @@ paths:
                   $ref: '#/components/schemas/RiskCategory'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+      - Risk Categories
+      summary: Create a risk category
+      description: The Admin Console's Risk Categories "Add Category" dialog. Gated on MANAGE_RISK_HUB.
+      operationId: createRiskCategory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRiskCategoryRequest'
+      responses:
+        '201':
+          description: Category created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskCategory'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risk-categories/{id}:
+    put:
+      tags:
+      - Risk Categories
+      summary: Update a risk category
+      operationId: updateRiskCategory
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRiskCategoryRequest'
+      responses:
+        '200':
+          description: Category updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskCategory'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+      - Risk Categories
+      summary: Delete a risk category
+      description: The entity refuses (409) when the category is still used by a risk.
+      operationId: deleteRiskCategory
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      responses:
+        '204':
+          description: Category deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/management-approvers:
@@ -2743,6 +3100,133 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}/evidence:
+    get:
+      tags:
+      - Risk Evidence
+      summary: List a risk's evidence files
+      operationId: listRiskEvidence
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      responses:
+        '200':
+          description: Evidence files
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RiskEvidence'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+      - Risk Evidence
+      summary: Upload a risk evidence file
+      description: 'Multipart form upload (fields: file, evidenceType, actionPlanId (optional, required for FINAL_APPROVAL_ATTACHMENT), note (optional)). Bytes travel browser -> backend -> Compliance Entity -> Azure; no SAS is ever handed to the client. evidenceType ACTION_PLAN_ATTACHMENT requires being the risk''s assigner (or compliance-admin override); FINAL_APPROVAL_ATTACHMENT requires being the action plan''s action owner (or compliance-admin override).'
+      operationId: uploadRiskEvidence
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - file
+              - evidenceType
+              properties:
+                file:
+                  type: string
+                  format: binary
+                evidenceType:
+                  type: string
+                  enum:
+                  - ACTION_PLAN_ATTACHMENT
+                  - FINAL_APPROVAL_ATTACHMENT
+                actionPlanId:
+                  type: integer
+                note:
+                  type: string
+      responses:
+        '201':
+          description: Evidence uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskEvidence'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}/evidence/{fileId}:
+    delete:
+      tags:
+      - Risk Evidence
+      summary: Delete a risk evidence file
+      description: The caller must be the file's original uploader or hold the compliance-admin override. The blob in Azure is not deleted — only the DB record is removed.
+      operationId: deleteRiskEvidence
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      - $ref: '#/components/parameters/FileId'
+      responses:
+        '204':
+          description: Evidence deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}/evidence/{fileId}/download:
+    get:
+      tags:
+      - Risk Evidence
+      summary: Download a risk evidence file
+      description: Proxies the file bytes from the Compliance Entity (which reads them from Azure) so the browser never contacts Azure directly.
+      operationId: downloadRiskEvidence
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      - $ref: '#/components/parameters/FileId'
+      responses:
+        '200':
+          description: File bytes
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   # ---------------------------------------------------------------------------
   # Shared User endpoints
   # ---------------------------------------------------------------------------
@@ -2816,6 +3300,227 @@ paths:
           $ref: '#/components/responses/UnprocessableEntity'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  # ---------------------------------------------------------------------------
+  # Admin Console — every route below requires MANAGE_USERS GLOBAL
+  # ---------------------------------------------------------------------------
+  /api/v1/admin/directory/search:
+    get:
+      tags:
+      - Admin
+      summary: Search the internal WSO2-org directory snapshot by name/email substring
+      description: Powers the "Add User" typeahead for INTERNAL users — a snapshot substring match, not a live SCIM call.
+      operationId: searchAdminDirectory
+      parameters:
+      - name: q
+        in: query
+        required: true
+        description: Search substring; must be at least 2 characters.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Matching directory entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DirectorySearchResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/admin/directory/search-external:
+    get:
+      tags:
+      - Admin
+      summary: Search the external auditor organization directory by name/email substring
+      description: Powers the "Add User" typeahead once the EXTERNAL user type is selected — a live SCIM call against the external org, unlike the internal snapshot search.
+      operationId: searchAdminExternalDirectory
+      parameters:
+      - name: q
+        in: query
+        required: true
+        description: Search substring; must be at least 2 characters.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Matching directory entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DirectorySearchResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/admin/users:
+    get:
+      tags:
+      - Admin
+      summary: List every platform user with their resolved grants
+      operationId: listAdminUsers
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AdminUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+      - Admin
+      summary: Provision a platform user by uuid
+      description: Requires a directory match (internal WSO2-org or external auditor org, per userType) — nothing is stored beyond the uuid itself.
+      operationId: createAdminUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAdminUserRequest'
+      responses:
+        '201':
+          description: User provisioned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateAdminUserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/admin/users/{id}/status:
+    patch:
+      tags:
+      - Admin
+      summary: Change a platform user's status
+      description: A caller may not change their own status — that would zero all of their own privileges.
+      operationId: updateAdminUserStatus
+      parameters:
+      - $ref: '#/components/parameters/AdminUserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserStatusRequest'
+      responses:
+        '204':
+          description: Status updated
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/admin/users/{id}/grants:
+    post:
+      tags:
+      - Admin
+      summary: Grant a role to a user in a scope
+      operationId: createAdminGrant
+      parameters:
+      - $ref: '#/components/parameters/AdminUserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateGrantRequest'
+      responses:
+        '201':
+          description: Grant created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGrant'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/admin/users/{id}/grants/{grantId}:
+    delete:
+      tags:
+      - Admin
+      summary: Revoke a user's role grant
+      description: The revoking caller is always the authenticated user, never a client-supplied value.
+      operationId: revokeAdminGrant
+      parameters:
+      - $ref: '#/components/parameters/AdminUserId'
+      - name: grantId
+        in: path
+        required: true
+        schema:
+          type: integer
+      responses:
+        '204':
+          description: Grant revoked
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/admin/roles:
+    get:
+      tags:
+      - Admin
+      summary: List assignable roles for the grant editor's role picker
+      description: Never includes AUDIT roles.
+      operationId: listAdminRoles
+      responses:
+        '200':
+          description: List of roles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AdminRole'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 components:
   securitySchemes:
     bearerAuth:
@@ -2873,6 +3578,13 @@ components:
       name: escalationId
       in: path
       required: true
+      schema:
+        type: integer
+    AdminUserId:
+      name: id
+      in: path
+      required: true
+      description: Platform user ID.
       schema:
         type: integer
   responses:
@@ -5059,3 +5771,265 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AgingRiskItem'
+    # --- Admin Console -----------------------------------------------------
+    DirectorySearchResult:
+      type: object
+      properties:
+        uuid:
+          type: string
+        email:
+          type: string
+        displayName:
+          type: string
+    AdminGrant:
+      type: object
+      description: One row of user_role_grant, resolved to names the Admin Console can render without a second lookup.
+      properties:
+        id:
+          type: integer
+        roleId:
+          type: integer
+        roleName:
+          type: string
+        module:
+          type: string
+          enum:
+          - RISK
+          - AUDIT
+          - SHARED
+        scopeType:
+          type: string
+        scopeId:
+          type: integer
+        scopeBasis:
+          type: string
+        scopeTeamType:
+          type: string
+        scopeName:
+          type: string
+    AdminUser:
+      type: object
+      properties:
+        id:
+          type: integer
+        uuid:
+          type: string
+        displayName:
+          type: string
+        email:
+          type: string
+        userType:
+          type: string
+          enum:
+          - INTERNAL
+          - EXTERNAL
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - INACTIVE
+          - REMOVED
+        createdOn:
+          type: string
+          format: date-time
+        grants:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminGrant'
+    AdminRole:
+      type: object
+      description: A row of the shared role table, for populating the grant editor's role picker. Never includes AUDIT roles.
+      properties:
+        id:
+          type: integer
+        roleName:
+          type: string
+        description:
+          type: string
+        module:
+          type: string
+        scopeBasis:
+          type: string
+        assignableUserType:
+          type: string
+          enum:
+          - INTERNAL
+          - EXTERNAL
+        status:
+          type: string
+    CreateAdminUserRequest:
+      type: object
+      required:
+      - uuid
+      properties:
+        uuid:
+          type: string
+        userType:
+          type: string
+          description: INTERNAL or EXTERNAL. Empty defaults to INTERNAL.
+          enum:
+          - INTERNAL
+          - EXTERNAL
+    CreateAdminUserResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        uuid:
+          type: string
+        displayName:
+          type: string
+        email:
+          type: string
+    UpdateUserStatusRequest:
+      type: object
+      required:
+      - status
+      properties:
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - INACTIVE
+          - REMOVED
+    CreateGrantRequest:
+      type: object
+      required:
+      - roleId
+      - scopeType
+      - scopeId
+      properties:
+        roleId:
+          type: integer
+        scopeType:
+          type: string
+        scopeId:
+          type: integer
+    # --- Audit Teams --------------------------------------------------------
+    CreateAuditTeamRequest:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          description: Defaults to ACTIVE when omitted.
+          enum:
+          - ACTIVE
+          - INACTIVE
+    UpdateAuditTeamRequest:
+      type: object
+      required:
+      - name
+      - status
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - INACTIVE
+    # --- Risk Teams -----------------------------------------------------------
+    CreateRiskTeamRequest:
+      type: object
+      required:
+      - name
+      - team_type
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+          nullable: true
+        description:
+          type: string
+        team_type:
+          type: string
+    UpdateRiskTeamRequest:
+      type: object
+      required:
+      - name
+      - team_type
+      - status
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+          nullable: true
+        description:
+          type: string
+        team_type:
+          type: string
+        status:
+          type: string
+    # --- Risk Compliance References -----------------------------------------
+    CreateComplianceReferenceRequest:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+    UpdateComplianceReferenceRequest:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+    # --- Risk Categories ------------------------------------------------------
+    CreateRiskCategoryRequest:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+    UpdateRiskCategoryRequest:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+    # --- Risk Evidence --------------------------------------------------------
+    RiskEvidence:
+      type: object
+      properties:
+        id:
+          type: integer
+        risk_id:
+          type: integer
+        action_plan_id:
+          type: integer
+          nullable: true
+        file_name:
+          type: string
+        file_path:
+          type: string
+        note:
+          type: string
+        evidence_type:
+          type: string
+          enum:
+          - ACTION_PLAN_ATTACHMENT
+          - FINAL_APPROVAL_ATTACHMENT
+        created_by:
+          type: string
+        created_by_email:
+          type: string
+        created_at:
+          type: string
+          format: date-time

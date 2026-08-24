@@ -146,7 +146,9 @@ func main() {
 		}
 		actors = append(actors, a)
 	}
-	rows.Close()
+	if err := rows.Close(); err != nil {
+		fatal("close risk_evidence.created_by rows: %v", err)
+	}
 	if err := rows.Err(); err != nil {
 		fatal("iterate risk_evidence.created_by: %v", err)
 	}

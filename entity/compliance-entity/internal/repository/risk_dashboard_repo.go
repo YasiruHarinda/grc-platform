@@ -104,6 +104,7 @@ func (d *riskDashboardRepo) OpenRiskFacts(ctx context.Context, registerID *int, 
 	args := append([]any{statusClosed, statusCancelled}, filterArgs...)
 	args = append(args, scopeArgs...)
 
+	// #nosec G202 -- concatenated parts are fixed SQL fragments from registerFilter/registerScopeFilter/dashboardScoreJoin, never user input; values go through args
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT st.id, st.name, rs.likelihood, rs.impact, rs.risk_level, rs.color_code,
 		       COALESCE(r.treatment_strategy, 'UNSPECIFIED'), COUNT(*)
@@ -150,6 +151,7 @@ func (d *riskDashboardRepo) RegisterStatusFacts(ctx context.Context, registerID 
 	args := append([]any{statusCancelled}, filterArgs...)
 	args = append(args, scopeArgs...)
 
+	// #nosec G202 -- concatenated parts are fixed SQL fragments from registerFilter/registerScopeFilter/dashboardScoreJoin/registerStatusBucketCase, never user input; values go through args
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT st.id, st.name, rs.risk_level, rs.color_code,
 		       `+registerStatusBucketCase+`,
@@ -185,6 +187,7 @@ func (d *riskDashboardRepo) CertTagCounts(ctx context.Context, registerID *int, 
 	args := append([]any{statusClosed, statusCancelled}, filterArgs...)
 	args = append(args, scopeArgs...)
 
+	// #nosec G202 -- concatenated parts are fixed SQL fragments from registerFilter/registerScopeFilter, never user input; values go through args
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT st.name, ref.name, COUNT(*)
 		FROM risk r
@@ -227,6 +230,7 @@ func (d *riskDashboardRepo) RepeatedComplianceRisks(ctx context.Context, registe
 	args = append(args, filterArgs...)
 	args = append(args, r2ScopeArgs...)
 
+	// #nosec G202 -- concatenated parts are fixed SQL fragments from registerFilter/registerScopeFilter/dashboardScoreJoin (and the r2 variants), never user input; values go through args
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT r.risk_title, st.name,
 		       CASE WHEN r.workflow_status = ? THEN 'CLOSED' ELSE 'OPEN' END,
@@ -267,6 +271,7 @@ func (d *riskDashboardRepo) HighRisks(ctx context.Context, registerID *int, regi
 	args := append([]any{statusClosed, statusCancelled}, filterArgs...)
 	args = append(args, scopeArgs...)
 
+	// #nosec G202 -- concatenated parts are fixed SQL fragments (registerFilter/registerScopeFilter/dashboardScoreJoin, and the reserved-word `user` table quoting) never user input; values go through args
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT r.id, r.risk_code, r.risk_title, st.name,
 		       -- uuid only — the platform stores no name for anyone. The

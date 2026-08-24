@@ -122,6 +122,7 @@ func (a *riskAnalyticsRepo) IdentifiedTrend(ctx context.Context, registerID *int
 	args := append([]any{statusCancelled, since}, filterArgs...)
 	args = append(args, scopeArgs...)
 
+	// #nosec G202 -- concatenated parts are fixed SQL fragments from registerFilter/registerScopeFilter/dashboardScoreJoin, never user input; values go through args
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT DATE_FORMAT(r.risk_identified_date, '%Y-%m-01'), COUNT(*), AVG(rs.risk_rating)
 		FROM risk r`+dashboardScoreJoin+`
@@ -153,6 +154,7 @@ func (a *riskAnalyticsRepo) ClosedTrend(ctx context.Context, registerID *int, re
 	args := append([]any{statusClosed, since}, filterArgs...)
 	args = append(args, scopeArgs...)
 
+	// #nosec G202 -- concatenated parts are fixed SQL fragments from registerFilter/registerScopeFilter, never user input; values go through args
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT DATE_FORMAT(r.updated_at, '%Y-%m-01'), COUNT(*)
 		FROM risk r
@@ -184,6 +186,7 @@ func (a *riskAnalyticsRepo) LevelDistribution(ctx context.Context, registerID *i
 	args := append([]any{statusCancelled, since}, filterArgs...)
 	args = append(args, scopeArgs...)
 
+	// #nosec G202 -- concatenated parts are fixed SQL fragments from registerFilter/registerScopeFilter/dashboardScoreJoin, never user input; values go through args
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT DATE_FORMAT(r.risk_identified_date, '%Y-%m-01'), rs.risk_level, rs.color_code, COUNT(*)
 		FROM risk r`+dashboardScoreJoin+`
@@ -238,6 +241,7 @@ func (a *riskAnalyticsRepo) IdentifiedTrendByRegister(ctx context.Context, regis
 	args := append([]any{statusCancelled, since}, filterArgs...)
 	args = append(args, scopeArgs...)
 
+	// #nosec G202 -- concatenated parts are fixed SQL fragments from registerFilter/registerScopeFilter, never user input; values go through args
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT DATE_FORMAT(r.risk_identified_date, '%Y-%m-01'), st.name, COUNT(*)
 		FROM risk r
@@ -270,6 +274,7 @@ func (a *riskAnalyticsRepo) ClosedTrendByRegister(ctx context.Context, registerI
 	args := append([]any{statusClosed, since}, filterArgs...)
 	args = append(args, scopeArgs...)
 
+	// #nosec G202 -- concatenated parts are fixed SQL fragments from registerFilter/registerScopeFilter, never user input; values go through args
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT DATE_FORMAT(r.updated_at, '%Y-%m-01'), st.name, COUNT(*)
 		FROM risk r
@@ -300,6 +305,7 @@ func (a *riskAnalyticsRepo) RegisterTotals(ctx context.Context, registerIDs []in
 	scopeClause, scopeArgs := registerScopeFilter("r", registerIDs)
 	args := append([]any{statusCancelled}, scopeArgs...)
 
+	// #nosec G202 -- concatenated part is only registerScopeFilter's fixed SQL fragment, never user input; values go through args
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT st.name, COUNT(*)
 		FROM risk r
@@ -331,6 +337,7 @@ func (a *riskAnalyticsRepo) ComplianceDistribution(ctx context.Context, register
 	args := append([]any{statusCancelled}, filterArgs...)
 	args = append(args, scopeArgs...)
 
+	// #nosec G202 -- concatenated parts are fixed SQL fragments from registerFilter/registerScopeFilter, never user input; values go through args
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT ref.name, COUNT(*)
 		FROM risk r
@@ -363,6 +370,7 @@ func (a *riskAnalyticsRepo) TreatmentMix(ctx context.Context, registerID *int, r
 	args := append([]any{statusClosed, statusCancelled}, filterArgs...)
 	args = append(args, scopeArgs...)
 
+	// #nosec G202 -- concatenated parts are fixed SQL fragments from registerFilter/registerScopeFilter, never user input; values go through args
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT COALESCE(r.treatment_strategy, ''), COUNT(*)
 		FROM risk r
@@ -393,6 +401,7 @@ func (a *riskAnalyticsRepo) WorkflowFunnel(ctx context.Context, registerID *int,
 	args := append([]any{statusCancelled}, filterArgs...)
 	args = append(args, scopeArgs...)
 
+	// #nosec G202 -- concatenated parts are fixed SQL fragments from registerFilter/registerScopeFilter, never user input; values go through args
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT r.workflow_status, COUNT(*)
 		FROM risk r
@@ -423,6 +432,7 @@ func (a *riskAnalyticsRepo) AgingRisks(ctx context.Context, registerID *int, reg
 	args = append(args, scopeArgs...)
 	args = append(args, limit)
 
+	// #nosec G202 -- concatenated parts are fixed SQL fragments (registerFilter/registerScopeFilter/dashboardScoreJoin, and the reserved-word `user` table quoting) never user input; values go through args
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT r.id, r.risk_code, r.risk_title, st.name,
 		       -- uuid only, same pattern as risk_repo.go: the caller resolves

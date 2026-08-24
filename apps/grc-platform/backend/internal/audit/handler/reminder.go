@@ -65,7 +65,7 @@ func (h *reminderJobHandler) run(w http.ResponseWriter, r *http.Request) {
 		response.WriteError(w, http.StatusConflict, "reminder job is already running")
 		return
 	}
-	go func() {
+	go func() { // #nosec G118 -- deliberately detached from r.Context(): it would cancel this sweep the instant the handler returns 202, well before the up-to-30min run finishes
 		defer h.running.Store(false)
 		defer func() {
 			if p := recover(); p != nil {
