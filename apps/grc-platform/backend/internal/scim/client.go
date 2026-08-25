@@ -238,6 +238,9 @@ type DirectoryUser struct {
 type userSearchInput struct {
 	Schemas []string `json:"schemas"`
 	Filter  string   `json:"filter"`
+	// Domain restricts the search to the DEFAULT userstore, matching what
+	// Asgardeo returns for LookupByEmail/LookupByUUID/SearchByQuery elsewhere.
+	Domain string `json:"domain"`
 	// Attributes to return
 	Attributes []string `json:"attributes,omitempty"`
 	// StartIndex/ItemsPerPage are 1-indexed SCIM pagination — zero means
@@ -456,6 +459,7 @@ func (c *Client) searchUsersPage(ctx context.Context, filter string, startIndex,
 	body, err := json.Marshal(userSearchInput{
 		Schemas: []string{scimSearchRequestSchema},
 		Filter:  filter,
+		Domain:  "DEFAULT",
 		// Asking for only what is used keeps the response small and avoids
 		// pulling attributes this platform has no business reading.
 		Attributes:   []string{"id", "userName", "name"},
