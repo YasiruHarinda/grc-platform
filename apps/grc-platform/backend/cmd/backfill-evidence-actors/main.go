@@ -98,7 +98,7 @@ func main() {
 
 	scimCli := scim.NewClient(
 		mustEnv("SCIM_BASE_URL"), mustEnv("SCIM_TOKEN_URL"),
-		mustEnv("SCIM_CLIENT_ID"), mustEnv("SCIM_CLIENT_SECRET"), mustEnv("SCIM_SCOPES"),
+		mustEnv("SCIM_CLIENT_ID"), mustEnv("SCIM_CLIENT_SECRET"), mustEnv("SCIM_SCOPES"), mustEnv("SCIM_ORG"),
 	)
 	scimCli.SetHTTPTimeout(*scimTimeout)
 

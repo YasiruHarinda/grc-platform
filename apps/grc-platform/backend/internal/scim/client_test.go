@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 // TestListUsersByDomain_ShortPage exercises the case the review comment
@@ -65,7 +66,7 @@ func TestListUsersByDomain_ShortPage(t *testing.T) {
 	}))
 	defer searchSrv.Close()
 
-	c := NewClient(searchSrv.URL, tokenSrv.URL, "id", "secret", "org_internal:users:read")
+	c := NewClient(searchSrv.URL, tokenSrv.URL, "id", "secret", "internal_user_mgt_view internal_user_mgt_list", "wso2")
 
 	got, err := c.ListUsersByDomain(context.Background(), "wso2.com")
 	if err != nil {
@@ -88,10 +89,11 @@ func TestListUsersByDomain_ShortPage(t *testing.T) {
 }
 
 // TestNewExternalClient_HitsExternalOrgPath confirms NewExternalClient's
-// requests target organizations/external/*, not organizations/internal/* —
-// the two orgs hold genuinely distinct identities (see the design doc's
-// §1.4), so a client wired to the wrong path would silently never resolve
-// anyone, or worse, resolve the wrong org's uuid space.
+// requests target the external org's own tenant path
+// (/t/wso2external/scim2/...), not the internal org's — the two orgs hold
+// genuinely distinct identities (see the design doc's §1.4), so a client
+// wired to the wrong path would silently never resolve anyone, or worse,
+// resolve the wrong org's uuid space.
 func TestNewExternalClient_HitsExternalOrgPath(t *testing.T) {
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewEncoder(w).Encode(tokenResponse{AccessToken: "test-token", ExpiresIn: 3600}); err != nil {
@@ -112,7 +114,8 @@ func TestNewExternalClient_HitsExternalOrgPath(t *testing.T) {
 	}))
 	defer searchSrv.Close()
 
-	c := NewExternalClient(searchSrv.URL, tokenSrv.URL, "id", "secret", "org_external:users:read")
+	c := NewExternalClient(searchSrv.URL, tokenSrv.URL, "id", "secret",
+		"internal_user_mgt_view internal_user_mgt_list", "wso2external")
 
 	got, err := c.LookupByUUID(context.Background(), "ext-uuid-1")
 	if err != nil {
@@ -121,14 +124,14 @@ func TestNewExternalClient_HitsExternalOrgPath(t *testing.T) {
 	if got == nil || got.UUID != "ext-uuid-1" {
 		t.Fatalf("got %+v, want a resolved external user", got)
 	}
-	if gotPath != "/organizations/external/users/search" {
-		t.Errorf("hit path %q, want /organizations/external/users/search", gotPath)
+	if gotPath != "/t/wso2external/scim2/Users/.search" {
+		t.Errorf("hit path %q, want /t/wso2external/scim2/Users/.search", gotPath)
 	}
 }
 
 // TestNewClient_StillHitsInternalOrgPath guards the refactor that introduced
 // the org field: NewClient's existing callers (main.go, the backfill tools)
-// must keep resolving against organizations/internal/*, unchanged.
+// must keep resolving against the internal org's own tenant path, unchanged.
 func TestNewClient_StillHitsInternalOrgPath(t *testing.T) {
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(tokenResponse{AccessToken: "test-token", ExpiresIn: 3600})
@@ -142,12 +145,55 @@ func TestNewClient_StillHitsInternalOrgPath(t *testing.T) {
 	}))
 	defer searchSrv.Close()
 
-	c := NewClient(searchSrv.URL, tokenSrv.URL, "id", "secret", "org_internal:users:read")
+	c := NewClient(searchSrv.URL, tokenSrv.URL, "id", "secret", "internal_user_mgt_view internal_user_mgt_list", "wso2")
 	if _, err := c.LookupByUUID(context.Background(), "some-uuid"); err != nil {
 		t.Fatalf("LookupByUUID: %v", err)
 	}
-	if gotPath != "/organizations/internal/users/search" {
-		t.Errorf("hit path %q, want /organizations/internal/users/search", gotPath)
+	if gotPath != "/t/wso2/scim2/Users/.search" {
+		t.Errorf("hit path %q, want /t/wso2/scim2/Users/.search", gotPath)
+	}
+}
+
+// TestAccessToken_SendsStableTokenBindingID confirms every token request
+// from one Client instance carries the same tokenBindingId — a fresh random
+// value per request would defeat the whole point (see Client.tokenBindingID's
+// doc comment): Asgardeo revokes a client's previous token when it issues a
+// new one for the same binding, so two requests from the same instance need
+// to agree on the binding to avoid invalidating each other.
+func TestAccessToken_SendsStableTokenBindingID(t *testing.T) {
+	var gotBindingIDs []string
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse token request form: %v", err)
+		}
+		gotBindingIDs = append(gotBindingIDs, r.FormValue("tokenBindingId"))
+		// ExpiresIn: 0 forces accessToken to skip the cache and re-request
+		// every call, so a second accessToken call actually hits this server
+		// again instead of reusing the first response.
+		json.NewEncoder(w).Encode(tokenResponse{AccessToken: "test-token", ExpiresIn: 0})
+	}))
+	defer tokenSrv.Close()
+
+	c := NewClient("https://unused.example", tokenSrv.URL, "id", "secret",
+		"internal_user_mgt_view internal_user_mgt_list", "wso2")
+
+	if _, err := c.accessToken(context.Background()); err != nil {
+		t.Fatalf("accessToken (1st): %v", err)
+	}
+	c.tokenExpiry = time.Time{} // force the second call past the cache too
+	if _, err := c.accessToken(context.Background()); err != nil {
+		t.Fatalf("accessToken (2nd): %v", err)
+	}
+
+	if len(gotBindingIDs) != 2 {
+		t.Fatalf("token endpoint hit %d times, want 2", len(gotBindingIDs))
+	}
+	if gotBindingIDs[0] == "" {
+		t.Fatal("tokenBindingId was empty")
+	}
+	if gotBindingIDs[0] != gotBindingIDs[1] {
+		t.Errorf("tokenBindingId changed between requests from the same Client: %q vs %q",
+			gotBindingIDs[0], gotBindingIDs[1])
 	}
 }
 

@@ -14,19 +14,22 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package scim is a client for the internal SCIM Operations Service
-// (digiops-infra/operations/scim-operations-service), used to resolve
+// Package scim is a client for Asgardeo's own SCIM2 API, used to resolve
 // identity between a person's email and their Asgardeo user id (uuid) — the
-// only identifier the `user` table stores (see shared.sql). This client never
-// modifies the SCIM Operations Service or Asgardeo itself; it only calls the
-// service's existing Users-search endpoint.
+// only identifier the `user` table stores (see shared.sql). It calls
+// Asgardeo directly (POST /t/{org}/scim2/Users/.search, authenticating
+// against /t/{org}/oauth2/token) rather than going through digiops-infra's
+// SCIM Operations Service. It never modifies Asgardeo; it only calls the
+// Users-search endpoint.
 package scim
 
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -34,36 +37,57 @@ import (
 	"time"
 )
 
-// Client talks to the SCIM Operations Service's endpoints for one Asgardeo
-// organization — "internal" (asgardeo/wso2) or "external" (asgardeo/wso2external),
-// picked at construction by NewClient vs NewExternalClient and fixed for the
-// Client's lifetime. The service itself sits behind Choreo API Management
-// with OAuth2 client-credentials auth, mirroring the hr_entity client's
-// pattern.
+// maxErrorBodyBytes caps how much of an error response body gets read into
+// an error message — enough for Asgardeo's SCIM/OAuth2 error payloads (a
+// short JSON object), not so much that a misbehaving proxy returning an
+// enormous body could bloat a log line.
+const maxErrorBodyBytes = 2048
+
+// readErrorBody best-effort reads and trims resp.Body for inclusion in an
+// error message. Asgardeo's non-2xx responses carry a JSON body naming the
+// actual problem (e.g. "invalid_client", "unauthorized_client", a SCIM
+// "detail" string) that the plain status code alone doesn't distinguish —
+// a 403 for "wrong scope" and a 403 for "wrong org" look identical without
+// it. Never itself errors: a body read failure degrades to an empty string
+// rather than masking the original status-code error.
+func readErrorBody(resp *http.Response) string {
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+	return strings.TrimSpace(string(b))
+}
+
+// Client talks to Asgardeo's SCIM2 API for one Asgardeo organization —
+// "internal" (org wso2) or "external" (org wso2external), picked at
+// construction by NewClient vs NewExternalClient and fixed for the Client's
+// lifetime. Internal users and external auditors live in genuinely separate
+// Asgardeo organizations, each with its own OAuth2 app registration, so
+// there is no single set of credentials or endpoint that covers both — every
+// method needs a Client built for the right org.
 type Client struct {
 	baseURL      string
 	tokenURL     string
 	clientID     string
 	clientSecret string
 	// scopes is a space-separated OAuth2 scope string requested on every token
-	// exchange — every method on this client needs org_internal:users:read (or
-	// org_external:users:read for an external-org Client). Asgardeo silently
-	// omits any scope the application isn't authorized for from the issued
-	// token rather than erroring, so an empty/wrong value here surfaces later
-	// as a 403 "Scope validation failed" from the SCIM Operations Service's
-	// gateway, not as a token-request failure.
+	// exchange — every method on this client needs internal_user_mgt_view and
+	// internal_user_mgt_list. Asgardeo silently omits any scope the
+	// application isn't authorized for from the issued token rather than
+	// erroring, so an empty/wrong value here surfaces later as a 403 from
+	// Asgardeo's SCIM2 API at call time, not as a token-request failure.
 	scopes string
-	// org is the path segment ("internal" or "external") every request this
-	// client makes targets — see NewClient/NewExternalClient. External
-	// auditors' identities live in a genuinely separate Asgardeo organization,
-	// not a filtered view of the internal one (confirmed against
-	// scim-operations-service/modules/scim/client.bal, which backs
-	// organizations/internal/* and organizations/'external/* — the Ballerina
-	// source's leading quote is only its keyword-escape syntax for `external`;
-	// the actual path segment on the wire is unquoted), so there is no single
-	// endpoint that covers both.
-	org        string
-	httpClient *http.Client
+	// org is the Asgardeo tenant path segment this client's requests target
+	// (e.g. "wso2" or "wso2external"), used to build both the SCIM2 base
+	// (/t/{org}/scim2) and the token endpoint (/t/{org}/oauth2/token).
+	org string
+	// tokenBindingID is a random identifier generated once per Client and
+	// sent as an optional param on every token request. Asgardeo revokes a
+	// client's previously issued token when it issues a new one for the same
+	// binding, so without a stable-per-instance binding id, concurrent
+	// server processes/replicas sharing one Asgardeo app would keep
+	// invalidating each other's cached tokens. Mirrors
+	// scim-operations-service/modules/scim/client.bal, which generates one
+	// via uuid:createRandomUuid() per http:Client it builds.
+	tokenBindingID string
+	httpClient     *http.Client
 
 	tokenMu     sync.Mutex
 	cachedToken string
@@ -74,44 +98,60 @@ type Client struct {
 // near-expiry token is never handed to an in-flight request.
 const tokenExpiryBuffer = 30 * time.Second
 
-// NewClient creates a Client for the SCIM Operations Service's internal-org
-// endpoints at baseURL, authenticating via OAuth2 client-credentials at
-// tokenURL. scopes is a space-separated list requested on every token
+// NewClient creates a Client for Asgardeo's internal-org SCIM2 API at
+// baseURL (the Asgardeo API root, e.g. https://api.asgardeo.io), targeting
+// tenant org (e.g. "wso2") and authenticating via OAuth2 client-credentials
+// at tokenURL. scopes is a space-separated list requested on every token
 // exchange (see Client.scopes).
-func NewClient(baseURL, tokenURL, clientID, clientSecret, scopes string) *Client {
-	return newClient(baseURL, tokenURL, clientID, clientSecret, scopes, "internal")
+func NewClient(baseURL, tokenURL, clientID, clientSecret, scopes, org string) *Client {
+	return newClient(baseURL, tokenURL, clientID, clientSecret, scopes, org)
 }
 
-// NewExternalClient is NewClient for external auditors' identities. Every
-// method on the returned Client calls organizations/external/* instead of
-// organizations/internal/*. ListUsersByDomain is still exposed (the type has
-// no per-org method set) but has no real use here: the bulk-fetch shape it
-// implements has no external-org equivalent to call against, so callers
-// resolving an external uuid should use LookupByUUID.
-func NewExternalClient(baseURL, tokenURL, clientID, clientSecret, scopes string) *Client {
-	return newClient(baseURL, tokenURL, clientID, clientSecret, scopes, "external")
+// NewExternalClient is NewClient for external auditors' identities — pass
+// the external org's own tokenURL/clientID/clientSecret/scopes/org (a
+// genuinely different Asgardeo app registration, not just a different scope
+// string). ListUsersByDomain is still exposed (the type has no per-org
+// method set) but has no real use here: the bulk-fetch shape it implements
+// has no external-org equivalent to call against, so callers resolving an
+// external uuid should use LookupByUUID.
+func NewExternalClient(baseURL, tokenURL, clientID, clientSecret, scopes, org string) *Client {
+	return newClient(baseURL, tokenURL, clientID, clientSecret, scopes, org)
 }
 
 func newClient(baseURL, tokenURL, clientID, clientSecret, scopes, org string) *Client {
 	return &Client{
-		baseURL:      strings.TrimRight(baseURL, "/"),
-		tokenURL:     tokenURL,
-		clientID:     clientID,
-		clientSecret: clientSecret,
-		scopes:       scopes,
-		org:          org,
-		httpClient:   &http.Client{Timeout: 5 * time.Second},
+		baseURL:        strings.TrimRight(baseURL, "/"),
+		tokenURL:       tokenURL,
+		clientID:       clientID,
+		clientSecret:   clientSecret,
+		scopes:         scopes,
+		org:            org,
+		tokenBindingID: newTokenBindingID(),
+		httpClient:     &http.Client{Timeout: 5 * time.Second},
 	}
+}
+
+// newTokenBindingID generates a random RFC4122-ish v4 identifier, matching
+// internal/middleware.newCorrelationID's approach — no external uuid
+// dependency needed for a value that only has to be unique per process, not
+// globally unique or spec-compliant.
+func newTokenBindingID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("scim: failed to read random bytes for token binding id: " + err.Error())
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
 // SetHTTPTimeout replaces the per-request timeout. The 5s default suits the
 // live request path, where a user is waiting and a slow directory should fail
 // fast rather than hold the request open.
 //
-// Offline tools want the opposite: this service is Choreo-hosted and cold
-// starts, so a first call can take far longer than any interactive budget,
-// and a batch job that has no user waiting would rather wait than abort a
-// whole migration run.
+// Offline tools want the opposite: a first call can cold-start slower than
+// any interactive budget, and a batch job that has no user waiting would
+// rather wait than abort a whole migration run.
 //
 // Call it during setup, before any request — it is not safe to call
 // concurrently with in-flight calls.
@@ -124,8 +164,8 @@ type tokenResponse struct {
 	ExpiresIn   int    `json:"expires_in"`
 }
 
-// accessToken returns a valid bearer token for the SCIM Operations Service,
-// reusing the cached one until it's close to expiry.
+// accessToken returns a valid bearer token for Asgardeo's SCIM2 API, reusing
+// the cached one until it's close to expiry.
 func (c *Client) accessToken(ctx context.Context) (string, error) {
 	c.tokenMu.Lock()
 	defer c.tokenMu.Unlock()
@@ -139,6 +179,10 @@ func (c *Client) accessToken(ctx context.Context) (string, error) {
 	if c.scopes != "" {
 		form.Set("scope", c.scopes)
 	}
+	// See Client.tokenBindingID's doc comment: keeps this token request from
+	// revoking a token another process/replica issued for the same Asgardeo
+	// app.
+	form.Set("tokenBindingId", c.tokenBindingID)
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -154,7 +198,7 @@ func (c *Client) accessToken(ctx context.Context) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("scim token endpoint returned status %d", resp.StatusCode)
+		return "", fmt.Errorf("scim token endpoint returned status %d: %s", resp.StatusCode, readErrorBody(resp))
 	}
 
 	var tokenResp tokenResponse
@@ -192,7 +236,9 @@ type DirectoryUser struct {
 }
 
 type userSearchInput struct {
-	Filter     string   `json:"filter"`
+	Schemas []string `json:"schemas"`
+	Filter  string   `json:"filter"`
+	// Attributes to return
 	Attributes []string `json:"attributes,omitempty"`
 	// StartIndex/ItemsPerPage are 1-indexed SCIM pagination — zero means
 	// "unset" and is omitted, letting the server apply its own default
@@ -202,9 +248,13 @@ type userSearchInput struct {
 	ItemsPerPage int `json:"itemsPerPage,omitempty"`
 }
 
-// scimUser is one entry in a Users-search result. The service's own type is an
-// open record, so Asgardeo's extra attributes (name, emails, …) pass through
-// and can be read here even though its Ballerina definition names only two.
+// scimSearchRequestSchema is the SCIM2 SearchRequest schema Asgardeo expects
+// on the "schemas" field of a POST /Users/.search body.
+const scimSearchRequestSchema = "urn:ietf:params:scim:api:messages:2.0:SearchRequest"
+
+// scimUser is one entry in a Users-search result. Asgardeo's response
+// carries far more attributes than these; only the two read here are
+// declared, and the rest are ignored by encoding/json.
 type scimUser struct {
 	ID       string `json:"id"`
 	UserName string `json:"userName"`
@@ -257,21 +307,21 @@ const searchPageSize = 20
 // LookupByEmail resolves an email to that person's directory record — their
 // Asgardeo id and display name.
 //
-// Requires the org_internal:users:read scope, which is narrower than the groups
-// scope this client also uses. Asgardeo silently omits a scope the application
-// is not authorised for rather than failing the token request, so a missing
-// grant surfaces here as a 403 from the gateway at call time, not as a
-// configuration error at startup.
+// Requires the internal_user_mgt_view and internal_user_mgt_list scopes.
+// Asgardeo silently omits a scope the application is not authorised for
+// rather than failing the token request, so a missing grant surfaces here as
+// a 403 from Asgardeo's SCIM2 API at call time, not as a configuration error
+// at startup.
 //
 // Returns (nil, nil) when the directory knows no such user. That is an ordinary
 // answer, not a failure: an employee may be assignable in HR long before they
 // have an Asgardeo account, and the caller decides what to do about it.
 // A nil Client means the directory is not configured — local development
-// without credentials for this internal, VPN-only service. It answers "no such
-// user" rather than panicking, so callers written to tolerate an unknown person
-// behave the same way whether the directory is absent or merely unaware of
-// them. Callers that must not proceed without a real answer have to check for
-// a nil client themselves; none do today.
+// without Asgardeo credentials. It answers "no such user" rather than
+// panicking, so callers written to tolerate an unknown person behave the
+// same way whether the directory is absent or merely unaware of them.
+// Callers that must not proceed without a real answer have to check for a
+// nil client themselves; none do today.
 func (c *Client) LookupByEmail(ctx context.Context, email string) (*DirectoryUser, error) {
 	if c == nil {
 		return nil, nil
@@ -299,8 +349,8 @@ func (c *Client) LookupByEmail(ctx context.Context, email string) (*DirectoryUse
 // the `user` table keeps the uuid, and the name and email come from here.
 //
 // Same contract as LookupByEmail — (nil, nil) for an id the directory does not
-// know, which happens for a deleted account, and the same org_internal:users:read
-// scope requirement.
+// know, which happens for a deleted account, and the same
+// internal_user_mgt_view/internal_user_mgt_list scope requirement.
 func (c *Client) LookupByUUID(ctx context.Context, uuid string) (*DirectoryUser, error) {
 	if c == nil {
 		return nil, nil
@@ -320,21 +370,22 @@ func (c *Client) LookupByUUID(ctx context.Context, uuid string) (*DirectoryUser,
 	return &users[0], nil
 }
 
-// searchUsers runs a caller-built SCIM filter against the Users-search
-// endpoint, single-page. The filter string is forwarded to Asgardeo verbatim
-// by the SCIM Operations Service, so its syntax — not this platform's — is
-// what governs. Fine for LookupByEmail/LookupByUUID, an exact-match filter
-// expected to return 0 or 1 result; ListUsersByDomain uses searchUsersPage
-// directly instead, since a domain filter can span many pages.
+// searchUsers runs a caller-built SCIM filter against Asgardeo's
+// Users-search endpoint, single-page. The filter string is forwarded to
+// Asgardeo verbatim, so its syntax is what governs. Fine for
+// LookupByEmail/LookupByUUID, an exact-match filter expected to return 0 or
+// 1 result; ListUsersByDomain uses searchUsersPage directly instead, since a
+// domain filter can span many pages.
 func (c *Client) searchUsers(ctx context.Context, filter string) ([]DirectoryUser, error) {
 	users, _, err := c.searchUsersPage(ctx, filter, 0, 0)
 	return users, err
 }
 
-// searchUsersPage is one page of a Users-search call. startIndex/itemsPerPage
-// are 1-indexed SCIM pagination; either left at 0 lets the server apply its
-// own default (observed as 100). Returns the page's users and the search's
-// totalResults, so a caller can decide whether to fetch another page.
+// searchUsersPage is one page of a Users-search call against
+// /t/{org}/scim2/Users/.search. startIndex/itemsPerPage are 1-indexed SCIM
+// pagination; either left at 0 lets the server apply its own default
+// (observed as 100). Returns the page's users and the search's totalResults,
+// so a caller can decide whether to fetch another page.
 func (c *Client) searchUsersPage(ctx context.Context, filter string, startIndex, itemsPerPage int) ([]DirectoryUser, int, error) {
 	token, err := c.accessToken(ctx)
 	if err != nil {
@@ -342,7 +393,8 @@ func (c *Client) searchUsersPage(ctx context.Context, filter string, startIndex,
 	}
 
 	body, err := json.Marshal(userSearchInput{
-		Filter: filter,
+		Schemas: []string{scimSearchRequestSchema},
+		Filter:  filter,
 		// Asking for only what is used keeps the response small and avoids
 		// pulling attributes this platform has no business reading.
 		Attributes:   []string{"id", "userName", "name"},
@@ -354,7 +406,7 @@ func (c *Client) searchUsersPage(ctx context.Context, filter string, startIndex,
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.baseURL+"/organizations/"+c.org+"/users/search", bytes.NewReader(body))
+		c.baseURL+"/t/"+c.org+"/scim2/Users/.search", bytes.NewReader(body))
 	if err != nil {
 		return nil, 0, fmt.Errorf("build scim user search request: %w", err)
 	}
@@ -367,10 +419,12 @@ func (c *Client) searchUsersPage(ctx context.Context, filter string, startIndex,
 	}
 	defer resp.Body.Close()
 
-	// 201 as well as 200 — same non-standard success status the group search
-	// returns, and for the same reason.
+	// 201 as well as 200: not documented as a possible SCIM2 search response
+	// from Asgardeo, but accepted defensively since it costs nothing and the
+	// service this replaced (scim-operations-service) was observed to return
+	// it.
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, 0, fmt.Errorf("scim user search returned status %d", resp.StatusCode)
+		return nil, 0, fmt.Errorf("scim user search returned status %d: %s", resp.StatusCode, readErrorBody(resp))
 	}
 
 	var result userSearchResult

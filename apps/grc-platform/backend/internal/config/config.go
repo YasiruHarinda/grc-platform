@@ -92,30 +92,32 @@ type HREntityConfig struct {
 	ClientSecret string
 }
 
-// SCIMConfig holds the connection details for the internal SCIM Operations
-// Service, which this platform uses as its identity directory: resolving an
-// email to a person's Asgardeo id, and a uuid back to their name. A security
-// review required that the platform stop storing names and emails, so this is
-// where both now come from.
+// SCIMConfig holds the connection details for calling Asgardeo's own SCIM2
+// API directly, which this platform uses as its identity directory:
+// resolving an email to a person's Asgardeo id, and a uuid back to their
+// name. A security review required that the platform stop storing names and
+// emails, so this is where both now come from.
 //
-// Optional, unlike HREntityConfig. An unset BaseURL disables directory lookups
-// rather than failing startup: local development frequently runs without
-// credentials for an internal, VPN-only service, and the flows that use it are
-// written to degrade (a user is provisioned without a uuid) rather than break.
-// Configure it in every deployed environment.
+// Internal users and external auditors live in genuinely separate Asgardeo
+// organizations (see internal/scim.NewClient vs NewExternalClient), each
+// with its own OAuth2 app registration — hence the separate
+// Org/ClientID/ClientSecret/TokenURL/Scopes per org below. BaseURL is the
+// one thing shared: both orgs sit under the same Asgardeo API root
+// (https://api.asgardeo.io), just a different /t/{org}/... tenant path.
 //
-// Scopes is a space-separated OAuth2 scope string. Reading users needs
-// org_internal:users:read, which is granted separately from the groups scope —
-// Asgardeo silently drops a scope the application is not authorised for, so a
-// missing grant appears as a 403 at call time rather than a startup failure.
+// Optional, unlike HREntityConfig. An unset BaseURL disables directory
+// lookups rather than failing startup: local development frequently runs
+// without Asgardeo credentials, and the flows that use it are written to
+// degrade (a user is provisioned without a uuid) rather than break. Configure
+// it in every deployed environment.
 //
-// ExternalScopes is the equivalent for organizations/external/* calls
-// (external auditors' identities — see internal/scim.NewExternalClient),
-// assumed to follow the same org_<org>:users:read naming convention as
-// Scopes. That naming is not confirmed against this deployment's actual
-// Choreo API Management scope registration for the external org as of
-// writing — verify it there before depending on external-org lookups
-// resolving in production.
+// Scopes/ExternalScopes are space-separated OAuth2 scope strings. Only
+// internal_user_mgt_view and internal_user_mgt_list are requested — this
+// client only ever searches users, never groups/bulk/update, even though the
+// underlying Asgardeo app may be authorised for more. Asgardeo silently
+// drops a scope the application is not authorised for rather than failing
+// the token request, so a missing grant appears as a 403 at call time rather
+// than a startup failure.
 //
 // UserDomain is the email-domain suffix the directory's bulk cache is scoped
 // to (see internal/directory.Service.StartBulkRefresh). An unfiltered
@@ -125,18 +127,36 @@ type HREntityConfig struct {
 // keeps the cache to real employees instead. Internal-org only: the bulk
 // cache has no external-org equivalent (see internal/directory.Service.LookupTyped).
 type SCIMConfig struct {
-	BaseURL        string
-	TokenURL       string
-	ClientID       string
-	ClientSecret   string
-	Scopes         string
-	ExternalScopes string
-	UserDomain     string
+	BaseURL string
+
+	Org          string
+	ClientID     string
+	ClientSecret string
+	TokenURL     string
+	Scopes       string
+
+	ExternalOrg          string
+	ExternalClientID     string
+	ExternalClientSecret string
+	ExternalTokenURL     string
+	ExternalScopes       string
+
+	UserDomain string
 }
 
-// Configured reports whether enough is set to build a working client.
+// Configured reports whether enough is set to build a working internal-org
+// client. Independent of ExternalConfigured — local dev or a partial
+// rollout can have Asgardeo credentials for one org without the other, and
+// each client degrades to "unknown" on its own when unset (see
+// internal/scim.Client's nil-tolerance).
 func (c SCIMConfig) Configured() bool {
-	return c.BaseURL != "" && c.TokenURL != "" && c.ClientID != "" && c.ClientSecret != ""
+	return c.BaseURL != "" && c.Org != "" && c.TokenURL != "" && c.ClientID != "" && c.ClientSecret != ""
+}
+
+// ExternalConfigured is Configured for the external-org client.
+func (c SCIMConfig) ExternalConfigured() bool {
+	return c.BaseURL != "" && c.ExternalOrg != "" && c.ExternalTokenURL != "" &&
+		c.ExternalClientID != "" && c.ExternalClientSecret != ""
 }
 
 // Load reads configuration from environment variables.
@@ -219,13 +239,20 @@ func Load() (Config, error) {
 			ClientSecret: hrEntityClientSecret,
 		},
 		SCIM: SCIMConfig{
-			BaseURL:        os.Getenv("SCIM_BASE_URL"),
-			TokenURL:       os.Getenv("SCIM_TOKEN_URL"),
-			UserDomain:     envOrDefault("SCIM_USER_DOMAIN", "wso2.com"),
-			ClientID:       os.Getenv("SCIM_CLIENT_ID"),
-			ClientSecret:   os.Getenv("SCIM_CLIENT_SECRET"),
-			Scopes:         envOrDefault("SCIM_SCOPES", "org_internal:users:read"),
-			ExternalScopes: envOrDefault("SCIM_EXTERNAL_SCOPES", "org_external:users:read"),
+			BaseURL:    os.Getenv("SCIM_BASE_URL"),
+			UserDomain: envOrDefault("SCIM_USER_DOMAIN", "wso2.com"),
+
+			Org:          envOrDefault("SCIM_ORG", "wso2"),
+			ClientID:     os.Getenv("SCIM_CLIENT_ID"),
+			ClientSecret: os.Getenv("SCIM_CLIENT_SECRET"),
+			TokenURL:     os.Getenv("SCIM_TOKEN_URL"),
+			Scopes:       envOrDefault("SCIM_SCOPES", "internal_user_mgt_view internal_user_mgt_list"),
+
+			ExternalOrg:          envOrDefault("SCIM_EXTERNAL_ORG", "wso2external"),
+			ExternalClientID:     os.Getenv("SCIM_EXTERNAL_CLIENT_ID"),
+			ExternalClientSecret: os.Getenv("SCIM_EXTERNAL_CLIENT_SECRET"),
+			ExternalTokenURL:     os.Getenv("SCIM_EXTERNAL_TOKEN_URL"),
+			ExternalScopes:       envOrDefault("SCIM_EXTERNAL_SCOPES", "internal_user_mgt_view internal_user_mgt_list"),
 		},
 		// Derived from FRONTEND_BASE_URL rather than its own env var: both are
 		// "the webapp's public origin", and having two meant one could be
