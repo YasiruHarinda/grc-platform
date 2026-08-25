@@ -242,13 +242,13 @@ func Load() (Config, error) {
 			BaseURL:    os.Getenv("SCIM_BASE_URL"),
 			UserDomain: envOrDefault("SCIM_USER_DOMAIN", "wso2.com"),
 
-			Org:          envOrDefault("SCIM_ORG", "wso2"),
+			Org:          os.Getenv("SCIM_ORG"),
 			ClientID:     os.Getenv("SCIM_CLIENT_ID"),
 			ClientSecret: os.Getenv("SCIM_CLIENT_SECRET"),
 			TokenURL:     os.Getenv("SCIM_TOKEN_URL"),
 			Scopes:       envOrDefault("SCIM_SCOPES", "internal_user_mgt_view internal_user_mgt_list"),
 
-			ExternalOrg:          envOrDefault("SCIM_EXTERNAL_ORG", "wso2external"),
+			ExternalOrg:          os.Getenv("SCIM_EXTERNAL_ORG"),
 			ExternalClientID:     os.Getenv("SCIM_EXTERNAL_CLIENT_ID"),
 			ExternalClientSecret: os.Getenv("SCIM_EXTERNAL_CLIENT_SECRET"),
 			ExternalTokenURL:     os.Getenv("SCIM_EXTERNAL_TOKEN_URL"),

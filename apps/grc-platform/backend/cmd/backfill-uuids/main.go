@@ -351,17 +351,6 @@ func mustEnv(k string) string {
 	return v
 }
 
-// envOrDefault mirrors internal/config.envOrDefault (unexported there) —
-// SCIM_ORG must default the same way here as it does for the server, or an
-// existing .env that never needed to set it works for one and hard-fails
-// the other.
-func envOrDefault(k, def string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return def
-}
-
 func fatal(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "backfill-uuids: "+format+"\n", args...)
 	os.Exit(1)
