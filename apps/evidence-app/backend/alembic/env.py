@@ -1,7 +1,9 @@
+import re
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
+from sqlalchemy import text
 
 from alembic import context
 
@@ -28,6 +30,68 @@ target_metadata = Base.metadata
 # can be acquired:
 # my_important_option = config.get_main_option("my_important_option")
 # ... etc.
+
+# DB_SCHEMA is configuration, not a literal any caller controls at request
+# time, but it still ends up interpolated straight into DDL below — schema
+# and database names cannot be bind parameters, Postgres only allows them as
+# literal identifiers in this position. A plain identifier is the only shape
+# that is safe to interpolate, so anything else is refused here rather than
+# quoted and hoped for.
+_SCHEMA_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _create_and_switch_to_schema(connection, schema: str) -> None:
+    """Give the app a schema of its own to create, own and migrate into,
+    instead of the database's default "public" schema.
+
+    Postgres 15+ only lets a schema's *owner* create objects inside it, so on
+    a server where the app user does not own "public" — Azure Database for
+    PostgreSQL is one, it hands "public" to its own admin role — migrations
+    fail with a permission error before a single table exists. Creating a
+    schema here means the app user owns it outright, which needs no grant
+    from anyone.
+
+    Three statements, three different jobs:
+
+    - CREATE SCHEMA IF NOT EXISTS makes the schema. The IF NOT EXISTS is what
+      makes this safe to run on every pod restart, not just the first.
+    - SET search_path fixes *this* connection, the one Alembic is about to
+      run all the migrations on. ALTER DATABASE ... SET below does not reach
+      a connection that is already open, and this one already is — skip
+      this line and the tables still land in "public", or the CREATE TABLE
+      fails with the original permission error, depending on what "public"
+      allows.
+    - ALTER DATABASE ... SET fixes every *future* connection to this
+      database, which is what lets app/database.py go untouched: the app's
+      own engine picks up the new default the same way a fresh psql session
+      would.
+    """
+    if not _SCHEMA_NAME_RE.match(schema):
+        raise ValueError(
+            f"DB_SCHEMA={schema!r} is not a valid identifier. It is "
+            "interpolated directly into DDL because Postgres has no way to "
+            "bind a schema name as a query parameter, so only a plain "
+            f"identifier matching {_SCHEMA_NAME_RE.pattern!r} is accepted."
+        )
+
+    preparer = connection.dialect.identifier_preparer
+    quoted_schema = preparer.quote(schema)
+
+    database = connection.execute(text("SELECT current_database()")).scalar()
+    quoted_database = preparer.quote(database)
+
+    connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {quoted_schema}"))
+    connection.execute(text(f"SET search_path TO {quoted_schema}"))
+    connection.execute(
+        text(f"ALTER DATABASE {quoted_database} SET search_path TO {quoted_schema}")
+    )
+
+    # engine_from_config below is built with NullPool, and this connection's
+    # own execute() calls each opened an implicit transaction (SQLAlchemy 2.0
+    # default) — without an explicit commit here, that transaction would
+    # still be open when context.begin_transaction() starts the migrations'
+    # own transaction next, leaving the schema uncommitted for the duration.
+    connection.commit()
 
 
 def run_migrations_offline() -> None:
@@ -68,6 +132,9 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        if settings.DB_SCHEMA:
+            _create_and_switch_to_schema(connection, settings.DB_SCHEMA)
+
         context.configure(
             connection=connection, target_metadata=target_metadata
         )
