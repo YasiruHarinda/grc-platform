@@ -104,23 +104,30 @@ func main() {
 
 	// The identity directory. Left nil when unconfigured, which the client
 	// tolerates by answering "no such user" — see scim.Client.LookupByEmail.
-	// Local development without credentials for this internal service then
-	// provisions users without a uuid instead of failing.
+	// Local development without Asgardeo credentials then provisions users
+	// without a uuid instead of failing.
 	// scimExternalClient resolves user_type=EXTERNAL identities (external
 	// auditors), which live in a separate Asgardeo org from scimClient's —
 	// see internal/scim.NewExternalClient. Only Audit has external users
 	// today; Risk keeps resolving everyone through scimClient/dirSvc's
 	// existing internal-only Lookup/LookupAll, untouched by this.
+	// Configured/ExternalConfigured are independent: a deployment can have
+	// Asgardeo credentials for one org without the other, and each client
+	// degrades to "unknown" on its own when unset.
 	var scimClient, scimExternalClient *scim.Client
 	if cfg.SCIM.Configured() {
 		scimClient = scim.NewClient(cfg.SCIM.BaseURL, cfg.SCIM.TokenURL,
-			cfg.SCIM.ClientID, cfg.SCIM.ClientSecret, cfg.SCIM.Scopes)
-		scimExternalClient = scim.NewExternalClient(cfg.SCIM.BaseURL, cfg.SCIM.TokenURL,
-			cfg.SCIM.ClientID, cfg.SCIM.ClientSecret, cfg.SCIM.ExternalScopes)
+			cfg.SCIM.ClientID, cfg.SCIM.ClientSecret, cfg.SCIM.Scopes, cfg.SCIM.Org)
 	} else {
-		slog.Warn("SCIM is not configured; users will be provisioned without an Asgardeo uuid, " +
+		slog.Warn("SCIM internal org is not configured; users will be provisioned without an Asgardeo uuid, " +
 			"risk notifications will have no deliverable recipients, and the Risk Owner / " +
 			"Management Approver pickers will return no candidates")
+	}
+	if cfg.SCIM.ExternalConfigured() {
+		scimExternalClient = scim.NewExternalClient(cfg.SCIM.BaseURL, cfg.SCIM.ExternalTokenURL,
+			cfg.SCIM.ExternalClientID, cfg.SCIM.ExternalClientSecret, cfg.SCIM.ExternalScopes, cfg.SCIM.ExternalOrg)
+	} else {
+		slog.Warn("SCIM external org is not configured; external auditor identities will not resolve")
 	}
 
 	// One directory for the whole process, so its cache is shared across every

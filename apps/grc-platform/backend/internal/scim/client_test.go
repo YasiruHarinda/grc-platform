@@ -22,7 +22,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
 // TestListUsersByDomain_ShortPage exercises the case the review comment
@@ -65,7 +67,7 @@ func TestListUsersByDomain_ShortPage(t *testing.T) {
 	}))
 	defer searchSrv.Close()
 
-	c := NewClient(searchSrv.URL, tokenSrv.URL, "id", "secret", "org_internal:users:read")
+	c := NewClient(searchSrv.URL, tokenSrv.URL, "id", "secret", "internal_user_mgt_view internal_user_mgt_list", "wso2")
 
 	got, err := c.ListUsersByDomain(context.Background(), "wso2.com")
 	if err != nil {
@@ -88,10 +90,11 @@ func TestListUsersByDomain_ShortPage(t *testing.T) {
 }
 
 // TestNewExternalClient_HitsExternalOrgPath confirms NewExternalClient's
-// requests target organizations/external/*, not organizations/internal/* —
-// the two orgs hold genuinely distinct identities (see the design doc's
-// §1.4), so a client wired to the wrong path would silently never resolve
-// anyone, or worse, resolve the wrong org's uuid space.
+// requests target the external org's own tenant path
+// (/t/wso2external/scim2/...), not the internal org's — the two orgs hold
+// genuinely distinct identities (see the design doc's §1.4), so a client
+// wired to the wrong path would silently never resolve anyone, or worse,
+// resolve the wrong org's uuid space.
 func TestNewExternalClient_HitsExternalOrgPath(t *testing.T) {
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewEncoder(w).Encode(tokenResponse{AccessToken: "test-token", ExpiresIn: 3600}); err != nil {
@@ -112,7 +115,8 @@ func TestNewExternalClient_HitsExternalOrgPath(t *testing.T) {
 	}))
 	defer searchSrv.Close()
 
-	c := NewExternalClient(searchSrv.URL, tokenSrv.URL, "id", "secret", "org_external:users:read")
+	c := NewExternalClient(searchSrv.URL, tokenSrv.URL, "id", "secret",
+		"internal_user_mgt_view internal_user_mgt_list", "wso2external")
 
 	got, err := c.LookupByUUID(context.Background(), "ext-uuid-1")
 	if err != nil {
@@ -121,14 +125,14 @@ func TestNewExternalClient_HitsExternalOrgPath(t *testing.T) {
 	if got == nil || got.UUID != "ext-uuid-1" {
 		t.Fatalf("got %+v, want a resolved external user", got)
 	}
-	if gotPath != "/organizations/external/users/search" {
-		t.Errorf("hit path %q, want /organizations/external/users/search", gotPath)
+	if gotPath != "/t/wso2external/scim2/Users/.search" {
+		t.Errorf("hit path %q, want /t/wso2external/scim2/Users/.search", gotPath)
 	}
 }
 
 // TestNewClient_StillHitsInternalOrgPath guards the refactor that introduced
 // the org field: NewClient's existing callers (main.go, the backfill tools)
-// must keep resolving against organizations/internal/*, unchanged.
+// must keep resolving against the internal org's own tenant path, unchanged.
 func TestNewClient_StillHitsInternalOrgPath(t *testing.T) {
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(tokenResponse{AccessToken: "test-token", ExpiresIn: 3600})
@@ -142,12 +146,187 @@ func TestNewClient_StillHitsInternalOrgPath(t *testing.T) {
 	}))
 	defer searchSrv.Close()
 
-	c := NewClient(searchSrv.URL, tokenSrv.URL, "id", "secret", "org_internal:users:read")
+	c := NewClient(searchSrv.URL, tokenSrv.URL, "id", "secret", "internal_user_mgt_view internal_user_mgt_list", "wso2")
 	if _, err := c.LookupByUUID(context.Background(), "some-uuid"); err != nil {
 		t.Fatalf("LookupByUUID: %v", err)
 	}
-	if gotPath != "/organizations/internal/users/search" {
-		t.Errorf("hit path %q, want /organizations/internal/users/search", gotPath)
+	if gotPath != "/t/wso2/scim2/Users/.search" {
+		t.Errorf("hit path %q, want /t/wso2/scim2/Users/.search", gotPath)
+	}
+}
+
+// TestAccessToken_SendsStableTokenBindingID confirms every token request
+// from one Client instance carries the same tokenBindingId — a fresh random
+// value per request would defeat the whole point (see Client.tokenBindingID's
+// doc comment): Asgardeo revokes a client's previous token when it issues a
+// new one for the same binding, so two requests from the same instance need
+// to agree on the binding to avoid invalidating each other.
+func TestAccessToken_SendsStableTokenBindingID(t *testing.T) {
+	var gotBindingIDs []string
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse token request form: %v", err)
+		}
+		gotBindingIDs = append(gotBindingIDs, r.FormValue("tokenBindingId"))
+		// ExpiresIn: 0 forces accessToken to skip the cache and re-request
+		// every call, so a second accessToken call actually hits this server
+		// again instead of reusing the first response.
+		json.NewEncoder(w).Encode(tokenResponse{AccessToken: "test-token", ExpiresIn: 0})
+	}))
+	defer tokenSrv.Close()
+
+	c := NewClient("https://unused.example", tokenSrv.URL, "id", "secret",
+		"internal_user_mgt_view internal_user_mgt_list", "wso2")
+
+	if _, err := c.accessToken(context.Background()); err != nil {
+		t.Fatalf("accessToken (1st): %v", err)
+	}
+	c.tokenExpiry = time.Time{} // force the second call past the cache too
+	if _, err := c.accessToken(context.Background()); err != nil {
+		t.Fatalf("accessToken (2nd): %v", err)
+	}
+
+	if len(gotBindingIDs) != 2 {
+		t.Fatalf("token endpoint hit %d times, want 2", len(gotBindingIDs))
+	}
+	if gotBindingIDs[0] == "" {
+		t.Fatal("tokenBindingId was empty")
+	}
+	if gotBindingIDs[0] != gotBindingIDs[1] {
+		t.Errorf("tokenBindingId changed between requests from the same Client: %q vs %q",
+			gotBindingIDs[0], gotBindingIDs[1])
+	}
+}
+
+// TestSearchByQuery_MergesAndDedupesPerAttributeFilters covers the fix for
+// Asgardeo rejecting a compound "or" filter (500, "Unsupported Operation:
+// or"): SearchByQuery now sends three single-attribute filters instead. This
+// asserts none of those filters ever contains " or " (the regression this
+// guards against), and that a person matching more than one attribute
+// (userName and givenName both) is only returned once.
+func TestSearchByQuery_MergesAndDedupesPerAttributeFilters(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(tokenResponse{AccessToken: "test-token", ExpiresIn: 3600})
+	}))
+	defer tokenSrv.Close()
+
+	searchSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var in userSearchInput
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			t.Fatalf("decode search request: %v", err)
+		}
+		if strings.Contains(in.Filter, " or ") {
+			t.Errorf("filter %q contains an \"or\" — Asgardeo rejects this", in.Filter)
+			http.Error(w, `{"detail":"Unsupported Operation: or"}`, http.StatusInternalServerError)
+			return
+		}
+
+		var resources []scimUser
+		switch {
+		case strings.Contains(in.Filter, "userName"):
+			// Matches on both userName and givenName — must be de-duplicated.
+			resources = []scimUser{
+				{ID: "uuid-1", UserName: "nim@partner.example", Name: struct {
+					GivenName  string `json:"givenName"`
+					FamilyName string `json:"familyName"`
+				}{GivenName: "Nim"}},
+			}
+		case strings.Contains(in.Filter, "givenName"):
+			resources = []scimUser{
+				{ID: "uuid-1", UserName: "nim@partner.example", Name: struct {
+					GivenName  string `json:"givenName"`
+					FamilyName string `json:"familyName"`
+				}{GivenName: "Nim"}},
+				{ID: "uuid-2", UserName: "other@partner.example", Name: struct {
+					GivenName  string `json:"givenName"`
+					FamilyName string `json:"familyName"`
+				}{GivenName: "Nimal"}},
+			}
+		case strings.Contains(in.Filter, "familyName"):
+			resources = nil
+		default:
+			t.Fatalf("unexpected filter %q", in.Filter)
+		}
+		json.NewEncoder(w).Encode(userSearchResult{TotalResults: len(resources), Resources: resources})
+	}))
+	defer searchSrv.Close()
+
+	c := NewClient(searchSrv.URL, tokenSrv.URL, "id", "secret", "internal_user_mgt_view internal_user_mgt_list", "wso2external")
+
+	got, err := c.SearchByQuery(context.Background(), "nim")
+	if err != nil {
+		t.Fatalf("SearchByQuery: %v", err)
+	}
+
+	byUUID := make(map[string]int, len(got))
+	for _, u := range got {
+		byUUID[u.UUID]++
+	}
+	if byUUID["uuid-1"] != 1 {
+		t.Errorf("uuid-1 (matched by both userName and givenName filters) appeared %d times, want 1", byUUID["uuid-1"])
+	}
+	if byUUID["uuid-2"] != 1 {
+		t.Errorf("uuid-2 appeared %d times, want 1", byUUID["uuid-2"])
+	}
+	if len(got) != 2 {
+		t.Errorf("got %d users, want 2 (deduplicated)", len(got))
+	}
+}
+
+// TestSearchByQuery_FilledCapDoesNotHideOtherAttributes reproduces the
+// review comment's scenario: the userName filter alone returns enough
+// matches to fill searchPageSize. A naive "append userName, then givenName,
+// then familyName, then truncate" would drop every givenName/familyName
+// match — someone findable only by surname would never appear. Merging
+// round-robin instead means a familyName-only match still makes the cut.
+func TestSearchByQuery_FilledCapDoesNotHideOtherAttributes(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(tokenResponse{AccessToken: "test-token", ExpiresIn: 3600})
+	}))
+	defer tokenSrv.Close()
+
+	searchSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var in userSearchInput
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			t.Fatalf("decode search request: %v", err)
+		}
+
+		var resources []scimUser
+		switch {
+		case strings.Contains(in.Filter, "userName"):
+			// Exactly searchPageSize matches on their own — enough to fill
+			// the cap before a single givenName/familyName match is even
+			// considered, under the old sequential-append-then-truncate logic.
+			resources = fakeUsers(1, searchPageSize)
+		case strings.Contains(in.Filter, "givenName"):
+			resources = nil
+		case strings.Contains(in.Filter, "familyName"):
+			resources = []scimUser{{ID: "uuid-surname-only", UserName: "surname-only@partner.example"}}
+		default:
+			t.Fatalf("unexpected filter %q", in.Filter)
+		}
+		json.NewEncoder(w).Encode(userSearchResult{TotalResults: len(resources), Resources: resources})
+	}))
+	defer searchSrv.Close()
+
+	c := NewClient(searchSrv.URL, tokenSrv.URL, "id", "secret", "internal_user_mgt_view internal_user_mgt_list", "wso2external")
+
+	got, err := c.SearchByQuery(context.Background(), "query")
+	if err != nil {
+		t.Fatalf("SearchByQuery: %v", err)
+	}
+
+	if len(got) != searchPageSize {
+		t.Fatalf("got %d users, want %d (capped)", len(got), searchPageSize)
+	}
+	found := false
+	for _, u := range got {
+		if u.UUID == "uuid-surname-only" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the familyName-only match was dropped even though the cap wasn't reached until this round — round-robin merge regressed")
 	}
 }
 

@@ -108,13 +108,14 @@ func main() {
 	entityURL := mustEnv("COMPLIANCE_ENTITY_BASE_URL")
 	cli := entityclient.New(entityURL)
 	scimCli := scim.NewClient(
-		mustEnv("SCIM_BASE_URL"), mustEnv("SCIM_TOKEN_URL"),
-		mustEnv("SCIM_CLIENT_ID"), mustEnv("SCIM_CLIENT_SECRET"), mustEnv("SCIM_SCOPES"),
+		mustEnv("SCIM_BASE_URL"), mustEnv("SCIM_INTERNAL_TOKEN_URL"),
+		mustEnv("SCIM_INTERNAL_CLIENT_ID"), mustEnv("SCIM_INTERNAL_CLIENT_SECRET"),
+		mustEnv("SCIM_INTERNAL_SCOPES"), mustEnv("SCIM_INTERNAL_ORG"),
 	)
 	// The client's default timeout is tuned for the live request path. Nobody is
-	// waiting on a backfill, and the SCIM Operations Service is Choreo-hosted:
-	// a cold first call can take well over a minute, and timing out here means
-	// re-running the whole migration rather than showing someone a slow page.
+	// waiting on a backfill, and Asgardeo can cold-start slowly on a first call:
+	// timing out here means re-running the whole migration rather than showing
+	// someone a slow page.
 	scimCli.SetHTTPTimeout(*scimTimeout)
 
 	// ── Load the two inputs ──────────────────────────────────────────────────

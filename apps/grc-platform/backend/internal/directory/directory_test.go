@@ -72,7 +72,7 @@ func newFakeDirectory(t *testing.T) *fakeDirectory {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "t", "expires_in": 3600})
 	})
-	mux.HandleFunc("POST /organizations/internal/users/search", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /t/wso2/scim2/Users/.search", func(w http.ResponseWriter, r *http.Request) {
 		f.calls.Add(1)
 		if f.down.Load() {
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -95,7 +95,7 @@ func newFakeDirectory(t *testing.T) *fakeDirectory {
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{"Resources": resources})
 	})
-	mux.HandleFunc("POST /organizations/external/users/search", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /t/wso2external/scim2/Users/.search", func(w http.ResponseWriter, r *http.Request) {
 		f.externalCalls.Add(1)
 		if f.down.Load() {
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -122,7 +122,7 @@ func newFakeDirectory(t *testing.T) *fakeDirectory {
 }
 
 func (f *fakeDirectory) service(ttl time.Duration) *directory.Service {
-	c := scim.NewClient(f.srv.URL, f.srv.URL+"/oauth2/token", "id", "secret", "scope")
+	c := scim.NewClient(f.srv.URL, f.srv.URL+"/oauth2/token", "id", "secret", "scope", "wso2")
 	return directory.New(c, ttl)
 }
 
@@ -132,8 +132,8 @@ func (f *fakeDirectory) service(ttl time.Duration) *directory.Service {
 // this helper assert call counts within a single TTL window, not expiry, so a
 // single knob is enough.
 func (f *fakeDirectory) serviceWithExternal(ttl time.Duration) *directory.Service {
-	c := scim.NewClient(f.srv.URL, f.srv.URL+"/oauth2/token", "id", "secret", "scope")
-	ec := scim.NewExternalClient(f.srv.URL, f.srv.URL+"/oauth2/token", "id", "secret", "scope")
+	c := scim.NewClient(f.srv.URL, f.srv.URL+"/oauth2/token", "id", "secret", "scope", "wso2")
+	ec := scim.NewExternalClient(f.srv.URL, f.srv.URL+"/oauth2/token", "id", "secret", "scope", "wso2external")
 	return directory.NewWithExternal(c, ec, ttl, ttl)
 }
 

@@ -296,17 +296,17 @@ func TestRequireRiskActor(t *testing.T) {
 	}
 }
 
-// fakeSCIMServer stands in for the SCIM Operations Service, resolving exactly
-// one uuid (if any) to a name/email — enough to drive describeActor's
-// formatting logic through its cases without duplicating internal/directory's
-// own, more thorough coverage of the cache/staleness mechanics themselves.
+// fakeSCIMServer stands in for Asgardeo's SCIM2 API, resolving exactly one
+// uuid (if any) to a name/email — enough to drive describeActor's formatting
+// logic through its cases without duplicating internal/directory's own, more
+// thorough coverage of the cache/staleness mechanics themselves.
 func fakeSCIMServer(t *testing.T, uuid, givenName, familyName, email string) *directory.Service {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /oauth2/token", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "t", "expires_in": 3600})
 	})
-	mux.HandleFunc("POST /organizations/internal/users/search", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /t/wso2/scim2/Users/.search", func(w http.ResponseWriter, r *http.Request) {
 		resources := []map[string]any{}
 		if uuid != "" {
 			resources = append(resources, map[string]any{
@@ -319,7 +319,7 @@ func fakeSCIMServer(t *testing.T, uuid, givenName, familyName, email string) *di
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	c := scim.NewClient(srv.URL, srv.URL+"/oauth2/token", "id", "secret", "scope")
+	c := scim.NewClient(srv.URL, srv.URL+"/oauth2/token", "id", "secret", "scope", "wso2")
 	return directory.New(c, time.Hour)
 }
 

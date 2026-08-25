@@ -47,7 +47,7 @@ func newDirServer(t *testing.T, people map[string]string) *dirServer {
 	mux.HandleFunc("POST /oauth2/token", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "t", "expires_in": 3600})
 	})
-	mux.HandleFunc("POST /organizations/internal/users/search", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /t/wso2/scim2/Users/.search", func(w http.ResponseWriter, r *http.Request) {
 		d.calls.Add(1)
 		var body struct {
 			Filter string `json:"filter"`
@@ -84,7 +84,7 @@ func contains(haystack, needle string) bool {
 }
 
 func (d *dirServer) deps() *Deps {
-	c := scim.NewClient(d.srv.URL, d.srv.URL+"/oauth2/token", "id", "secret", "scope")
+	c := scim.NewClient(d.srv.URL, d.srv.URL+"/oauth2/token", "id", "secret", "scope", "wso2")
 	return &Deps{Directory: directory.New(c, time.Hour)}
 }
 
