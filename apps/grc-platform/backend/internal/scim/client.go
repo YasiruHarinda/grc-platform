@@ -323,22 +323,40 @@ func (c *Client) SearchByQuery(ctx context.Context, query string) ([]DirectoryUs
 	}
 	wg.Wait()
 
-	seen := make(map[string]bool, searchPageSize)
-	out := make([]DirectoryUser, 0, searchPageSize)
 	for _, r := range results {
 		if r.err != nil {
 			return nil, fmt.Errorf("scim search: %w", r.err)
 		}
-		for _, u := range r.users {
+	}
+
+	// Round-robin across the three filters' result lists rather than
+	// appending one fully before the next and truncating at the end: each
+	// filter can independently return up to searchPageSize matches, so a
+	// straight concatenation lets whichever filter is processed first (here,
+	// userName) crowd out every match from the other two before the cap is
+	// even reached — someone findable only by surname would never appear.
+	seen := make(map[string]bool, searchPageSize)
+	out := make([]DirectoryUser, 0, searchPageSize)
+	for j := 0; len(out) < searchPageSize; j++ {
+		any := false
+		for _, r := range results {
+			if j >= len(r.users) {
+				continue
+			}
+			any = true
+			u := r.users[j]
 			if seen[u.UUID] {
 				continue
 			}
 			seen[u.UUID] = true
 			out = append(out, u)
+			if len(out) == searchPageSize {
+				break
+			}
 		}
-	}
-	if len(out) > searchPageSize {
-		out = out[:searchPageSize]
+		if !any {
+			break // every filter's result list is exhausted
+		}
 	}
 	return out, nil
 }

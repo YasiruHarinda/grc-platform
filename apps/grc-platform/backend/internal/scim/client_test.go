@@ -273,6 +273,63 @@ func TestSearchByQuery_MergesAndDedupesPerAttributeFilters(t *testing.T) {
 	}
 }
 
+// TestSearchByQuery_FilledCapDoesNotHideOtherAttributes reproduces the
+// review comment's scenario: the userName filter alone returns enough
+// matches to fill searchPageSize. A naive "append userName, then givenName,
+// then familyName, then truncate" would drop every givenName/familyName
+// match — someone findable only by surname would never appear. Merging
+// round-robin instead means a familyName-only match still makes the cut.
+func TestSearchByQuery_FilledCapDoesNotHideOtherAttributes(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(tokenResponse{AccessToken: "test-token", ExpiresIn: 3600})
+	}))
+	defer tokenSrv.Close()
+
+	searchSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var in userSearchInput
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			t.Fatalf("decode search request: %v", err)
+		}
+
+		var resources []scimUser
+		switch {
+		case strings.Contains(in.Filter, "userName"):
+			// Exactly searchPageSize matches on their own — enough to fill
+			// the cap before a single givenName/familyName match is even
+			// considered, under the old sequential-append-then-truncate logic.
+			resources = fakeUsers(1, searchPageSize)
+		case strings.Contains(in.Filter, "givenName"):
+			resources = nil
+		case strings.Contains(in.Filter, "familyName"):
+			resources = []scimUser{{ID: "uuid-surname-only", UserName: "surname-only@partner.example"}}
+		default:
+			t.Fatalf("unexpected filter %q", in.Filter)
+		}
+		json.NewEncoder(w).Encode(userSearchResult{TotalResults: len(resources), Resources: resources})
+	}))
+	defer searchSrv.Close()
+
+	c := NewClient(searchSrv.URL, tokenSrv.URL, "id", "secret", "internal_user_mgt_view internal_user_mgt_list", "wso2external")
+
+	got, err := c.SearchByQuery(context.Background(), "query")
+	if err != nil {
+		t.Fatalf("SearchByQuery: %v", err)
+	}
+
+	if len(got) != searchPageSize {
+		t.Fatalf("got %d users, want %d (capped)", len(got), searchPageSize)
+	}
+	found := false
+	for _, u := range got {
+		if u.UUID == "uuid-surname-only" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the familyName-only match was dropped even though the cap wasn't reached until this round — round-robin merge regressed")
+	}
+}
+
 func fakeUsers(startIndex, n int) []scimUser {
 	users := make([]scimUser, n)
 	for i := range users {
