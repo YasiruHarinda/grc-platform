@@ -129,7 +129,7 @@ export default function ManageAuditHubPage(): JSX.Element {
             Manage Audit Hub
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Audit teams — who a control's evidence gets assigned to, and what an Internal Team or Management grant
+            Audit teams - who a control's evidence gets assigned to, and what an Internal Team or Management grant
             can be scoped to.
           </Typography>
         </Box>
