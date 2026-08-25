@@ -14,7 +14,13 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+# set_main_option writes into a ConfigParser, which reads "%" as the start of an
+# interpolation token. A password with a character that has to be percent-encoded
+# in the URL — "?" becomes "%3F" — therefore crashes the parser before a single
+# connection is attempted. Doubling every "%" is how that parser is told to treat
+# one literally; it hands the original string back, so SQLAlchemy still receives
+# the URL exactly as it was written. A URL with no "%" in it is left untouched.
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
 
 target_metadata = Base.metadata
 

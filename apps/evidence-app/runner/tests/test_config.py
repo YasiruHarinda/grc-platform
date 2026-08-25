@@ -10,15 +10,23 @@ whatever `runner/.env` or `~/.wso2-runner/.env` happens to exist on the
 developer's machine; only the process environment (which monkeypatch
 controls) is read.
 """
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
 from wso2_runner.config import RunnerSettings
 
+# Root of the runner package (one level up from this tests/ directory) —
+# used as the cwd for the subprocess test below, so a plain `import
+# wso2_runner...` resolves the same way it does for every other test here.
+_RUNNER_ROOT = Path(__file__).resolve().parent.parent
+
 # Fields the default-test asserts on; cleared from the process env so a stray
-# export on the machine cannot mask the real default. ASGARDEO_ORG is not here:
-# it is required with no default, so it is set (not asserted) so construction
-# succeeds, and its own missing-case test lives below.
+# export on the machine cannot mask the real default.
 _ASSERTED_DEFAULTS = [
     "CLOUD_URL",
     "USER_EMAIL",
@@ -31,9 +39,6 @@ _ASSERTED_DEFAULTS = [
 def test_defaults_when_no_env_or_file(monkeypatch):
     for key in _ASSERTED_DEFAULTS:
         monkeypatch.delenv(key, raising=False)
-    # Required field, so it must be present for construction to succeed; its
-    # value is asserted by test_env_var_overrides_default, not here.
-    monkeypatch.setenv("ASGARDEO_ORG", "test-org")
 
     s = RunnerSettings(_env_file=None)
 
@@ -44,13 +49,57 @@ def test_defaults_when_no_env_or_file(monkeypatch):
     assert s.SCREENSHOT_MONITOR == 1
 
 
-def test_raises_when_asgardeo_org_is_missing(monkeypatch):
-    # Required, no default: a runner that forgets to set the org should fail
-    # loudly at startup rather than authenticate against the wrong tenant.
+def test_asgardeo_org_defaults_to_empty_string(monkeypatch):
+    # Used to be required with no default, on the theory that a runner
+    # forgetting to set it should fail loudly rather than "silently
+    # authenticate against the wrong tenant" — but required-ness never
+    # protected against a WRONG org, only a MISSING one, and an empty org
+    # can't authenticate against any tenant either: it just builds an
+    # invalid URL and fails. Worse, the old required field made
+    # *importing this module* raise before the CLI wizard that fixes a
+    # missing value could even start (see cli.py's `configure`). A missing
+    # value is now caught, and reported in plain language, by `start` and
+    # `doctor` instead.
     monkeypatch.delenv("ASGARDEO_ORG", raising=False)
 
-    with pytest.raises(ValidationError, match="ASGARDEO_ORG"):
-        RunnerSettings(_env_file=None)
+    s = RunnerSettings(_env_file=None)
+
+    assert s.ASGARDEO_ORG == ""
+
+
+def test_import_never_raises_on_a_machine_with_no_config(tmp_path):
+    """Reproduces the original crash end to end, in a real subprocess.
+
+    This test's own process already has `wso2_runner.config` imported (and
+    its module-level `settings = RunnerSettings()` already evaluated)
+    before this test body ever runs, so nothing in-process can re-trigger
+    that line under the missing-value condition. A subprocess, with HOME
+    pointed at an empty directory (so no ~/.wso2-runner/.env exists either),
+    is the only way to prove a genuinely fresh machine can import this
+    module at all.
+    """
+    # PYTHONPATH is set explicitly to this process's own sys.path: Python
+    # resolves "user site-packages" (where pydantic-settings etc. live on
+    # this machine) from $HOME, so simply pointing HOME at an empty tmp_path
+    # would otherwise also hide this process's real dependencies, and the
+    # subprocess would fail for a reason that has nothing to do with the bug
+    # under test.
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path),
+        "PYTHONPATH": os.pathsep.join(p for p in sys.path if p),
+    }
+    env.pop("ASGARDEO_ORG", None)
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import wso2_runner.config"],
+        cwd=_RUNNER_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_env_var_overrides_default(monkeypatch):
@@ -98,7 +147,6 @@ def test_unknown_setting_is_ignored_not_fatal():
 
 def test_azure_auth_mode_defaults_to_entra(monkeypatch):
     monkeypatch.delenv("AZURE_OPENAI_AUTH_MODE", raising=False)
-    monkeypatch.setenv("ASGARDEO_ORG", "test-org")
 
     settings = RunnerSettings(_env_file=None)
 
@@ -107,7 +155,6 @@ def test_azure_auth_mode_defaults_to_entra(monkeypatch):
 
 @pytest.mark.parametrize("mode", ["entra", "api_key"])
 def test_azure_auth_mode_accepts_both_documented_values(monkeypatch, mode):
-    monkeypatch.setenv("ASGARDEO_ORG", "test-org")
     monkeypatch.setenv("AZURE_OPENAI_AUTH_MODE", mode)
 
     assert RunnerSettings(_env_file=None).AZURE_OPENAI_AUTH_MODE == mode
@@ -115,7 +162,6 @@ def test_azure_auth_mode_accepts_both_documented_values(monkeypatch, mode):
 
 @pytest.mark.parametrize("typo", ["apikey", "api-key", "API_KEY", "Entra", ""])
 def test_azure_auth_mode_rejects_anything_else_and_names_the_valid_values(monkeypatch, typo):
-    monkeypatch.setenv("ASGARDEO_ORG", "test-org")
     monkeypatch.setenv("AZURE_OPENAI_AUTH_MODE", typo)
 
     with pytest.raises(ValidationError) as excinfo:

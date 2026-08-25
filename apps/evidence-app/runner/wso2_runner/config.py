@@ -28,9 +28,19 @@ class RunnerSettings(BaseSettings):
     USER_EMAIL: str = ""
 
     # Asgardeo tenant/org — same tenant as the web frontend and backend.
-    # Required, no default: a runner that forgets to set it should fail loudly
-    # at startup rather than silently authenticate against the wrong tenant.
-    ASGARDEO_ORG: str
+    # Used to be required with no default, on the theory that a runner
+    # forgetting to set it should fail loudly rather than "silently
+    # authenticate against the wrong tenant". That reasoning doesn't hold up:
+    # required-ness never protected against a WRONG org, only a MISSING one,
+    # and an empty org can't authenticate against any tenant either — it just
+    # builds an invalid URL and fails. Worse, being required here made
+    # *importing this module* raise before `wso2-runner configure` (the
+    # wizard meant to fix a missing config) could even start, because cli.py
+    # imports CONFIG_DIR/CONFIG_FILE from this module and that import runs
+    # the `settings = RunnerSettings()` line below. A missing value is now
+    # caught, and reported in plain language, by `start` and `doctor`
+    # instead — see cli.py.
+    ASGARDEO_ORG: str = ""
     # Client ID of the Runner's own Asgardeo "Native Application" (public
     # client, PKCE, no secret) — separate from the web frontend's client ID.
     # Set this after registering it in the Asgardeo console (see setup docs).

@@ -8,16 +8,126 @@ import typer
 app = typer.Typer(help="WSO2 Compliance Evidence Runner — polls cloud backend and runs browser automation locally.")
 
 
+def _fetch_server_config(server: str) -> dict[str, str]:
+    """Fetch CLOUD_URL / ASGARDEO_ORG / ASGARDEO_CLIENT_ID for `--server`.
+
+    Talks to GET {server}/api/runner-config (see
+    backend/app/api/routes/runner_config.py), which hands back
+    {"asgardeo_org": ..., "asgardeo_client_id": ...} with no auth required —
+    the Runner needs these before it can log in at all, so there is no
+    token yet to present.
+
+    On any failure this prints a plain message naming the URL that was
+    tried and raises typer.Exit(1) — it never returns a partial dict. The
+    whole reason `--server` exists is to stop a fresh Runner from silently
+    inheriting the http://localhost:8000 default in config.py, which looks
+    configured but polls nothing. A --server that half-works (e.g. writes
+    CLOUD_URL but not the org, because the response was odd) recreates
+    exactly that trap in a new shape: `configure` would exit 0, the file
+    would exist, and the Runner would still fail to reach anything real.
+    Better to write nothing at all and make the operator try again.
+    """
+    import httpx
+
+    url = f"{server.rstrip('/')}/api/runner-config"
+
+    try:
+        # follow_redirects is not httpx's default. Without it a --server given
+        # on http://, or a host that redirects to its canonical address, comes
+        # back as a bare 301 and gets reported below as "the backend there may
+        # be too old" -- the wrong problem, on the operator's first command.
+        response = httpx.get(url, timeout=5, follow_redirects=True)
+    except Exception as exc:
+        typer.echo(f"\nCould not reach {url}: {exc}\n", err=True)
+        raise typer.Exit(1)
+
+    if response.status_code != 200:
+        typer.echo(
+            f"\n{url} returned HTTP {response.status_code}. Check the "
+            "server address — or the backend there may be too old to have "
+            "this endpoint.\n",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    try:
+        data = response.json()
+    except Exception:
+        typer.echo(
+            f"\n{url} did not return JSON. Check the server address — this "
+            "usually means it's wrong (e.g. pointing at a login page or a "
+            "load balancer's error page instead of the backend).\n",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    asgardeo_org = data.get("asgardeo_org") if isinstance(data, dict) else None
+    asgardeo_client_id = data.get("asgardeo_client_id") if isinstance(data, dict) else None
+    if not asgardeo_org or not asgardeo_client_id:
+        typer.echo(
+            f"\n{url} responded, but the body is missing asgardeo_org or "
+            "asgardeo_client_id. Check the server address — or the backend "
+            "there may be too old to have this endpoint.\n",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    return {
+        "CLOUD_URL": server,
+        "ASGARDEO_ORG": asgardeo_org,
+        "ASGARDEO_CLIENT_ID": asgardeo_client_id,
+    }
+
+
 @app.command()
-def configure():
+def configure(
+    server: str = typer.Option(
+        None,
+        "--server",
+        "-s",
+        help="Cloud backend URL, e.g. https://portal.example.com — fetches "
+        "the Asgardeo org and client ID from it and saves CLOUD_URL "
+        "alongside them, so you never hand edit ~/.wso2-runner/.env",
+    ),
+):
     """First-time setup wizard — saves your LLM credentials to ~/.wso2-runner/.env."""
-    from wso2_runner.config import CONFIG_DIR, CONFIG_FILE
+    from wso2_runner.browser_install import (
+        MANUAL_INSTALL_COMMAND,
+        ChromiumInstallError,
+        ensure_chromium_installed,
+    )
+    from wso2_runner.config import CONFIG_DIR, CONFIG_FILE, settings
+    from wso2_runner.env_file import read_env_values, write_config_file
+
+    # Fetched before anything is printed or asked, deliberately. A wrong
+    # --server is a typo or a stale URL, and the sooner that's reported the
+    # better — nobody should have to answer eight prompts about their LLM
+    # provider only to be told at the very end that the server address was
+    # wrong and none of it was saved anyway.
+    server_updates: dict[str, str] = {}
+    if server is not None:
+        server_updates = _fetch_server_config(server)
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     print("\nWSO2 Compliance Runner — setup wizard")
     print("=" * 42)
     print("This saves your config to ~/.wso2-runner/.env\n")
+
+    if server_updates:
+        print(f"Fetched Asgardeo org and client ID from {server}\n")
+
+    # Read what's already on disk before asking anything, so a value this
+    # wizard already knows (e.g. re-running configure on a machine that's
+    # been set up before) can be offered back as the default — pressing
+    # Enter keeps it instead of the engineer having to retype it.
+    current = read_env_values(CONFIG_FILE)
+
+    email = typer.prompt(
+        "Your WSO2 email",
+        default=current.get("USER_EMAIL", ""),
+        prompt_suffix=" (used to sign in via Asgardeo, and so `wso2-runner start` needs no argument): ",
+    )
 
     provider = typer.prompt(
         "LLM provider",
@@ -33,22 +143,22 @@ def configure():
     }
     model = typer.prompt("Model name", default=model_defaults.get(provider, ""))
 
-    lines = [f"AGENT_PROVIDER={provider}", f"AGENT_MODEL={model}"]
+    updates = {"USER_EMAIL": email, "AGENT_PROVIDER": provider, "AGENT_MODEL": model}
 
     if provider == "azure":
         # No API key prompt here, deliberately — the Runner authorises Azure
         # OpenAI calls with the engineer's own Entra identity (az login),
         # not a shared secret written to disk. See azure_credential.py.
-        lines.append("AZURE_OPENAI_ENDPOINT=" + typer.prompt("Azure OpenAI endpoint (https://...)"))
-        lines.append("AZURE_OPENAI_DEPLOYMENT=" + typer.prompt("Deployment name", default=model))
-        lines.append("AZURE_OPENAI_API_VERSION=2024-10-21")
-        lines.append("AZURE_TENANT_ID=" + typer.prompt("Azure tenant ID"))
+        updates["AZURE_OPENAI_ENDPOINT"] = typer.prompt("Azure OpenAI endpoint (https://...)")
+        updates["AZURE_OPENAI_DEPLOYMENT"] = typer.prompt("Deployment name", default=model)
+        updates["AZURE_OPENAI_API_VERSION"] = "2024-10-21"
+        updates["AZURE_TENANT_ID"] = typer.prompt("Azure tenant ID")
         print("\n  Next: run `az login` to sign in with your own Azure identity.")
         print("  The Runner uses that session to call Azure OpenAI — no key is stored.")
     elif provider == "anthropic":
-        lines.append("ANTHROPIC_API_KEY=" + typer.prompt("Anthropic API key", hide_input=True))
+        updates["ANTHROPIC_API_KEY"] = typer.prompt("Anthropic API key", hide_input=True)
     elif provider == "gemini":
-        lines.append("GEMINI_API_KEY=" + typer.prompt("Gemini API key", hide_input=True))
+        updates["GEMINI_API_KEY"] = typer.prompt("Gemini API key", hide_input=True)
     elif provider == "ollama":
         print("  (Ollama uses no API key — make sure it's running on localhost:11434)")
 
@@ -69,15 +179,49 @@ def configure():
     print("  1 = laptop/primary screen (default)")
     print("  2 = external monitor (plug it in before running the agent)")
     monitor = typer.prompt("Which monitor should the agent use for screenshots?", default=1, type=int)
-    lines.append(f"SCREENSHOT_MONITOR={monitor}")
+    updates["SCREENSHOT_MONITOR"] = str(monitor)
 
     if monitor > 1:
         print(f"\n  Tip: drag the agent's Chrome window to monitor {monitor} after it opens.")
         print("  Chrome remembers the position — you only need to do this once.")
 
-    CONFIG_FILE.write_text("\n".join(lines) + "\n")
+    # CLOUD_URL, ASGARDEO_ORG and ASGARDEO_CLIENT_ID come from --server
+    # above when it's given, and are otherwise set by hand per the setup
+    # docs — this wizard's own prompts never touch them. Merged in here,
+    # right before the single write, rather than fetched later, so a run
+    # without --server writes exactly the keys it always did.
+    updates.update(server_updates)
+
+    # Update the file in place rather than replacing it — a plain
+    # write_text() of only the keys collected above used to delete
+    # everything else in the file, including these three. See
+    # write_config_file() for how the merge, the atomic write, and the file
+    # permissions are handled.
+    write_config_file(CONFIG_FILE, updates)
     print(f"\nConfig saved to {CONFIG_FILE}")
-    print("Next: wso2-runner start your@wso2.com  (opens a browser to sign in via Asgardeo)\n")
+
+    # Chromium used to be installed by runner/install.sh's own step 4. That
+    # script is going away in favour of a plain wheel install, and neither
+    # `uv tool install` nor `pip install` fetches a browser binary — so this
+    # is now the only place a fresh machine gets one. See
+    # browser_install.py's module docstring for why only BROWSER_CHANNEL ==
+    # "chromium" triggers a real check here.
+    #
+    # A failed install is reported, not raised — the config above is
+    # already saved and good, so treating this the same way `start`'s
+    # guards do (exit non-zero) would make an otherwise successful
+    # `configure` look like it failed outright. `start`'s own guard below
+    # will catch this again, for real, if it's still broken by then.
+    try:
+        ensure_chromium_installed(settings.BROWSER_CHANNEL)
+    except ChromiumInstallError as exc:
+        typer.echo(
+            f"\n[runner] {exc}. Run this yourself, then try again:\n\n"
+            f"    {MANUAL_INSTALL_COMMAND}\n",
+            err=True,
+        )
+
+    print("Next: wso2-runner start  (opens a browser to sign in via Asgardeo)\n")
 
 
 @app.command()
@@ -99,6 +243,19 @@ def start(
         typer.echo(
             "\n[runner] No LLM config found. Run this first:\n\n"
             "    wso2-runner configure\n",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    # ASGARDEO_ORG has no default that would work (it names a specific
+    # Asgardeo tenant), and `configure` above doesn't ask for it — it's set
+    # by hand, per the setup docs. Caught here, in plain language, rather
+    # than left to blow up deep inside run_forever (loop.py reads it to sign
+    # in and to build the cloud client).
+    if not settings.ASGARDEO_ORG:
+        typer.echo(
+            f"\n[runner] ASGARDEO_ORG is not set. Add it to {CONFIG_FILE} — "
+            "see the setup docs.\n",
             err=True,
         )
         raise typer.Exit(1)
@@ -162,6 +319,31 @@ def start(
             typer.echo(f"\n[runner] Azure authentication check failed: {exc}\n", err=True)
             raise typer.Exit(1)
 
+    # Guard, not just a one-time setup step: `configure` already tries this,
+    # but the browser could still be missing here -- an engineer skipping
+    # `configure`'s prompt on a flaky connection, someone else's machine
+    # image, `~/.cache` cleared by hand, etc. Checked here, before the poll
+    # loop (and therefore any browser) starts, for the same reason the
+    # Azure check above runs before the loop rather than lazily on first
+    # use: a broken environment should fail once, plainly, right here --
+    # not resurface as a cryptic Playwright exception after a task has
+    # already been pulled off the queue.
+    from wso2_runner.browser_install import (
+        MANUAL_INSTALL_COMMAND,
+        ChromiumInstallError,
+        ensure_chromium_installed,
+    )
+
+    try:
+        ensure_chromium_installed(settings.BROWSER_CHANNEL)
+    except ChromiumInstallError as exc:
+        typer.echo(
+            f"\n[runner] {exc}. Run this yourself, then try again:\n\n"
+            f"    {MANUAL_INSTALL_COMMAND}\n",
+            err=True,
+        )
+        raise typer.Exit(1)
+
     from wso2_runner.loop import run_forever
 
     try:
@@ -198,7 +380,9 @@ def doctor(
     # Check auth — uses a cached Asgardeo session if one exists; does not
     # force an interactive login just to run a diagnostic check.
     print("\n[2] Asgardeo auth check")
-    if not settings.ASGARDEO_CLIENT_ID:
+    if not settings.ASGARDEO_ORG:
+        print("    ✗ ASGARDEO_ORG is not set — see the setup docs")
+    elif not settings.ASGARDEO_CLIENT_ID:
         print("    ✗ ASGARDEO_CLIENT_ID is not set — see the setup docs")
     else:
         if not oauth.has_cached_session():
@@ -227,8 +411,17 @@ def doctor(
             b.close()
         print(f"    ✓ {channel} launches OK")
     except Exception as exc:
+        # Advice has to match the channel. Printing "playwright install
+        # chromium" unconditionally, as this used to, is wrong on every
+        # channel but "chromium": it fetches a browser the Runner is not
+        # going to launch, so the engineer waits out a 150 MB download and
+        # finds the same failure still there. See browser_install for the
+        # full reasoning.
+        from wso2_runner.browser_install import launch_failure_advice
+
         print(f"    ✗ Browser launch failed: {exc}")
-        print("       Try: playwright install chromium")
+        for line in launch_failure_advice(settings.BROWSER_CHANNEL).splitlines():
+            print(f"       {line}")
 
     # Check LLM
     print(f"\n[4] LLM: provider={settings.AGENT_PROVIDER} model={settings.AGENT_MODEL}")
@@ -309,5 +502,34 @@ def doctor(
             print("    ✗ Ollama not running on localhost:11434")
     else:
         print("    ✓ Key present")
+
+    # Its own numbered section rather than folded into [3]: [3] is about
+    # whether a browser can launch at all, which is a Chromium/Playwright
+    # concern. This is about whether the OS is willing to hand the Runner
+    # real pixels once something IS on screen -- a completely different
+    # failure mode (a missing OS permission, not a missing browser), with
+    # its own separate fix. Keeping them apart means a ✓ on [3] can never
+    # be misread as "screenshots will work too".
+    print("\n[5] Screen capture sanity check")
+    from wso2_runner import capture_check
+
+    try:
+        test_capture = capture_check.capture_test_screenshot()
+    except Exception as exc:
+        # Not this check's problem to diagnose further -- [3] above already
+        # covers a broken browser/display loudly. This is just "couldn't
+        # even try", reported plainly like every other check here.
+        print(f"    ✗ Could not take a test capture: {exc}")
+    else:
+        if capture_check.looks_blank(test_capture):
+            # This is a heuristic, not a permission API call — see
+            # capture_check.py's module docstring. It must only ever warn:
+            # a legitimately plain screen would trip it too, so this can
+            # never be treated as a hard failure of `doctor`, and nothing
+            # about it ever gates `start`.
+            print("    ✗ Test capture looks blank (almost no colour variation)")
+            print(capture_check.BLANK_CAPTURE_ADVICE)
+        else:
+            print("    ✓ Test capture looks fine")
 
     print()
