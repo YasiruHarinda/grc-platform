@@ -101,7 +101,9 @@ type HREntityConfig struct {
 // Internal users and external auditors live in genuinely separate Asgardeo
 // organizations (see internal/scim.NewClient vs NewExternalClient), each
 // with its own OAuth2 app registration — hence the separate
-// Org/ClientID/ClientSecret/TokenURL/Scopes per org below. BaseURL is the
+// SCIM_INTERNAL_*/SCIM_EXTERNAL_* env vars per org below (Org/ClientID/
+// ClientSecret/TokenURL/Scopes fields, unprefixed here since they're already
+// disambiguated by sitting next to their External* siblings). BaseURL is the
 // one thing shared: both orgs sit under the same Asgardeo API root
 // (https://api.asgardeo.io), just a different /t/{org}/... tenant path.
 //
@@ -242,11 +244,11 @@ func Load() (Config, error) {
 			BaseURL:    os.Getenv("SCIM_BASE_URL"),
 			UserDomain: envOrDefault("SCIM_USER_DOMAIN", "wso2.com"),
 
-			Org:          os.Getenv("SCIM_ORG"),
-			ClientID:     os.Getenv("SCIM_CLIENT_ID"),
-			ClientSecret: os.Getenv("SCIM_CLIENT_SECRET"),
-			TokenURL:     os.Getenv("SCIM_TOKEN_URL"),
-			Scopes:       envOrDefault("SCIM_SCOPES", "internal_user_mgt_view internal_user_mgt_list"),
+			Org:          os.Getenv("SCIM_INTERNAL_ORG"),
+			ClientID:     os.Getenv("SCIM_INTERNAL_CLIENT_ID"),
+			ClientSecret: os.Getenv("SCIM_INTERNAL_CLIENT_SECRET"),
+			TokenURL:     os.Getenv("SCIM_INTERNAL_TOKEN_URL"),
+			Scopes:       envOrDefault("SCIM_INTERNAL_SCOPES", "internal_user_mgt_view internal_user_mgt_list"),
 
 			ExternalOrg:          os.Getenv("SCIM_EXTERNAL_ORG"),
 			ExternalClientID:     os.Getenv("SCIM_EXTERNAL_CLIENT_ID"),
