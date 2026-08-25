@@ -270,8 +270,16 @@ type userSearchResult struct {
 }
 
 // SearchByQuery finds people whose userName (email), given name, or family
-// name contains query — a live SCIM call, single page, capped at
-// searchPageSize results.
+// name contains query — three live SCIM calls run concurrently, merged and
+// de-duplicated by uuid (a person can match more than one attribute), capped
+// at searchPageSize results overall.
+//
+// This is three calls, not one with a compound filter, because Asgardeo's
+// SCIM2 API in this deployment rejects an "or" filter outright (observed:
+// {"detail":"Unsupported Operation: or", ...} — a 500, not a 4xx, so there's
+// no way to detect this ahead of trying) even though RFC 7644 requires
+// logical operator support. Splitting into per-attribute queries and merging
+// here is what stands in for the "or" Asgardeo won't do itself.
 //
 // This is the external-org counterpart to directory.Service.SearchDomain,
 // which searches a bulk snapshot instead: the external org has no
@@ -279,7 +287,8 @@ type userSearchResult struct {
 // comment), so every external search hits Asgardeo directly. Fine for an
 // admin-only, low-frequency lookup (the Add User dialog's External search),
 // same reasoning as LookupByEmail/LookupByUUID — not worth a caching layer
-// for how rarely this is called.
+// for how rarely this is called. Three concurrent calls instead of one still
+// costs one round trip's worth of latency, not three's.
 //
 // %q quotes and escapes query the same way LookupByEmail's filter does,
 // which is what keeps a query containing a literal `"` from breaking out of
@@ -292,12 +301,46 @@ func (c *Client) SearchByQuery(ctx context.Context, query string) ([]DirectoryUs
 	if query == "" {
 		return nil, nil
 	}
-	filter := fmt.Sprintf(`userName co %q or name.givenName co %q or name.familyName co %q`, query, query, query)
-	users, _, err := c.searchUsersPage(ctx, filter, 0, searchPageSize)
-	if err != nil {
-		return nil, fmt.Errorf("scim search: %w", err)
+
+	filters := []string{
+		fmt.Sprintf(`userName co %q`, query),
+		fmt.Sprintf(`name.givenName co %q`, query),
+		fmt.Sprintf(`name.familyName co %q`, query),
 	}
-	return users, nil
+	type pageResult struct {
+		users []DirectoryUser
+		err   error
+	}
+	results := make([]pageResult, len(filters))
+	var wg sync.WaitGroup
+	for i, filter := range filters {
+		wg.Add(1)
+		go func(i int, filter string) {
+			defer wg.Done()
+			users, _, err := c.searchUsersPage(ctx, filter, 0, searchPageSize)
+			results[i] = pageResult{users: users, err: err}
+		}(i, filter)
+	}
+	wg.Wait()
+
+	seen := make(map[string]bool, searchPageSize)
+	out := make([]DirectoryUser, 0, searchPageSize)
+	for _, r := range results {
+		if r.err != nil {
+			return nil, fmt.Errorf("scim search: %w", r.err)
+		}
+		for _, u := range r.users {
+			if seen[u.UUID] {
+				continue
+			}
+			seen[u.UUID] = true
+			out = append(out, u)
+		}
+	}
+	if len(out) > searchPageSize {
+		out = out[:searchPageSize]
+	}
+	return out, nil
 }
 
 // searchPageSize caps SearchByQuery's single page — an admin typing a query

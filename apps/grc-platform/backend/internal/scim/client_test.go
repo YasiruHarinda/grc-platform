@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -194,6 +195,81 @@ func TestAccessToken_SendsStableTokenBindingID(t *testing.T) {
 	if gotBindingIDs[0] != gotBindingIDs[1] {
 		t.Errorf("tokenBindingId changed between requests from the same Client: %q vs %q",
 			gotBindingIDs[0], gotBindingIDs[1])
+	}
+}
+
+// TestSearchByQuery_MergesAndDedupesPerAttributeFilters covers the fix for
+// Asgardeo rejecting a compound "or" filter (500, "Unsupported Operation:
+// or"): SearchByQuery now sends three single-attribute filters instead. This
+// asserts none of those filters ever contains " or " (the regression this
+// guards against), and that a person matching more than one attribute
+// (userName and givenName both) is only returned once.
+func TestSearchByQuery_MergesAndDedupesPerAttributeFilters(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(tokenResponse{AccessToken: "test-token", ExpiresIn: 3600})
+	}))
+	defer tokenSrv.Close()
+
+	searchSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var in userSearchInput
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			t.Fatalf("decode search request: %v", err)
+		}
+		if strings.Contains(in.Filter, " or ") {
+			t.Errorf("filter %q contains an \"or\" — Asgardeo rejects this", in.Filter)
+			http.Error(w, `{"detail":"Unsupported Operation: or"}`, http.StatusInternalServerError)
+			return
+		}
+
+		var resources []scimUser
+		switch {
+		case strings.Contains(in.Filter, "userName"):
+			// Matches on both userName and givenName — must be de-duplicated.
+			resources = []scimUser{
+				{ID: "uuid-1", UserName: "nim@partner.example", Name: struct {
+					GivenName  string `json:"givenName"`
+					FamilyName string `json:"familyName"`
+				}{GivenName: "Nim"}},
+			}
+		case strings.Contains(in.Filter, "givenName"):
+			resources = []scimUser{
+				{ID: "uuid-1", UserName: "nim@partner.example", Name: struct {
+					GivenName  string `json:"givenName"`
+					FamilyName string `json:"familyName"`
+				}{GivenName: "Nim"}},
+				{ID: "uuid-2", UserName: "other@partner.example", Name: struct {
+					GivenName  string `json:"givenName"`
+					FamilyName string `json:"familyName"`
+				}{GivenName: "Nimal"}},
+			}
+		case strings.Contains(in.Filter, "familyName"):
+			resources = nil
+		default:
+			t.Fatalf("unexpected filter %q", in.Filter)
+		}
+		json.NewEncoder(w).Encode(userSearchResult{TotalResults: len(resources), Resources: resources})
+	}))
+	defer searchSrv.Close()
+
+	c := NewClient(searchSrv.URL, tokenSrv.URL, "id", "secret", "internal_user_mgt_view internal_user_mgt_list", "wso2external")
+
+	got, err := c.SearchByQuery(context.Background(), "nim")
+	if err != nil {
+		t.Fatalf("SearchByQuery: %v", err)
+	}
+
+	byUUID := make(map[string]int, len(got))
+	for _, u := range got {
+		byUUID[u.UUID]++
+	}
+	if byUUID["uuid-1"] != 1 {
+		t.Errorf("uuid-1 (matched by both userName and givenName filters) appeared %d times, want 1", byUUID["uuid-1"])
+	}
+	if byUUID["uuid-2"] != 1 {
+		t.Errorf("uuid-2 appeared %d times, want 1", byUUID["uuid-2"])
+	}
+	if len(got) != 2 {
+		t.Errorf("got %d users, want 2 (deduplicated)", len(got))
 	}
 }
 
