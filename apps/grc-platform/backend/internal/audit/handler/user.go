@@ -41,8 +41,15 @@ type userHandler struct {
 // Returns all active users for owner/auditor assignment dropdowns. The user
 // table stores no display name or email (see model.UserRef.UUID), so those
 // are resolved in bulk via the identity directory before responding.
+//
+// Internal-only: dumps the full user directory, which external auditors
+// don't need. Gated on ViewInternalComments, the same internal-vs-external
+// signal comment.go already uses — external-auditor holds ViewAudits but not it.
 func (h *userHandler) listUsers(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAudits) {
+		return
+	}
+	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewInternalComments) {
 		return
 	}
 	users, err := h.svc.List(r.Context())

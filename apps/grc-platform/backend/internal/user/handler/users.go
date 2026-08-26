@@ -22,6 +22,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
 
@@ -36,6 +37,9 @@ import (
 // other picker (see candidates.go's resolveCandidates).
 func handleListUsers(repo userentity.Repository, dir *directory.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !auth.RequirePrivilege(r.Context(), w, privilege.ViewRisks) {
+			return
+		}
 		users, err := repo.List(r.Context())
 		if err != nil {
 			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
