@@ -51,10 +51,12 @@ function clearReturnTo(): void {
   }
 }
 
-// Skips "/" (where we'd land anyway) and spent OAuth callback params.
+// Skips "/" (where we'd land anyway) and spent OAuth callback params. Matches
+// the "code" param exactly: a substring test also swallows deep links carrying
+// unrelated params like ?invite_code=.
 function saveReturnTo(): void {
   const { pathname, search } = window.location;
-  if (pathname === "/" || search.includes("code=")) return;
+  if (pathname === "/" || new URLSearchParams(search).has("code")) return;
   try {
     sessionStorage.setItem(RETURN_TO_KEY, pathname + search);
   } catch {
