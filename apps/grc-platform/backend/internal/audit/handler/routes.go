@@ -85,7 +85,7 @@ type Deps struct {
 func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	ah := &auditHandler{svc: deps.Audit}
 	ch := &controlHandler{svc: deps.Control, notify: &deps}
-	tlh := &trailHandler{svc: deps.Trail, directory: deps.Directory}
+	tlh := &trailHandler{svc: deps.Trail, controlSvc: deps.Control, auditSvc: deps.Audit, directory: deps.Directory}
 	fh := &frameworkHandler{svc: deps.Framework}
 	uh := &userHandler{svc: deps.User, directory: deps.Directory, grants: deps.Grants}
 	th := &teamHandler{svc: deps.Team}
