@@ -163,6 +163,12 @@ func (h *commentHandler) addComment(w http.ResponseWriter, r *http.Request) {
 // grantService.validateScope, not just convention), so there is no team to
 // check it against (contrast evidence/population's HasPrivilegeIn bypass
 // checks, which exist because those privileges can be team-scoped).
+//
+// controlInScope still runs first, same as listComments/addComment: without
+// it, a caller who is the comment's author but has since lost scope over its
+// control (e.g. reassigned off the audit team) could still delete it, and a
+// non-author non-admin caller would get a scope-probing 403 instead of the
+// 404 every other control-scoped endpoint here returns.
 func (h *commentHandler) deleteComment(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.AddComment) {
 		return
@@ -173,6 +179,9 @@ func (h *commentHandler) deleteComment(w http.ResponseWriter, r *http.Request) {
 	}
 	controlID, ok := parseIntParam(w, r, "controlId")
 	if !ok {
+		return
+	}
+	if !controlInScope(w, r, h.controlSvc, auditID, controlID) {
 		return
 	}
 	commentID, ok := parseIntParam(w, r, "commentId")
