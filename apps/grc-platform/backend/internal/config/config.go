@@ -71,9 +71,7 @@ type IdPConfig struct {
 }
 
 type AuthConfig struct {
-	// IdPs holds every trusted issuer — today, just the GRC web app. Empty when
-	// TokenValidatorEnabled is false (local dev decodes tokens without
-	// verification).
+	// IdPs holds every trusted issuer. Empty when TokenValidatorEnabled is false (local dev decodes tokens without verification).
 	IdPs                  []IdPConfig
 	ClockSkew             time.Duration
 	TokenValidatorEnabled bool
