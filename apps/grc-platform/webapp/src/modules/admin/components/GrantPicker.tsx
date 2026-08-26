@@ -140,7 +140,7 @@ export default function GrantPicker({ roles, onAdd, userType }: GrantPickerProps
       cancelled = true;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roleId]);
+  }, [roleId, selectedRole?.globalOnly]);
 
   const handleAdd = () => {
     if (!selectedRole || roleId === "") return;
