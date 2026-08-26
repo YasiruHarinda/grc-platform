@@ -27,12 +27,23 @@ import (
 )
 
 // handleListTeams serves GET /api/v1/teams.
+//
+// Gated on ViewRisks OR ManageRiskHub — same shape as the Audit Hub's
+// analogous GET /api/v1/audit/teams (audit/handler/team.go): every Risk Hub
+// role that has any business here (Assigner/Owner/Compliance/Management, all
+// seeded with RISK_VIEW_RISKS) is let in, and grc-platform-admin
+// (ManageRiskHub only, no ViewRisks) still reaches it for the Admin Console
+// and the grant editor's scope picker. Without this gate any authenticated
+// caller — an external auditor included — could enumerate the full risk
+// register/org-team structure.
+//
 // Optional ?type=SOURCE_REGISTER or ?type=ASSIGNMENT — semantic filter, BOTH teams
 // appear in both result sets.
 //
 // Optional ?includeInactive=true returns every status, not just ACTIVE — the
 // Admin Console's Risk Teams table is the only caller that sets this; every
-// picker leaves it off.
+// picker leaves it off. Additionally gated on ManageRiskHub: an inactive team
+// list is reference-data administration, not everyday Risk Hub use.
 //
 // Optional ?mine=true restricts the list to the caller's own risk teams — how
 // the Dashboard/Analytics/Registers-list register filters avoid offering a
@@ -44,9 +55,16 @@ import (
 // register — raising a risk under a register you don't belong to is a
 // legitimate action this scoping was never meant to restrict.
 func (d *Deps) handleListTeams(w http.ResponseWriter, r *http.Request) {
+	if !auth.HasPrivilege(r.Context(), privilege.ViewRisks) && !auth.RequirePrivilege(r.Context(), w, privilege.ManageRiskHub) {
+		return
+	}
+
 	filter := model.ListTeamsFilter{
 		Type:            r.URL.Query().Get("type"),
 		IncludeInactive: r.URL.Query().Get("includeInactive") == "true",
+	}
+	if filter.IncludeInactive && !auth.RequirePrivilege(r.Context(), w, privilege.ManageRiskHub) {
+		return
 	}
 
 	teams, err := d.Team.List(r.Context(), filter)

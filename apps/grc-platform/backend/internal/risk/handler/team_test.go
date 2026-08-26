@@ -78,3 +78,46 @@ func TestListTeamsPrivilegeFilterAppliesEvenWhenCallerSeesEveryRisk(t *testing.T
 			"a global ViewRisks grant must not bypass the RISK_CREATE scope check", got, asgardeo)
 	}
 }
+
+// TestListTeamsRequiresPrivilege guards against a caller with no Risk Hub
+// privilege at all — an external auditor, or any authenticated user with no
+// grant in this module — enumerating the risk register/org-team structure.
+func TestListTeamsRequiresPrivilege(t *testing.T) {
+	ctx := contextForGrants(t, map[string]bool{privilege.ViewAudits: true}, nil)
+
+	d := &Deps{Team: &fakeTeamService{teams: []*model.Team{
+		{ID: asgardeo, Name: "Asgardeo", TeamType: "BOTH", Status: "ACTIVE"},
+	}}}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/teams", nil)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	d.handleListTeams(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("handleListTeams() with no Risk Hub privilege = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+// TestListTeamsIncludeInactiveRequiresManageRiskHub reproduces the audit-teams
+// precedent (audit/handler/team.go): a caller who can see the risk team list
+// (ViewRisks) but doesn't administer it (no ManageRiskHub) must not be able to
+// pull inactive teams too, just by adding ?includeInactive=true.
+func TestListTeamsIncludeInactiveRequiresManageRiskHub(t *testing.T) {
+	ctx := contextForGrants(t, map[string]bool{privilege.ViewRisks: true}, nil)
+
+	d := &Deps{Team: &fakeTeamService{teams: []*model.Team{
+		{ID: asgardeo, Name: "Asgardeo", TeamType: "BOTH", Status: "INACTIVE"},
+	}}}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/teams?includeInactive=true", nil)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	d.handleListTeams(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("handleListTeams(includeInactive=true) with ViewRisks but no ManageRiskHub = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
