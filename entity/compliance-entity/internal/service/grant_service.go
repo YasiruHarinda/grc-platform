@@ -40,6 +40,9 @@ var globalOnlyPrivileges = []string{
 	manageUsersPrivilege,
 	"AUDIT_MANAGE_CONTROLS",
 	"AUDIT_UPDATE_AUDIT",
+	// Org-wide review authority, checked unscoped in review.go. Keeps
+	// grc-platform-audit-compliance-team GLOBAL-only.
+	"AUDIT_REVIEW_EVIDENCE",
 }
 
 // GrantService reads and writes role grants.
@@ -282,6 +285,16 @@ func (s *grantService) ListRoles(ctx context.Context) (domain.ListRolesResponse,
 	}
 	if roles == nil {
 		roles = []domain.Role{}
+	}
+
+	globalOnlyRoleIDs, err := s.repo.RolesCarryingAnyPrivilege(ctx, globalOnlyPrivileges)
+	if err != nil {
+		return domain.ListRolesResponse{}, err
+	}
+	for i := range roles {
+		roles[i].GlobalOnly = roles[i].Module == domain.ModuleShared ||
+			roles[i].AssignableUserType == domain.UserTypeExternal ||
+			globalOnlyRoleIDs[roles[i].ID]
 	}
 	return domain.ListRolesResponse{Roles: roles}, nil
 }

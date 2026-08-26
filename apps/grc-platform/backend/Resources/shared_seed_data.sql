@@ -596,6 +596,19 @@ JOIN   `role` r ON r.id = rp.role_id
 WHERE  r.role_name = 'wso2-everyone';
 DELETE FROM `role` WHERE role_name = 'wso2-everyone';
 
+-- ── Remediate pre-existing non-GLOBAL grants for GLOBAL-only privileges ────────
+-- Deactivates (never upgrades to GLOBAL) any existing grant that CreateGrant
+-- would now reject — see globalOnlyPrivileges in grant_service.go. Idempotent.
+UPDATE user_role_grant g
+JOIN   role_privilege rp ON rp.role_id = g.role_id AND rp.is_active = TRUE
+JOIN   privilege p        ON p.id = rp.privilege_id
+                         AND p.privilege_name IN (
+                               'MANAGE_USERS', 'AUDIT_MANAGE_CONTROLS',
+                               'AUDIT_UPDATE_AUDIT', 'AUDIT_REVIEW_EVIDENCE'
+                             )
+SET    g.status = 'INACTIVE', g.updated_by = 'shared_seed_data.sql migration'
+WHERE  g.scope_type <> 'GLOBAL' AND g.status = 'ACTIVE';
+
 -- ── Verify ────────────────────────────────────────────────────────────────────
 SELECT 'role'            AS `table`, COUNT(*) AS `count` FROM `role`
 UNION ALL
@@ -609,6 +622,21 @@ SELECT 'role_privilege', COUNT(*) FROM role_privilege WHERE is_active = TRUE;
 SELECT role_name, module, 'MISSING scope_basis — holders will see nothing' AS problem
 FROM   `role`
 WHERE  module = 'RISK' AND status = 'ACTIVE' AND scope_basis IS NULL;
+
+-- A row here means the remediation above missed something (e.g. a grant
+-- created between running this file and reading these results). Expected: 0
+-- rows.
+SELECT g.id, g.user_id, r.role_name, g.scope_type, g.scope_id,
+       'ACTIVE non-GLOBAL grant for a GLOBAL-only privilege' AS problem
+FROM   user_role_grant g
+JOIN   `role` r           ON r.id = g.role_id
+JOIN   role_privilege rp  ON rp.role_id = g.role_id AND rp.is_active = TRUE
+JOIN   privilege p        ON p.id = rp.privilege_id
+                         AND p.privilege_name IN (
+                               'MANAGE_USERS', 'AUDIT_MANAGE_CONTROLS',
+                               'AUDIT_UPDATE_AUDIT', 'AUDIT_REVIEW_EVIDENCE'
+                             )
+WHERE  g.scope_type <> 'GLOBAL' AND g.status = 'ACTIVE';
 
 -- =============================================================================
 -- Bootstrap admin grant — ENVIRONMENT-SPECIFIC, run separately

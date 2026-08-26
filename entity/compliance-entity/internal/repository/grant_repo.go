@@ -39,6 +39,9 @@ type GrantRepository interface {
 	ListRoles(ctx context.Context) ([]domain.Role, error)
 	TeamExists(ctx context.Context, scopeType string, scopeID int) (bool, error)
 	RoleCarriesPrivilege(ctx context.Context, roleID int, privilegeName string) (bool, error)
+	// RolesCarryingAnyPrivilege returns the role ids that carry at least one of
+	// privilegeNames.
+	RolesCarryingAnyPrivilege(ctx context.Context, privilegeNames []string) (map[int]bool, error)
 	CandidatesForPrivilege(ctx context.Context, privilegeName string, teamIDs []int) ([]domain.GrantCandidate, error)
 	// UserType returns the target user's user_type (INTERNAL/EXTERNAL), for
 	// validateScope's assignable_user_type check.
@@ -431,4 +434,39 @@ func (r *grantRepo) RoleCarriesPrivilege(ctx context.Context, roleID int, privil
 		return false, fmt.Errorf("grant.RoleCarriesPrivilege: %w", err)
 	}
 	return true, nil
+}
+
+// RolesCarryingAnyPrivilege returns the role ids that carry at least one of
+// privilegeNames.
+func (r *grantRepo) RolesCarryingAnyPrivilege(ctx context.Context, privilegeNames []string) (map[int]bool, error) {
+	out := map[int]bool{}
+	if len(privilegeNames) == 0 {
+		return out, nil
+	}
+	placeholders := make([]string, len(privilegeNames))
+	args := make([]any, len(privilegeNames))
+	for i, name := range privilegeNames {
+		placeholders[i] = "?"
+		args[i] = name
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT DISTINCT rp.role_id
+		FROM   role_privilege rp
+		JOIN   privilege p ON p.id = rp.privilege_id
+		WHERE  rp.is_active = TRUE AND p.status = 'ACTIVE'
+		  AND  p.privilege_name IN (`+strings.Join(placeholders, ",")+`)`,
+		args...)
+	if err != nil {
+		return nil, fmt.Errorf("grant.RolesCarryingAnyPrivilege: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var roleID int
+		if err := rows.Scan(&roleID); err != nil {
+			return nil, fmt.Errorf("grant.RolesCarryingAnyPrivilege scan: %w", err)
+		}
+		out[roleID] = true
+	}
+	return out, rows.Err()
 }

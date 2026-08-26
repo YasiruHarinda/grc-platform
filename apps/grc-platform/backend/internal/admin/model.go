@@ -78,4 +78,6 @@ type Role struct {
 	// enforces it regardless of what the UI offers.
 	AssignableUserType string `json:"assignableUserType"`
 	Status             string `json:"status"`
+	// GlobalOnly mirrors the entity's domain.Role.GlobalOnly.
+	GlobalOnly bool `json:"globalOnly"`
 }
