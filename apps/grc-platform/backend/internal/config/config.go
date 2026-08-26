@@ -168,8 +168,23 @@ func (c SCIMConfig) ExternalConfigured() bool {
 // AUTH_JWKS_ENDPOINT, AUTH_ISSUER, and AUTH_AUDIENCE are only required when
 // AUTH_TOKEN_VALIDATOR_ENABLED is true (the default). They are not needed for
 // local development (set AUTH_TOKEN_VALIDATOR_ENABLED=false).
+//
+// AUTH_TOKEN_VALIDATOR_ENABLED=false is a full auth bypass, not just a
+// signature-check toggle: middleware.Auth decodes the token without
+// verifying it AND, because privStore is never built in this mode
+// (cmd/server/main.go), auth.HasPrivilege/HasPrivilegeIn answer true for
+// every check — allow-all. A single misconfigured env var in a real
+// deployment would be silent, total authn+authz bypass, so this is refused
+// at startup unless APP_ENV=local also confirms the deployment is a
+// developer's own machine and not a Choreo environment.
 func Load() (Config, error) {
 	tokenValidatorEnabled := os.Getenv("AUTH_TOKEN_VALIDATOR_ENABLED") != "false"
+	if !tokenValidatorEnabled && os.Getenv("APP_ENV") != "local" {
+		return Config{}, fmt.Errorf(
+			"AUTH_TOKEN_VALIDATOR_ENABLED=false disables JWT signature verification and every " +
+				"privilege check (allow-all); refusing to start without APP_ENV=local to confirm " +
+				"this is a local development machine, not a deployed environment")
+	}
 
 	authCfg := AuthConfig{
 		ClockSkew:             5 * time.Second,

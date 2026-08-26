@@ -90,7 +90,8 @@ Copy `.env` and fill in the values:
 | `AUTH_JWKS_ENDPOINT` | Asgardeo JWKS URL |
 | `AUTH_ISSUER` | Expected `iss` claim |
 | `AUTH_AUDIENCE` | Expected `aud` claim |
-| `AUTH_TOKEN_VALIDATOR_ENABLED` | Set to `false` to skip signature verification locally (default `true`) |
+| `AUTH_TOKEN_VALIDATOR_ENABLED` | Set to `false` to skip signature verification locally (default `true`). Disables every privilege check too (allow-all) — requires `APP_ENV=local` or the server refuses to start |
+| `APP_ENV` | Set to `local` to permit `AUTH_TOKEN_VALIDATOR_ENABLED=false`. Leave unset in every deployed environment |
 
 ### Azure Blob Storage
 
@@ -237,7 +238,7 @@ HTTP request
 set -a && source .env && set +a && go run ./cmd/server
 ```
 
-When `AUTH_TOKEN_VALIDATOR_ENABLED=false`, JWT signature verification is skipped — the token is still decoded so user info is populated. Pass any valid-structure JWT as the Bearer token for local testing.
+When `AUTH_TOKEN_VALIDATOR_ENABLED=false`, JWT signature verification is skipped — the token is still decoded so user info is populated. Pass any valid-structure JWT as the Bearer token for local testing. This also requires `APP_ENV=local` to be set, or `config.Load()` refuses to start — see [Asgardeo JWT](#asgardeo-jwt).
 
 ### Examples
 
