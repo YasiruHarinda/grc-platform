@@ -32,7 +32,7 @@ func TestEveryAuditEventHasATemplate(t *testing.T) {
 	all := []AuditEvent{
 		AuditEventOwnerAssigned, AuditEventAuditorAssigned, AuditEventReminderDue10,
 		AuditEventReminderDue5, AuditEventReminderOverdue, AuditEventReminderOverdueAdmin,
-		AuditEventResubmissionNeeded,
+		AuditEventReminderOverdueLead, AuditEventResubmissionNeeded,
 		AuditEventSampleSubmitted, AuditEventEvidenceInternalReview, AuditEventPopulationInternalReview,
 		AuditEventEvidenceUnderValidation, AuditEventPopulationUnderValidation,
 		AuditEventPopulationCompleteSampleNeeded, AuditEventControlComplete, AuditEventCommentAdded,
@@ -181,5 +181,98 @@ func TestOverdueAdminSubjectIsItsOwnStableThread(t *testing.T) {
 	}
 	if overdueAdminSubject(AuditEventInfo{AuditName: "Q3 Audit"}) == "" {
 		t.Error("subject must never be empty, even with no items")
+	}
+}
+
+// The lead digest is about one person and spans audits, so its subject names
+// the owner rather than an audit — and stays stable as their overdue set
+// changes, so each day's escalation threads with the last.
+func TestOverdueLeadSubjectNamesTheOwnerAndStaysStable(t *testing.T) {
+	info := AuditEventInfo{
+		OwnerName: "Jane Doe",
+		Items: []AuditEventItem{
+			{ControlNumber: "C-1", Audit: "Q3 Audit"},
+			{ControlNumber: "C-2", Audit: "Q4 Audit"},
+		},
+	}
+	got := overdueLeadSubject(info)
+	if !strings.Contains(got, "Jane Doe") {
+		t.Errorf("subject %q should name the owner", got)
+	}
+	info.Items = info.Items[:1]
+	if again := overdueLeadSubject(info); again != got {
+		t.Errorf("subject changed with the item set (%q vs %q) — daily digests would stop threading", again, got)
+	}
+}
+
+// TestEveryAuditEventHasATemplate calls every subject with an info carrying no
+// owner name; this is the fallback that keeps it non-empty.
+func TestOverdueLeadSubjectFallsBackWithoutAnOwnerName(t *testing.T) {
+	if got := overdueLeadSubject(AuditEventInfo{}); got == "" {
+		t.Error("subject must never be empty, even with no owner name")
+	}
+}
+
+// A lead holds no audit privileges, so the digest must carry no links at all —
+// including the footer button, which renders unconditionally for every other
+// event.
+func TestLeadDigestRendersNoLinks(t *testing.T) {
+	var decoded string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Template string `json:"template"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		raw, _ := base64.StdEncoding.DecodeString(body.Template)
+		decoded = string(raw)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"message":"ok"}`))
+	})
+
+	err := c.SendAuditEvent(context.Background(), AuditEventReminderOverdueLead, "lead@example.com", AuditEventInfo{
+		OwnerName: "Jane Doe",
+		Actor:     "Jane Doe (jane@example.com)",
+		ShowAudit: true,
+		Items:     []AuditEventItem{{ControlNumber: "C-1", Audit: "Q3 Audit", RequirementType: "Evidence Requirement"}},
+	})
+	if err != nil {
+		t.Fatalf("SendAuditEvent: %v", err)
+	}
+	if strings.Contains(decoded, "<a href") {
+		t.Errorf("lead digest must contain no links:\n%s", decoded)
+	}
+	if strings.Contains(decoded, "View in Audit Hub") {
+		t.Error("lead digest must omit the footer button")
+	}
+	// ShowAudit is the only place the audit name can appear for this event.
+	if !strings.Contains(decoded, "Q3 Audit") {
+		t.Errorf("lead digest should label each row's audit:\n%s", decoded)
+	}
+}
+
+// Every other event sets DetailURL, so making the footer conditional must not
+// remove the button from any of them.
+func TestFooterButtonStillRendersWhenDetailURLIsSet(t *testing.T) {
+	var decoded string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Template string `json:"template"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		raw, _ := base64.StdEncoding.DecodeString(body.Template)
+		decoded = string(raw)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"message":"ok"}`))
+	})
+
+	err := c.SendAuditEvent(context.Background(), AuditEventOwnerAssigned, "owner@example.com", AuditEventInfo{
+		DetailURL: "https://grc.example.com/audit/1/controls/2",
+		Items:     []AuditEventItem{{ControlNumber: "C-1"}},
+	})
+	if err != nil {
+		t.Fatalf("SendAuditEvent: %v", err)
+	}
+	if !strings.Contains(decoded, "View in Audit Hub") {
+		t.Error("footer button must still render when DetailURL is set")
 	}
 }

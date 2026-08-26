@@ -18,6 +18,7 @@ package job
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -876,5 +877,218 @@ func TestRunOnceRecoversFromPanic(t *testing.T) {
 	}
 	if len(dedup.released) != 1 {
 		t.Errorf("released = %v, want exactly one release call", dedup.released)
+	}
+}
+
+// leadSink collects the escalations a job hands to notifyLead — one entry per
+// (lead, owner), each carrying that owner's overdue items across every audit.
+type leadSink struct {
+	mu     sync.Mutex
+	alerts []struct {
+		ownerID   int
+		leadEmail string
+		items     []model.ReminderItem
+	}
+	err error
+}
+
+func (s *leadSink) notify(_ context.Context, ownerID int, leadEmail string, items []model.ReminderItem) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.alerts = append(s.alerts, struct {
+		ownerID   int
+		leadEmail string
+		items     []model.ReminderItem
+	}{ownerID, leadEmail, items})
+	return s.err
+}
+
+// leadsFn stubs lead resolution and records the id sets it was asked for, so
+// tests can assert leads are resolved once per sweep for overdue owners only.
+func leadsFn(leads map[int]string, calls *[][]int) func(context.Context, []int) map[int]string {
+	return func(_ context.Context, ownerIDs []int) map[int]string {
+		*calls = append(*calls, append([]int(nil), ownerIDs...))
+		return leads
+	}
+}
+
+// Without WithLeadAlerts nothing resolves a lead and nothing is emailed — the
+// disabled deployment must make no HR call at all.
+func TestRunOnceSkipsLeadEscalationWhenNotWired(t *testing.T) {
+	today := time.Now().UTC()
+	overdue := today.AddDate(0, 0, -3).Format("2006-01-02")
+
+	audits := &fakeAudits{audits: []*model.Audit{{ID: 1, Status: "ACTIVE", Name: "SOC2"}}}
+	controls := &fakeControls{controls: []*model.AuditControl{
+		{ID: 40, AuditID: 1, ControlNumber: "C-40", OwnerID: intPtr(700), Status: "EVIDENCE_PENDING", DueDate: strPtr(overdue)},
+	}}
+	j := NewReminderJob(audits, controls, &fakeClaimer{claimed: map[string]bool{}},
+		func(context.Context, int, []model.ReminderItem) error { return nil })
+	if err := j.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce: %v", err)
+	}
+}
+
+// One digest per (lead, owner) covering that owner's overdue items across
+// every audit — and only the overdue tier, never their due-in-10/5 items.
+func TestRunOnceEscalatesOverdueToTheOwnersLead(t *testing.T) {
+	today := time.Now().UTC()
+	overdue := today.AddDate(0, 0, -2).Format("2006-01-02")
+	dueIn10 := today.AddDate(0, 0, 10).Format("2006-01-02")
+
+	audits := &fakeAudits{audits: []*model.Audit{
+		{ID: 1, Status: "ACTIVE", Name: "SOC2"},
+		{ID: 2, Status: "ACTIVE", Name: "ISO27001"},
+	}}
+	controls := &fakeControls{controls: []*model.AuditControl{
+		{ID: 40, AuditID: 1, ControlNumber: "C-40", OwnerID: intPtr(700), Status: "EVIDENCE_PENDING", DueDate: strPtr(overdue)},
+		{ID: 41, AuditID: 2, ControlNumber: "C-41", OwnerID: intPtr(700), Status: "EVIDENCE_PENDING", DueDate: strPtr(overdue)},
+		{ID: 42, AuditID: 1, ControlNumber: "C-42", OwnerID: intPtr(700), Status: "EVIDENCE_PENDING", DueDate: strPtr(dueIn10)},
+	}}
+	sink := &leadSink{}
+	var leadCalls [][]int
+	j := NewReminderJob(audits, controls, &fakeClaimer{claimed: map[string]bool{}},
+		func(context.Context, int, []model.ReminderItem) error { return nil }).
+		WithLeadAlerts(leadsFn(map[int]string{700: "lead@x.com"}, &leadCalls), sink.notify)
+	if err := j.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce: %v", err)
+	}
+
+	if len(sink.alerts) != 1 {
+		t.Fatalf("lead digests = %d, want 1 (one per owner)", len(sink.alerts))
+	}
+	got := sink.alerts[0]
+	if got.leadEmail != "lead@x.com" || got.ownerID != 700 {
+		t.Errorf("digest = (owner %d, lead %q), want (700, lead@x.com)", got.ownerID, got.leadEmail)
+	}
+	if len(got.items) != 2 {
+		t.Fatalf("items = %d, want 2 overdue across both audits (the due-in-10 must not escalate)", len(got.items))
+	}
+	audits2 := map[string]bool{}
+	for _, it := range got.items {
+		if it.Type != "REMINDER_OVERDUE" {
+			t.Errorf("item type = %q, want only REMINDER_OVERDUE", it.Type)
+		}
+		audits2[it.AuditName] = true
+	}
+	if !audits2["SOC2"] || !audits2["ISO27001"] {
+		t.Errorf("digest should span both audits, got %v", audits2)
+	}
+	if len(leadCalls) != 1 {
+		t.Errorf("lead resolution called %d times, want 1 per sweep", len(leadCalls))
+	}
+}
+
+// An owner with only due-in-10/5 items must not be looked up in HR at all.
+func TestRunOnceResolvesLeadsOnlyForOverdueOwners(t *testing.T) {
+	today := time.Now().UTC()
+	overdue := today.AddDate(0, 0, -1).Format("2006-01-02")
+	dueIn5 := today.AddDate(0, 0, 5).Format("2006-01-02")
+
+	audits := &fakeAudits{audits: []*model.Audit{{ID: 1, Status: "ACTIVE", Name: "SOC2"}}}
+	controls := &fakeControls{controls: []*model.AuditControl{
+		{ID: 50, AuditID: 1, ControlNumber: "C-50", OwnerID: intPtr(700), Status: "EVIDENCE_PENDING", DueDate: strPtr(overdue)},
+		{ID: 51, AuditID: 1, ControlNumber: "C-51", OwnerID: intPtr(800), Status: "EVIDENCE_PENDING", DueDate: strPtr(dueIn5)},
+	}}
+	sink := &leadSink{}
+	var leadCalls [][]int
+	j := NewReminderJob(audits, controls, &fakeClaimer{claimed: map[string]bool{}},
+		func(context.Context, int, []model.ReminderItem) error { return nil }).
+		WithLeadAlerts(leadsFn(map[int]string{700: "lead@x.com", 800: "other@x.com"}, &leadCalls), sink.notify)
+	if err := j.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce: %v", err)
+	}
+
+	if len(leadCalls) != 1 {
+		t.Fatalf("lead resolution called %d times, want 1", len(leadCalls))
+	}
+	if len(leadCalls[0]) != 1 || leadCalls[0][0] != 700 {
+		t.Errorf("resolved %v, want only the overdue owner [700]", leadCalls[0])
+	}
+	if len(sink.alerts) != 1 {
+		t.Errorf("lead digests = %d, want 1", len(sink.alerts))
+	}
+}
+
+// An owner with no reachable lead is simply absent from the resolved map.
+func TestRunOnceSkipsOwnersWithNoLead(t *testing.T) {
+	today := time.Now().UTC()
+	overdue := today.AddDate(0, 0, -1).Format("2006-01-02")
+
+	audits := &fakeAudits{audits: []*model.Audit{{ID: 1, Status: "ACTIVE", Name: "SOC2"}}}
+	controls := &fakeControls{controls: []*model.AuditControl{
+		{ID: 60, AuditID: 1, ControlNumber: "C-60", OwnerID: intPtr(700), Status: "EVIDENCE_PENDING", DueDate: strPtr(overdue)},
+	}}
+	sink := &leadSink{}
+	var leadCalls [][]int
+	j := NewReminderJob(audits, controls, &fakeClaimer{claimed: map[string]bool{}},
+		func(context.Context, int, []model.ReminderItem) error { return nil }).
+		WithLeadAlerts(leadsFn(map[int]string{}, &leadCalls), sink.notify)
+	if err := j.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce: %v", err)
+	}
+	if len(sink.alerts) != 0 {
+		t.Errorf("lead digests = %d, want 0 when no lead resolves", len(sink.alerts))
+	}
+}
+
+// The owner's digest is already sent and its claims spent by the time the lead
+// is emailed, so a failed escalation must not release them — releasing would
+// re-send the owner's own digest tomorrow for an item they were already told
+// about. The sweep itself must still succeed.
+func TestRunOnceFailedLeadEscalationDoesNotReleaseOwnerClaims(t *testing.T) {
+	today := time.Now().UTC()
+	overdue := today.AddDate(0, 0, -1).Format("2006-01-02")
+
+	audits := &fakeAudits{audits: []*model.Audit{{ID: 1, Status: "ACTIVE", Name: "SOC2"}}}
+	controls := &fakeControls{controls: []*model.AuditControl{
+		{ID: 70, AuditID: 1, ControlNumber: "C-70", OwnerID: intPtr(700), Status: "EVIDENCE_PENDING", DueDate: strPtr(overdue)},
+	}}
+	claim := &fakeClaimer{claimed: map[string]bool{}}
+	sink := &leadSink{err: errors.New("email service down")}
+	var leadCalls [][]int
+	j := NewReminderJob(audits, controls, claim,
+		func(context.Context, int, []model.ReminderItem) error { return nil }).
+		WithLeadAlerts(leadsFn(map[int]string{700: "lead@x.com"}, &leadCalls), sink.notify)
+	if err := j.runOnce(context.Background()); err != nil {
+		t.Fatalf("runOnce: %v", err)
+	}
+	if len(claim.released) != 0 {
+		t.Errorf("released %d claims, want 0 — a failed lead send must not undo the owner's digest", len(claim.released))
+	}
+	if len(sink.alerts) != 1 {
+		t.Errorf("lead digests attempted = %d, want 1", len(sink.alerts))
+	}
+}
+
+// A panicking lead escalation must not undo the owner's digest. The owner's
+// email is already sent by the time the lead is notified, so releasing their
+// claims would re-send that digest tomorrow for items they were already told
+// about — the delete from byOwner has to happen before the lead send, not after.
+func TestRunOncePanickingLeadEscalationDoesNotReleaseOwnerClaims(t *testing.T) {
+	today := time.Now().UTC()
+	overdue := today.AddDate(0, 0, -1).Format("2006-01-02")
+
+	audits := &fakeAudits{audits: []*model.Audit{{ID: 1, Status: "ACTIVE", Name: "SOC2"}}}
+	controls := &fakeControls{controls: []*model.AuditControl{
+		{ID: 80, AuditID: 1, ControlNumber: "C-80", OwnerID: intPtr(700), Status: "EVIDENCE_PENDING", DueDate: strPtr(overdue)},
+	}}
+	claim := &fakeClaimer{claimed: map[string]bool{}}
+	var leadCalls [][]int
+	j := NewReminderJob(audits, controls, claim,
+		func(context.Context, int, []model.ReminderItem) error { return nil }).
+		WithLeadAlerts(
+			leadsFn(map[int]string{700: "lead@x.com"}, &leadCalls),
+			func(context.Context, int, string, []model.ReminderItem) error {
+				panic("lead resolution blew up")
+			})
+
+	// runOnce's own recovery converts the panic into an error rather than
+	// taking the process down.
+	if err := j.runOnce(context.Background()); err == nil {
+		t.Fatal("want an error from the recovered panic, got nil")
+	}
+	if len(claim.released) != 0 {
+		t.Errorf("released %d claims, want 0 — the owner's digest already sent", len(claim.released))
 	}
 }

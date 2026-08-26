@@ -14,8 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Idle timeout in ms — sign the user out after 30 minutes of inactivity.
-export const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+// Idle timeout in ms — sign the user out after 60 minutes of inactivity.
+export const IDLE_TIMEOUT_MS = 60 * 60 * 1000;
 
 // Show "Are you still there?" this many ms before idle timeout (60s warning window).
 export const IDLE_PROMPT_BEFORE_MS = 60_000;

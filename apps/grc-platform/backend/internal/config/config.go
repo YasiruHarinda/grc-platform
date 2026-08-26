@@ -32,6 +32,32 @@ type Config struct {
 	CORSAllowedOrigin       string
 	AIValidation            AIValidationConfig
 	Email                   EmailConfig
+	// AuditLeadEscalationEnabled turns on emailing an overdue item's owner's
+	// HR line manager. See AuditLeadEscalationDefault.
+	AuditLeadEscalationEnabled bool
+}
+
+// AuditLeadEscalationDefault is the built-in setting for the overdue lead
+// escalation, used by every environment that does not override it. Deliberately
+// a constant rather than a required env var: production takes no config
+// changes, so enabling this is a one-line edit here plus a deploy.
+//
+// AUDIT_LEAD_ESCALATION_ENABLED overrides it with exactly "true" or "false",
+// which is how staging opts out independently of this default.
+const AuditLeadEscalationDefault = false
+
+// auditLeadEscalationEnabled resolves the override against the default above.
+// Any other value — including unset — leaves the default alone, so a typo can
+// never silently start mailing line managers.
+func auditLeadEscalationEnabled() bool {
+	switch os.Getenv("AUDIT_LEAD_ESCALATION_ENABLED") {
+	case "true":
+		return true
+	case "false":
+		return false
+	default:
+		return AuditLeadEscalationDefault
+	}
 }
 
 // EmailConfig holds the connection details for the shared email-sending
@@ -294,6 +320,7 @@ func Load() (Config, error) {
 			ClientSecret:    emailClientSecret,
 			TokenURL:        emailTokenURL,
 		},
+		AuditLeadEscalationEnabled: auditLeadEscalationEnabled(),
 	}, nil
 }
 

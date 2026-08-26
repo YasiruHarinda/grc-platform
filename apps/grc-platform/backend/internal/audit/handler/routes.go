@@ -24,6 +24,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/repository"
 	auditservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/aiagent"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
@@ -73,6 +74,10 @@ type Deps struct {
 	// FrontendBaseURL builds the "View in Audit Hub" link inside notification
 	// emails.
 	FrontendBaseURL string
+	// HR resolves an owner's line manager for the overdue lead escalation.
+	// Nil when AUDIT_LEAD_ESCALATION_ENABLED is false, in which case no lead
+	// is ever resolved — same nil-when-disabled pattern as AIAgent.
+	HR *hrentity.Client
 	// TriggerReminderJob runs the daily due-date reminder sweep on demand —
 	// wired in cmd/server/main.go to the reminder job's RunOnce method, kept
 	// as a plain function here so this package never imports internal/audit/job
