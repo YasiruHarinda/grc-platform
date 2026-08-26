@@ -82,10 +82,11 @@ func TestHandleListUsers_LocalDevWithoutDirectory(t *testing.T) {
 	}
 }
 
-// TestHandleListUsers_RequiresAuth: this route used to have no privilege
-// check, so an unauthenticated request fell through to an empty-but-200
-// list. auth.RequirePrivilege now fails closed instead.
-func TestHandleListUsers_RequiresAuth(t *testing.T) {
+// TestHandleListUsers_NoDirectoryOutsideLocalDev covers the complementary
+// case: without local dev's AllowAll signal (a real deployment whose
+// directory happens to be unconfigured, which should not happen but must
+// not silently leak unresolved rows either), the handler still returns [].
+func TestHandleListUsers_NoDirectoryOutsideLocalDev(t *testing.T) {
 	repo := &fakeUserRepo{users: []*userentity.User{
 		{ID: 1, UUID: "uuid-1", Email: "person1@wso2.com", DisplayName: "Person One", Status: "ACTIVE"},
 	}}
@@ -93,12 +94,16 @@ func TestHandleListUsers_RequiresAuth(t *testing.T) {
 	h := handleListUsers(repo, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
-	// No UserInfo in context: auth.AllowAll is false.
+	// No UserInfo in context at all: auth.AllowAll is false.
 	rr := httptest.NewRecorder()
 
 	h(rr, req)
 
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403 — body: %s", rr.Code, rr.Body.String())
+	var got []*userentity.User
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d users, want 0 (not local dev, no directory to resolve through)", len(got))
 	}
 }
