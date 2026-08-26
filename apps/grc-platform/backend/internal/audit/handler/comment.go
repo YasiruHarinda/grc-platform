@@ -148,9 +148,10 @@ func (h *commentHandler) addComment(w http.ResponseWriter, r *http.Request) {
 //
 // The caller must be the comment's original author or hold ManageControls.
 // isAdmin below is intentionally the unscoped HasPrivilege: ManageControls is
-// never granted scoped to a single team, so there is no team to check it
-// against (contrast evidence/population's HasPrivilegeIn bypass checks, which
-// exist because those privileges can be team-scoped).
+// never granted scoped to a single team (enforced by the entity's
+// grantService.validateScope, not just convention), so there is no team to
+// check it against (contrast evidence/population's HasPrivilegeIn bypass
+// checks, which exist because those privileges can be team-scoped).
 func (h *commentHandler) deleteComment(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.AddComment) {
 		return

@@ -405,7 +405,8 @@ func (h *controlHandler) updateControlStatus(w http.ResponseWriter, r *http.Requ
 // Gated on the unscoped ManageControls, like every other control-CRUD write in
 // this file (addControl/updateControl/deleteControl/updateControlStatus) —
 // unlike evidence/population's HasPrivilegeIn bypass checks, ManageControls
-// itself is never granted scoped to a single team, so there is no narrower
+// itself is never granted scoped to a single team (enforced by the entity's
+// grantService.validateScope, not just convention), so there is no narrower
 // scope to check here.
 func (h *controlHandler) overrideControlStatus(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageControls) {
