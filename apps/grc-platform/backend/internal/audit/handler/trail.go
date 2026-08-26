@@ -185,6 +185,14 @@ func (h *trailHandler) listAuditTrail(w http.ResponseWriter, r *http.Request) {
 		filter.To = &to
 	}
 
+	// Row-scope control-level entries — auditInScope alone lets a
+	// single-control caller see every other control's trail rows too.
+	filter.Scope, _ = deriveScopes(r.Context())
+	if user := auth.FromContext(r.Context()); user != nil {
+		filter.UserID = user.UserID
+	}
+	filter.ScopeTeamIDs = managedTeamIDs(auth.Grants(r.Context()))
+
 	entries, total, err := h.svc.ListByAudit(r.Context(), auditID, filter, limit, offset)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
