@@ -83,6 +83,36 @@ func (h *commentHandler) resolveCommentAuthors(ctx context.Context, comments []*
 	}
 }
 
+// controlInScope enforces the same row-level visibility as getControl
+// (handler/control.go) for the control a comment thread belongs to: without
+// this, ViewAudits/AddComment being unscoped privileges meant any holder —
+// including an external auditor scoped to a single control via
+// ScopeAssigned — could read or post comments on any control in any audit.
+// Writes a 404 (never 403, to avoid confirming the control exists in a
+// different scope) and returns false on failure.
+func (h *commentHandler) controlInScope(w http.ResponseWriter, r *http.Request, auditID, controlID int) bool {
+	ctx := r.Context()
+	scope, _ := deriveScopes(ctx)
+	if scope == model.ScopeAll {
+		return true
+	}
+	user := auth.FromContext(ctx)
+	var userID int
+	if user != nil {
+		userID = user.UserID
+	}
+	inScope, err := h.controlSvc.InScope(ctx, auditID, controlID, scope, userID, managedTeamIDs(auth.Grants(ctx)))
+	if err != nil {
+		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
+		return false
+	}
+	if !inScope {
+		response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
+		return false
+	}
+	return true
+}
+
 // listComments handles GET /api/v1/audits/{id}/controls/{controlId}/comments.
 func (h *commentHandler) listComments(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAudits) {
@@ -94,6 +124,9 @@ func (h *commentHandler) listComments(w http.ResponseWriter, r *http.Request) {
 	}
 	controlID, ok := parseIntParam(w, r, "controlId")
 	if !ok {
+		return
+	}
+	if !h.controlInScope(w, r, auditID, controlID) {
 		return
 	}
 	// Internal-only comments are shown to holders of the internal-comments
@@ -125,13 +158,21 @@ func (h *commentHandler) addComment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !h.controlInScope(w, r, auditID, controlID) {
+		return
+	}
 	var req model.AddCommentRequest
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
 	caller := auth.FromContext(r.Context())
 	actor := caller.Subject
-	c, err := h.svc.Add(r.Context(), auditID, controlID, req, actor)
+	// IsInternal is derived server-side from the caller's own privilege, never
+	// trusted from the request body — otherwise a caller with AddComment but
+	// not ViewInternalComments (e.g. an external auditor) could mark their own
+	// comment internal.
+	isInternal := req.IsInternal && auth.HasPrivilege(r.Context(), privilege.ViewInternalComments)
+	c, err := h.svc.Add(r.Context(), auditID, controlID, req, isInternal, actor)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
