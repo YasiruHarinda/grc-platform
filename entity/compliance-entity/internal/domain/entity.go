@@ -906,6 +906,13 @@ type AuditEvidence struct {
 	CreatedBy   *string   `json:"createdBy"`
 	CreatedOn   time.Time `json:"createdOn"`
 	UpdatedOn   time.Time `json:"updatedOn"`
+	// AuditorID and TeamID are the owning control's auditor_id/team_id,
+	// LEFT JOINed in by GetEvidenceByID so the GRC Backend can authorize
+	// evidence-scoped endpoints (e.g. AI validation results) against the
+	// assigned auditor or a team-scoped grant without a second round trip.
+	// Nil when the control has no auditor/team assigned.
+	AuditorID *int `json:"auditorId"`
+	TeamID    *int `json:"teamId"`
 }
 
 // CreateEvidenceRequest is the payload for POST /audits/{auditId}/controls/{controlId}/evidence.

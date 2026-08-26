@@ -114,6 +114,13 @@ type EvidenceService interface {
 	// downloadEvidenceFile resolves assignment/team without one.
 	FileAuditorID(ctx context.Context, fileID int) (auditorID *int, teamID *int, err error)
 
+	// EvidenceAuditorID returns the user.id of the auditor assigned to
+	// evidenceID's owning control (nil if none) and that control's team id
+	// (nil if none) — the same assignment/team resolution as FileAuditorID,
+	// but keyed by an evidence (round) id for routes that carry only that
+	// (e.g. GET /evidence/{evidenceId}/ai-validations).
+	EvidenceAuditorID(ctx context.Context, evidenceID int) (auditorID *int, teamID *int, err error)
+
 	// DeleteFile removes a single evidence file from the submission. The caller
 	// must be the file's creator or hold ManageControls (isAdmin=true). The blob
 	// in Azure is not deleted — only the DB record is removed.
@@ -466,6 +473,10 @@ func (s *evidenceService) FileAuditorID(ctx context.Context, fileID int) (audito
 		return nil, nil, err
 	}
 	return f.AuditorID, f.TeamID, nil
+}
+
+func (s *evidenceService) EvidenceAuditorID(ctx context.Context, evidenceID int) (auditorID *int, teamID *int, err error) {
+	return s.repo.EvidenceAuditorID(ctx, evidenceID)
 }
 
 func (s *evidenceService) DeleteFile(ctx context.Context, fileID int, actor string, isAdmin bool) error {
