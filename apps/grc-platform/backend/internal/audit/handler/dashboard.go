@@ -78,6 +78,87 @@ func managedTeamIDs(set *grant.Set) []int {
 	return out
 }
 
+// controlInScope enforces the same row-level visibility as getControl
+// (handler/control.go) for a single control. Any endpoint that reads data
+// scoped to one control — comments, trail history, evidence, population —
+// must call this (or getControl's inline equivalent) before serving data,
+// since ViewAudits/AddComment etc. are coarse booleans with no row scope of
+// their own. Writes 404, never 403, so scope can't be probed to distinguish
+// "doesn't exist" from "exists outside your scope."
+func controlInScope(w http.ResponseWriter, r *http.Request, controlSvc auditservice.ControlService, auditID, controlID int) bool {
+	ctx := r.Context()
+	scope, _ := deriveScopes(ctx)
+	if scope == model.ScopeAll {
+		return true
+	}
+	user := auth.FromContext(ctx)
+	var userID int
+	if user != nil {
+		userID = user.UserID
+	}
+	inScope, err := controlSvc.InScope(ctx, auditID, controlID, scope, userID, managedTeamIDs(auth.Grants(ctx)))
+	if err != nil {
+		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
+		return false
+	}
+	if !inScope {
+		response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
+		return false
+	}
+	return true
+}
+
+// auditInScope is controlInScope's audit-level counterpart, mirroring getAudit
+// (handler/audit.go) for endpoints that read across a whole audit rather than
+// one control (e.g. the audit-wide activity log).
+func auditInScope(w http.ResponseWriter, r *http.Request, auditSvc auditservice.AuditService, auditID int) bool {
+	ctx := r.Context()
+	scope, _ := deriveScopes(ctx)
+	if scope == model.ScopeAll {
+		return true
+	}
+	user := auth.FromContext(ctx)
+	var userID int
+	if user != nil {
+		userID = user.UserID
+	}
+	inScope, err := auditSvc.InScope(ctx, auditID, scope, userID, managedTeamIDs(auth.Grants(ctx)))
+	if err != nil {
+		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
+		return false
+	}
+	if !inScope {
+		response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
+		return false
+	}
+	return true
+}
+
+// frameworkInScope gates listFrameworkControls: a caller must not read an
+// arbitrary framework's control catalog outside their audit scope.
+func frameworkInScope(w http.ResponseWriter, r *http.Request, frameworkSvc auditservice.FrameworkService, frameworkID int) bool {
+	ctx := r.Context()
+	scope, _ := deriveScopes(ctx)
+	if scope == model.ScopeAll {
+		return true
+	}
+	user := auth.FromContext(ctx)
+	var userID int
+	if user != nil {
+		userID = user.UserID
+	}
+	inScope, err := frameworkSvc.FrameworkInScope(ctx, frameworkID, scope, userID, managedTeamIDs(auth.Grants(ctx)))
+	if err != nil {
+		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
+		return false
+	}
+	if !inScope {
+		response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
+		return false
+	}
+	return true
+}
+
 // deriveWorkQueueClass computes which control-lifecycle bucket is the actor's
 // action queue, from privileges. Reviewers (compliance/admin) review; submitters
 // without review (internal team) submit; auditors validate; everyone else — most

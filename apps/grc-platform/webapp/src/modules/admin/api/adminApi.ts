@@ -59,6 +59,8 @@ export interface Role {
   scopeBasis?: "SOURCE_REGISTER" | "ASSIGNMENT_TEAM";
   assignableUserType: "INTERNAL" | "EXTERNAL";
   status: string;
+  // True if the backend would reject any non-GLOBAL grant of this role.
+  globalOnly: boolean;
 }
 
 type AuthFetch = (input: RequestInfo | URL, options?: RequestInit) => Promise<Response>;

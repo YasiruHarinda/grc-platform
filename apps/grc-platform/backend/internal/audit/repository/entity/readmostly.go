@@ -115,13 +115,20 @@ func NewProductRepository(c *entityclient.Client) repository.ProductRepository {
 	return &productRepo{c: c}
 }
 
-func (r *productRepo) List(ctx context.Context) ([]*model.AuditProduct, error) {
+func (r *productRepo) List(ctx context.Context, scope model.Scope, userID int, scopeTeamIDs []int) ([]*model.AuditProduct, error) {
 	var all []*model.AuditProduct
 	for offset := 0; ; offset += pageLimit {
 		var resp struct {
 			Products []*model.AuditProduct `json:"products"`
 		}
-		if err := r.c.Post(ctx, "/audit/products/search", activeStatusPageBody(offset), &resp); err != nil {
+		body := map[string]any{
+			"statusKey":    statusActive,
+			"scope":        scope,
+			"userId":       userID,
+			"scopeTeamIds": scopeTeamIDs,
+			"pagination":   map[string]int{"limit": pageLimit, "offset": offset},
+		}
+		if err := r.c.Post(ctx, "/audit/products/search", body, &resp); err != nil {
 			return nil, err
 		}
 		all = append(all, resp.Products...)

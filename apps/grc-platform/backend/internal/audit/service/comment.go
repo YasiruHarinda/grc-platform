@@ -32,7 +32,10 @@ type CommentService interface {
 	// List returns comments for a control. When includeInternal is false
 	// (external auditor), is_internal comments are excluded.
 	List(ctx context.Context, auditID, controlID int, includeInternal bool) ([]*model.AuditComment, error)
-	Add(ctx context.Context, auditID, controlID int, req model.AddCommentRequest, createdBy string) (*model.AuditComment, error)
+	// Add creates a comment. isInternal is the caller's derived eligibility to
+	// post an internal comment (see handler.addComment) — never req.IsInternal
+	// taken as-is, since the request body is untrusted.
+	Add(ctx context.Context, auditID, controlID int, req model.AddCommentRequest, isInternal bool, createdBy string) (*model.AuditComment, error)
 	// Delete removes a comment. The caller must be the comment's original
 	// author or hold ManageControls — same authorization contract as
 	// evidenceService.DeleteFile.
@@ -65,11 +68,11 @@ func (s *commentService) List(ctx context.Context, auditID, controlID int, inclu
 	return visible, nil
 }
 
-func (s *commentService) Add(ctx context.Context, auditID, controlID int, req model.AddCommentRequest, createdBy string) (*model.AuditComment, error) {
+func (s *commentService) Add(ctx context.Context, auditID, controlID int, req model.AddCommentRequest, isInternal bool, createdBy string) (*model.AuditComment, error) {
 	if strings.TrimSpace(req.Content) == "" {
 		return nil, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "content is required"}
 	}
-	return s.repo.Create(ctx, auditID, controlID, req.Content, req.IsInternal, req.ParentCommentID, createdBy)
+	return s.repo.Create(ctx, auditID, controlID, req.Content, isInternal, req.ParentCommentID, createdBy)
 }
 
 func (s *commentService) Delete(ctx context.Context, auditID, controlID, commentID int, actor string, isAdmin bool) error {

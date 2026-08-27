@@ -101,6 +101,24 @@ func inClause[T any](col string, values []T) (string, []any) {
 	return col + " IN (" + strings.Join(placeholders, ",") + ")", args
 }
 
+// auditTrailScopeWhere mirrors controlScopeWhere, for use inside an EXISTS(...)
+// subquery against audit_control aliased "c"; ("", nil) for ScopeAll.
+func auditTrailScopeWhere(scope domain.Scope, userID int, scopeTeamIDs []int) (string, []any) {
+	switch scope {
+	case domain.ScopeAll:
+		return "", nil
+	case domain.ScopeOwned:
+		return " AND c.owner_id = ?", []any{userID}
+	case domain.ScopeAssigned:
+		return " AND c.auditor_id = ?", []any{userID}
+	case domain.ScopeTeam:
+		pred, args := teamScopePredicate("c", scopeTeamIDs, userID)
+		return " AND " + pred, args
+	default: // ScopeNone and any unrecognized value scope to nothing.
+		return " AND 1=0", nil
+	}
+}
+
 func (r *auditTrailRepo) ListAuditTrail(ctx context.Context, auditID int, filter domain.TrailFilter, limit, offset int) ([]domain.AuditTrail, int, error) {
 	// Control filter uses IN (...), built only when non-empty. Date range keeps
 	// the fixed `(? IS NULL OR col >= /<= ?)` shape so one query serves both the
@@ -112,11 +130,21 @@ func (r *auditTrailRepo) ListAuditTrail(ctx context.Context, auditID int, filter
 		where += " AND " + clause
 		args = append(args, clauseArgs...)
 	}
+	// Audit-level rows (control_id IS NULL) always pass; control-level rows
+	// require the control itself to be in the caller's scope.
+	if scopeClause, scopeArgs := auditTrailScopeWhere(filter.Scope, filter.UserID, filter.ScopeTeamIDs); scopeClause != "" {
+		where += " AND (t.control_id IS NULL OR EXISTS (SELECT 1 FROM audit_control c WHERE c.id = t.control_id" + scopeClause + "))"
+		args = append(args, scopeArgs...)
+	}
 	where += " AND (? IS NULL OR t.created_at >= ?) AND (? IS NULL OR t.created_at <= ?)"
 	args = append(args,
 		nilableAny(filter.From), nilableAny(filter.From),
 		nilableAny(filter.To), nilableAny(filter.To),
 	)
+	if !filter.IncludeInternal {
+		// Fail closed: visible only when isInternal decodes to exactly JSON false.
+		where += ` AND (t.action != 'COMMENTED' OR JSON_EXTRACT(t.details, '$.isInternal') = CAST('false' AS JSON))`
+	}
 
 	var total int
 	if err := r.db.QueryRowContext(ctx,

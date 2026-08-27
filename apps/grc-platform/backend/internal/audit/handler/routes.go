@@ -24,6 +24,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/repository"
 	auditservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/aiagent"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
@@ -73,6 +74,10 @@ type Deps struct {
 	// FrontendBaseURL builds the "View in Audit Hub" link inside notification
 	// emails.
 	FrontendBaseURL string
+	// HR resolves an owner's line manager for the overdue lead escalation.
+	// Nil when AUDIT_LEAD_ESCALATION_ENABLED is false, in which case no lead
+	// is ever resolved — same nil-when-disabled pattern as AIAgent.
+	HR *hrentity.Client
 	// TriggerReminderJob runs the daily due-date reminder sweep on demand —
 	// wired in cmd/server/main.go to the reminder job's RunOnce method, kept
 	// as a plain function here so this package never imports internal/audit/job
@@ -85,14 +90,14 @@ type Deps struct {
 func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	ah := &auditHandler{svc: deps.Audit}
 	ch := &controlHandler{svc: deps.Control, notify: &deps}
-	tlh := &trailHandler{svc: deps.Trail, directory: deps.Directory}
+	tlh := &trailHandler{svc: deps.Trail, controlSvc: deps.Control, auditSvc: deps.Audit, directory: deps.Directory}
 	fh := &frameworkHandler{svc: deps.Framework}
 	uh := &userHandler{svc: deps.User, directory: deps.Directory, grants: deps.Grants}
 	th := &teamHandler{svc: deps.Team}
 	dh := &dashboardHandler{svc: deps.Dashboard}
 	eh := &evidenceHandler{svc: deps.Evidence, controlSvc: deps.Control, popSvc: deps.Population, trailSvc: deps.Trail, aiClient: deps.AIAgent, notify: &deps, directory: deps.Directory}
 	cmh := &commentHandler{svc: deps.Comment, controlSvc: deps.Control, notify: &deps, directory: deps.Directory}
-	avh := &aiValidationHandler{svc: deps.AIValidation}
+	avh := &aiValidationHandler{svc: deps.AIValidation, evidenceSvc: deps.Evidence}
 	rjh := &reminderJobHandler{trigger: deps.TriggerReminderJob}
 
 	// Current user (shared by both hubs — resolved privilege set unions RISK_*

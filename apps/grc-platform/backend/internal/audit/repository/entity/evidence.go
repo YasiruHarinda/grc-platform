@@ -43,6 +43,8 @@ type entEvidence struct {
 	Attestation *string   `json:"attestation"`
 	CreatedBy   *string   `json:"createdBy"`
 	CreatedOn   time.Time `json:"createdOn"`
+	AuditorID   *int      `json:"auditorId"`
+	TeamID      *int      `json:"teamId"`
 }
 
 // entFile mirrors the entity's AuditEvidenceFile JSON.
@@ -145,6 +147,14 @@ func (r *evidenceRepo) ListByControl(ctx context.Context, auditID, controlID int
 
 func (r *evidenceRepo) DeleteEvidence(ctx context.Context, evidenceID int) error {
 	return r.c.Delete(ctx, fmt.Sprintf("/evidence/%d", evidenceID))
+}
+
+func (r *evidenceRepo) EvidenceAuditorID(ctx context.Context, evidenceID int) (auditorID *int, teamID *int, err error) {
+	var ev entEvidence
+	if err := r.c.Get(ctx, fmt.Sprintf("/evidence/%d", evidenceID), &ev); err != nil {
+		return nil, nil, err
+	}
+	return ev.AuditorID, ev.TeamID, nil
 }
 
 func (r *evidenceRepo) GetFileByID(ctx context.Context, fileID int) (*model.AuditEvidenceFile, error) {

@@ -59,4 +59,11 @@ type TrailFilter struct {
 	ControlIDs []int
 	From       *time.Time
 	To         *time.Time
+	// Scope/UserID/ScopeTeamIDs row-scope the control-level entries for
+	// listAuditTrail; unused by ListByControl (already single-control scoped).
+	Scope        Scope
+	UserID       int
+	ScopeTeamIDs []int
+	// IncludeInternal, when false, excludes internal COMMENTED entries entity-side, before limit/offset.
+	IncludeInternal bool
 }

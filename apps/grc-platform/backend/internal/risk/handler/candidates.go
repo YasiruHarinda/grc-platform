@@ -68,7 +68,20 @@ func (d *Deps) handleListRiskAssignerCandidates(w http.ResponseWriter, r *http.R
 //
 // A candidate who doesn't resolve through the identity directory is silently
 // dropped from the list, not just shown with a blank name — see resolveCandidates.
+//
+// Gated on the same privileges as /users/resolve and /employees/search: every
+// caller of these pickers is filling in an Add Risk or Edit Risk form, so a
+// caller holding neither CreateRisk nor UpdateRisk has no legitimate reason to
+// read them — and without this guard any authenticated caller could enumerate
+// every internal user holding the picked privilege, with resolved name, email
+// and uuid, and sweep teamId to map who holds authority in which register.
+// ManageRiskHub is included so a Risk Hub admin editing configuration still
+// sees the pickers.
 func (d *Deps) handleListCandidates(w http.ResponseWriter, r *http.Request, priv string) {
+	if !auth.RequireAnyPrivilege(r.Context(), w, privilege.CreateRisk, privilege.UpdateRisk, privilege.ManageRiskHub) {
+		return
+	}
+
 	teamIDs := make([]int, 0, len(r.URL.Query()["teamId"]))
 	for _, raw := range r.URL.Query()["teamId"] {
 		id, err := strconv.Atoi(raw)

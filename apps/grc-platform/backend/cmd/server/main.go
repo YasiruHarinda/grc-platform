@@ -160,8 +160,18 @@ func main() {
 	userhandler.RegisterRoutes(mux, userDeps)
 	riskDeps := buildRiskDeps(entityCli, fileSvc, hrClient, grantRepo, dirSvc, scimClient, cfg.Email)
 	riskhandler.RegisterRoutes(mux, riskDeps)
-	auditDeps := buildAuditDeps(fileSvc, entityCli, cfg.AIValidation, cfg.Email, grantRepo, dirSvc)
+	// The HR client reaches the audit module only when lead escalation is on;
+	// nil otherwise, so no line manager is ever resolved.
+	var auditHRClient *hrentity.Client
+	if cfg.AuditLeadEscalationEnabled {
+		auditHRClient = hrClient
+	}
+	auditDeps := buildAuditDeps(fileSvc, entityCli, cfg.AIValidation, cfg.Email, grantRepo, dirSvc, auditHRClient)
 	reminderJob := auditjob.NewReminderJob(auditDeps.Audit, auditDeps.Control, auditDeps.Notification, auditDeps.SendReminderDigestSync)
+	if cfg.AuditLeadEscalationEnabled {
+		reminderJob = reminderJob.WithLeadAlerts(auditDeps.ResolveOwnerLeads, auditDeps.SendOverdueLeadDigestSync)
+		slog.Info("audit overdue lead escalation enabled")
+	}
 	auditDeps.TriggerReminderJob = reminderJob.RunOnce
 	audithandler.RegisterRoutes(mux, auditDeps)
 	adminhandler.RegisterRoutes(mux, adminhandler.Deps{

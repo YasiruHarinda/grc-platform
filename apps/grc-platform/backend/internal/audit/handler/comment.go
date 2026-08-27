@@ -96,6 +96,9 @@ func (h *commentHandler) listComments(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !controlInScope(w, r, h.controlSvc, auditID, controlID) {
+		return
+	}
 	// Internal-only comments are shown to holders of the internal-comments
 	// privilege (the internal roles) and hidden from external auditors, who
 	// lack it.
@@ -125,13 +128,21 @@ func (h *commentHandler) addComment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !controlInScope(w, r, h.controlSvc, auditID, controlID) {
+		return
+	}
 	var req model.AddCommentRequest
 	if err := response.DecodeJSON(w, r, &req); err != nil {
 		return
 	}
 	caller := auth.FromContext(r.Context())
 	actor := caller.Subject
-	c, err := h.svc.Add(r.Context(), auditID, controlID, req, actor)
+	// IsInternal is derived server-side from the caller's own privilege, never
+	// trusted from the request body — otherwise a caller with AddComment but
+	// not ViewInternalComments (e.g. an external auditor) could mark their own
+	// comment internal.
+	isInternal := req.IsInternal && auth.HasPrivilege(r.Context(), privilege.ViewInternalComments)
+	c, err := h.svc.Add(r.Context(), auditID, controlID, req, isInternal, actor)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
@@ -148,9 +159,16 @@ func (h *commentHandler) addComment(w http.ResponseWriter, r *http.Request) {
 //
 // The caller must be the comment's original author or hold ManageControls.
 // isAdmin below is intentionally the unscoped HasPrivilege: ManageControls is
-// never granted scoped to a single team, so there is no team to check it
-// against (contrast evidence/population's HasPrivilegeIn bypass checks, which
-// exist because those privileges can be team-scoped).
+// never granted scoped to a single team (enforced by the entity's
+// grantService.validateScope, not just convention), so there is no team to
+// check it against (contrast evidence/population's HasPrivilegeIn bypass
+// checks, which exist because those privileges can be team-scoped).
+//
+// controlInScope still runs first, same as listComments/addComment: without
+// it, a caller who is the comment's author but has since lost scope over its
+// control (e.g. reassigned off the audit team) could still delete it, and a
+// non-author non-admin caller would get a scope-probing 403 instead of the
+// 404 every other control-scoped endpoint here returns.
 func (h *commentHandler) deleteComment(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.AddComment) {
 		return
@@ -161,6 +179,9 @@ func (h *commentHandler) deleteComment(w http.ResponseWriter, r *http.Request) {
 	}
 	controlID, ok := parseIntParam(w, r, "controlId")
 	if !ok {
+		return
+	}
+	if !controlInScope(w, r, h.controlSvc, auditID, controlID) {
 		return
 	}
 	commentID, ok := parseIntParam(w, r, "commentId")

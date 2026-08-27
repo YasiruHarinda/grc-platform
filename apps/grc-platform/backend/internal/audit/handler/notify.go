@@ -175,17 +175,8 @@ func (d *Deps) logSends(ctx context.Context, recipientUserID int, logItems []not
 }
 
 // describeActor renders the person who triggered a notification as
-// "Display Name (email)". Handlers only have the caller's uuid (auth.FromContext's
-// Subject — the token's verified `sub` claim), so that's what's looked up; an
-// email alone would read poorly in a notification, but resolving one is also
-// the unambiguous fallback, so both are shown rather than swapping one for
-// the other.
-//
-// Looked up via the internal-org directory path only (plain Lookup, not
-// LookupTyped): the actor's user_type isn't available here without a second
-// round trip to Users.GetByID, and no live external-auditor login path exists
-// yet to make that lookup worth its cost. An external actor degrades to the
-// bare uuid below, same as any other unresolvable one.
+// "Display Name (email)", looked up via the internal-org directory (plain
+// Lookup, not LookupTyped — no external-auditor login path exists yet).
 //
 // Degrades to the bare uuid whenever the name can't be resolved: the actor
 // may have no Asgardeo account known to the directory, the lookup may fail,
@@ -383,19 +374,28 @@ func (d *Deps) SendOverdueAdminDigestSync(ctx context.Context, adminUserID int, 
 // Best-effort like describeActor: any unresolvable step degrades to "" and the
 // template omits the line rather than failing the notification.
 func (d *Deps) describeUser(ctx context.Context, userID int) string {
+	_, withEmail := d.userNames(ctx, userID)
+	return withEmail
+}
+
+// userNames resolves a platform user id to their bare display name and the
+// "Display Name (email)" form. Both empty when any step fails — a subject that
+// names the owner needs the bare name, the body wants the fuller one.
+func (d *Deps) userNames(ctx context.Context, userID int) (string, string) {
 	if userID <= 0 {
-		return ""
+		return "", ""
 	}
 	u, err := d.Users.GetByID(ctx, userID)
 	if err != nil || u == nil {
 		slog.Warn("audit notification: failed to resolve user for display", "userId", userID, "err", err)
-		return ""
+		return "", ""
 	}
 	person, found := d.Directory.LookupTyped(ctx, u.UUID, u.UserType)
-	if !found || strings.TrimSpace(person.DisplayName) == "" || person.Email == "" {
-		return ""
+	name := strings.TrimSpace(person.DisplayName)
+	if !found || name == "" || person.Email == "" {
+		return "", ""
 	}
-	return fmt.Sprintf("%s (%s)", strings.TrimSpace(person.DisplayName), person.Email)
+	return name, fmt.Sprintf("%s (%s)", name, person.Email)
 }
 
 // ResolveOwnerNames batches describeUser across a deduped set of owner ids —
@@ -407,6 +407,101 @@ func (d *Deps) ResolveOwnerNames(ctx context.Context, ownerIDs []int) map[int]st
 		names[id] = d.describeUser(ctx, id)
 	}
 	return names
+}
+
+// leadEmailOf resolves a user's HR line manager's email. Empty whenever the
+// chain can't complete — feature disabled, unknown user, no directory email,
+// no HR record (every external user), or no manager on file. All ordinary, so
+// none is treated as an error. Unlike risk's managerOf there is no SCIM hop:
+// an address is all a notification needs, so a lead without an Asgardeo
+// account is still reachable.
+func (d *Deps) leadEmailOf(ctx context.Context, userID int) string {
+	if d.HR == nil || userID <= 0 {
+		return ""
+	}
+	u, err := d.Users.GetByID(ctx, userID)
+	if err != nil || u == nil {
+		return ""
+	}
+	person, found := d.Directory.LookupTyped(ctx, u.UUID, u.UserType)
+	if !found || person.Email == "" {
+		return ""
+	}
+	emp, err := d.HR.GetEmployeeByEmail(ctx, person.Email)
+	if err != nil {
+		slog.Warn("audit notification: HR lookup failed for lead", "ownerId", userID, "err", err)
+		return ""
+	}
+	if emp == nil {
+		return ""
+	}
+	lead := strings.TrimSpace(emp.ManagerEmail)
+	// An owner recorded as their own manager already got the digest directly.
+	if lead == "" || strings.EqualFold(lead, person.Email) {
+		return ""
+	}
+	return lead
+}
+
+// ResolveOwnerLeads resolves each owner's lead email once per sweep — wired to
+// job.ReminderJob.WithLeadAlerts. Owners with no reachable lead are absent
+// from the map rather than present with an empty value.
+func (d *Deps) ResolveOwnerLeads(ctx context.Context, ownerIDs []int) map[int]string {
+	leads := make(map[int]string, len(ownerIDs))
+	for _, id := range ownerIDs {
+		if email := d.leadEmailOf(ctx, id); email != "" {
+			leads[id] = email
+		}
+	}
+	return leads
+}
+
+// SendOverdueLeadDigestSync emails one owner's lead every overdue item that
+// owner holds, spanning audits — so each row names its own audit and the
+// header names none.
+//
+// Writes no audit_notification row and takes no claim of its own: the owner's
+// claim on these same items, already taken by the job, is what stops a second
+// send. Sends to a raw address rather than through sendAuditEventSync, which
+// resolves a platform user id — a lead has none.
+func (d *Deps) SendOverdueLeadDigestSync(ctx context.Context, ownerUserID int, leadEmail string, items []model.ReminderItem) error {
+	leadEmail = strings.TrimSpace(leadEmail)
+	if len(items) == 0 || leadEmail == "" || d.Email == nil {
+		return nil
+	}
+	emailItems := make([]emailer.AuditEventItem, 0, len(items))
+	for _, it := range items {
+		emailItems = append(emailItems, emailer.AuditEventItem{
+			ControlNumber:   it.ControlNumber,
+			Description:     it.Description,
+			DueDate:         it.DueDate,
+			RequirementType: it.RequirementType,
+			Audit:           it.AuditName,
+		})
+	}
+	name, withEmail := d.userNames(ctx, ownerUserID)
+	// DetailURL stays empty on purpose: a lead holds no audit privileges, so
+	// every link would land on a denied page. The template omits the button.
+	info := emailer.AuditEventInfo{
+		Actor:     withEmail,
+		OwnerName: name,
+		Items:     emailItems,
+		ShowAudit: true,
+	}
+
+	select {
+	case notifySem <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-notifySem }()
+
+	if err := d.Email.SendAuditEvent(ctx, emailer.AuditEventReminderOverdueLead, leadEmail, info); err != nil {
+		slog.Warn("audit notification: lead escalation failed", "ownerId", ownerUserID, "err", err)
+		return fmt.Errorf("send: %w", err)
+	}
+	slog.Info("audit lead escalation sent", "ownerId", ownerUserID, "items", len(items))
+	return nil
 }
 
 // notifyResubmission handles the resubmission-needed event for all four

@@ -68,9 +68,19 @@ func (r *evidenceRepo) GetEvidenceByID(ctx context.Context, evidenceID int) (*do
 	var e domain.AuditEvidence
 	var reusedFrom sql.NullInt64
 	var folderPath, createdBy, attestation sql.NullString
-	err := r.db.QueryRowContext(ctx,
-		"SELECT id, control_id, status, folder_path, reused_from_evidence_id, attestation, created_by, created_at, updated_at FROM audit_evidence WHERE id = ?",
-		evidenceID).Scan(&e.ID, &e.ControlID, &e.Status, &folderPath, &reusedFrom, &attestation, &createdBy, &e.CreatedOn, &e.UpdatedOn)
+	var controlAuditorID, controlTeamID sql.NullInt64
+	// LEFT JOINed through to the owning control's auditor and team — same
+	// join as getEvidenceFileByID — so the GRC Backend can authorize
+	// evidence-scoped endpoints (e.g. AI validation results) against the
+	// assigned auditor or a team-scoped grant without a second round trip.
+	err := r.db.QueryRowContext(ctx, `
+		SELECT e.id, e.control_id, e.status, e.folder_path, e.reused_from_evidence_id,
+		       e.attestation, e.created_by, e.created_at, e.updated_at,
+		       c.auditor_id AS control_auditor_id, c.team_id AS control_team_id
+		FROM audit_evidence e
+		LEFT JOIN audit_control c ON c.id = e.control_id
+		WHERE e.id = ?`,
+		evidenceID).Scan(&e.ID, &e.ControlID, &e.Status, &folderPath, &reusedFrom, &attestation, &createdBy, &e.CreatedOn, &e.UpdatedOn, &controlAuditorID, &controlTeamID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, &apierror.NotFoundError{Msg: fmt.Sprintf("evidence %d not found", evidenceID)}
 	}
@@ -89,6 +99,14 @@ func (r *evidenceRepo) GetEvidenceByID(ctx context.Context, evidenceID int) (*do
 	}
 	if createdBy.Valid {
 		e.CreatedBy = &createdBy.String
+	}
+	if controlAuditorID.Valid {
+		v := int(controlAuditorID.Int64)
+		e.AuditorID = &v
+	}
+	if controlTeamID.Valid {
+		v := int(controlTeamID.Int64)
+		e.TeamID = &v
 	}
 	return &e, nil
 }
