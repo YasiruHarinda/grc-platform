@@ -174,7 +174,10 @@ func (d *Deps) logSends(ctx context.Context, recipientUserID int, logItems []not
 	}
 }
 
-
+// describeActor renders the person who triggered a notification as
+// "Display Name (email)", looked up via the internal-org directory (plain
+// Lookup, not LookupTyped — no external-auditor login path exists yet).
+//
 // Degrades to the bare uuid whenever the name can't be resolved: the actor
 // may have no Asgardeo account known to the directory, the lookup may fail,
 // or the entry may have no display name. A notification is never worth
