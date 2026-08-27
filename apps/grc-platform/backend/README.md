@@ -159,6 +159,7 @@ HTTP request
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/v1/risk/users` | List users |
+| `POST` | `/api/v1/risk/users/resolve` | Resolve an employee email to an internal user, provisioning one if needed |
 | `GET` | `/api/v1/me/profile` | Current user profile |
 | `GET` | `/api/v1/risk/teams` | List risk teams |
 | `POST` | `/api/v1/risk/teams` | Create team |
