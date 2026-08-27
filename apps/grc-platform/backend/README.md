@@ -154,44 +154,79 @@ HTTP request
 
 ## API Endpoints
 
+### Current User
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/me/profile` | Current user's profile |
+| `GET` | `/api/v1/me/privileges` | Current user's resolved privilege set (unions RISK_* and AUDIT_* names; both hubs' frontends call this same endpoint) |
+
+### Admin
+
+Every route below requires `MANAGE_USERS` GLOBAL.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/admin/directory/search` | Search the WSO2-org directory |
+| `GET` | `/api/v1/admin/directory/search-external` | Search the external-org directory |
+| `POST` | `/api/v1/admin/users` | Provision a platform user |
+| `GET` | `/api/v1/admin/users` | List platform users |
+| `PATCH` | `/api/v1/admin/users/{id}/status` | Update a user's status |
+| `POST` | `/api/v1/admin/users/{id}/grants` | Create a (role, scope) grant |
+| `DELETE` | `/api/v1/admin/users/{id}/grants/{grantId}` | Revoke a grant |
+| `GET` | `/api/v1/admin/roles` | List roles |
+
 ### Risk Hub
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/v1/risks/users` | List users |
-| `POST` | `/api/v1/risks/users/resolve` | Resolve an employee email to an internal user, provisioning one if needed |
-| `GET` | `/api/v1/me/profile` | Current user profile |
 | `GET` | `/api/v1/risks/teams` | List risk teams |
 | `POST` | `/api/v1/risks/teams` | Create team |
 | `PUT` | `/api/v1/risks/teams/{id}` | Update team |
-| `GET` | `/api/v1/risks/scores` | List risk scores |
+| `GET` | `/api/v1/risks/scores` | List risk scores (read-only; the likelihood x impact matrix is fixed) |
+| `GET` | `/api/v1/risks/compliance-references` | List compliance references |
+| `POST` | `/api/v1/risks/compliance-references` | Create compliance reference |
+| `PUT` | `/api/v1/risks/compliance-references/{id}` | Update compliance reference |
+| `DELETE` | `/api/v1/risks/compliance-references/{id}` | Delete compliance reference |
+| `GET` | `/api/v1/risks/categories` | List risk categories |
+| `POST` | `/api/v1/risks/categories` | Create risk category |
+| `PUT` | `/api/v1/risks/categories/{id}` | Update risk category |
+| `DELETE` | `/api/v1/risks/categories/{id}` | Delete risk category |
+| `GET` | `/api/v1/risks/users` | List users |
+| `POST` | `/api/v1/risks/users/resolve` | Resolve an employee email to an internal user, provisioning one if needed |
+| `GET` | `/api/v1/risks/management-approvers` | List management-approver candidates |
+| `GET` | `/api/v1/risks/owner-candidates` | List risk-owner candidates |
+| `GET` | `/api/v1/risks/assigner-candidates` | List risk-assigner candidates |
+| `GET` | `/api/v1/risks/employees/search` | Search employees (HR entity) |
+| `GET` | `/api/v1/risks/next-sequence-id` | Preview the next risk sequence ID for a register/year/quarter |
 | `GET` | `/api/v1/risks` | List risks |
 | `POST` | `/api/v1/risks` | Register a risk |
 | `GET` | `/api/v1/risks/{id}` | Get risk by ID |
 | `PUT` | `/api/v1/risks/{id}` | Update risk |
-| `POST` | `/api/v1/risks/{id}/submit` | Submit for compliance review |
+| `POST` | `/api/v1/risks/{id}/owner-approve` | Risk owner approves closure |
+| `POST` | `/api/v1/risks/{id}/management-approve` | Management approves |
 | `POST` | `/api/v1/risks/{id}/approve` | Compliance approves |
 | `POST` | `/api/v1/risks/{id}/reject` | Compliance rejects |
 | `POST` | `/api/v1/risks/{id}/complete` | Complete remediation |
-| `POST` | `/api/v1/risks/{id}/owner-approve` | Risk owner approves closure |
+| `POST` | `/api/v1/risks/{id}/resubmit` | Resubmit after rejection |
 | `POST` | `/api/v1/risks/{id}/close` | Compliance closes |
-| `POST` | `/api/v1/risks/{id}/escalate` | Escalate to management |
+| `POST` | `/api/v1/risks/{id}/cancel` | Cancel risk |
 | `POST` | `/api/v1/risks/{id}/assess` | Management assessment |
-| `GET` | `/api/v1/risks/{id}/changelog` | Risk change history |
-| `GET` | `/api/v1/risks/{id}/action-plans` | List action plans |
-| `POST` | `/api/v1/risks/{id}/action-plans` | Create action plan |
-| `GET` | `/api/v1/risks/{id}/action-plans/{planId}` | Get action plan |
-| `PUT` | `/api/v1/risks/{id}/action-plans/{planId}` | Update action plan |
-| `GET` | `/api/v1/risks/{id}/action-plans/{planId}/steps` | List steps |
-| `POST` | `/api/v1/risks/{id}/action-plans/{planId}/steps` | Add step |
-| `PUT` | `/api/v1/risks/{id}/action-plans/{planId}/steps/{stepId}` | Update step |
-| `GET` | `/api/v1/risks/{id}/evidence` | List evidence |
-| `POST` | `/api/v1/risks/{id}/evidence` | Upload evidence |
-| `DELETE` | `/api/v1/risks/{id}/evidence/{evidenceId}` | Delete evidence |
-| `GET` | `/api/v1/risks/{id}/escalations` | Escalation history |
-| `GET` | `/api/v1/risks/compliance-references` | List compliance references |
-| `POST` | `/api/v1/risks/compliance-references` | Create compliance reference |
+| `GET` | `/api/v1/risks/dashboard` | Risk Hub dashboard |
 | `GET` | `/api/v1/risks/analytics/summary` | Risk analytics summary |
+| `POST` | `/api/v1/risks/{id}/action-plans` | Create action plan |
+| `GET` | `/api/v1/risks/{id}/action-plans` | List action plans |
+| `GET` | `/api/v1/risks/{id}/action-plans/{planId}/steps` | List an action plan's steps |
+| `PATCH` | `/api/v1/risks/{id}/action-plans/{planId}/steps/{stepId}` | Update a step |
+| `POST` | `/api/v1/risks/{id}/action-plans/{planId}/complete` | Complete an action plan |
+| `POST` | `/api/v1/risks/{id}/escalate` | Escalate to management |
+| `GET` | `/api/v1/risks/{id}/escalations` | Escalation history |
+| `GET` | `/api/v1/risks/{id}/history` | Full risk history (workflow events + field edits) |
+| `POST` | `/api/v1/risks/{id}/escalations/{escalationId}/comment` | Answer an escalation, returning the risk to its assigner |
+| `POST` | `/api/v1/risks/{id}/evidence` | Upload evidence |
+| `GET` | `/api/v1/risks/{id}/evidence` | List evidence |
+| `DELETE` | `/api/v1/risks/{id}/evidence/{fileId}` | Delete an evidence file |
+| `GET` | `/api/v1/risks/{id}/evidence/{fileId}/download` | Download an evidence file |
 
 ### Audit Hub
 
