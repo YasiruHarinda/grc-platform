@@ -57,7 +57,7 @@ export interface UserOption {
   risk_team_ids: number[];
 }
 
-// EmployeeOption is a WSO2 employee returned by GET /api/v1/employees/search,
+// EmployeeOption is a WSO2 employee returned by GET /api/v1/risks/employees/search,
 // sourced live from the HR entity service — never from the GRC platform's
 // own database. Used only for the "Risk Identified By: Employee" field.
 export interface EmployeeOption {
@@ -532,32 +532,32 @@ export async function fetchSourceRegisterTeams(
   privilege?: string,
 ): Promise<RiskTeam[]> {
   const query = mine ? `&mine=true${privilege ? `&privilege=${encodeURIComponent(privilege)}` : ""}` : "";
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/teams?type=SOURCE_REGISTER${query}`);
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/teams?type=SOURCE_REGISTER${query}`);
   return handleResponse<RiskTeam[]>(res);
 }
 
 export async function fetchAssignmentTeams(authFetch: AuthFetch): Promise<RiskTeam[]> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/teams?type=ASSIGNMENT`);
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/teams?type=ASSIGNMENT`);
   return handleResponse<RiskTeam[]>(res);
 }
 
 export async function fetchRiskScores(authFetch: AuthFetch): Promise<RiskScore[]> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk-scores`);
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/scores`);
   return handleResponse<RiskScore[]>(res);
 }
 
 export async function fetchComplianceReferences(authFetch: AuthFetch): Promise<ComplianceReference[]> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/compliance-references`);
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/compliance-references`);
   return handleResponse<ComplianceReference[]>(res);
 }
 
 export async function fetchUsers(authFetch: AuthFetch): Promise<UserOption[]> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/users`);
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/users`);
   return handleResponse<UserOption[]>(res);
 }
 
 export async function fetchRiskCategories(authFetch: AuthFetch): Promise<RiskCategory[]> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk-categories`);
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/categories`);
   return handleResponse<RiskCategory[]>(res);
 }
 
@@ -574,12 +574,12 @@ function teamIdsQuery(teamIds?: number[]): string {
 }
 
 export async function fetchManagementApprovers(authFetch: AuthFetch, teamIds?: number[]): Promise<UserOption[]> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/management-approvers${teamIdsQuery(teamIds)}`);
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/management-approvers${teamIdsQuery(teamIds)}`);
   return handleResponse<UserOption[]>(res);
 }
 
 export async function fetchRiskOwnerCandidates(authFetch: AuthFetch, teamIds?: number[]): Promise<UserOption[]> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk-owner-candidates${teamIdsQuery(teamIds)}`);
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/owner-candidates${teamIdsQuery(teamIds)}`);
   return handleResponse<UserOption[]>(res);
 }
 
@@ -588,7 +588,7 @@ export async function fetchRiskOwnerCandidates(authFetch: AuthFetch, teamIds?: n
 // Same guarantee as fetchManagementApprovers/fetchRiskOwnerCandidates: a
 // candidate offered here can never 403 on Create Risk for lack of the grant.
 export async function fetchRiskAssignerCandidates(authFetch: AuthFetch, teamIds?: number[]): Promise<UserOption[]> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk-assigner-candidates${teamIdsQuery(teamIds)}`);
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/assigner-candidates${teamIdsQuery(teamIds)}`);
   return handleResponse<UserOption[]>(res);
 }
 
@@ -596,7 +596,7 @@ export async function fetchRiskAssignerCandidates(authFetch: AuthFetch, teamIds?
 // from the HR entity service (never the GRC platform's own database), for
 export async function searchEmployees(authFetch: AuthFetch, query: string): Promise<EmployeeOption[]> {
   const params = new URLSearchParams({ q: query });
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/employees/search?${params}`);
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/employees/search?${params}`);
   return handleResponse<EmployeeOption[]>(res);
 }
 
@@ -608,12 +608,12 @@ export async function searchEmployees(authFetch: AuthFetch, query: string): Prom
 //
 // Only email is sent: the backend looks the display name up from hr_entity
 // itself rather than trust one supplied here (the search result's `name` is
-// display-only and no longer part of this request) — see resolve.go.
+// display-only and no longer part of this request) — see users.go.
 export async function resolveUserByEmail(
   authFetch: AuthFetch,
   employee: EmployeeOption,
 ): Promise<UserOption> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/users/resolve`, {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/users/resolve`, {
     method: "POST",
     body: JSON.stringify({ email: employee.email }),
   });

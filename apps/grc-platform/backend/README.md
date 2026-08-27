@@ -17,7 +17,7 @@ Backend starts at `http://localhost:8081`.
 - Runtime: Go `1.23+`
 - Entry point: `cmd/server/main.go`
 - Authentication: Asgardeo JWT Bearer token — validated via JWKS endpoint; pass as `Authorization: Bearer <token>` header
-- Two modules: **Risk Hub** (`/api/v1/`) and **Audit Hub** (`/api/v1/audit/`)
+- Two modules: **Risk Hub** (`/api/v1/risks/`) and **Audit Hub** (`/api/v1/audit/`)
 
 ## Prerequisites
 
@@ -158,14 +158,13 @@ HTTP request
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/v1/users` | List users |
-| `GET` | `/api/v1/users/me` | Current user profile |
-| `GET` | `/api/v1/teams` | List risk teams |
-| `POST` | `/api/v1/teams` | Create team |
-| `PUT` | `/api/v1/teams/{id}` | Update team |
-| `GET` | `/api/v1/risk-scores` | List risk scores |
-| `POST` | `/api/v1/risk-scores` | Create risk score |
-| `PUT` | `/api/v1/risk-scores/{id}` | Update risk score |
+| `GET` | `/api/v1/risks/users` | List users |
+| `POST` | `/api/v1/risks/users/resolve` | Resolve an employee email to an internal user, provisioning one if needed |
+| `GET` | `/api/v1/me/profile` | Current user profile |
+| `GET` | `/api/v1/risks/teams` | List risk teams |
+| `POST` | `/api/v1/risks/teams` | Create team |
+| `PUT` | `/api/v1/risks/teams/{id}` | Update team |
+| `GET` | `/api/v1/risks/scores` | List risk scores |
 | `GET` | `/api/v1/risks` | List risks |
 | `POST` | `/api/v1/risks` | Register a risk |
 | `GET` | `/api/v1/risks/{id}` | Get risk by ID |
@@ -190,10 +189,8 @@ HTTP request
 | `POST` | `/api/v1/risks/{id}/evidence` | Upload evidence |
 | `DELETE` | `/api/v1/risks/{id}/evidence/{evidenceId}` | Delete evidence |
 | `GET` | `/api/v1/risks/{id}/escalations` | Escalation history |
-| `GET` | `/api/v1/notifications` | List notifications |
-| `PATCH` | `/api/v1/notifications/{id}/read` | Mark notification read |
-| `GET` | `/api/v1/compliance-references` | List compliance references |
-| `POST` | `/api/v1/compliance-references` | Create compliance reference |
+| `GET` | `/api/v1/risks/compliance-references` | List compliance references |
+| `POST` | `/api/v1/risks/compliance-references` | Create compliance reference |
 | `GET` | `/api/v1/risks/analytics/summary` | Risk analytics summary |
 
 ### Audit Hub
@@ -228,8 +225,6 @@ HTTP request
 | `POST` | `/api/v1/audits/{id}/assignments` | Create assignment |
 | `DELETE` | `/api/v1/audits/{id}/assignments/{assignmentId}` | Remove assignment |
 | `GET` | `/api/v1/audits/{id}/trail` | Audit trail |
-| `GET` | `/api/v1/audit/notifications` | List notifications |
-| `PATCH` | `/api/v1/audit/notifications/{id}/read` | Mark notification read |
 
 ## Run Locally
 
@@ -249,7 +244,7 @@ JWT="<your-jwt-token>"
 curl http://localhost:8081/health
 
 # Get current user profile
-curl -H "Authorization: Bearer $JWT" http://localhost:8081/api/v1/users/me
+curl -H "Authorization: Bearer $JWT" http://localhost:8081/api/v1/me/profile
 
 # List risks
 curl -H "Authorization: Bearer $JWT" http://localhost:8081/api/v1/risks

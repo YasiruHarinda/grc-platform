@@ -73,6 +73,8 @@ func buildRiskDeps(
 		Dashboard:       riskservice.NewAssembledDashboardService(riskentity.NewDashboardRepository(ec)),
 		Employee:        riskservice.NewEmployeeSearchService(hrClient),
 		Users:           userRepo,
+		HREntity:        hrClient,
+		SCIM:            scimClient,
 		Grants:          grantRepo,
 		Directory:       dirSvc,
 		Email:           emailer.New(emailCfg.ServiceURL, emailCfg.FromAddress, emailCfg.TokenURL, emailCfg.ClientID, emailCfg.ClientSecret),

@@ -26,7 +26,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
-// handleListTeams serves GET /api/v1/teams.
+// handleListTeams serves GET /api/v1/risks/teams.
 //
 // Gated on ViewRisks OR ManageRiskHub — same shape as the Audit Hub's
 // analogous GET /api/v1/audit/teams (audit/handler/team.go): every Risk Hub
@@ -121,7 +121,7 @@ func (d *Deps) handleListTeams(w http.ResponseWriter, r *http.Request) {
 	response.WriteJSONValue(w, http.StatusOK, teams)
 }
 
-// handleCreateTeam serves POST /api/v1/teams — the Admin Console's Risk
+// handleCreateTeam serves POST /api/v1/risks/teams — the Admin Console's Risk
 // Teams "Add Team" dialog. Gated on MANAGE_RISK_HUB, not MANAGE_USERS: this
 // is reference-data management, a separate authorisation boundary from user
 // provisioning even though only grc-platform-admin holds either today.
@@ -156,7 +156,7 @@ func (d *Deps) handleCreateTeam(w http.ResponseWriter, r *http.Request) {
 	response.WriteJSONValue(w, http.StatusCreated, t)
 }
 
-// handleUpdateTeam serves PUT /api/v1/teams/{id}.
+// handleUpdateTeam serves PUT /api/v1/risks/teams/{id}.
 func (d *Deps) handleUpdateTeam(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageRiskHub) {
 		return

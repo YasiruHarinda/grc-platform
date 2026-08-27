@@ -26,7 +26,7 @@ import (
 
 // TestListCandidatesRequiresPrivilege is the regression test for the review
 // follow-up on the teams/users privilege-gate fix: the three role-gated
-// pickers (management-approvers, risk-owner-candidates, risk-assigner-candidates)
+// pickers (risks/management-approvers, risks/owner-candidates, risks/assigner-candidates)
 // were left ungated, letting any authenticated caller — an external auditor
 // included — enumerate every internal user holding the picked privilege, with
 // resolved name, email and uuid, and sweep teamId to map who holds authority
@@ -45,17 +45,17 @@ func TestListCandidatesRequiresPrivilege(t *testing.T) {
 	}{
 		{
 			name:    "management approvers",
-			path:    "/api/v1/management-approvers",
+			path:    "/api/v1/risks/management-approvers",
 			handler: (&Deps{}).handleListManagementApprovers,
 		},
 		{
 			name:    "risk owner candidates",
-			path:    "/api/v1/risk-owner-candidates",
+			path:    "/api/v1/risks/owner-candidates",
 			handler: (&Deps{}).handleListRiskOwnerCandidates,
 		},
 		{
 			name:    "risk assigner candidates",
-			path:    "/api/v1/risk-assigner-candidates",
+			path:    "/api/v1/risks/assigner-candidates",
 			handler: (&Deps{}).handleListRiskAssignerCandidates,
 		},
 	}

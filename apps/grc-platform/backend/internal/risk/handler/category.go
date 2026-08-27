@@ -26,10 +26,10 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
-// handleListRiskCategories serves GET /api/v1/risk-categories.
+// handleListRiskCategories serves GET /api/v1/risks/categories.
 //
-// Gated on ViewRisks OR ManageRiskHub — same shape as GET /api/v1/teams and
-// GET /api/v1/users (team.go, users.go): read here was ungated while its
+// Gated on ViewRisks OR ManageRiskHub — same shape as GET /api/v1/risks/teams and
+// GET /api/v1/risks/users (team.go, users.go): read here was ungated while its
 // write counterparts (Create/Update/Delete below) were already gated on
 // ManageRiskHub, letting any authenticated caller enumerate the risk
 // category reference data.
@@ -50,7 +50,7 @@ func (d *Deps) handleListRiskCategories(w http.ResponseWriter, r *http.Request) 
 	response.WriteJSONValue(w, http.StatusOK, cats)
 }
 
-// handleCreateRiskCategory serves POST /api/v1/risk-categories — the Admin
+// handleCreateRiskCategory serves POST /api/v1/risks/categories — the Admin
 // Console's Risk Categories "Add Category" dialog. Gated on MANAGE_RISK_HUB.
 func (d *Deps) handleCreateRiskCategory(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageRiskHub) {
@@ -79,7 +79,7 @@ func (d *Deps) handleCreateRiskCategory(w http.ResponseWriter, r *http.Request) 
 	response.WriteJSONValue(w, http.StatusCreated, cat)
 }
 
-// handleUpdateRiskCategory serves PUT /api/v1/risk-categories/{id}.
+// handleUpdateRiskCategory serves PUT /api/v1/risks/categories/{id}.
 func (d *Deps) handleUpdateRiskCategory(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageRiskHub) {
 		return
@@ -113,7 +113,7 @@ func (d *Deps) handleUpdateRiskCategory(w http.ResponseWriter, r *http.Request) 
 	response.WriteJSONValue(w, http.StatusOK, cat)
 }
 
-// handleDeleteRiskCategory serves DELETE /api/v1/risk-categories/{id}. The
+// handleDeleteRiskCategory serves DELETE /api/v1/risks/categories/{id}. The
 // entity refuses (409) when the category is still used by a risk — see
 // repository.RiskCategoryRepository.Delete's doc comment for why that check
 // can't be left to a DB constraint here.

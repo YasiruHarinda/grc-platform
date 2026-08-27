@@ -82,11 +82,11 @@ get() {
 echo "capturing to $OUT (RISK_ENTITY_REPOS=${RISK_ENTITY_REPOS:-<unset>})"
 
 # Reference data
-get teams-all             "/api/v1/teams"
-get teams-source          "/api/v1/teams?type=SOURCE_REGISTER"
-get teams-assignment      "/api/v1/teams?type=ASSIGNMENT"
-get risk-scores           "/api/v1/risk-scores"
-get compliance-references "/api/v1/compliance-references"
+get teams-all             "/api/v1/risks/teams"
+get teams-source          "/api/v1/risks/teams?type=SOURCE_REGISTER"
+get teams-assignment      "/api/v1/risks/teams?type=ASSIGNMENT"
+get risk-scores           "/api/v1/risks/scores"
+get compliance-references "/api/v1/risks/compliance-references"
 
 # Risk reads. next-sequence-id is a read-only preview: it SELECTs
 # last_sequence_number without incrementing it, so it is safe to capture.

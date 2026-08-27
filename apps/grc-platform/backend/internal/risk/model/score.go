@@ -27,7 +27,7 @@ type RiskScore struct {
 	ColorCode  string `json:"color_code"`
 }
 
-// CreateRiskScoreRequest is the payload for POST /api/v1/risk-scores.
+// CreateRiskScoreRequest is the payload for POST /api/v1/risks/scores.
 type CreateRiskScoreRequest struct {
 	Likelihood int    `json:"likelihood"`
 	Impact     int    `json:"impact"`
@@ -36,7 +36,7 @@ type CreateRiskScoreRequest struct {
 	ColorCode  string `json:"color_code"`
 }
 
-// UpdateRiskScoreRequest is the payload for PUT /api/v1/risk-scores/{id}.
+// UpdateRiskScoreRequest is the payload for PUT /api/v1/risks/scores/{id}.
 type UpdateRiskScoreRequest struct {
 	RiskLevel string `json:"risk_level"`
 	ColorCode string `json:"color_code"`

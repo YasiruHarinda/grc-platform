@@ -26,7 +26,7 @@ type Team struct {
 	Status      string  `json:"status"`
 }
 
-// ListTeamsFilter controls which teams are returned by GET /api/v1/teams.
+// ListTeamsFilter controls which teams are returned by GET /api/v1/risks/teams.
 // Type uses semantic values: "SOURCE_REGISTER" returns teams where team_type
 // IN ('SOURCE_REGISTER','BOTH'); "ASSIGNMENT" returns IN ('ASSIGNMENT','BOTH').
 // Empty Type returns all ACTIVE teams.
@@ -41,7 +41,7 @@ type ListTeamsFilter struct {
 	IncludeInactive bool
 }
 
-// CreateTeamRequest is the payload for POST /api/v1/teams.
+// CreateTeamRequest is the payload for POST /api/v1/risks/teams.
 type CreateTeamRequest struct {
 	Name        string  `json:"name"`
 	Code        *string `json:"code"`
@@ -49,7 +49,7 @@ type CreateTeamRequest struct {
 	TeamType    string  `json:"team_type"`
 }
 
-// UpdateTeamRequest is the payload for PUT /api/v1/teams/{id}.
+// UpdateTeamRequest is the payload for PUT /api/v1/risks/teams/{id}.
 type UpdateTeamRequest struct {
 	Name        string  `json:"name"`
 	Code        *string `json:"code"`
