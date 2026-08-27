@@ -1,11 +1,13 @@
 # GRC Platform Webapp
 
-The GRC Platform Webapp is the React single-page application for a governance, risk, and compliance platform. It hosts two modules behind a shared
+The GRC Platform Webapp is the React single-page application for a governance, risk, and compliance platform. It hosts three modules behind a shared
 shell:
 
 - **Audit Hub** — run SOC 2 / HIPAA / ISO 27001 audits: controls, evidence
   collection, population/sample workflows, and review.
 - **Risk Hub** — risk register and assessment workflows.
+- **Admin Console** — user management and Audit/Risk Hub configuration (audit
+  teams, compliance references, risk categories/teams/scores).
 
 The app authenticates users through **Asgardeo** (or WSO2 Identity Server) and
 talks to the GRC Platform **Go backend** over REST. Access is role-gated.
@@ -21,6 +23,7 @@ talks to the GRC Platform **Go backend** over REST. Access is role-gated.
 | Authentication | [@asgardeo/react](https://github.com/asgardeo/asgardeo-auth-react-sdk) (with `@asgardeo/browser` and `@asgardeo/react-router`) |
 | Forms | [react-hook-form](https://react-hook-form.com/) |
 | Session | [react-idle-timer](https://idletimer.dev/) (idle-timeout session guard) |
+| Testing | [Vitest](https://vitest.dev/) 4 (`npm test`) |
 
 ## Prerequisites
 
@@ -87,12 +90,14 @@ Open [http://localhost:3000](http://localhost:3000). The root path redirects to
 | `npm run build` | Type-check (`tsc -b`) and build to `dist/` |
 | `npm run preview` | Serve the production build locally |
 | `npm run lint` | Run ESLint |
+| `npm test` | Run unit tests once with Vitest (`vitest run`) |
 
 ## Configuration Keys
 
 | Key | Required | Description |
 |-----|----------|-------------|
 | `GRC_PLATFORM_MOCK_AUTH` | No | `true` bypasses Asgardeo and signs in a local "Dev User". Set `false`/omit for real auth. |
+| `GRC_PLATFORM_MOCK_AUTH_TOKEN` | No | Local-dev only. A forged JWT used as the bearer token when `GRC_PLATFORM_MOCK_AUTH` is `true`, since the backend 401s on the literal `"local-dev"` placeholder. Never set outside `public/config.js`. |
 | `GRC_PLATFORM_AUTH_BASE_URL` | When not mocking | Asgardeo/IS tenant base URL (e.g. `https://api.asgardeo.io/t/<org>`) |
 | `GRC_PLATFORM_AUTH_CLIENT_ID` | When not mocking | OAuth 2.0 SPA client ID |
 | `GRC_PLATFORM_AUTH_SIGN_IN_REDIRECT_URL` | When not mocking | Post-login redirect (must match the IdP callback allowlist) |
@@ -133,13 +138,14 @@ EVIDENCE_PENDING
   → EVIDENCE_INTERNAL_REVIEW    (team submits evidence)
   → EVIDENCE_UNDER_VALIDATION   (internal admin approves)
   → COMPLETE                    ✅
-  ↩ EVIDENCE_PENDING            (internal admin OR auditor rejects at any review stage)
+  ↩ EVIDENCE_PENDING            (internal admin rejects at EVIDENCE_INTERNAL_REVIEW)
+  ↩ EVIDENCE_NEED_CLARIFICATION (auditor rejects at EVIDENCE_UNDER_VALIDATION) → EVIDENCE_INTERNAL_REVIEW (team resubmits)
 ```
 
 **Actors:**
-- **Compliance Team** — submits evidence when status is `EVIDENCE_PENDING`
+- **Compliance Team** — submits/resubmits evidence when status is `EVIDENCE_PENDING` or `EVIDENCE_NEED_CLARIFICATION`
 - **Internal Compliance Admin** — reviews at `EVIDENCE_INTERNAL_REVIEW`; approve → `EVIDENCE_UNDER_VALIDATION`; reject → `EVIDENCE_PENDING`
-- **External Auditor** — validates at `EVIDENCE_UNDER_VALIDATION`; approve → `COMPLETE`; reject → `EVIDENCE_PENDING`
+- **External Auditor** — validates at `EVIDENCE_UNDER_VALIDATION`; approve → `COMPLETE`; reject → `EVIDENCE_NEED_CLARIFICATION`
 
 ### Operational Effectiveness (`requirementType = OE`)
 
@@ -150,10 +156,16 @@ OE controls require the team to first provide a full **population list**. The au
 POPULATION_PENDING
   → POPULATION_INTERNAL_REVIEW    (team submits population file)
   → POPULATION_UNDER_VALIDATION   (internal admin approves)
-  → SUBMITTED_SAMPLE              ✅ (auditor accepts + selects samples)
-  ↩ POPULATION_PENDING            (internal admin rejects)
-  ↩ POPULATION_NEED_CLARIFICATION (auditor rejects → team resubmits → POPULATION_INTERNAL_REVIEW)
+  → POPULATION_COMPLETE           (auditor approves the population)
+  → AWAITING_SAMPLE                (optional — auditor needs more time to pick a sample)
+  → SUBMITTED_SAMPLE              ✅ (auditor selects + submits the sample)
+  ↩ POPULATION_PENDING            (internal admin rejects at POPULATION_INTERNAL_REVIEW)
+  ↩ POPULATION_NEED_CLARIFICATION (auditor rejects at POPULATION_UNDER_VALIDATION) → POPULATION_INTERNAL_REVIEW (team resubmits)
 ```
+
+`POPULATION_COMPLETE`, `AWAITING_SAMPLE`, and `SUBMITTED_SAMPLE` can each also
+advance straight to `EVIDENCE_PENDING`, letting the auditor skip formal sample
+tracking and request evidence directly.
 
 **Evidence cycle (after `SUBMITTED_SAMPLE`):**
 ```
@@ -161,7 +173,8 @@ SUBMITTED_SAMPLE
   → EVIDENCE_INTERNAL_REVIEW    (team submits per-sample evidence)
   → EVIDENCE_UNDER_VALIDATION   (internal admin approves)
   → COMPLETE                    ✅
-  ↩ EVIDENCE_PENDING            (internal admin OR auditor rejects → team resubmits → EVIDENCE_INTERNAL_REVIEW)
+  ↩ EVIDENCE_PENDING            (internal admin rejects at EVIDENCE_INTERNAL_REVIEW)
+  ↩ EVIDENCE_NEED_CLARIFICATION (auditor rejects at EVIDENCE_UNDER_VALIDATION) → EVIDENCE_INTERNAL_REVIEW (team resubmits)
 ```
 
 **Status colour reference:**
@@ -172,10 +185,13 @@ SUBMITTED_SAMPLE
 | Population Internal Review | OE | Amber |
 | Population Under Validation | OE | Purple |
 | Population Need Clarification | OE | Red |
-| Submitted Sample | OE | Cyan |
-| Evidence Pending | Both | Orange |
-| Evidence Internal Review | Both | Amber |
+| Population Complete | OE | Teal |
+| Awaiting Sample | OE | Teal |
+| Submitted Sample | OE | Indigo |
+| Evidence Pending | Both | Amber |
+| Evidence Internal Review | Both | Indigo |
 | Evidence Under Validation | Both | Purple |
+| Evidence Need Clarification | Both | Red |
 | Complete | Both | Green |
 
 - **Auditor POC** is assigned per control by the compliance admin. They perform the external validation step.
@@ -187,13 +203,15 @@ webapp/
 ├── public/
 │   └── config.js            # Runtime config (window.config), loaded by index.html
 ├── src/
+│   ├── assets/               # Static assets (e.g. error illustrations)
 │   ├── components/          # Shared UI: header, sidebar, footer, error pages, banners
 │   ├── config/              # Reads window.config (auth, api, theme, logger)
 │   ├── constants/           # Shared constants
-│   ├── context/             # App-wide providers (loader, error/success banners, logger)
+│   ├── context/             # App-wide providers (loader, error/success banners, logger, theme)
 │   ├── hooks/               # Shared hooks (logger, auth API client, responsive)
 │   ├── layouts/             # App shell, auth guard, error layout
 │   ├── modules/             # Feature modules
+│   │   ├── admin/           # Admin Console — pages, routes.tsx, nav.ts
 │   │   ├── audit/           # Audit Hub — pages, routes.tsx, nav.ts
 │   │   └── risk/            # Risk Hub — pages, routes.tsx, nav.ts
 │   ├── providers/           # Cross-cutting providers (idle-timeout session guard)
@@ -216,6 +234,7 @@ spread (see the registration pattern below).
 |--------|-----------|---------|
 | `audit` | `/audit` | Audit Hub — controls, evidence, audit workflows |
 | `risk` | `/risk` | Risk Hub — risk register and assessments |
+| `admin` | `/admin` | Admin Console — user management, Audit/Risk Hub configuration |
 
 Each module owns these files/folders:
 
@@ -230,15 +249,20 @@ src/modules/audit/                    src/modules/risk/
 │   └── AuditPrivilegeGuard.tsx       │   └── PrivilegeGuard.tsx
 └── pages/...                         └── pages/...
             ↓ imported & spread by ↓
-App.tsx:      <Route>{auditRoutes}{riskRoutes}</Route>
-SideBar.tsx:  SECTIONS = [auditNav, riskNav]   (maps over them)
+App.tsx:      <Route>{auditRoutes}{riskRoutes}{adminRoutes}</Route>
+SideBar.tsx:  SECTIONS = [auditNav, riskNav, adminNav]   (maps over them)
 ```
+
+The `admin` module follows the same pattern (`routes.tsx`, `nav.ts`,
+`privileges.ts`, and its own `src/modules/admin/components/PrivilegeGuard.tsx`)
+and owns the Admin Console at `/admin` — user management plus Audit/Risk Hub
+configuration pages.
 
 `privileges.ts` values must match `privilege_name` in the backend's privilege
 table exactly. Routes and nav items are gated by privilege using each
-module's privilege-guard component (`AuditPrivilegeGuard.tsx` /
-`PrivilegeGuard.tsx`), which reads the current user's privileges and
-redirects/hides when the required one is missing.
+module's privilege-guard component (`AuditPrivilegeGuard.tsx` in `audit`,
+`PrivilegeGuard.tsx` in `risk` and `admin`), which reads the current user's
+privileges and redirects/hides when the required one is missing.
 
 This **registration pattern** keeps the Audit and Risk owners working in separate
 files so they don't cause merge conflicts.
@@ -259,6 +283,7 @@ own files.
 |------|-----------|---------------|
 | `modules/audit/{routes,nav}` + `pages/**` | Audit owner only | none |
 | `modules/risk/{routes,nav}` + `pages/**` | Risk owner only | none |
+| `modules/admin/{routes,nav}` + `pages/**` | Admin owner only | none |
 | `App.tsx`, `SideBar.tsx` | only when adding a whole new module | near-zero |
 
 ## Import Aliases

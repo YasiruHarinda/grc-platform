@@ -18,6 +18,7 @@ Backend starts at `http://localhost:8081`.
 - Entry point: `cmd/server/main.go`
 - Authentication: Asgardeo JWT Bearer token — validated via JWKS endpoint; pass as `Authorization: Bearer <token>` header
 - Two modules: **Risk Hub** (`/api/v1/risks/`) and **Audit Hub** (`/api/v1/audits/`)
+- Data layer: this service holds no database handle and never talks to Azure directly. Every read/write goes through the **Compliance Entity** (`COMPLIANCE_ENTITY_BASE_URL`), a separate service that owns MySQL and Azure Blob Storage
 
 ## Prerequisites
 
@@ -67,6 +68,8 @@ make setup
 
 After this, `git push` automatically runs `go test ./...` whenever backend files are in the push. If any test fails, the push is aborted.
 
+(This requires a `pre-push` script under a `.githooks/` directory at the repo root — that directory is not currently committed to this repository, so `make setup`/`git config core.hooksPath .githooks` alone configures the hook path but has no script to run yet.)
+
 To skip the hook in exceptional cases:
 
 ```bash
@@ -75,13 +78,15 @@ git push --no-verify
 
 ## Configuration
 
-Copy `.env` and fill in the values:
+Copy `.env.example` to `.env` and fill in the values:
 
-### Database
+### Compliance Entity
+
+There is no database or Azure configuration here: the backend holds no DB handle and never talks to Azure directly. All data access and file storage go through the Compliance Entity.
 
 | Variable | Description |
 |---|---|
-| `DB_DSN` | MySQL DSN — `user:password@tcp(host:port)/grc_platform?parseTime=true` |
+| `COMPLIANCE_ENTITY_BASE_URL` | Base URL of the Compliance Entity (data layer + Azure Blob Storage), e.g. `http://localhost:8080` |
 
 ### Asgardeo JWT
 
@@ -93,13 +98,59 @@ Copy `.env` and fill in the values:
 | `AUTH_TOKEN_VALIDATOR_ENABLED` | Set to `false` to skip signature verification locally (default `true`). Disables every privilege check too (allow-all) — requires `APP_ENV=local` or the server refuses to start |
 | `APP_ENV` | Set to `local` to permit `AUTH_TOKEN_VALIDATOR_ENABLED=false`. Leave unset in every deployed environment |
 
-### Azure Blob Storage
+### HR Entity
+
+Used by the Risk module's "Risk Identified By: Employee" search. Required (`mustEnv`).
 
 | Variable | Description |
 |---|---|
-| `AZURE_STORAGE_ACCOUNT_NAME` | Azure Storage account name |
-| `AZURE_STORAGE_ACCOUNT_KEY` | Azure Storage account key |
-| `AZURE_STORAGE_CONTAINER` | Blob container name for evidence files |
+| `HR_ENTITY_GRAPHQL_URL` | WSO2 HR entity GraphQL endpoint (local: `go run ./cmd/hrmock`) |
+| `HR_ENTITY_TOKEN_URL` | OAuth2 token URL for the HR entity |
+| `HR_ENTITY_CLIENT_ID` | OAuth2 client ID |
+| `HR_ENTITY_CLIENT_SECRET` | OAuth2 client secret |
+
+### Asgardeo SCIM2 (identity directory)
+
+Resolves a person's uuid to their name/email (names and emails are no longer stored in this platform's own data). Optional — an unset `SCIM_BASE_URL` disables directory lookups rather than failing startup. Internal users and external auditors live in separate Asgardeo organizations, each with its own app registration.
+
+| Variable | Description |
+|---|---|
+| `SCIM_BASE_URL` | Shared Asgardeo API root, e.g. `https://api.asgardeo.io` |
+| `SCIM_USER_DOMAIN` | Email-domain suffix the bulk directory cache is scoped to (default `wso2.com`) |
+| `SCIM_INTERNAL_ORG` | Internal-org Asgardeo tenant |
+| `SCIM_INTERNAL_CLIENT_ID` / `SCIM_INTERNAL_CLIENT_SECRET` | Internal-org OAuth2 credentials |
+| `SCIM_INTERNAL_TOKEN_URL` | `https://api.asgardeo.io/t/{SCIM_INTERNAL_ORG}/oauth2/token` |
+| `SCIM_INTERNAL_SCOPES` | Space-separated scopes (default `internal_user_mgt_view internal_user_mgt_list`) |
+| `SCIM_EXTERNAL_ORG` | External-org (auditor) Asgardeo tenant |
+| `SCIM_EXTERNAL_CLIENT_ID` / `SCIM_EXTERNAL_CLIENT_SECRET` | External-org OAuth2 credentials |
+| `SCIM_EXTERNAL_TOKEN_URL` | `https://api.asgardeo.io/t/{SCIM_EXTERNAL_ORG}/oauth2/token` |
+| `SCIM_EXTERNAL_SCOPES` | Space-separated scopes (default `internal_user_mgt_view internal_user_mgt_list`) |
+
+### Email notifications
+
+Connection details for the shared `email-service` (`POST /send-email`), used for risk/audit notification emails. Required (`mustEnv`).
+
+| Variable | Description |
+|---|---|
+| `EMAIL_SERVICE_URL` | Base URL of email-service |
+| `EMAIL_FROM_ADDRESS` | From address for outgoing notifications |
+| `EMAIL_CLIENT_ID` / `EMAIL_CLIENT_SECRET` | OAuth2 client credentials |
+| `EMAIL_TOKEN_URL` | OAuth2 token URL |
+| `FRONTEND_BASE_URL` | Public URL of the webapp — builds links inside notification emails, and doubles as the CORS-allowed origin (there is no separate CORS variable) |
+
+### AI Validation (optional)
+
+| Variable | Description |
+|---|---|
+| `AI_VALIDATION_ENABLED` | Set to `true` to trigger the AI Validation Agent after an evidence submission (default disabled) |
+| `AI_AGENT_BASE_URL` | Agent base URL (default `http://localhost:8090`) |
+| `AI_AGENT_API_KEY` | Agent API key |
+
+### Audit overdue lead escalation (optional)
+
+| Variable | Description |
+|---|---|
+| `AUDIT_LEAD_ESCALATION_ENABLED` | `true`/`false` to override the built-in default (`false`) — emails an overdue item owner's HR line manager |
 
 ### Server
 
@@ -111,45 +162,69 @@ Copy `.env` and fill in the values:
 
 ```text
 backend/
-├── cmd/server/main.go              # Entry point — middleware chain + route registration
+├── cmd/
+│   ├── server/                      # Entry point
+│   │   ├── main.go                  # Middleware chain + route registration
+│   │   ├── risk_deps.go             # Wires Risk Hub service/repository dependencies
+│   │   └── audit_deps.go            # Wires Audit Hub service/repository dependencies
+│   ├── backfill-uuids/              # One-off: backfills `user`.uuid from Asgardeo SCIM (email → uuid)
+│   ├── backfill-escalation-leads/   # One-off: backfills risk_escalation's frozen lead uuid columns
+│   └── backfill-evidence-actors/    # One-off: rewrites risk_evidence.created_by from email to uuid
 ├── internal/
 │   ├── config/config.go            # Env var loading (mustEnv)
-│   ├── db/db.go                    # MySQL connection pool
 │   ├── apierror/apierror.go        # Typed API error with HTTP status
 │   ├── response/response.go        # JSON write helpers
 │   ├── middleware/
 │   │   ├── auth.go                 # Asgardeo JWT validation, UserInfo → context
 │   │   ├── correlation.go          # X-Correlation-ID generation + slog injection
-│   │   └── logger.go               # Per-request structured logging
+│   │   ├── logger.go               # Per-request structured logging
+│   │   ├── cors.go                 # CORS headers (allowed origin = FRONTEND_BASE_URL)
+│   │   └── security_headers.go     # Baseline security response headers
 │   ├── shared/
 │   │   ├── auth/auth.go            # HasPrivilege / RequirePrivilege helpers (no role constants)
-│   │   ├── privilege/privilege.go  # Privilege name constants + Store (DB-loaded role→privilege map)
-│   │   └── file/file.go            # Azure Blob Storage wrapper (TODO)
+│   │   ├── privilege/privilege.go  # Privilege name constants + Store (role→privilege map, loaded from the Compliance Entity)
+│   │   ├── grant/                  # (role, scope) grant repository — create/revoke/candidates, backs the Admin Console
+│   │   ├── entityclient/client.go  # Typed HTTP client to the Compliance Entity (all data access goes through this)
+│   │   ├── file/file.go            # HTTP client to the Compliance Entity's file (Azure Blob) endpoints
+│   │   ├── emailer/                # Client for the shared email-service (risk/audit notification sends)
+│   │   ├── aiagent/client.go       # Fire-and-forget trigger to the AI Validation Agent
+│   │   └── blobpath/blobpath.go    # Blob path construction helpers
+│   ├── directory/directory.go      # uuid → name/email resolution via SCIM, with caching
+│   ├── hrentity/client.go          # WSO2 HR entity GraphQL client (employee search)
+│   ├── scim/client.go              # Asgardeo SCIM2 client (internal org + external/auditor org)
 │   ├── user/                       # Shared user entity (both modules reference it)
 │   │   ├── model.go
 │   │   ├── repository.go
-│   │   └── mysql/repository.go
+│   │   ├── entity/repository.go    # Compliance Entity-backed implementation
+│   │   └── handler/                # GET /api/v1/me/profile (routes.go)
+│   ├── admin/                      # Admin Console (user provisioning, roles, grants)
+│   │   ├── model.go
+│   │   ├── repository.go
+│   │   ├── entity/repository.go
+│   │   └── handler/                # HTTP handlers + route registration (routes.go)
 │   ├── risk/                       # Risk Hub
 │   │   ├── model/                  # Domain types and request/response structs
-│   │   ├── repository/             # Interfaces (repository.go) + MySQL stubs (mysql/)
+│   │   ├── repository/             # Interfaces (repository.go) + Compliance Entity client (entity/)
 │   │   ├── service/                # Business logic — workflow rules, validations
-│   │   └── handler/                # HTTP handlers + route registration (routes.go)
+│   │   ├── handler/                # HTTP handlers + route registration (routes.go)
+│   │   └── job/                    # Daily overdue-risk escalation job
 │   └── audit/                      # Audit Hub
 │       ├── model/
 │       ├── repository/
 │       ├── service/
-│       └── handler/
-└── tests/integration/              # Integration test stubs
+│       ├── handler/
+│       └── job/                    # Daily due-date reminder digest job
+└── tests/integration/              # Integration tests against a real MySQL database — skipped unless DB_DSN is set
 ```
 
 **Request flow through the layers:**
 ```
 HTTP request
-    → middleware (CorrelationID → Auth → Logger)
+    → middleware (SecurityHeaders → CORS → CorrelationID → Logger → Auth)
     → handler   (parse request, call service, write response)
     → service   (business rules, status transition guards, changelog/trail writes)
-    → repository (SQL queries, no business logic)
-    → MySQL
+    → repository (typed HTTP calls to the Compliance Entity via internal/shared/entityclient — no direct SQL)
+    → Compliance Entity (owns MySQL and Azure Blob Storage)
 ```
 
 ## API Endpoints
@@ -313,14 +388,28 @@ curl -H "Authorization: Bearer $JWT" http://localhost:8081/api/v1/me/profile
 # List risks
 curl -H "Authorization: Bearer $JWT" http://localhost:8081/api/v1/risks
 
-# Register a risk
+# Register a risk (see internal/risk/model/risk.go's CreateRiskRequest for the
+# full field list — creation itself submits the risk, there is no separate
+# /submit endpoint)
 curl -X POST http://localhost:8081/api/v1/risks \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
-  -d '{"title":"Unauthorised data access","category":"SECURITY","likelihood":3,"impact":4}'
+  -d '{
+        "year": 2026, "quarter": "Q1", "source_register_id": 1,
+        "risk_title": "Unauthorised data access",
+        "risk_description": "...", "compliance_reference_ids": [1],
+        "identified_by_type": "EMPLOYEE", "identified_by_email": "jane@wso2.com",
+        "assigner_id": 3, "risk_identified_date": "2026-01-15",
+        "risk_category_ids": [2], "likelihood": 3, "impact": 4,
+        "impact_description": "...", "implementation_date": "2026-02-01",
+        "reassessment_date": "2026-08-01", "assignment_team_id": 1,
+        "owner_id": 5, "management_approver_id": 6, "action_owner_id": 5,
+        "action_plan_description": "...", "action_steps": [{"description":"..."}],
+        "treatment_strategy": "MITIGATE", "email_subject": "New risk registered"
+      }'
 
-# Submit a risk for compliance review
-curl -X POST http://localhost:8081/api/v1/risks/1/submit \
+# Compliance approves a risk (moves PENDING_COMPLIANCE_REVIEW → IN_REMEDIATION)
+curl -X POST http://localhost:8081/api/v1/risks/1/approve \
   -H "Authorization: Bearer $JWT"
 
 # List audits
@@ -330,10 +419,11 @@ curl -H "Authorization: Bearer $JWT" http://localhost:8081/api/v1/audits
 curl -X POST http://localhost:8081/api/v1/audits \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
-  -d '{"title":"Q2 SOC2 Audit","frameworkId":1,"productId":2,"assignedLeadId":5}'
+  -d '{"name":"Q2 SOC2 Audit","frameworkId":1,"productId":2,"periodStart":"2026-04-01","periodEnd":"2026-06-30"}'
 
 # Upload evidence for a risk
 curl -X POST http://localhost:8081/api/v1/risks/1/evidence \
   -H "Authorization: Bearer $JWT" \
+  -F "evidenceType=ACTION_PLAN_ATTACHMENT" \
   -F "file=@/path/to/document.pdf"
 ```

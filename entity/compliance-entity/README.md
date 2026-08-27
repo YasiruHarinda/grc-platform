@@ -74,10 +74,12 @@ Copy `.env.example` to `.env` and fill in the values:
 | `AZURE_STORAGE_ACCOUNT_KEY` | Azure Storage account key |
 | `AZURE_STORAGE_CONTAINER` | Blob container name (default `grc-evidence`) |
 
-When Azure credentials are absent, the service still starts — the `/files`,
-`/evidence-files`, and `/evidence/{id}/files` byte-storage routes are simply
-disabled, which is useful for local dev/tests that only exercise MySQL-backed
-metadata endpoints.
+When Azure credentials are absent, the service still starts — only the byte
+routes are disabled: `/files` (upload/download/list/delete) and
+`/evidence-files/{fileId}/content`. The metadata routes (`/evidence/{id}/files`,
+`/evidence-files/{fileId}`, population and risk-evidence file records, etc.)
+stay registered regardless, which is useful for local dev/tests that only
+exercise MySQL-backed metadata endpoints.
 
 ### Server
 
@@ -92,16 +94,16 @@ compliance-entity/
 ├── cmd/api/main.go                 # Entry point — config load, DB pool, server start, graceful shutdown
 ├── internal/
 │   ├── config/config.go            # Env var loading + Validate()
-│   ├── db/db.go                    # MySQL connection pool
-│   ├── apierror/apierror.go        # Typed API error with HTTP status
+│   ├── db/mysql.go                 # MySQL connection pool
+│   ├── apierror/errors.go          # Typed API error with HTTP status
 │   ├── cache/                      # In-memory caches (e.g. risk scores, users, audit frameworks)
-│   ├── domain/                     # Domain/response types shared across handlers (entity.go, privilege.go, dashboard.go, ...)
+│   ├── domain/                     # Domain/response types shared across handlers (entity.go, privilege.go, grant.go, dashboard.go, ...)
 │   ├── middleware/
 │   │   ├── correlationid.go        # X-Correlation-ID propagation
 │   │   ├── recovery.go             # Panic recovery → 500
 │   │   ├── logger.go               # Per-request structured logging
-│   │   ├── timeout.go              # Request timeout (30s)
-│   │   └── usertoken.go            # Captures x-user-id-token header (forwarded, not trusted for identity)
+│   │   ├── usertoken.go            # Captures x-user-id-token header (forwarded, not trusted for identity)
+│   │   └── timeout.go              # Request timeout (30s)
 │   ├── repository/                 # SQL queries, one file per resource (risk_repo.go, audit_repo.go, user_repo.go, ...)
 │   ├── service/                    # Business logic — validation, workflow-transition guards, orchestration
 │   ├── handler/                    # HTTP handlers, one file per resource
@@ -114,7 +116,7 @@ compliance-entity/
 **Request flow through the layers:**
 ```text
 HTTP request (from the GRC Backend)
-    → middleware (CorrelationID → Recovery → Logger → Timeout)
+    → middleware (CorrelationID → Recovery → Logger → UserIDToken → Timeout)
     → handler    (decode request, call service, write response)
     → service    (business rules, status-transition guards, validation)
     → repository (SQL queries, no business logic)
@@ -140,9 +142,15 @@ here).
 | `POST` | `/users` | Create user |
 | `POST` | `/users/search` | Search users |
 | `GET` | `/users/{id}` | Get user by ID |
-| `GET` | `/users/by-email/{email}` | Get user by email |
+| `GET` | `/users/by-uuid/{uuid}` | Get user by Asgardeo UUID |
 | `PATCH` | `/users/{id}` | Update user |
 | `GET` | `/role-privileges` | Role → privilege map (backend's privilege store loads from here) |
+| `GET` | `/grants/by-uuid/{uuid}` | Get a user's role grants by Asgardeo UUID (hot path — called on every authenticated request; never cached) |
+| `GET` | `/grants/candidates` | List users holding a given privilege, optionally scoped to teams (powers Risk Owner / Approver pickers) |
+| `GET` | `/grants/user/{id}` | Get a user's role grants by user ID |
+| `POST` | `/grants/user/{id}` | Grant a role in a scope (idempotent — reactivates an existing grant) |
+| `DELETE` | `/grants/user/{id}/{grantId}` | Revoke a grant |
+| `GET` | `/roles` | Role catalogue (module + valid scopes per role, for a grant editor) |
 
 ### Risk Hub — Teams, Scores, References
 
@@ -153,10 +161,15 @@ here).
 | `GET` | `/risk/teams/{id}` | Get risk team |
 | `PATCH` | `/risk/teams/{id}` | Update risk team |
 | `GET` | `/risk/scores` | List risk scores |
+| `GET` | `/risk/categories` | List risk categories |
+| `POST` | `/risk/categories` | Create risk category |
+| `PATCH` | `/risk/categories/{id}` | Update risk category |
+| `DELETE` | `/risk/categories/{id}` | Delete risk category |
 | `POST` | `/risk/compliance-references` | Create compliance reference |
 | `POST` | `/risk/compliance-references/search` | Search compliance references |
 | `GET` | `/risk/compliance-references/{id}` | Get compliance reference |
 | `PATCH` | `/risk/compliance-references/{id}` | Update compliance reference |
+| `DELETE` | `/risk/compliance-references/{id}` | Delete compliance reference |
 
 ### Risk Hub — Risks & Workflow
 
@@ -172,7 +185,7 @@ here).
 | `POST` | `/risks/{riskId}/compliance-references` | Attach a compliance reference |
 | `DELETE` | `/risks/{riskId}/compliance-references/{referenceId}` | Detach a compliance reference |
 
-### Risk Hub — Action Plans, Escalations, Assessments, Evidence, Change Log, Notifications
+### Risk Hub — Action Plans, Escalations, Assessments, Evidence, Change Log
 
 | Method | Path | Description |
 |---|---|---|
@@ -187,20 +200,19 @@ here).
 | `DELETE` | `/action-plans/{planId}/steps/{stepId}` | Delete action step |
 | `POST` | `/action-plans/{planId}/complete` | Complete a plan (all steps must already be COMPLETED); for a MANAGEMENT plan also resolves its escalation and reverts the risk to IN_REMEDIATION |
 | `POST` | `/risks/{riskId}/escalate` | Manually trigger escalation of an overdue IN_REMEDIATION risk (alternative to waiting for the daily job) |
-| `POST` | `/risks/{riskId}/escalations` | Create escalation (created automatically by the daily overdue-risk job — see `internal/job` — not by a user) |
+| `POST` | `/risks/{riskId}/escalations` | Create escalation (created automatically by the daily overdue-risk job, which runs in the GRC Backend — `apps/grc-platform/backend/internal/risk/job` — not by a user) |
 | `GET` | `/risks/{riskId}/escalations` | List escalations |
 | `GET` | `/risks/{riskId}/escalations/{escalationId}` | Get escalation |
 | `PATCH` | `/risks/{riskId}/escalations/{escalationId}` | Update escalation |
+| `PATCH` | `/risks/{riskId}/escalations/{escalationId}/comment` | Record a decision comment and atomically revert the risk to IN_REMEDIATION |
 | `POST` | `/risks/{riskId}/assessments` | Create reassessment |
 | `GET` | `/risks/{riskId}/assessments` | List reassessment history |
 | `POST` | `/risks/{riskId}/evidence` | Add risk evidence record |
 | `GET` | `/risks/{riskId}/evidence` | List risk evidence |
-| `DELETE` | `/risk-evidence/{fileId}` | Delete risk evidence file |
+| `GET` | `/risk-evidence/{fileId}` | Get risk evidence file |
+| `DELETE` | `/risks/{riskId}/evidence/{fileId}` | Delete risk evidence file |
 | `POST` | `/risks/{riskId}/changes` | Write a change-log entry |
 | `GET` | `/risks/{riskId}/changes` | List a risk's change log |
-| `POST` | `/notifications` | Create a notification |
-| `GET` | `/notifications?recipientId=` | List a recipient's notifications |
-| `PATCH` | `/notifications/{id}/read` | Mark a notification read |
 
 ### Risk Hub — Analytics & Dashboard
 
@@ -244,10 +256,10 @@ here).
 | `POST` | `/audits/{auditId}/controls/search` | Search an audit's controls |
 | `GET` | `/audits/{auditId}/controls/{controlId}` | Get control |
 | `PATCH` | `/audits/{auditId}/controls/{controlId}` | Update control |
+| `POST` | `/audits/{auditId}/controls/{controlId}/status-override` | Manually override a control's computed status |
 | `DELETE` | `/audits/{auditId}/controls/{controlId}` | Delete control |
 | `POST` | `/controls/search` | Search controls globally |
-| `GET` | `/controls/assigned-for-evidence` | List controls assigned to the caller for evidence |
-| `GET` | `/audit-controls/{controlId}/evidence-assignment` | Get a control's evidence assignment |
+| `GET` | `/audit-controls/{controlId}/evidence-assignment` | Get a control's evidence assignment (derived audit id; used by the web app's evidence-submission IDOR gate) |
 | `GET` | `/audit-controls/{controlId}/active-population` | Get a control's active population |
 | `POST` | `/audits/{auditId}/controls/{controlId}/populations` | Create population |
 | `GET` | `/audits/{auditId}/controls/{controlId}/populations` | List populations |
@@ -261,6 +273,7 @@ here).
 | `GET` | `/audits/{auditId}/controls/{controlId}/evidence` | List evidence for a control |
 | `GET` | `/evidence/{evidenceId}` | Get evidence |
 | `PATCH` | `/evidence/{evidenceId}` | Update evidence |
+| `DELETE` | `/evidence/{evidenceId}` | Delete evidence (whole round, including its files/AI-validation logs via FK cascade) |
 | `POST` | `/evidence/{evidenceId}/files` | Add evidence file |
 | `GET` | `/evidence/{evidenceId}/files` | List evidence files |
 | `GET` | `/evidence-files/{fileId}` | Get evidence file |
@@ -306,8 +319,8 @@ go run ./cmd/api
 # Health check
 curl http://localhost:8080/health
 
-# Get a user by email
-curl http://localhost:8080/users/by-email/alice@wso2.com
+# Get a user by ID
+curl http://localhost:8080/users/1
 
 # Search risks
 curl -X POST http://localhost:8080/risks/search \
