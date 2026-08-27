@@ -3214,7 +3214,7 @@ paths:
       tags:
       - Users
       summary: List active users
-      description: Risk-module-only despite the shared route name — used by the Risk module's general user dropdowns (e.g. Add Risk). Audit Hub has its own, separate GET /api/v1/audit/users.
+      description: Risk-module-only despite the shared route name — used by the Risk module's general user dropdowns (e.g. Add Risk). Audit Hub has its own, separate GET /api/v1/audits/users.
       operationId: listUsers
       responses:
         '200':
