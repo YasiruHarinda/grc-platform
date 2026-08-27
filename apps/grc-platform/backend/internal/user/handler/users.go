@@ -22,12 +22,21 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
 
 // handleListUsers returns every active user, for the Risk module's general
 // user dropdowns (e.g. the Add Risk form). Risk-only — see the doc comment on
 // RegisterRoutes for why this route name reads as more "shared" than it is.
+//
+// Gated on ViewRisks OR ManageRiskHub — same shape as GET /api/v1/teams
+// (risk/handler/team.go): every Risk Hub role that populates the Add Risk
+// pickers this feeds is seeded with RISK_VIEW_RISKS, and grc-platform-admin
+// reaches it via ManageRiskHub. Without this gate any authenticated caller —
+// an external auditor included, since Audit Hub has its own privilege set —
+// could enumerate every active platform user's resolved display name and
+// email.
 //
 // A user who doesn't resolve through the identity directory is dropped from
 // the list rather than shown with a blank name — the platform is removing
@@ -36,6 +45,10 @@ import (
 // other picker (see candidates.go's resolveCandidates).
 func handleListUsers(repo userentity.Repository, dir *directory.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !auth.HasPrivilege(r.Context(), privilege.ViewRisks) && !auth.RequirePrivilege(r.Context(), w, privilege.ManageRiskHub) {
+			return
+		}
+
 		users, err := repo.List(r.Context())
 		if err != nil {
 			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)

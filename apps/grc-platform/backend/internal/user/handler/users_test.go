@@ -24,8 +24,19 @@ import (
 	"testing"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/middleware"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
+
+// authedCtx builds a context the way the Auth middleware would for an
+// authenticated caller holding exactly the given privileges — a non-nil
+// privilege map, so auth.AllowAll(ctx) is false (unlike the true local-dev
+// signal used by TestHandleListUsers_LocalDevWithoutDirectory below, which
+// deliberately leaves the privilege map unset).
+func authedCtx(privs map[string]bool) context.Context {
+	ctx := middleware.WithUserInfo(context.Background(), &middleware.UserInfo{Subject: "test-caller-uuid"})
+	return privilege.WithContext(ctx, privs)
+}
 
 // fakeUserRepo implements userentity.Repository, returning fixed rows from
 // List and failing every other method — this handler never calls them.
@@ -83,9 +94,10 @@ func TestHandleListUsers_LocalDevWithoutDirectory(t *testing.T) {
 }
 
 // TestHandleListUsers_NoDirectoryOutsideLocalDev covers the complementary
-// case: without local dev's AllowAll signal (a real deployment whose
-// directory happens to be unconfigured, which should not happen but must
-// not silently leak unresolved rows either), the handler still returns [].
+// case: an authenticated, privileged caller in a real deployment whose
+// directory happens to be unconfigured (should not happen, but must not
+// silently leak unresolved rows either) — auth.AllowAll is false because the
+// privilege map is a real (non-nil) grant, not local dev's unset map.
 func TestHandleListUsers_NoDirectoryOutsideLocalDev(t *testing.T) {
 	repo := &fakeUserRepo{users: []*userentity.User{
 		{ID: 1, UUID: "uuid-1", Email: "person1@wso2.com", DisplayName: "Person One", Status: "ACTIVE"},
@@ -94,16 +106,43 @@ func TestHandleListUsers_NoDirectoryOutsideLocalDev(t *testing.T) {
 	h := handleListUsers(repo, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
-	// No UserInfo in context at all: auth.AllowAll is false.
+	req = req.WithContext(authedCtx(map[string]bool{privilege.ViewRisks: true}))
 	rr := httptest.NewRecorder()
 
 	h(rr, req)
 
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rr.Code, rr.Body.String())
+	}
 	var got []*userentity.User
 	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
 	if len(got) != 0 {
 		t.Fatalf("got %d users, want 0 (not local dev, no directory to resolve through)", len(got))
+	}
+}
+
+// TestHandleListUsers_RequiresPrivilege is the regression test for the
+// missing-authorization finding: GET /api/v1/users had no privilege check at
+// all, so any authenticated caller — an external auditor included — could
+// enumerate every active platform user's resolved name and email.
+func TestHandleListUsers_RequiresPrivilege(t *testing.T) {
+	repo := &fakeUserRepo{users: []*userentity.User{
+		{ID: 1, UUID: "uuid-1", Email: "person1@wso2.com", DisplayName: "Person One", Status: "ACTIVE"},
+	}}
+
+	h := handleListUsers(repo, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
+	// Authenticated, but holding a privilege from an unrelated module (Audit
+	// Hub) — e.g. an external auditor — not RISK_VIEW_RISKS/MANAGE_RISK_HUB.
+	req = req.WithContext(authedCtx(map[string]bool{privilege.ViewAudits: true}))
+	rr := httptest.NewRecorder()
+
+	h(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d (body: %s)", rr.Code, http.StatusForbidden, rr.Body.String())
 	}
 }
