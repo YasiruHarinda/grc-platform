@@ -454,7 +454,7 @@ func (r *grantRepo) RolesCarryingAnyPrivilege(ctx context.Context, privilegeName
 		FROM   role_privilege rp
 		JOIN   privilege p ON p.id = rp.privilege_id
 		WHERE  rp.is_active = TRUE AND p.status = 'ACTIVE'
-		  AND  p.privilege_name IN (`+strings.Join(placeholders, ",")+`)`,
+		  AND  p.privilege_name IN (`+strings.Join(placeholders, ",")+`)`, // #nosec G202 -- concatenated part is only "?" placeholders (count-derived), values go through args
 		args...)
 	if err != nil {
 		return nil, fmt.Errorf("grant.RolesCarryingAnyPrivilege: %w", err)
