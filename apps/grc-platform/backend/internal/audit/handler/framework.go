@@ -76,9 +76,16 @@ func (h *frameworkHandler) listProducts(w http.ResponseWriter, r *http.Request) 
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAudits) {
 		return
 	}
-	products, err := h.svc.ListProducts(r.Context())
+	ctx := r.Context()
+	scope, _ := deriveScopes(ctx)
+	user := auth.FromContext(ctx)
+	var userID int
+	if user != nil {
+		userID = user.UserID
+	}
+	products, err := h.svc.ListProducts(ctx, scope, userID, managedTeamIDs(auth.Grants(ctx)))
 	if err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
 		return
 	}
 	if products == nil {
@@ -112,6 +119,9 @@ func (h *frameworkHandler) listFrameworkControls(w http.ResponseWriter, r *http.
 	}
 	id, ok := parseIntParam(w, r, "id")
 	if !ok {
+		return
+	}
+	if !frameworkInScope(w, r, h.svc, id) {
 		return
 	}
 	controls, err := h.svc.ListFrameworkControls(r.Context(), id)

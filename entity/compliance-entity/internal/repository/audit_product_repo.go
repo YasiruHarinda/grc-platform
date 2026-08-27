@@ -54,6 +54,9 @@ func (r *auditProductRepo) SearchAuditProducts(ctx context.Context, req domain.S
 		where += " AND status = ?"
 		args = append(args, req.StatusKey)
 	}
+	scopeClause, scopeArgs := productScopeWhere(req.Scope, req.UserID, req.ScopeTeamIDs)
+	where += scopeClause
+	args = append(args, scopeArgs...)
 
 	var total int
 	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM audit_product "+where, args...).Scan(&total); err != nil {
@@ -78,6 +81,30 @@ func (r *auditProductRepo) SearchAuditProducts(ctx context.Context, req domain.S
 		products = append(products, p)
 	}
 	return products, total, rows.Err()
+}
+
+// productScopeWhere mirrors frameworkScopeWhere: a product has no team/owner
+// of its own, so it qualifies when one of its audits has a control in scope.
+func productScopeWhere(scope domain.Scope, userID int, scopeTeamIDs []int) (string, []any) {
+	switch scope {
+	case domain.ScopeAll:
+		return "", nil
+	case domain.ScopeOwned:
+		return ` AND EXISTS (SELECT 1 FROM audit a JOIN audit_control c ON c.audit_id = a.id
+			WHERE a.product_id = audit_product.id AND c.owner_id = ?)`,
+			[]any{userID}
+	case domain.ScopeAssigned:
+		return ` AND EXISTS (SELECT 1 FROM audit a JOIN audit_control c ON c.audit_id = a.id
+			WHERE a.product_id = audit_product.id AND c.auditor_id = ?)`,
+			[]any{userID}
+	case domain.ScopeTeam:
+		pred, args := teamScopePredicate("c", scopeTeamIDs, userID)
+		return ` AND EXISTS (SELECT 1 FROM audit a JOIN audit_control c ON c.audit_id = a.id
+			WHERE a.product_id = audit_product.id AND ` + pred + `)`,
+			args
+	default: // ScopeNone and any unrecognized value scope to nothing.
+		return " AND 1=0", nil
+	}
 }
 
 func (r *auditProductRepo) GetAuditProductByID(ctx context.Context, id int) (*domain.AuditProduct, error) {
