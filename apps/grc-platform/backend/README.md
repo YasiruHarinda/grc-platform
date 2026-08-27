@@ -17,7 +17,7 @@ Backend starts at `http://localhost:8081`.
 - Runtime: Go `1.23+`
 - Entry point: `cmd/server/main.go`
 - Authentication: Asgardeo JWT Bearer token — validated via JWKS endpoint; pass as `Authorization: Bearer <token>` header
-- Two modules: **Risk Hub** (`/api/v1/`) and **Audit Hub** (`/api/v1/audits/`)
+- Two modules: **Risk Hub** (`/api/v1/risks/`) and **Audit Hub** (`/api/v1/audits/`)
 
 ## Prerequisites
 
