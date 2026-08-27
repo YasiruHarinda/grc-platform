@@ -175,17 +175,8 @@ func (d *Deps) logSends(ctx context.Context, recipientUserID int, logItems []not
 }
 
 // describeActor renders the person who triggered a notification as
-// "Display Name (email)". Handlers only have the caller's uuid (auth.FromContext's
-// Subject — the token's verified `sub` claim), so that's what's looked up; an
-// email alone would read poorly in a notification, but resolving one is also
-// the unambiguous fallback, so both are shown rather than swapping one for
-// the other.
-//
-// Looked up via the internal-org directory path only (plain Lookup, not
-// LookupTyped): the actor's user_type isn't available here without a second
-// round trip to Users.GetByID, and no live external-auditor login path exists
-// yet to make that lookup worth its cost. An external actor degrades to the
-// bare uuid below, same as any other unresolvable one.
+// "Display Name (email)", looked up via the internal-org directory (plain
+// Lookup, not LookupTyped — no external-auditor login path exists yet).
 //
 // Degrades to the bare uuid whenever the name can't be resolved: the actor
 // may have no Asgardeo account known to the directory, the lookup may fail,

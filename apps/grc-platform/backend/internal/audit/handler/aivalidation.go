@@ -27,7 +27,8 @@ import (
 )
 
 type aiValidationHandler struct {
-	svc service.AIValidationService
+	svc         service.AIValidationService
+	evidenceSvc service.EvidenceService
 }
 
 // listValidations handles GET /api/v1/evidence/{evidenceId}/ai-validations.
@@ -35,17 +36,40 @@ type aiValidationHandler struct {
 // Advisory review hints. Visible to anyone permitted to see the evidence —
 // submitters (for the pre-review feedback loop) and reviewers (for the hint) —
 // so it reuses SUBMIT_EVIDENCE OR REVIEW_EVIDENCE rather than a new privilege.
+// The route carries only a bare evidenceId (no team/control context), so —
+// same as requireEvidenceFileAccess for file downloads — the owning
+// control's team/auditor must be resolved first and the privileges checked
+// scoped to that team (HasPrivilegeIn), not the unscoped HasPrivilege/
+// RequireAnyPrivilege: otherwise a grant scoped to one team would let its
+// holder read every other team's AI validation results by evidenceId.
 func (h *aiValidationHandler) listValidations(w http.ResponseWriter, r *http.Request) {
-	if !auth.RequireAnyPrivilege(r.Context(), w, privilege.SubmitEvidence, privilege.ReviewEvidence) {
-		return
-	}
+	ctx := r.Context()
 	evidenceID, ok := parseIntParam(w, r, "evidenceId")
 	if !ok {
 		return
 	}
-	validations, err := h.svc.ListByEvidence(r.Context(), evidenceID)
+	auditorID, evidenceTeamID, err := h.evidenceSvc.EvidenceAuditorID(ctx, evidenceID)
 	if err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
+		return
+	}
+	teamID := 0
+	if evidenceTeamID != nil {
+		teamID = *evidenceTeamID
+	}
+	if !auth.HasPrivilegeIn(ctx, privilege.ManageControls, teamID) &&
+		!auth.HasPrivilegeIn(ctx, privilege.SubmitEvidence, teamID) &&
+		!auth.HasPrivilegeIn(ctx, privilege.ReviewEvidence, teamID) &&
+		!auth.HasPrivilegeIn(ctx, privilege.ViewAllAudits, teamID) {
+		actor := auth.FromContext(ctx)
+		if auditorID == nil || *auditorID != actor.UserID {
+			response.WriteError(w, http.StatusForbidden, response.ErrMsgForbidden)
+			return
+		}
+	}
+	validations, err := h.svc.ListByEvidence(ctx, evidenceID)
+	if err != nil {
+		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
 		return
 	}
 	if validations == nil {

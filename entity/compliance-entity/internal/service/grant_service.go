@@ -30,6 +30,21 @@ import (
 // validateGrant.
 const manageUsersPrivilege = "MANAGE_USERS"
 
+// globalOnlyPrivileges are privileges whose platform-side handlers check them
+// with the unscoped HasPrivilege/RequirePrivilege, not HasPrivilegeIn, on the
+// assumption that they are never granted team-scoped (see control.go,
+// comment.go, audit.go, review.go and reminder.go in the platform backend). A
+// role carrying any of these may only ever be granted GLOBAL, so that
+// assumption holds instead of being a comment nobody enforces.
+var globalOnlyPrivileges = []string{
+	manageUsersPrivilege,
+	"AUDIT_MANAGE_CONTROLS",
+	"AUDIT_UPDATE_AUDIT",
+	// Org-wide review authority, checked unscoped in review.go. Keeps
+	// grc-platform-audit-compliance-team GLOBAL-only.
+	"AUDIT_REVIEW_EVIDENCE",
+}
+
 // GrantService reads and writes role grants.
 //
 // Deliberately has no cached counterpart, unlike UserService. Grants are
@@ -211,20 +226,22 @@ func (s *grantService) validateScope(ctx context.Context, role *domain.Role, req
 				"assigned to the person, not from a team"}
 	}
 
-	// 3. Grant-management is never handed out scoped. A register-scoped admin
-	// granting roles would need the escalation rule that a grantor may not
-	// exceed their own privileges in that scope — subtle, and silent when
-	// wrong — so it is deliberately not permitted yet. Relaxing this later
-	// needs no schema change.
+	// 3. Some privileges are never handed out scoped — see globalOnlyPrivileges.
+	// For MANAGE_USERS specifically: a register-scoped admin granting roles
+	// would need the escalation rule that a grantor may not exceed their own
+	// privileges in that scope — subtle, and silent when wrong — so it is
+	// deliberately not permitted yet. Relaxing this later needs no schema change.
 	if req.ScopeType != domain.ScopeGlobal {
-		carries, err := s.repo.RoleCarriesPrivilege(ctx, role.ID, manageUsersPrivilege)
-		if err != nil {
-			return err
-		}
-		if carries {
-			return &apierror.ValidationError{
-				Msg: role.RoleName + " carries " + manageUsersPrivilege +
-					" and may only be granted GLOBAL"}
+		for _, priv := range globalOnlyPrivileges {
+			carries, err := s.repo.RoleCarriesPrivilege(ctx, role.ID, priv)
+			if err != nil {
+				return err
+			}
+			if carries {
+				return &apierror.ValidationError{
+					Msg: role.RoleName + " carries " + priv +
+						" and may only be granted GLOBAL"}
+			}
 		}
 	}
 
@@ -268,6 +285,16 @@ func (s *grantService) ListRoles(ctx context.Context) (domain.ListRolesResponse,
 	}
 	if roles == nil {
 		roles = []domain.Role{}
+	}
+
+	globalOnlyRoleIDs, err := s.repo.RolesCarryingAnyPrivilege(ctx, globalOnlyPrivileges)
+	if err != nil {
+		return domain.ListRolesResponse{}, err
+	}
+	for i := range roles {
+		roles[i].GlobalOnly = roles[i].Module == domain.ModuleShared ||
+			roles[i].AssignableUserType == domain.UserTypeExternal ||
+			globalOnlyRoleIDs[roles[i].ID]
 	}
 	return domain.ListRolesResponse{Roles: roles}, nil
 }

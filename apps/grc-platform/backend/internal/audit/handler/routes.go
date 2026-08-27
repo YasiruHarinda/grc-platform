@@ -85,14 +85,14 @@ type Deps struct {
 func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	ah := &auditHandler{svc: deps.Audit}
 	ch := &controlHandler{svc: deps.Control, notify: &deps}
-	tlh := &trailHandler{svc: deps.Trail, directory: deps.Directory}
+	tlh := &trailHandler{svc: deps.Trail, controlSvc: deps.Control, auditSvc: deps.Audit, directory: deps.Directory}
 	fh := &frameworkHandler{svc: deps.Framework}
 	uh := &userHandler{svc: deps.User, directory: deps.Directory, grants: deps.Grants}
 	th := &teamHandler{svc: deps.Team}
 	dh := &dashboardHandler{svc: deps.Dashboard}
 	eh := &evidenceHandler{svc: deps.Evidence, controlSvc: deps.Control, popSvc: deps.Population, trailSvc: deps.Trail, aiClient: deps.AIAgent, notify: &deps, directory: deps.Directory}
 	cmh := &commentHandler{svc: deps.Comment, controlSvc: deps.Control, notify: &deps, directory: deps.Directory}
-	avh := &aiValidationHandler{svc: deps.AIValidation}
+	avh := &aiValidationHandler{svc: deps.AIValidation, evidenceSvc: deps.Evidence}
 	rjh := &reminderJobHandler{trigger: deps.TriggerReminderJob}
 
 	// Current user (shared by both hubs — resolved privilege set unions RISK_*

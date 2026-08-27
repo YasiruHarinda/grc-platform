@@ -68,17 +68,9 @@ const hubLabel: Record<Role["module"], string> = {
 };
 
 // The Role + Scope + Add row shared by AddUserDialog's stage 2 and
-// GrantEditorDialog. Role is one flat dropdown grouped by hub (section
-// headers, not a separate hub-picking step) — the scope picker's shape then
-// depends on the selected role's module/scopeBasis:
-//   - SHARED role                 → Scope is always Global, not editable.
-//   - RISK role, SOURCE_REGISTER  → Global, or a source-register team.
-//   - RISK role, ASSIGNMENT_TEAM  → Global, or an assignment team.
-//   - AUDIT role                  → Global, or an audit team (unless it's the
-//                                   one EXTERNAL-only role, which locks to
-//                                   Global the same way SHARED does — its
-//                                   real scoping is per-control assignment,
-//                                   not team-based).
+// GrantEditorDialog. Scope locks to Global when the role is globalOnly (SHARED,
+// EXTERNAL-assignable, or backend-flagged GLOBAL-only); otherwise Global or a
+// team, per the role's module/scopeBasis.
 export default function GrantPicker({ roles, onAdd, userType }: GrantPickerProps): JSX.Element {
   const authFetch = useAuthApiClient();
   const [roleId, setRoleId] = useState<number | "">("");
@@ -100,7 +92,7 @@ export default function GrantPicker({ roles, onAdd, userType }: GrantPickerProps
 
   useEffect(() => {
     setScopeId("GLOBAL");
-    if (!selectedRole || selectedRole.assignableUserType === "EXTERNAL") {
+    if (!selectedRole || selectedRole.globalOnly) {
       setTeams([]);
       setTeamsLoading(false);
       return;
@@ -148,7 +140,7 @@ export default function GrantPicker({ roles, onAdd, userType }: GrantPickerProps
       cancelled = true;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roleId]);
+  }, [roleId, selectedRole?.globalOnly]);
 
   const handleAdd = () => {
     if (!selectedRole || roleId === "") return;
@@ -162,7 +154,7 @@ export default function GrantPicker({ roles, onAdd, userType }: GrantPickerProps
     );
   };
 
-  const scopeLocked = !selectedRole || selectedRole.module === "SHARED" || selectedRole.assignableUserType === "EXTERNAL";
+  const scopeLocked = !selectedRole || selectedRole.globalOnly;
   const scopeHint = scopeLocked
     ? selectedRole?.assignableUserType === "EXTERNAL"
       ? "This role is scoped to the controls assigned to this person, not to a team."

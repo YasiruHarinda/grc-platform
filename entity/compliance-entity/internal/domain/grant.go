@@ -134,6 +134,9 @@ type Role struct {
 	// this is a convenience, not the enforcement.
 	AssignableUserType string `json:"assignableUserType"`
 	Status             string `json:"status"`
+	// GlobalOnly mirrors validateScope: true if only a GLOBAL grant of this
+	// role would be accepted.
+	GlobalOnly bool `json:"globalOnly"`
 }
 
 // ListRolesResponse is returned by GET /roles.

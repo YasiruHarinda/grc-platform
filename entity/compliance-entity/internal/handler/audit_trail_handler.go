@@ -102,6 +102,24 @@ func (h *AuditTrailHandler) ListAuditTrail(w http.ResponseWriter, r *http.Reques
 		to = to.AddDate(0, 0, 1)
 		filter.To = &to
 	}
+	// scope/userId/scopeTeamId row-scope control-level entries — see domain.TrailFilter.
+	filter.Scope = domain.Scope(q.Get("scope"))
+	if raw := q.Get("userId"); raw != "" {
+		userID, err := strconv.Atoi(raw)
+		if err != nil {
+			writeServiceError(w, r, &apierror.ValidationError{Msg: "userId must be a positive integer"})
+			return
+		}
+		filter.UserID = userID
+	}
+	for _, raw := range q["scopeTeamId"] {
+		id, err := strconv.Atoi(raw)
+		if err != nil {
+			writeServiceError(w, r, &apierror.ValidationError{Msg: "scopeTeamId must be a positive integer"})
+			return
+		}
+		filter.ScopeTeamIDs = append(filter.ScopeTeamIDs, id)
+	}
 	resp, err := h.svc.ListAuditTrail(r.Context(), auditID, filter, limit, offset)
 	if err != nil {
 		writeServiceError(w, r, err)

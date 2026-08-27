@@ -36,8 +36,12 @@ import (
 const trailDateFormat = "2006-01-02"
 
 type trailHandler struct {
-	svc       service.TrailService
-	directory *directory.Service
+	svc service.TrailService
+	// controlSvc/auditSvc back the controlInScope/auditInScope checks below —
+	// see their doc comments in dashboard.go.
+	controlSvc service.ControlService
+	auditSvc   service.AuditService
+	directory  *directory.Service
 }
 
 // resolveTrailActors fills each entry's CreatedByName from CreatedBy (the
@@ -79,8 +83,11 @@ func (h *trailHandler) resolveTrailActors(ctx context.Context, entries []*model.
 // listControlTrail handles GET /api/v1/audits/{id}/controls/{controlId}/trail.
 //
 // Returns the control's immutable history (append-only audit_trail), newest
-// first, for the History tab. Read access is gated on ViewAudits — the trail
-// only surfaces events, never evidence bytes.
+// first, for the History tab. Read access is gated on ViewAudits plus the
+// same controlInScope check getControl uses — ViewAudits alone is a coarse
+// boolean with no row scope, so without it a caller scoped to one control
+// (e.g. an assigned external auditor) could read another audit's trail by
+// guessing its id.
 func (h *trailHandler) listControlTrail(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAudits) {
 		return
@@ -91,6 +98,9 @@ func (h *trailHandler) listControlTrail(w http.ResponseWriter, r *http.Request) 
 	}
 	controlID, ok := parseIntParam(w, r, "controlId")
 	if !ok {
+		return
+	}
+	if !controlInScope(w, r, h.controlSvc, auditID, controlID) {
 		return
 	}
 
@@ -113,14 +123,17 @@ func (h *trailHandler) listControlTrail(w http.ResponseWriter, r *http.Request) 
 //
 // Returns the whole audit's activity — audit-level events (created/updated/
 // deleted) and every control's events together, newest first — for the
-// audit-wide Activity Log page. Same ViewAudits gate as the per-control history;
-// this only surfaces event metadata, never evidence bytes.
+// audit-wide Activity Log page. Same ViewAudits gate as the per-control
+// history, plus the same auditInScope check getAudit uses.
 func (h *trailHandler) listAuditTrail(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAudits) {
 		return
 	}
 	auditID, ok := parseIntParam(w, r, "id")
 	if !ok {
+		return
+	}
+	if !auditInScope(w, r, h.auditSvc, auditID) {
 		return
 	}
 
@@ -171,6 +184,14 @@ func (h *trailHandler) listAuditTrail(w http.ResponseWriter, r *http.Request) {
 		}
 		filter.To = &to
 	}
+
+	// Row-scope control-level entries — auditInScope alone lets a
+	// single-control caller see every other control's trail rows too.
+	filter.Scope, _ = deriveScopes(r.Context())
+	if user := auth.FromContext(r.Context()); user != nil {
+		filter.UserID = user.UserID
+	}
+	filter.ScopeTeamIDs = managedTeamIDs(auth.Grants(r.Context()))
 
 	entries, total, err := h.svc.ListByAudit(r.Context(), auditID, filter, limit, offset)
 	if err != nil {

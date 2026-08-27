@@ -906,6 +906,13 @@ type AuditEvidence struct {
 	CreatedBy   *string   `json:"createdBy"`
 	CreatedOn   time.Time `json:"createdOn"`
 	UpdatedOn   time.Time `json:"updatedOn"`
+	// AuditorID and TeamID are the owning control's auditor_id/team_id,
+	// LEFT JOINed in by GetEvidenceByID so the GRC Backend can authorize
+	// evidence-scoped endpoints (e.g. AI validation results) against the
+	// assigned auditor or a team-scoped grant without a second round trip.
+	// Nil when the control has no auditor/team assigned.
+	AuditorID *int `json:"auditorId"`
+	TeamID    *int `json:"teamId"`
 }
 
 // CreateEvidenceRequest is the payload for POST /audits/{auditId}/controls/{controlId}/evidence.
@@ -1421,11 +1428,17 @@ type CreateAuditTrailRequest struct {
 // TrailFilter narrows a GET /audits/{auditId}/trail listing. ControlIDs empty
 // means "don't filter on this"; multiple values are OR'd (IN (...)), matching
 // the audit-wide activity log's Control column filter. Empty returns the whole
-// audit's trail (audit-level rows and every control's rows together).
+// audit's trail (audit-level rows and every control's rows together, subject to
+// Scope below).
 type TrailFilter struct {
 	ControlIDs []int
 	From       *time.Time
 	To         *time.Time
+	// Scope/UserID/ScopeTeamIDs row-scope control-level trail rows only, same as
+	// SearchControlsRequest.Scope; zero-value ("") is NOT ScopeAll.
+	Scope        Scope
+	UserID       int
+	ScopeTeamIDs []int
 }
 
 // ListAuditTrailResponse is returned by GET /audits/{auditId}/trail.

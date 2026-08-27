@@ -164,6 +164,12 @@ type EvidenceRepository interface {
 	// UpdateStatus advances one evidence round's own status (distinct from the
 	// control's status) — e.g. SUBMITTED → COMPLIANCE_REJECTED.
 	UpdateStatus(ctx context.Context, evidenceID int, status, updatedBy string) error
+	// EvidenceAuditorID returns the user.id of the auditor assigned to
+	// evidenceID's owning control (nil if none) and that control's team id
+	// (nil if none) — mirrors GetFileByID's role for FileAuditorID, but
+	// resolves from an evidence (round) id for callers whose route carries
+	// only that, not a file id (e.g. the AI-validations list endpoint).
+	EvidenceAuditorID(ctx context.Context, evidenceID int) (auditorID *int, teamID *int, err error)
 }
 
 // PopulationRepository is the data-access contract for OE-control population

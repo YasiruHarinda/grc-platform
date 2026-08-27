@@ -61,8 +61,12 @@ type entTrail struct {
 	CreatedOn         time.Time `json:"createdOn"`
 }
 
+// ListByControl always sends scope=all: the caller's access to controlID was
+// already authorised by the handler's controlInScope check, so the entity-side
+// row scoping in auditTrailScopeWhere (which defaults to "see nothing" when
+// scope is absent) would otherwise empty this single control's own trail.
 func (r *trailRepo) ListByControl(ctx context.Context, auditID, controlID, limit int) ([]*model.AuditTrailEntry, int, error) {
-	path := fmt.Sprintf("/audits/%d/trail?controlId=%d&limit=%d", auditID, controlID, limit)
+	path := fmt.Sprintf("/audits/%d/trail?controlId=%d&limit=%d&scope=all", auditID, controlID, limit)
 	return r.list(ctx, path)
 }
 
@@ -81,6 +85,11 @@ func (r *trailRepo) ListByAudit(ctx context.Context, auditID int, filter model.T
 	}
 	if filter.To != nil {
 		q.Set("to", filter.To.Format(trailDateFormat))
+	}
+	q.Set("scope", string(filter.Scope))
+	q.Set("userId", fmt.Sprintf("%d", filter.UserID))
+	for _, id := range filter.ScopeTeamIDs {
+		q.Add("scopeTeamId", fmt.Sprintf("%d", id))
 	}
 	path := fmt.Sprintf("/audits/%d/trail?%s", auditID, q.Encode())
 	return r.list(ctx, path)
