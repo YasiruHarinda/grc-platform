@@ -91,9 +91,11 @@ func filterInternalComments(entries []*model.AuditTrailEntry, includeInternal bo
 	for _, e := range entries {
 		if e.Action == "COMMENTED" {
 			var details struct {
-				IsInternal bool `json:"isInternal"`
+				IsInternal *bool `json:"isInternal"`
 			}
-			if err := json.Unmarshal(e.Details, &details); err == nil && details.IsInternal {
+			// Fail closed: exclude unless the details explicitly say isInternal:false.
+			err := json.Unmarshal(e.Details, &details)
+			if err != nil || details.IsInternal == nil || *details.IsInternal {
 				continue
 			}
 		}
