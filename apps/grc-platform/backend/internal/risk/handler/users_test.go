@@ -65,7 +65,7 @@ func TestHandleListUsers_LocalDevWithoutDirectory(t *testing.T) {
 
 	d := &Deps{Users: repo, Directory: nil} // Directory == nil: no SCIM configured
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/risk/users", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/risks/users", nil)
 	// Local dev signal for auth.AllowAll: a UserInfo present, no privilege
 	// store configured (privilege.FromContext stays nil by not setting one).
 	req = req.WithContext(middleware.WithUserInfo(req.Context(), &middleware.UserInfo{Subject: "dev-user"}))
@@ -97,7 +97,7 @@ func TestHandleListUsers_NoDirectoryOutsideLocalDev(t *testing.T) {
 
 	d := &Deps{Users: repo, Directory: nil}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/risk/users", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/risks/users", nil)
 	req = req.WithContext(contextForGrants(t, map[string]bool{privilege.ViewRisks: true}, nil))
 	rr := httptest.NewRecorder()
 
@@ -116,7 +116,7 @@ func TestHandleListUsers_NoDirectoryOutsideLocalDev(t *testing.T) {
 }
 
 // TestHandleListUsers_RequiresPrivilege is the regression test for the
-// missing-authorization finding: GET /api/v1/risk/users had no privilege
+// missing-authorization finding: GET /api/v1/risks/users had no privilege
 // check at all, so any authenticated caller — an external auditor included —
 // could enumerate every active platform user's resolved name and email.
 func TestHandleListUsers_RequiresPrivilege(t *testing.T) {
@@ -126,7 +126,7 @@ func TestHandleListUsers_RequiresPrivilege(t *testing.T) {
 
 	d := &Deps{Users: repo, Directory: nil}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/risk/users", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/risks/users", nil)
 	// Authenticated, but holding a privilege from an unrelated module (Audit
 	// Hub) — e.g. an external auditor — not RISK_VIEW_RISKS/MANAGE_RISK_HUB.
 	req = req.WithContext(contextForGrants(t, map[string]bool{privilege.ViewAudits: true}, nil))

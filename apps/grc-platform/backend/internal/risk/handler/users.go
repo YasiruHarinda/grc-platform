@@ -27,12 +27,12 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
 
-// handleListUsers serves GET /api/v1/risk/users: every active user, for the
+// handleListUsers serves GET /api/v1/risks/users: every active user, for the
 // Risk module's general user dropdowns (e.g. the Add Risk form). Risk-only —
 // Audit Hub has its own GET /api/v1/audit/users backed by a completely
 // separate handler/service/repository stack.
 //
-// Gated on ViewRisks OR ManageRiskHub — same shape as GET /api/v1/risk/teams
+// Gated on ViewRisks OR ManageRiskHub — same shape as GET /api/v1/risks/teams
 // (team.go): every Risk Hub role that populates the Add Risk pickers this
 // feeds is seeded with RISK_VIEW_RISKS, and grc-platform-admin reaches it via
 // ManageRiskHub. Without this gate any authenticated caller — an external
@@ -89,9 +89,9 @@ type resolveUserRequest struct {
 	Email string `json:"email"`
 }
 
-// handleResolveUser serves POST /api/v1/risk/users/resolve: it links an HR
+// handleResolveUser serves POST /api/v1/risks/users/resolve: it links an HR
 // entity employee (identified by email, as returned by
-// GET /api/v1/risk/employees/search) to an internal user.id, creating the
+// GET /api/v1/risks/employees/search) to an internal user.id, creating the
 // user row on the fly if one doesn't exist yet. Used wherever a form needs to
 // assign any employee — not just an existing grc-platform user — to an FK
 // field (e.g. a risk's Action Owner).

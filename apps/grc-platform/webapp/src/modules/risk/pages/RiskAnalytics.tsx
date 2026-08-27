@@ -29,7 +29,7 @@ import RegisterFilter from "./analytics/RegisterFilter";
 import CsvExportButton from "./analytics/CsvExportButton";
 
 // Risk Analytics: trend/time-series and cross-cutting metrics built from a
-// single GET /api/v1/risk/analytics/summary payload, scoped by an optional
+// single GET /api/v1/risks/analytics/summary payload, scoped by an optional
 // register filter. Deliberately complements rather than duplicates the
 // point-in-time breakdowns already on the Risk Dashboard.
 export default function RiskAnalytics(): JSX.Element {

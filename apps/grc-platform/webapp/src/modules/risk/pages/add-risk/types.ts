@@ -42,19 +42,19 @@ export interface AddRiskFormValues {
   year: number;
   quarter: Quarter;
   // Integer ID of the selected risk_team row (source register).
-  // Fetched from GET /api/v1/risk/teams?type=SOURCE_REGISTER.
+  // Fetched from GET /api/v1/risks/teams?type=SOURCE_REGISTER.
   sourceRegister: number | "";
   riskTitle: string;
   riskDescription: string;
   // Array of risk_security_compliance_reference IDs.
-  // Fetched from GET /api/v1/risk/compliance-references.
+  // Fetched from GET /api/v1/risks/compliance-references.
   complianceReferences: number[];
   // Integer ID of the selected risk_category row. Fetched from
-  // GET /api/v1/risk/categories. Single-select today; the schema is M2M-capable.
+  // GET /api/v1/risks/categories. Single-select today; the schema is M2M-capable.
   riskCategory: number | "";
   identifiedByType: IdentifiedByType;
   // Selected person/tool's name for all three identifiedByType values.
-  // EMPLOYEE: picked from a live HR entity search (GET /api/v1/risk/employees/search),
+  // EMPLOYEE: picked from a live HR entity search (GET /api/v1/risks/employees/search),
   // never our own database. EXTERNAL_PERSON | TOOL: free text.
   identifiedByName: string;
   // Set alongside identifiedByName when identifiedByType is EMPLOYEE, from the
@@ -63,7 +63,7 @@ export interface AddRiskFormValues {
   // trusted on its own — so this must travel with it. Unused for
   // EXTERNAL_PERSON/TOOL, which have no directory to verify against.
   identifiedByEmail: string;
-  // User ID of the risk assigner. Defaults to current user. Fetched from GET /api/v1/risk/users.
+  // User ID of the risk assigner. Defaults to current user. Fetched from GET /api/v1/risks/users.
   assignedBy: number | "";
   riskIdentifiedDate: Date | null;
 
@@ -75,15 +75,15 @@ export interface AddRiskFormValues {
   reassessmentDate: Date | null;
 
   // ── Step 3: Action Plan ───────────────────────────────────────────────────
-  // Integer ID of the assignment risk_team row. Fetched from GET /api/v1/risk/teams?type=ASSIGNMENT.
+  // Integer ID of the assignment risk_team row. Fetched from GET /api/v1/risks/teams?type=ASSIGNMENT.
   assignmentTeam: number | "";
-  // User ID of the risk owner. Fetched from GET /api/v1/risk/users, filtered to
-  // team membership AND GET /api/v1/risk/owner-candidates.
+  // User ID of the risk owner. Fetched from GET /api/v1/risks/users, filtered to
+  // team membership AND GET /api/v1/risks/owner-candidates.
   riskOwner: number | "";
   // User ID of the management approver. Required on every risk regardless of
-  // level/treatment. Fetched from GET /api/v1/risk/management-approvers.
+  // level/treatment. Fetched from GET /api/v1/risks/management-approvers.
   managementApprover: number | "";
-  // User ID of the action owner. Fetched from GET /api/v1/risk/users.
+  // User ID of the action owner. Fetched from GET /api/v1/risks/users.
   actionOwner: number | "";
   actionPlanDescription: string;
   actionSteps: ActionStep[];

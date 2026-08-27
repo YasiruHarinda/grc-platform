@@ -17,7 +17,7 @@
 // Package handler contains HTTP handlers for genuinely cross-module user
 // endpoints. The only one today is GET /api/v1/me/profile, the app-wide
 // account menu. The Risk module's own user list / resolve endpoints, which
-// used to live here despite being Risk-only, now sit under /api/v1/risk/...
+// used to live here despite being Risk-only, now sit under /api/v1/risks/...
 // in internal/risk/handler.
 package handler
 

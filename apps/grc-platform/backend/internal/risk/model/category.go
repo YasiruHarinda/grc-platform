@@ -24,13 +24,13 @@ type RiskCategory struct {
 	Description *string `json:"description"`
 }
 
-// CreateRiskCategoryRequest is the payload for POST /api/v1/risk/categories.
+// CreateRiskCategoryRequest is the payload for POST /api/v1/risks/categories.
 type CreateRiskCategoryRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }
 
-// UpdateRiskCategoryRequest is the payload for PUT /api/v1/risk/categories/{id}.
+// UpdateRiskCategoryRequest is the payload for PUT /api/v1/risks/categories/{id}.
 type UpdateRiskCategoryRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`

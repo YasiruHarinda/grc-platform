@@ -37,7 +37,7 @@ import DashboardView from "./dashboard/DashboardView";
 import RegisterFilter from "./analytics/RegisterFilter";
 
 // Risk dashboard: current organisational risk posture built from a single
-// GET /api/v1/risk/dashboard payload, plus the 3×3 risk_score matrix that
+// GET /api/v1/risks/dashboard payload, plus the 3×3 risk_score matrix that
 // colors heatmap cells holding no risks. Optionally scoped by the same
 // register filter used on the Analytics page.
 export default function RiskDashboard(): JSX.Element {

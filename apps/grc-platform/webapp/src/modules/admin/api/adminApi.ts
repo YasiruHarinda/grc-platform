@@ -180,7 +180,7 @@ export interface ScopeTeam {
 
 // fetchScopeTeams populates the grant editor's scope picker for a
 // SOURCE_REGISTER- or ASSIGNMENT_TEAM-scoped RISK role. Calls the same
-// GET /api/v1/risk/teams the Risk module's own pickers use directly (rather than
+// GET /api/v1/risks/teams the Risk module's own pickers use directly (rather than
 // importing modules/risk/api/riskApi.ts's equivalent) — the two modules stay
 // independent of each other's internals even though they happen to read the
 // same backend route today (see useAdminPrivileges's doc comment for the same
@@ -189,7 +189,7 @@ export async function fetchScopeTeams(
   authFetch: AuthFetch,
   type: "SOURCE_REGISTER" | "ASSIGNMENT",
 ): Promise<ScopeTeam[]> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk/teams?type=${type}`);
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/teams?type=${type}`);
   return handleResponse<ScopeTeam[]>(res);
 }
 
@@ -232,12 +232,12 @@ export interface TeamPayload {
 // a scope picker would never offer, and inactive ones so they can be
 // reactivated rather than disappearing the moment they're deactivated.
 export async function fetchAllTeams(authFetch: AuthFetch): Promise<AdminTeam[]> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk/teams?includeInactive=true`);
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/teams?includeInactive=true`);
   return handleResponse<AdminTeam[]>(res);
 }
 
 export async function createTeam(authFetch: AuthFetch, payload: TeamPayload): Promise<AdminTeam> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk/teams`, {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/teams`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -245,7 +245,7 @@ export async function createTeam(authFetch: AuthFetch, payload: TeamPayload): Pr
 }
 
 export async function updateTeam(authFetch: AuthFetch, id: number, payload: TeamPayload): Promise<void> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk/teams/${id}`, {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/teams/${id}`, {
     method: "PUT",
     body: JSON.stringify(payload),
   });
@@ -266,7 +266,7 @@ export interface RiskCategoryPayload {
 }
 
 export async function fetchRiskCategories(authFetch: AuthFetch): Promise<AdminRiskCategory[]> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk/categories`);
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/categories`);
   return handleResponse<AdminRiskCategory[]>(res);
 }
 
@@ -274,7 +274,7 @@ export async function createRiskCategory(
   authFetch: AuthFetch,
   payload: RiskCategoryPayload,
 ): Promise<AdminRiskCategory> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk/categories`, {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/categories`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -286,7 +286,7 @@ export async function updateRiskCategory(
   id: number,
   payload: RiskCategoryPayload,
 ): Promise<void> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk/categories/${id}`, {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/categories/${id}`, {
     method: "PUT",
     body: JSON.stringify(payload),
   });
@@ -297,7 +297,7 @@ export async function updateRiskCategory(
 // see the entity's DeleteRiskCategory doc comment for why that can't just be
 // a DB constraint error. The caller shows whatever message comes back.
 export async function deleteRiskCategory(authFetch: AuthFetch, id: number): Promise<void> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk/categories/${id}`, { method: "DELETE" });
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/categories/${id}`, { method: "DELETE" });
   await handleResponse(res);
 }
 
@@ -315,7 +315,7 @@ export interface ComplianceReferencePayload {
 }
 
 export async function fetchComplianceReferences(authFetch: AuthFetch): Promise<AdminComplianceReference[]> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk/compliance-references`);
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/compliance-references`);
   return handleResponse<AdminComplianceReference[]>(res);
 }
 
@@ -323,7 +323,7 @@ export async function createComplianceReference(
   authFetch: AuthFetch,
   payload: ComplianceReferencePayload,
 ): Promise<AdminComplianceReference> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk/compliance-references`, {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/compliance-references`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -335,7 +335,7 @@ export async function updateComplianceReference(
   id: number,
   payload: ComplianceReferencePayload,
 ): Promise<void> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk/compliance-references/${id}`, {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/compliance-references/${id}`, {
     method: "PUT",
     body: JSON.stringify(payload),
   });
@@ -345,7 +345,7 @@ export async function updateComplianceReference(
 // Refused (409) server-side when the reference is still tagged on any risk —
 // same reasoning as deleteRiskCategory.
 export async function deleteComplianceReference(authFetch: AuthFetch, id: number): Promise<void> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk/compliance-references/${id}`, { method: "DELETE" });
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/compliance-references/${id}`, { method: "DELETE" });
   await handleResponse(res);
 }
 
@@ -363,7 +363,7 @@ export interface RiskScore {
 // No add/edit UI at all, not even for color — a locked decision (the 3x3
 // matrix is a fixed set of load-bearing constants). This console only reads it.
 export async function fetchRiskScores(authFetch: AuthFetch): Promise<RiskScore[]> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risk/scores`);
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/risks/scores`);
   return handleResponse<RiskScore[]>(res);
 }
 

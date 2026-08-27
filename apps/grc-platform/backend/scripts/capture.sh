@@ -82,11 +82,11 @@ get() {
 echo "capturing to $OUT (RISK_ENTITY_REPOS=${RISK_ENTITY_REPOS:-<unset>})"
 
 # Reference data
-get teams-all             "/api/v1/risk/teams"
-get teams-source          "/api/v1/risk/teams?type=SOURCE_REGISTER"
-get teams-assignment      "/api/v1/risk/teams?type=ASSIGNMENT"
-get risk-scores           "/api/v1/risk/scores"
-get compliance-references "/api/v1/risk/compliance-references"
+get teams-all             "/api/v1/risks/teams"
+get teams-source          "/api/v1/risks/teams?type=SOURCE_REGISTER"
+get teams-assignment      "/api/v1/risks/teams?type=ASSIGNMENT"
+get risk-scores           "/api/v1/risks/scores"
+get compliance-references "/api/v1/risks/compliance-references"
 
 # Risk reads. next-sequence-id is a read-only preview: it SELECTs
 # last_sequence_number without incrementing it, so it is safe to capture.
@@ -95,7 +95,7 @@ get risk-detail           "/api/v1/risks/1"
 get next-sequence-id      "/api/v1/risks/next-sequence-id?source_register_id=1&year=2026&quarter=Q1"
 
 # Aggregates — see the time-window caveat above
-get dashboard             "/api/v1/risk/dashboard"
-get analytics             "/api/v1/risk/analytics/summary"
+get dashboard             "/api/v1/risks/dashboard"
+get analytics             "/api/v1/risks/analytics/summary"
 
 echo "done: $(find "$OUT" -name '*.json' | wc -l | tr -d ' ') files"

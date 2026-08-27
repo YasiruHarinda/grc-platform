@@ -63,7 +63,7 @@ func TestListTeamsPrivilegeFilterAppliesEvenWhenCallerSeesEveryRisk(t *testing.T
 		{ID: choreo, Name: "Choreo", TeamType: "BOTH", Status: "ACTIVE"},
 	}}}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/risk/teams?type=SOURCE_REGISTER&mine=true&privilege="+privilege.CreateRisk, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/risks/teams?type=SOURCE_REGISTER&mine=true&privilege="+privilege.CreateRisk, nil)
 	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
 
@@ -89,7 +89,7 @@ func TestListTeamsRequiresPrivilege(t *testing.T) {
 		{ID: asgardeo, Name: "Asgardeo", TeamType: "BOTH", Status: "ACTIVE"},
 	}}}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/risk/teams", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/risks/teams", nil)
 	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
 
@@ -111,7 +111,7 @@ func TestListTeamsIncludeInactiveRequiresManageRiskHub(t *testing.T) {
 		{ID: asgardeo, Name: "Asgardeo", TeamType: "BOTH", Status: "INACTIVE"},
 	}}}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/risk/teams?includeInactive=true", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/risks/teams?includeInactive=true", nil)
 	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
 

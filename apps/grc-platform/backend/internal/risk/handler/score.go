@@ -25,11 +25,11 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
-// handleListRiskScores serves GET /api/v1/risk/scores.
+// handleListRiskScores serves GET /api/v1/risks/scores.
 // Returns all 9 cells of the likelihood × impact matrix.
 //
-// Gated on ViewRisks OR ManageRiskHub — same shape as GET /api/v1/risk/teams and
-// GET /api/v1/risk/users (team.go, users.go). Unlike those, this route has no
+// Gated on ViewRisks OR ManageRiskHub — same shape as GET /api/v1/risks/teams and
+// GET /api/v1/risks/users (team.go, users.go). Unlike those, this route has no
 // write counterpart to compare against (routes.go: "read-only by design...
 // No write route exists"), so it was simply ungated outright, letting any
 // authenticated caller read the score matrix.

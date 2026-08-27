@@ -1851,7 +1851,7 @@ paths:
   # ---------------------------------------------------------------------------
   # Risk Hub
   # ---------------------------------------------------------------------------
-  /api/v1/risk/teams:
+  /api/v1/risks/teams:
     get:
       tags:
       - Risk Teams
@@ -1926,7 +1926,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/risk/teams/{id}:
+  /api/v1/risks/teams/{id}:
     put:
       tags:
       - Risk Teams
@@ -1957,7 +1957,7 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/risk/scores:
+  /api/v1/risks/scores:
     get:
       tags:
       - Risk Scores
@@ -1979,7 +1979,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/risk/compliance-references:
+  /api/v1/risks/compliance-references:
     get:
       tags:
       - Risk Compliance References
@@ -2027,7 +2027,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/risk/compliance-references/{id}:
+  /api/v1/risks/compliance-references/{id}:
     put:
       tags:
       - Risk Compliance References
@@ -2089,7 +2089,7 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/risk/categories:
+  /api/v1/risks/categories:
     get:
       tags:
       - Risk Categories
@@ -2138,7 +2138,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/risk/categories/{id}:
+  /api/v1/risks/categories/{id}:
     put:
       tags:
       - Risk Categories
@@ -2200,7 +2200,7 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/risk/management-approvers:
+  /api/v1/risks/management-approvers:
     get:
       tags:
       - Risk User Pickers
@@ -2220,7 +2220,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/risk/owner-candidates:
+  /api/v1/risks/owner-candidates:
     get:
       tags:
       - Risk User Pickers
@@ -2240,7 +2240,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/risk/assigner-candidates:
+  /api/v1/risks/assigner-candidates:
     get:
       tags:
       - Risk User Pickers
@@ -2268,25 +2268,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/me/privileges:
-    get:
-      tags:
-      - Privileges
-      summary: Get the authenticated caller's resolved privileges
-      description: Union of all the caller's roles' privileges via the role_privilege mapping. When no privilege store is configured (local dev), returns allowAll=true instead of an enumerated list.
-      operationId: getMyPrivileges
-      responses:
-        '200':
-          description: Resolved privileges
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PrivilegesResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-  /api/v1/risk/employees/search:
+  /api/v1/risks/employees/search:
     get:
       tags:
       - Employees
@@ -2792,7 +2774,7 @@ paths:
           $ref: '#/components/responses/UnprocessableEntity'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/risk/dashboard:
+  /api/v1/risks/dashboard:
     get:
       tags:
       - Risk Dashboard
@@ -2819,7 +2801,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/risk/analytics/summary:
+  /api/v1/risks/analytics/summary:
     get:
       tags:
       - Risk Analytics
@@ -3243,28 +3225,7 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  # ---------------------------------------------------------------------------
-  # Shared User endpoints
-  # ---------------------------------------------------------------------------
-  /api/v1/me/profile:
-    get:
-      tags:
-      - Users
-      summary: Get the signed-in user's name and profile photo
-      description: Looked up from the HR entity service by the caller's own email — Asgardeo's token doesn't carry name/picture claims for this application.
-      operationId: getMyProfile
-      responses:
-        '200':
-          description: Profile (empty fields when no matching HR record)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/MyProfileResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-  /api/v1/risk/users:
+  /api/v1/risks/users:
     get:
       tags:
       - Users
@@ -3286,12 +3247,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/risk/users/resolve:
+  /api/v1/risks/users/resolve:
     post:
       tags:
       - Users
       summary: Resolve an employee's email to an internal user, provisioning one if needed
-      description: Links an HR entity employee (as returned by GET /api/v1/risk/employees/search) to an internal user.id, creating the row on the fly when it doesn't exist. The display name is always looked up from the HR entity, never taken from the request body.
+      description: Links an HR entity employee (as returned by GET /api/v1/risks/employees/search) to an internal user.id, creating the row on the fly when it doesn't exist. The display name is always looked up from the HR entity, never taken from the request body.
       operationId: resolveUser
       requestBody:
         required: true
@@ -3316,6 +3277,45 @@ paths:
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  # ---------------------------------------------------------------------------
+  # Current User
+  # ---------------------------------------------------------------------------
+  /api/v1/me/profile:
+    get:
+      tags:
+      - Users
+      summary: Get the signed-in user's name and profile photo
+      description: Looked up from the HR entity service by the caller's own email — Asgardeo's token doesn't carry name/picture claims for this application.
+      operationId: getMyProfile
+      responses:
+        '200':
+          description: Profile (empty fields when no matching HR record)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyProfileResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/me/privileges:
+    get:
+      tags:
+      - Privileges
+      summary: Get the authenticated caller's resolved privileges
+      description: Union of all the caller's roles' privileges via the role_privilege mapping. When no privilege store is configured (local dev), returns allowAll=true instead of an enumerated list.
+      operationId: getMyPrivileges
+      responses:
+        '200':
+          description: Resolved privileges
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrivilegesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
   # ---------------------------------------------------------------------------
@@ -5616,7 +5616,7 @@ components:
           nullable: true
     DashboardSummary:
       type: object
-      description: Full payload for GET /api/v1/risk/dashboard. CANCELLED risks are excluded everywhere; every field is open-risks-only except registers[].status_levels.
+      description: Full payload for GET /api/v1/risks/dashboard. CANCELLED risks are excluded everywhere; every field is open-risks-only except registers[].status_levels.
       properties:
         summary:
           $ref: '#/components/schemas/RiskStatusSummary'
@@ -5749,7 +5749,7 @@ components:
           type: integer
     AnalyticsSummary:
       type: object
-      description: Full payload for GET /api/v1/risk/analytics/summary — the "over time" companion to DashboardSummary's point-in-time snapshot.
+      description: Full payload for GET /api/v1/risks/analytics/summary — the "over time" companion to DashboardSummary's point-in-time snapshot.
       properties:
         kpis:
           $ref: '#/components/schemas/AnalyticsKPIs'

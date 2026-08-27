@@ -24,13 +24,13 @@ type ComplianceReference struct {
 	Description *string `json:"description"`
 }
 
-// CreateComplianceRefRequest is the payload for POST /api/v1/risk/compliance-references.
+// CreateComplianceRefRequest is the payload for POST /api/v1/risks/compliance-references.
 type CreateComplianceRefRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }
 
-// UpdateComplianceRefRequest is the payload for PUT /api/v1/risk/compliance-references/{id}.
+// UpdateComplianceRefRequest is the payload for PUT /api/v1/risks/compliance-references/{id}.
 type UpdateComplianceRefRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`

@@ -48,15 +48,15 @@ type Deps struct {
 	// Users resolves an authenticated caller's email to their internal
 	// user.id — used by handleListRisks (Action Owner list scoping) and the
 	// action-plan handlers (ownership checks). Also backs GET
-	// /api/v1/risk/users and POST /api/v1/risk/users/resolve (users.go).
+	// /api/v1/risks/users and POST /api/v1/risks/users/resolve (users.go).
 	Users user.Repository
 	// HREntity checks whether a resolved email belongs to a current WSO2
-	// employee, for POST /api/v1/risk/users/resolve (users.go). The Risk
+	// employee, for POST /api/v1/risks/users/resolve (users.go). The Risk
 	// module is the only caller of that endpoint — an employee is resolved to
 	// a user id only while creating or editing a risk.
 	HREntity *hrentity.Client
 	// SCIM resolves an employee's email to their Asgardeo id when
-	// POST /api/v1/risk/users/resolve provisions a user row, so the row
+	// POST /api/v1/risks/users/resolve provisions a user row, so the row
 	// carries the identity they will authenticate as. nil in local dev
 	// without SCIM credentials — resolve then fails closed (see users.go).
 	SCIM *scim.Client
@@ -87,38 +87,40 @@ type Deps struct {
 
 // RegisterRoutes mounts all Risk Hub routes onto mux.
 //
-// Module-level lookup, reference-data and user-picker routes live under
-// /api/v1/risk/... (mirroring Audit Hub's /api/v1/audit/...); the risk
-// resource itself and its workflow transitions stay under /api/v1/risks/....
+// Every Risk Hub route lives under /api/v1/risks/: the risk collection itself
+// at /api/v1/risks and /api/v1/risks/{id}, and the module-level lookups,
+// reference data and user pickers as literal sub-paths (/api/v1/risks/teams,
+// /api/v1/risks/scores, ...). Go's ServeMux gives a literal first segment
+// precedence over the {id} wildcard, so the two groups never collide.
 func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	d := &deps
 
 	// Teams
-	mux.HandleFunc("GET /api/v1/risk/teams", d.handleListTeams)
-	mux.HandleFunc("POST /api/v1/risk/teams", d.handleCreateTeam)
-	mux.HandleFunc("PUT /api/v1/risk/teams/{id}", d.handleUpdateTeam)
+	mux.HandleFunc("GET /api/v1/risks/teams", d.handleListTeams)
+	mux.HandleFunc("POST /api/v1/risks/teams", d.handleCreateTeam)
+	mux.HandleFunc("PUT /api/v1/risks/teams/{id}", d.handleUpdateTeam)
 
 	// Risk scores — read-only by design: the 3x3 likelihood x impact matrix
 	// is a fixed set of load-bearing constants, not a freely editable
 	// table. No write route exists.
-	mux.HandleFunc("GET /api/v1/risk/scores", d.handleListRiskScores)
+	mux.HandleFunc("GET /api/v1/risks/scores", d.handleListRiskScores)
 
 	// Compliance references
-	mux.HandleFunc("GET /api/v1/risk/compliance-references", d.handleListComplianceReferences)
-	mux.HandleFunc("POST /api/v1/risk/compliance-references", d.handleCreateComplianceReference)
-	mux.HandleFunc("PUT /api/v1/risk/compliance-references/{id}", d.handleUpdateComplianceReference)
-	mux.HandleFunc("DELETE /api/v1/risk/compliance-references/{id}", d.handleDeleteComplianceReference)
+	mux.HandleFunc("GET /api/v1/risks/compliance-references", d.handleListComplianceReferences)
+	mux.HandleFunc("POST /api/v1/risks/compliance-references", d.handleCreateComplianceReference)
+	mux.HandleFunc("PUT /api/v1/risks/compliance-references/{id}", d.handleUpdateComplianceReference)
+	mux.HandleFunc("DELETE /api/v1/risks/compliance-references/{id}", d.handleDeleteComplianceReference)
 
 	// Risk categories
-	mux.HandleFunc("GET /api/v1/risk/categories", d.handleListRiskCategories)
-	mux.HandleFunc("POST /api/v1/risk/categories", d.handleCreateRiskCategory)
-	mux.HandleFunc("PUT /api/v1/risk/categories/{id}", d.handleUpdateRiskCategory)
-	mux.HandleFunc("DELETE /api/v1/risk/categories/{id}", d.handleDeleteRiskCategory)
+	mux.HandleFunc("GET /api/v1/risks/categories", d.handleListRiskCategories)
+	mux.HandleFunc("POST /api/v1/risks/categories", d.handleCreateRiskCategory)
+	mux.HandleFunc("PUT /api/v1/risks/categories/{id}", d.handleUpdateRiskCategory)
+	mux.HandleFunc("DELETE /api/v1/risks/categories/{id}", d.handleDeleteRiskCategory)
 
 	// Shared user endpoints — Risk-module-only in practice (Audit Hub has its
 	// own GET /api/v1/audit/users). Handlers in users.go.
-	mux.HandleFunc("GET /api/v1/risk/users", d.handleListUsers)
-	mux.HandleFunc("POST /api/v1/risk/users/resolve", d.handleResolveUser)
+	mux.HandleFunc("GET /api/v1/risks/users", d.handleListUsers)
+	mux.HandleFunc("POST /api/v1/risks/users/resolve", d.handleResolveUser)
 
 	// Role-gated user pickers: everyone who holds the grant the corresponding
 	// action requires, GLOBAL or scoped to the given teamId(s) — see
@@ -127,12 +129,12 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	// user_risk_team; that source could disagree with user_role_grant, the
 	// table the action itself checks, so a candidate offered here could 403 on
 	// first use. All three now query user_role_grant directly instead.
-	mux.HandleFunc("GET /api/v1/risk/management-approvers", d.handleListManagementApprovers)
-	mux.HandleFunc("GET /api/v1/risk/owner-candidates", d.handleListRiskOwnerCandidates)
-	mux.HandleFunc("GET /api/v1/risk/assigner-candidates", d.handleListRiskAssignerCandidates)
+	mux.HandleFunc("GET /api/v1/risks/management-approvers", d.handleListManagementApprovers)
+	mux.HandleFunc("GET /api/v1/risks/owner-candidates", d.handleListRiskOwnerCandidates)
+	mux.HandleFunc("GET /api/v1/risks/assigner-candidates", d.handleListRiskAssignerCandidates)
 
 	// Employees (HR entity)
-	mux.HandleFunc("GET /api/v1/risk/employees/search", d.handleSearchEmployees)
+	mux.HandleFunc("GET /api/v1/risks/employees/search", d.handleSearchEmployees)
 
 	// Risks
 	mux.HandleFunc("GET /api/v1/risks/next-sequence-id", d.handleNextSequenceID)
@@ -155,11 +157,11 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /api/v1/risks/{id}/assess", d.handleAssessRisk)
 
 	// Dashboard — a module-level aggregate view, not a sub-resource of one
-	// risk, so it sits under /api/v1/risk/ (cf. GET /api/v1/audit/dashboard).
-	mux.HandleFunc("GET /api/v1/risk/dashboard", d.handleDashboard)
+	// risk, so it sits under /api/v1/risks/ (cf. GET /api/v1/audit/dashboard).
+	mux.HandleFunc("GET /api/v1/risks/dashboard", d.handleDashboard)
 
 	// Analytics — module-level aggregate view, same rationale as dashboard.
-	mux.HandleFunc("GET /api/v1/risk/analytics/summary", d.handleAnalyticsSummary)
+	mux.HandleFunc("GET /api/v1/risks/analytics/summary", d.handleAnalyticsSummary)
 
 	// Action plans (additional plans added by the Risk Assigner; step
 	// completion by the plan's Action Owner)

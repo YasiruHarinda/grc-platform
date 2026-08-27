@@ -85,21 +85,21 @@ func TestListReferenceDataRequiresPrivilege(t *testing.T) {
 	}{
 		{
 			name: "risk categories",
-			path: "/api/v1/risk/categories",
+			path: "/api/v1/risks/categories",
 			handler: (&Deps{Category: &fakeCategoryService{
 				cats: []*model.RiskCategory{{ID: 1, Name: "Operational"}},
 			}}).handleListRiskCategories,
 		},
 		{
 			name: "risk scores",
-			path: "/api/v1/risk/scores",
+			path: "/api/v1/risks/scores",
 			handler: (&Deps{Score: &fakeScoreService{
 				scores: []*model.RiskScore{{ID: 1}},
 			}}).handleListRiskScores,
 		},
 		{
 			name: "compliance references",
-			path: "/api/v1/risk/compliance-references",
+			path: "/api/v1/risks/compliance-references",
 			handler: (&Deps{Compliance: &fakeComplianceService{
 				refs: []*model.ComplianceReference{{ID: 1, Name: "ISO 27001"}},
 			}}).handleListComplianceReferences,
@@ -135,21 +135,21 @@ func TestListReferenceDataAllowsViewRisks(t *testing.T) {
 	}{
 		{
 			name: "risk categories",
-			path: "/api/v1/risk/categories",
+			path: "/api/v1/risks/categories",
 			handler: (&Deps{Category: &fakeCategoryService{
 				cats: []*model.RiskCategory{{ID: 1, Name: "Operational"}},
 			}}).handleListRiskCategories,
 		},
 		{
 			name: "risk scores",
-			path: "/api/v1/risk/scores",
+			path: "/api/v1/risks/scores",
 			handler: (&Deps{Score: &fakeScoreService{
 				scores: []*model.RiskScore{{ID: 1}},
 			}}).handleListRiskScores,
 		},
 		{
 			name: "compliance references",
-			path: "/api/v1/risk/compliance-references",
+			path: "/api/v1/risks/compliance-references",
 			handler: (&Deps{Compliance: &fakeComplianceService{
 				refs: []*model.ComplianceReference{{ID: 1, Name: "ISO 27001"}},
 			}}).handleListComplianceReferences,
