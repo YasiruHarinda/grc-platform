@@ -1874,6 +1874,14 @@ paths:
           enum:
           - 'true'
           - 'false'
+      - name: includeInactive
+        in: query
+        description: '"true" returns every status, not just ACTIVE — the Admin Console''s Risk Teams table only. Additionally gated on MANAGE_RISK_HUB.'
+        schema:
+          type: string
+          enum:
+          - 'true'
+          - 'false'
       responses:
         '200':
           description: List of teams
@@ -1887,6 +1895,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
     post:
@@ -1965,6 +1975,8 @@ paths:
                   $ref: '#/components/schemas/RiskScore'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/compliance-references:
@@ -1984,6 +1996,8 @@ paths:
                   $ref: '#/components/schemas/ComplianceReference'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
     post:
@@ -2093,6 +2107,8 @@ paths:
                   $ref: '#/components/schemas/RiskCategory'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
     post:
@@ -3253,7 +3269,7 @@ paths:
       tags:
       - Users
       summary: List active users
-      description: Used by both Risk and Audit form dropdowns.
+      description: Risk-module-only despite the shared route name — used by the Risk module's general user dropdowns (e.g. Add Risk). Audit Hub has its own, separate GET /api/v1/audit/users.
       operationId: listUsers
       responses:
         '200':
@@ -3266,6 +3282,8 @@ paths:
                   $ref: '#/components/schemas/User'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/users/resolve:
