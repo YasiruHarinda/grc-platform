@@ -91,6 +91,7 @@ func (r *trailRepo) ListByAudit(ctx context.Context, auditID int, filter model.T
 	for _, id := range filter.ScopeTeamIDs {
 		q.Add("scopeTeamId", fmt.Sprintf("%d", id))
 	}
+	q.Set("includeInternal", fmt.Sprintf("%t", filter.IncludeInternal))
 	path := fmt.Sprintf("/audits/%d/trail?%s", auditID, q.Encode())
 	return r.list(ctx, path)
 }

@@ -1444,6 +1444,8 @@ type TrailFilter struct {
 	Scope        Scope
 	UserID       int
 	ScopeTeamIDs []int
+	// IncludeInternal, when false, excludes internal COMMENTED rows in SQL, before limit/offset.
+	IncludeInternal bool
 }
 
 // ListAuditTrailResponse is returned by GET /audits/{auditId}/trail.

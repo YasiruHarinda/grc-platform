@@ -218,19 +218,12 @@ func (h *trailHandler) listAuditTrail(w http.ResponseWriter, r *http.Request) {
 		filter.UserID = user.UserID
 	}
 	filter.ScopeTeamIDs = managedTeamIDs(auth.Grants(r.Context()))
+	filter.IncludeInternal = auth.HasPrivilege(r.Context(), privilege.ViewInternalComments)
 
 	entries, total, err := h.svc.ListByAudit(r.Context(), auditID, filter, limit, offset)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
-	}
-	includeInternal := auth.HasPrivilege(r.Context(), privilege.ViewInternalComments)
-	if !includeInternal {
-		dropped := len(entries)
-		entries = filterInternalComments(entries, includeInternal)
-		dropped -= len(entries)
-		// Approximate: only accounts for this page's dropped rows, not other pages.
-		total -= dropped
 	}
 	if entries == nil {
 		entries = []*model.AuditTrailEntry{}
