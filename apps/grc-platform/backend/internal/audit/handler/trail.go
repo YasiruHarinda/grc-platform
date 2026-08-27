@@ -18,7 +18,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -81,29 +80,6 @@ func (h *trailHandler) resolveTrailActors(ctx context.Context, entries []*model.
 	}
 }
 
-// filterInternalComments drops COMMENTED entries whose details mark them
-// isInternal when the caller lacks ViewInternalComments — same contract as commentService.List.
-func filterInternalComments(entries []*model.AuditTrailEntry, includeInternal bool) []*model.AuditTrailEntry {
-	if includeInternal {
-		return entries
-	}
-	visible := make([]*model.AuditTrailEntry, 0, len(entries))
-	for _, e := range entries {
-		if e.Action == "COMMENTED" {
-			var details struct {
-				IsInternal *bool `json:"isInternal"`
-			}
-			// Fail closed: exclude unless the details explicitly say isInternal:false.
-			err := json.Unmarshal(e.Details, &details)
-			if err != nil || details.IsInternal == nil || *details.IsInternal {
-				continue
-			}
-		}
-		visible = append(visible, e)
-	}
-	return visible
-}
-
 // listControlTrail handles GET /api/v1/audits/{id}/controls/{controlId}/trail.
 //
 // Returns the control's immutable history (append-only audit_trail), newest
@@ -128,13 +104,12 @@ func (h *trailHandler) listControlTrail(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	entries, total, err := h.svc.ListByControl(r.Context(), auditID, controlID)
+	includeInternal := auth.HasPrivilege(r.Context(), privilege.ViewInternalComments)
+	entries, total, err := h.svc.ListByControl(r.Context(), auditID, controlID, includeInternal)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
-	entries = filterInternalComments(entries, auth.HasPrivilege(r.Context(), privilege.ViewInternalComments))
-	total = len(entries)
 	if entries == nil {
 		entries = []*model.AuditTrailEntry{}
 	}

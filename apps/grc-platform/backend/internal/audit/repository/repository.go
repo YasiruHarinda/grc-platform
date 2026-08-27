@@ -245,9 +245,10 @@ type TrailRepository interface {
 	// Create appends one audit_trail entry under auditID. controlID/evidenceID are
 	// optional; details is a raw JSON string (may be empty).
 	Create(ctx context.Context, auditID int, controlID, evidenceID *int, action, details, createdBy string) error
-	// ListByControl returns the trail entries for one control, newest first, along
-	// with the total count. limit caps the number of entries returned.
-	ListByControl(ctx context.Context, auditID, controlID, limit int) ([]*model.AuditTrailEntry, int, error)
+	// ListByControl returns the trail entries for one control, newest first, with the
+	// total count. limit caps the entries; includeInternal=false drops internal
+	// COMMENTED rows entity-side before limit, so total counts only visible rows.
+	ListByControl(ctx context.Context, auditID, controlID, limit int, includeInternal bool) ([]*model.AuditTrailEntry, int, error)
 	// ListByAudit returns the whole audit's trail (audit-level and every control's
 	// events together), newest first, narrowed by filter, for the audit-wide
 	// activity log.

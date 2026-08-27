@@ -65,8 +65,10 @@ type entTrail struct {
 // already authorised by the handler's controlInScope check, so the entity-side
 // row scoping in auditTrailScopeWhere (which defaults to "see nothing" when
 // scope is absent) would otherwise empty this single control's own trail.
-func (r *trailRepo) ListByControl(ctx context.Context, auditID, controlID, limit int) ([]*model.AuditTrailEntry, int, error) {
-	path := fmt.Sprintf("/audits/%d/trail?controlId=%d&limit=%d&scope=all", auditID, controlID, limit)
+// includeInternal is forwarded so the entity strips internal COMMENTED rows
+// before limit, rather than us dropping rows from an already-truncated page.
+func (r *trailRepo) ListByControl(ctx context.Context, auditID, controlID, limit int, includeInternal bool) ([]*model.AuditTrailEntry, int, error) {
+	path := fmt.Sprintf("/audits/%d/trail?controlId=%d&limit=%d&scope=all&includeInternal=%t", auditID, controlID, limit, includeInternal)
 	return r.list(ctx, path)
 }
 
