@@ -82,8 +82,13 @@ func (h *userHandler) listUsers(w http.ResponseWriter, r *http.Request) {
 // Returns all users who hold AUDIT_SELECT_SAMPLE (INTERNAL or EXTERNAL —
 // the role is assignable to either) for the Auditor POC picker in Create
 // Audit / Manage Controls.
+//
+// Internal-only picker, so gated on ViewInternalComments too — same signal listUsers uses.
 func (h *userHandler) listAuditorCandidates(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAudits) {
+		return
+	}
+	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewInternalComments) {
 		return
 	}
 	users, err := h.svc.List(r.Context())

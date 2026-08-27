@@ -66,7 +66,12 @@ type FrameworkRepository interface {
 
 // ProductRepository is the data-access contract for audit products.
 type ProductRepository interface {
-	List(ctx context.Context) ([]*model.AuditProduct, error)
+	// List returns products with at least one audit in scope — same rule as
+	// FrameworkRepository.List, one level deeper than ListScoped for audits.
+	List(ctx context.Context, scope model.Scope, userID int, scopeTeamIDs []int) ([]*model.AuditProduct, error)
+	// GetByID is intentionally unscoped — used internally to validate a
+	// productId reference (e.g. audit creation), which must succeed
+	// regardless of the caller's row scope.
 	GetByID(ctx context.Context, id int) (*model.AuditProduct, error)
 	Create(ctx context.Context, req model.CreateProductRequest, createdBy string) (*model.AuditProduct, error)
 }
@@ -240,9 +245,10 @@ type TrailRepository interface {
 	// Create appends one audit_trail entry under auditID. controlID/evidenceID are
 	// optional; details is a raw JSON string (may be empty).
 	Create(ctx context.Context, auditID int, controlID, evidenceID *int, action, details, createdBy string) error
-	// ListByControl returns the trail entries for one control, newest first, along
-	// with the total count. limit caps the number of entries returned.
-	ListByControl(ctx context.Context, auditID, controlID, limit int) ([]*model.AuditTrailEntry, int, error)
+	// ListByControl returns the trail entries for one control, newest first, with the
+	// total count. limit caps the entries; includeInternal=false drops internal
+	// COMMENTED rows entity-side before limit, so total counts only visible rows.
+	ListByControl(ctx context.Context, auditID, controlID, limit int, includeInternal bool) ([]*model.AuditTrailEntry, int, error)
 	// ListByAudit returns the whole audit's trail (audit-level and every control's
 	// events together), newest first, narrowed by filter, for the audit-wide
 	// activity log.

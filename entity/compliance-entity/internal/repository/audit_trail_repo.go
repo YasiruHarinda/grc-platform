@@ -141,6 +141,10 @@ func (r *auditTrailRepo) ListAuditTrail(ctx context.Context, auditID int, filter
 		nilableAny(filter.From), nilableAny(filter.From),
 		nilableAny(filter.To), nilableAny(filter.To),
 	)
+	if !filter.IncludeInternal {
+		// Fail closed: visible only when isInternal decodes to exactly JSON false.
+		where += ` AND (t.action != 'COMMENTED' OR JSON_EXTRACT(t.details, '$.isInternal') = CAST('false' AS JSON))`
+	}
 
 	var total int
 	if err := r.db.QueryRowContext(ctx,

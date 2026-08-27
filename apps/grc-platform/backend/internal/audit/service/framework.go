@@ -30,8 +30,11 @@ import (
 type FrameworkService interface {
 	ListFrameworks(ctx context.Context, scope model.Scope, userID int, scopeTeamIDs []int) ([]*model.AuditFramework, error)
 	CreateFramework(ctx context.Context, req model.CreateFrameworkRequest, createdBy string) (*model.AuditFramework, error)
-	ListProducts(ctx context.Context) ([]*model.AuditProduct, error)
+	ListProducts(ctx context.Context, scope model.Scope, userID int, scopeTeamIDs []int) ([]*model.AuditProduct, error)
 	CreateProduct(ctx context.Context, req model.CreateProductRequest, createdBy string) (*model.AuditProduct, error)
+	// FrameworkInScope reports whether frameworkID has at least one audit
+	// visible to the caller — used to gate ListFrameworkControls.
+	FrameworkInScope(ctx context.Context, frameworkID int, scope model.Scope, userID int, scopeTeamIDs []int) (bool, error)
 	ListFrameworkControls(ctx context.Context, frameworkID int) ([]*model.AuditFrameworkControl, error)
 	CreateFrameworkControl(ctx context.Context, frameworkID int, req model.CreateFrameworkControlRequest, createdBy string) (*model.AuditFrameworkControl, error)
 }
@@ -50,6 +53,21 @@ func (s *frameworkService) ListFrameworks(ctx context.Context, scope model.Scope
 	return s.frameworkRepo.List(ctx, scope, userID, scopeTeamIDs)
 }
 
+// FrameworkInScope reuses List (frameworks are a small reference table) rather
+// than adding a dedicated single-ID repo endpoint.
+func (s *frameworkService) FrameworkInScope(ctx context.Context, frameworkID int, scope model.Scope, userID int, scopeTeamIDs []int) (bool, error) {
+	frameworks, err := s.frameworkRepo.List(ctx, scope, userID, scopeTeamIDs)
+	if err != nil {
+		return false, err
+	}
+	for _, f := range frameworks {
+		if f.ID == frameworkID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (s *frameworkService) CreateFramework(ctx context.Context, req model.CreateFrameworkRequest, createdBy string) (*model.AuditFramework, error) {
 	if req.Name == "" {
 		return nil, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "name is required"}
@@ -57,8 +75,8 @@ func (s *frameworkService) CreateFramework(ctx context.Context, req model.Create
 	return s.frameworkRepo.Create(ctx, req, createdBy)
 }
 
-func (s *frameworkService) ListProducts(ctx context.Context) ([]*model.AuditProduct, error) {
-	return s.productRepo.List(ctx)
+func (s *frameworkService) ListProducts(ctx context.Context, scope model.Scope, userID int, scopeTeamIDs []int) ([]*model.AuditProduct, error) {
+	return s.productRepo.List(ctx, scope, userID, scopeTeamIDs)
 }
 
 func (s *frameworkService) CreateProduct(ctx context.Context, req model.CreateProductRequest, createdBy string) (*model.AuditProduct, error) {

@@ -226,9 +226,14 @@ type AuditProduct struct {
 
 // SearchAuditProductsRequest is the payload for POST /audit/products/search.
 type SearchAuditProductsRequest struct {
-	SearchQuery string     `json:"searchQuery"`
-	StatusKey   string     `json:"statusKey"` // ACTIVE | INACTIVE | "" (all)
-	Pagination  Pagination `json:"pagination"`
+	SearchQuery string `json:"searchQuery"`
+	StatusKey   string `json:"statusKey"` // ACTIVE | INACTIVE | "" (all)
+	// Scope/UserID/ScopeTeamIDs row-scope like SearchAuditFrameworksRequest: a
+	// product matches when it has at least one audit with a control in scope.
+	Scope        Scope      `json:"scope"`
+	UserID       int        `json:"userId"`
+	ScopeTeamIDs []int      `json:"scopeTeamIds"`
+	Pagination   Pagination `json:"pagination"`
 }
 
 // SearchAuditProductsResponse is returned by POST /audit/products/search.
@@ -1439,6 +1444,8 @@ type TrailFilter struct {
 	Scope        Scope
 	UserID       int
 	ScopeTeamIDs []int
+	// IncludeInternal, when false, excludes internal COMMENTED rows in SQL, before limit/offset.
+	IncludeInternal bool
 }
 
 // ListAuditTrailResponse is returned by GET /audits/{auditId}/trail.

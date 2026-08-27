@@ -134,6 +134,31 @@ func auditInScope(w http.ResponseWriter, r *http.Request, auditSvc auditservice.
 	return true
 }
 
+// frameworkInScope gates listFrameworkControls: a caller must not read an
+// arbitrary framework's control catalog outside their audit scope.
+func frameworkInScope(w http.ResponseWriter, r *http.Request, frameworkSvc auditservice.FrameworkService, frameworkID int) bool {
+	ctx := r.Context()
+	scope, _ := deriveScopes(ctx)
+	if scope == model.ScopeAll {
+		return true
+	}
+	user := auth.FromContext(ctx)
+	var userID int
+	if user != nil {
+		userID = user.UserID
+	}
+	inScope, err := frameworkSvc.FrameworkInScope(ctx, frameworkID, scope, userID, managedTeamIDs(auth.Grants(ctx)))
+	if err != nil {
+		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
+		return false
+	}
+	if !inScope {
+		response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
+		return false
+	}
+	return true
+}
+
 // deriveWorkQueueClass computes which control-lifecycle bucket is the actor's
 // action queue, from privileges. Reviewers (compliance/admin) review; submitters
 // without review (internal team) submit; auditors validate; everyone else — most

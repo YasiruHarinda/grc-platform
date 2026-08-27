@@ -35,7 +35,8 @@ const defaultAuditTrailLimit = 100
 // TrailService defines business operations for the audit trail (append-only log).
 type TrailService interface {
 	// ListByControl returns a control's history, newest first, with the total count.
-	ListByControl(ctx context.Context, auditID, controlID int) ([]*model.AuditTrailEntry, int, error)
+	// includeInternal=false excludes internal COMMENTED entries entity-side before the limit.
+	ListByControl(ctx context.Context, auditID, controlID int, includeInternal bool) ([]*model.AuditTrailEntry, int, error)
 	// ListByAudit returns the whole audit's trail (audit-level and every control's
 	// events together), newest first, narrowed by filter, with the total count.
 	ListByAudit(ctx context.Context, auditID int, filter model.TrailFilter, limit, offset int) ([]*model.AuditTrailEntry, int, error)
@@ -64,8 +65,8 @@ func NewTrailService(repo repository.TrailRepository) TrailService {
 	return &trailService{repo: repo}
 }
 
-func (s *trailService) ListByControl(ctx context.Context, auditID, controlID int) ([]*model.AuditTrailEntry, int, error) {
-	entries, total, err := s.repo.ListByControl(ctx, auditID, controlID, defaultTrailLimit)
+func (s *trailService) ListByControl(ctx context.Context, auditID, controlID int, includeInternal bool) ([]*model.AuditTrailEntry, int, error) {
+	entries, total, err := s.repo.ListByControl(ctx, auditID, controlID, defaultTrailLimit, includeInternal)
 	if err != nil {
 		return nil, 0, err
 	}

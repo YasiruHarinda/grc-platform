@@ -64,4 +64,6 @@ type TrailFilter struct {
 	Scope        Scope
 	UserID       int
 	ScopeTeamIDs []int
+	// IncludeInternal, when false, excludes internal COMMENTED entries entity-side, before limit/offset.
+	IncludeInternal bool
 }

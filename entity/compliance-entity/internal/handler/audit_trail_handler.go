@@ -120,6 +120,7 @@ func (h *AuditTrailHandler) ListAuditTrail(w http.ResponseWriter, r *http.Reques
 		}
 		filter.ScopeTeamIDs = append(filter.ScopeTeamIDs, id)
 	}
+	filter.IncludeInternal = q.Get("includeInternal") == "true"
 	resp, err := h.svc.ListAuditTrail(r.Context(), auditID, filter, limit, offset)
 	if err != nil {
 		writeServiceError(w, r, err)
