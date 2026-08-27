@@ -27,7 +27,17 @@ import (
 )
 
 // handleListComplianceReferences serves GET /api/v1/compliance-references.
+//
+// Gated on ViewRisks OR ManageRiskHub — same shape as GET /api/v1/teams and
+// GET /api/v1/users (team.go, users.go): read here was ungated while its
+// write counterparts (Create/Update/Delete below) were already gated on
+// ManageRiskHub, letting any authenticated caller enumerate the compliance
+// reference data.
 func (d *Deps) handleListComplianceReferences(w http.ResponseWriter, r *http.Request) {
+	if !auth.RequireAnyPrivilege(r.Context(), w, privilege.ViewRisks, privilege.ManageRiskHub) {
+		return
+	}
+
 	refs, err := d.Compliance.List(r.Context())
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)

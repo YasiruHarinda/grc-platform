@@ -166,8 +166,29 @@ func (c SCIMConfig) ExternalConfigured() bool {
 // AUTH_JWKS_ENDPOINT, AUTH_ISSUER, and AUTH_AUDIENCE are only required when
 // AUTH_TOKEN_VALIDATOR_ENABLED is true (the default). They are not needed for
 // local development (set AUTH_TOKEN_VALIDATOR_ENABLED=false).
+//
+// AUTH_TOKEN_VALIDATOR_ENABLED=false is a full auth bypass, not just a
+// signature-check toggle: middleware.Auth decodes the token without
+// verifying it AND, because privStore is never built in this mode
+// (cmd/server/main.go), auth.HasPrivilege/HasPrivilegeIn answer true for
+// every check — allow-all. Requiring APP_ENV=local alongside it closes one
+// specific gap: a *single* mistyped or copy-pasted env var (e.g. an entire
+// local .env pasted into a Choreo environment) can no longer silently open
+// this bypass — the server now crashes loudly at boot instead. It is not a
+// defence against someone who can already write to the same Choreo variable
+// store deliberately setting both vars together; that requires either
+// restricting who can write AUTH_TOKEN_VALIDATOR_ENABLED/APP_ENV in each
+// deployed environment, or removing the unverified-decode path from
+// non-local builds entirely (a build-tag split around the ParseUnverified
+// branch in middleware/auth.go — tracked as a follow-up, not done here).
 func Load() (Config, error) {
 	tokenValidatorEnabled := os.Getenv("AUTH_TOKEN_VALIDATOR_ENABLED") != "false"
+	if !tokenValidatorEnabled && os.Getenv("APP_ENV") != "local" {
+		return Config{}, fmt.Errorf(
+			"AUTH_TOKEN_VALIDATOR_ENABLED=false disables JWT signature verification and every " +
+				"privilege check (allow-all); refusing to start without APP_ENV=local also set, so " +
+				"this doesn't take effect from a single accidentally-set variable")
+	}
 
 	authCfg := AuthConfig{
 		ClockSkew:             5 * time.Second,

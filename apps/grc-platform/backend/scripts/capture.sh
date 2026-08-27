@@ -17,8 +17,10 @@
 # DEV_TOKEN must be a bearer token the backend accepts. Simplest is to copy a
 # real one from the browser's network tab while the web app is open.
 #
-# Alternatively, start the backend with AUTH_TOKEN_VALIDATOR_ENABLED=false. In
-# that mode middleware.extractUserInfo decodes the token with ParseUnverified —
+# Alternatively, start the backend with AUTH_TOKEN_VALIDATOR_ENABLED=false and
+# APP_ENV=local (config.Load refuses to start with the validator disabled
+# unless APP_ENV=local also confirms this is a developer machine). In that
+# mode middleware.extractUserInfo decodes the token with ParseUnverified —
 # no signature, issuer, audience or expiry check, only a non-empty `sub` — and
 # cmd/server/main.go leaves the privilege store nil so HasPrivilege returns true
 # for every check. Any correctly-shaped JWT then works, e.g.:
