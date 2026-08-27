@@ -53,6 +53,12 @@ const (
 	// row names its own owner (ShowOwner) and links straight to its control.
 	AuditEventReminderOverdueAdmin AuditEvent = "AUDIT_REMINDER_OVERDUE_ADMIN"
 
+	// AuditEventReminderOverdueLead escalates one owner's overdue items to
+	// their HR line manager, one digest per (lead, owner) per day. Spans
+	// audits, so each row names its own (ShowAudit) and the header names none.
+	// Carries no links: a lead holds no audit privileges.
+	AuditEventReminderOverdueLead AuditEvent = "AUDIT_REMINDER_OVERDUE_LEAD"
+
 	// The six below notify admin/auditor recipients when a control reaches a
 	// given status, regardless of which endpoint produced the transition —
 	// see handler/notify.go's notifyControlStatusReached. None ever populate
@@ -91,6 +97,9 @@ type AuditEventItem struct {
 	// Owner is this item's owner display name, shown when Info.ShowOwner is
 	// set — the overdue admin digest's per-row "who owns this" column.
 	Owner string
+	// Audit names this row's audit, shown under the control number when
+	// Info.ShowAudit is set.
+	Audit string
 }
 
 // AuditEventInfo carries everything any audit template might render. Unlike
@@ -124,6 +133,13 @@ type AuditEventInfo struct {
 	// per-row rather than the single Actor field. Never true alongside
 	// ShowStatus; both share the same column width budget.
 	ShowOwner bool
+	// ShowAudit renders each item's Audit under its control number, for a
+	// digest spanning audits. Widens the control column at Description's
+	// expense rather than adding a sixth one.
+	ShowAudit bool
+	// OwnerName is the owner's display name alone, for subjects that name
+	// them. Actor carries the fuller "Name (email)" form for the body.
+	OwnerName string
 }
 
 // auditEventTemplate is the per-event copy — the audit equivalent of
@@ -171,6 +187,17 @@ func overdueAdminSubject(i AuditEventInfo) string {
 	return fmt.Sprintf("[GRC Platform] Overdue — %s", i.AuditName)
 }
 
+// overdueLeadSubject names the owner rather than the audit — a lead digest is
+// about one person and spans audits. Stable per owner so each day's escalation
+// threads with the last, same reasoning as overdueAdminSubject.
+func overdueLeadSubject(i AuditEventInfo) string {
+	name := strings.TrimSpace(i.OwnerName)
+	if name == "" {
+		return "[GRC Platform] Overdue"
+	}
+	return fmt.Sprintf("[GRC Platform] Overdue — %s", name)
+}
+
 // auditEventTemplates is the single place to see everything the audit module
 // sends. An AuditEvent with no entry here is a programming error and
 // SendAuditEvent rejects it rather than sending a blank email.
@@ -204,6 +231,11 @@ var auditEventTemplates = map[AuditEvent]auditEventTemplate{
 		subject:    overdueAdminSubject,
 		lead:       "The following item(s) are overdue and have not been completed.",
 		actorLabel: "",
+	},
+	AuditEventReminderOverdueLead: {
+		subject:    overdueLeadSubject,
+		lead:       "The following item(s) owned by a member of your team are overdue and have not been completed.",
+		actorLabel: "Owned by",
 	},
 	AuditEventResubmissionNeeded: {
 		subject:    controlThreadSubject,
@@ -274,15 +306,15 @@ var auditBodyTemplate = template.Must(template.New("auditEvent").Parse(`<html>
 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed; font-size:13px; border-collapse:collapse;">
 <tr style="color:#57606a; text-align:left;">
 <td width="29%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Requirement Type</td>
-<td width="14%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Control No</td>
-<td width="{{if or .Info.ShowStatus .Info.ShowOwner}}23{{else}}42{{end}}%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Description</td>
+<td width="{{if .Info.ShowAudit}}24{{else}}14{{end}}%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Control No</td>
+<td width="{{if .Info.ShowAudit}}32{{else if or .Info.ShowStatus .Info.ShowOwner}}23{{else}}42{{end}}%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Description</td>
 <td width="15%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Due Date</td>
 {{if .Info.ShowStatus}}<td width="19%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Status</td>{{end}}
 {{if .Info.ShowOwner}}<td width="19%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Owner</td>{{end}}
 </tr>
 {{range .Info.Items}}<tr>
 <td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; word-break:break-word;">{{.RequirementType}}</td>
-<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; font-weight:bold; word-break:break-word;">{{if .DetailURL}}<a href="{{.DetailURL}}" style="color:#ff7300; text-decoration:none;">{{.ControlNumber}}</a>{{else}}{{.ControlNumber}}{{end}}</td>
+<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; font-weight:bold; word-break:break-word;">{{if .DetailURL}}<a href="{{.DetailURL}}" style="color:#ff7300; text-decoration:none;">{{.ControlNumber}}</a>{{else}}{{.ControlNumber}}{{end}}{{if $.Info.ShowAudit}}<br><span style="font-weight:normal; color:#57606a; font-size:12px;">{{.Audit}}</span>{{end}}</td>
 <td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; word-break:break-word; overflow-wrap:break-word;">{{.Description}}</td>
 <td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; white-space:nowrap;">{{.DueDate}}</td>
 {{if $.Info.ShowStatus}}<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; white-space:nowrap;">{{.Tier}}</td>{{end}}
@@ -299,9 +331,9 @@ var auditBodyTemplate = template.Must(template.New("auditEvent").Parse(`<html>
 </table>
 </td></tr>{{end}}
 
-<tr><td style="padding:20px 24px 24px 24px;">
+{{if .Info.DetailURL}}<tr><td style="padding:20px 24px 24px 24px;">
 <a href="{{.Info.DetailURL}}" style="display:inline-block; padding:10px 20px; background-color:#ff7300; color:#ffffff; text-decoration:none; border-radius:4px; font-weight:bold; font-size:14px;">View in Audit Hub</a>
-</td></tr>
+</td></tr>{{end}}
 
 </table>
 </td></tr>

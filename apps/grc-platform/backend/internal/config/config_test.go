@@ -114,3 +114,41 @@ func TestLoadDefaultTokenValidatorEnabledIgnoresAppEnv(t *testing.T) {
 		t.Fatal("cfg.Auth.TokenValidatorEnabled = false, want true (secure default)")
 	}
 }
+
+// The lead escalation mails people outside the audit, so only the two exact
+// spellings may override the built-in default — a typo must leave it alone
+// rather than resolve to "on".
+func TestAuditLeadEscalationOverride(t *testing.T) {
+	tests := []struct {
+		name string
+		set  bool
+		env  string
+		want bool
+	}{
+		{"unset uses the code default", false, "", AuditLeadEscalationDefault},
+		{"empty uses the code default", true, "", AuditLeadEscalationDefault},
+		{"true enables", true, "true", true},
+		{"false disables", true, "false", false},
+		{"typo uses the code default", true, "ture", AuditLeadEscalationDefault},
+		{"TRUE is not true", true, "TRUE", AuditLeadEscalationDefault},
+		{"1 is not true", true, "1", AuditLeadEscalationDefault},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.set {
+				t.Setenv("AUDIT_LEAD_ESCALATION_ENABLED", tt.env)
+			}
+			if got := auditLeadEscalationEnabled(); got != tt.want {
+				t.Errorf("auditLeadEscalationEnabled() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// Guards the shipped default. Flipping it is a deliberate release decision, so
+// this failing is the reminder to update the docs and staging's override.
+func TestAuditLeadEscalationDefaultIsOff(t *testing.T) {
+	if AuditLeadEscalationDefault {
+		t.Error("lead escalation ships enabled — intended? update docs/audit-lead-escalation.md and set =false in staging")
+	}
+}

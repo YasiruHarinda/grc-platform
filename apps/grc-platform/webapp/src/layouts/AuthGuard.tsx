@@ -15,6 +15,7 @@
 // under the License.
 
 import { type JSX, useEffect, useRef, useState } from "react";
+import { Navigate, useLocation } from "react-router";
 import { useAsgardeo, useBrowserUrl } from "@asgardeo/react";
 import { Box, Button, LinearProgress, Typography } from "@wso2/oxygen-ui";
 import AppLayout from "@layouts/AppLayout";
@@ -22,12 +23,46 @@ import { authConfig } from "@config/authConfig";
 
 const isMockAuth = window.config?.GRC_PLATFORM_MOCK_AUTH === true;
 
-// How long RealAuthGuard waits before giving up and calling signIn() itself.
-// Short in the common case (hydrating an existing session from storage);
-// much longer while an OAuth callback exchange may be in flight, since that's
-// a real network round trip — see the comment where each is used.
+// How long RealAuthGuard waits before calling signIn() itself: short while
+// hydrating from storage, much longer while an OAuth exchange is in flight.
 const SIGN_IN_GRACE_MS = 500;
 const AUTH_EXCHANGE_FALLBACK_MS = 10000;
+
+// Parks the deep link across the OAuth round trip, which always returns to the
+// fixed afterSignInUrl and would otherwise lose it.
+const RETURN_TO_KEY = "grc:auth:returnTo";
+
+// Pure read — runs as a useState initializer, which StrictMode double-invokes.
+// Clearing here would hand the second call a null. Storage can throw when
+// blocked; deep links just don't survive sign-in then.
+function readReturnTo(): string | null {
+  try {
+    return sessionStorage.getItem(RETURN_TO_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function clearReturnTo(): void {
+  try {
+    sessionStorage.removeItem(RETURN_TO_KEY);
+  } catch {
+    // Ignore: see readReturnTo.
+  }
+}
+
+// Skips "/" (where we'd land anyway) and spent OAuth callback params. Matches
+// the "code" param exactly: a substring test also swallows deep links carrying
+// unrelated params like ?invite_code=.
+function saveReturnTo(): void {
+  const { pathname, search } = window.location;
+  if (pathname === "/" || new URLSearchParams(search).has("code")) return;
+  try {
+    sessionStorage.setItem(RETURN_TO_KEY, pathname + search);
+  } catch {
+    // Ignore: see readReturnTo.
+  }
+}
 
 const authLoader = (
   <Box
@@ -53,27 +88,29 @@ export default function AuthGuard(): JSX.Element {
   return <RealAuthGuard />;
 }
 
-// Drives mounting off isSignedIn rather than @asgardeo/react-router's
-// ProtectedRoute, which swaps its loader/children based on isLoading — a
-// value confirmed (via debug logging) to flap continuously without ever
-// settling in this SDK version, unmounting/remounting the whole app shell
-// (and everything inside it, including data-fetching effects) on every
-// flicker. isSignedIn has been reliably stable across every test; AppLayout
-// already has its own hasInitialized latch to handle the loading UI, so
-// ProtectedRoute's built-in loader-swap isn't needed here regardless.
+// Drives mounting off isSignedIn, not @asgardeo/react-router's ProtectedRoute:
+// its isLoading flaps forever in this SDK version, remounting the whole app
+// shell (and its data fetches) on every flicker. AppLayout handles its own
+// loading UI, so ProtectedRoute buys nothing here.
 function RealAuthGuard(): JSX.Element {
   const { isSignedIn, signIn } = useAsgardeo();
   const { hasAuthParams } = useBrowserUrl();
+  const { pathname } = useLocation();
   const hasTriggeredSignInRef = useRef(false);
   const [signInError, setSignInError] = useState(false);
+  // Returning from Asgardeo is a fresh page load, so the value saved before
+  // signIn() is already in storage at mount. Drop it once it's in state, or it
+  // would linger on the paths that never redirect.
+  const [returnTo] = useState(readReturnTo);
+  useEffect(clearReturnTo, []);
 
   const triggerSignIn = () => {
     hasTriggeredSignInRef.current = true;
     setSignInError(false);
+    saveReturnTo();
     signIn().catch(() => {
-      // Reset the guard so a manual retry (below) is allowed to call
-      // signIn() again; an uncaught rejection would otherwise leave the
-      // user stuck on the loader forever with no way back to the login page.
+      // Reset the guard so the retry button can call signIn() again; without
+      // this the user is stuck on the loader with no way back.
       hasTriggeredSignInRef.current = false;
       setSignInError(true);
     });
@@ -81,29 +118,14 @@ function RealAuthGuard(): JSX.Element {
 
   useEffect(() => {
     if (isSignedIn) return;
-    // The URL still carries the OAuth callback params (code + session_state)
-    // right after redirecting back from Asgardeo, for as long as the SDK is
-    // exchanging them for a session — which is a real network round trip and
-    // routinely takes longer than the short grace period below. Racing the
-    // short timer here previously fired a second, redundant signIn()
-    // mid-exchange; since the user had just authenticated, Asgardeo's SSO
-    // session silently re-approved it, reloading the whole app with a fresh
-    // code and restarting the same race — visible as the app "loading again
-    // and again" after sign-in until one exchange happened to finish inside
-    // the window. Use a much longer fallback while those params are present,
-    // so a normal exchange always finishes well within it and never races —
-    // but a failed one (stale code, network blip) still eventually surfaces
-    // the error UI below instead of leaving the user stuck on the loader
-    // forever with no error and no retry button.
+    // Callback params mean an exchange is mid-flight, so wait much longer:
+    // racing it fires a redundant signIn(), which SSO silently re-approves,
+    // restarting the race — the app "loading again and again". Still bounded,
+    // so a failed exchange surfaces the error UI instead of hanging.
     const hasCallbackParams = hasAuthParams(new URL(window.location.href), authConfig.signInRedirectURL);
-    // Grace period: don't redirect to the login page the instant isSignedIn
-    // is falsy — give the SDK a brief window to finish hydrating an existing
-    // session from storage first (isSignedIn can start out false/undefined
-    // even for an already-valid session). Any change to isSignedIn cancels
-    // this timer via the effect's own cleanup and reschedules a fresh one,
-    // so a flip to true (at any point) always cancels a pending redirect;
-    // signIn() only actually fires if isSignedIn stays falsy for the full
-    // uninterrupted window.
+    // Grace period: isSignedIn can start out falsy even for a valid session,
+    // so give hydration a window first. Any flip to true cancels this timer
+    // via the effect cleanup, so signIn() fires only if it stays falsy.
     const timer = setTimeout(
       () => {
         if (!hasTriggeredSignInRef.current) {
@@ -113,7 +135,7 @@ function RealAuthGuard(): JSX.Element {
       hasCallbackParams ? AUTH_EXCHANGE_FALLBACK_MS : SIGN_IN_GRACE_MS,
     );
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- signIn/hasAuthParams deliberately omitted: neither is guaranteed reference-stable, and including them would reset this grace-period timer on every unrelated render, potentially preventing it from ever firing
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- signIn/hasAuthParams omitted: neither is reference-stable, so including them would reset the timer on every render and it may never fire
   }, [isSignedIn]);
 
   if (signInError) {
@@ -138,6 +160,15 @@ function RealAuthGuard(): JSX.Element {
 
   if (!isSignedIn) {
     return authLoader;
+  }
+
+  // Restore the deep link. During render, not an effect, so the "/" redirect to
+  // the dashboard never mounts (child effects run before parent ones).
+  // Gated on "/" — the only place a restore is wanted. Comparing against
+  // returnTo instead loops forever once a page rewrites its own query string
+  // (AuditDetailPage strips ?control=), blanking the app.
+  if (returnTo && pathname === "/") {
+    return <Navigate to={returnTo} replace />;
   }
 
   return <AppLayout />;

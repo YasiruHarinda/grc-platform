@@ -80,6 +80,11 @@ type ReminderJob struct {
 	// escalation resolves each owner once per sweep instead of once per
 	// (admin, item) email — wired to handler.Deps.ResolveOwnerNames.
 	resolveOwnerNames func(ctx context.Context, ownerIDs []int) map[int]string
+	// leads resolves each overdue owner's line-manager email once per sweep;
+	// notifyLead sends that owner's overdue items to them. Both nil unless
+	// WithLeadAlerts wired them.
+	leads      func(ctx context.Context, ownerIDs []int) map[int]string
+	notifyLead func(ctx context.Context, ownerUserID int, leadEmail string, items []model.ReminderItem) error
 	// running serializes runOnce against itself: Start's daily ticker and the
 	// manual-trigger endpoint (handler.reminderJobHandler.run) both end up
 	// calling runOnce on this same instance. This guards a same-process
@@ -110,6 +115,41 @@ func (j *ReminderJob) WithAdminAlerts(
 	j.notifyAdmin = notifyAdmin
 	j.resolveOwnerNames = resolveOwnerNames
 	return j
+}
+
+// WithLeadAlerts turns on the overdue lead escalation: each owner's line
+// manager gets a digest of that owner's overdue items. Opt-in setter (nil
+// functions skip it) so a disabled deployment resolves no leads at all.
+func (j *ReminderJob) WithLeadAlerts(
+	leads func(ctx context.Context, ownerIDs []int) map[int]string,
+	notifyLead func(ctx context.Context, ownerUserID int, leadEmail string, items []model.ReminderItem) error,
+) *ReminderJob {
+	j.leads = leads
+	j.notifyLead = notifyLead
+	return j
+}
+
+// overdueOnly returns just the overdue entries of an owner's digest — the only
+// tier that escalates to a lead.
+func overdueOnly(items []model.ReminderItem) []model.ReminderItem {
+	out := make([]model.ReminderItem, 0, len(items))
+	for _, it := range items {
+		if it.Type == "REMINDER_OVERDUE" {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// hasOverdue answers overdueOnly's question without building the slice, for
+// the pre-pass that decides which owners are worth an HR lookup.
+func hasOverdue(items []model.ReminderItem) bool {
+	for _, it := range items {
+		if it.Type == "REMINDER_OVERDUE" {
+			return true
+		}
+	}
+	return false
 }
 
 // adminAuditKey groups escalated items by (admin, audit) — one digest email
@@ -390,7 +430,24 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 		}
 	}
 
+	// Lead recipients, resolved once per sweep and only for owners who
+	// actually have overdue items. Stays nil when the escalation is disabled,
+	// and a nil map reads as "no lead" for every owner below.
+	var ownerLeads map[int]string
+	if j.leads != nil && j.notifyLead != nil {
+		overdueOwners := make([]int, 0, len(byOwner))
+		for ownerID, items := range byOwner {
+			if hasOverdue(items) {
+				overdueOwners = append(overdueOwners, ownerID)
+			}
+		}
+		if len(overdueOwners) > 0 {
+			ownerLeads = j.leads(ctx, overdueOwners)
+		}
+	}
+
 	sent, notifyFailed := 0, 0
+	leadSent, leadFailed := 0, 0
 	for ownerID, items := range byOwner {
 		if err := j.notify(ctx, ownerID, items); err != nil {
 			slog.Warn("reminder job: notification failed", "ownerId", ownerID, "items", len(items), "err", err)
@@ -405,6 +462,20 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 		}
 		sent++
 		delete(byOwner, ownerID) // resolved (sent) — must never be released, even if a later owner's notify panics
+		// Strictly after the delete above: the digest is out and its claims are
+		// spent, so neither a failure nor a panic here may release them —
+		// doing so would re-send the owner's own digest tomorrow for an item
+		// they were already told about.
+		if leadEmail := ownerLeads[ownerID]; leadEmail != "" {
+			if overdue := overdueOnly(items); len(overdue) > 0 {
+				if err := j.notifyLead(ctx, ownerID, leadEmail, overdue); err != nil {
+					slog.Warn("reminder job: lead escalation failed", "ownerId", ownerID, "items", len(overdue), "err", err)
+					leadFailed++
+				} else {
+					leadSent++
+				}
+			}
+		}
 	}
 
 	// Resolved once per sweep, deduped across every escalated item, so an
@@ -451,6 +522,7 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 	slog.Info("reminder job: run complete",
 		"owners", sent, "notifyFailed", notifyFailed,
 		"adminDigestsSent", adminSent, "adminDigestsFailed", adminFailed,
+		"leadDigestsSent", leadSent, "leadDigestsFailed", leadFailed,
 		"itemsQueued", queued, "itemsSkippedDup", skippedDup, "itemsSkippedErr", skippedErr)
 	return nil
 }

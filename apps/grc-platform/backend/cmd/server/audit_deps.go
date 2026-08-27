@@ -24,6 +24,7 @@ import (
 	auditservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/aiagent"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
@@ -38,7 +39,9 @@ import (
 // the reminder job (internal/audit/job), which itself needs Control/Audit/
 // Notification from the Deps this function returns, so main.go wires it in
 // after calling this function and before RegisterRoutes.
-func buildAuditDeps(fileSvc *file.Service, ec *entityclient.Client, aiCfg config.AIValidationConfig, emailCfg config.EmailConfig, grantRepo grant.Repository, dirSvc *directory.Service) audithandler.Deps {
+// hrClient is nil unless the overdue lead escalation is enabled, which is what
+// keeps the disabled build from resolving any line manager at all.
+func buildAuditDeps(fileSvc *file.Service, ec *entityclient.Client, aiCfg config.AIValidationConfig, emailCfg config.EmailConfig, grantRepo grant.Repository, dirSvc *directory.Service, hrClient *hrentity.Client) audithandler.Deps {
 	// ── Repositories (all Compliance Entity) ──────────────────────────────────
 	auditRepo := auditentity.NewAuditRepository(ec)
 	frameworkRepo := auditentity.NewFrameworkRepository(ec)
@@ -102,6 +105,7 @@ func buildAuditDeps(fileSvc *file.Service, ec *entityclient.Client, aiCfg config
 		Directory:       dirSvc,
 		Grants:          grantRepo,
 		FrontendBaseURL: emailCfg.FrontendBaseURL,
+		HR:              hrClient,
 		// Review, Assignment are wired here as their implementations are added.
 	}
 }
