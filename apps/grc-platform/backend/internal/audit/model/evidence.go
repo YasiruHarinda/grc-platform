@@ -28,7 +28,8 @@ type AuditEvidenceFile struct {
 	FileSize   *int64    `json:"fileSize"`
 	CreatedBy  string    `json:"createdBy"`
 	CreatedAt  time.Time `json:"createdAt"`
-	// ReadURL is the backend proxy download URL (GET .../evidence/files/{id}/download).
+	// ReadURL is the backend proxy download URL
+	// (GET /api/v1/audits/{id}/controls/{controlId}/evidence/files/{fileId}/download).
 	// Computed at list time (not persisted); nil if the file has no DB id.
 	ReadURL *string `json:"readUrl"`
 	// AuditorID is the user.id of the auditor assigned to this file's owning
