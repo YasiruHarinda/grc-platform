@@ -18,6 +18,7 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
@@ -112,13 +113,21 @@ func (h *frameworkHandler) createProduct(w http.ResponseWriter, r *http.Request)
 	response.WriteJSONValue(w, http.StatusCreated, p)
 }
 
-// listFrameworkControls handles GET /api/v1/audits/frameworks/{id}/controls.
+// listFrameworkControls handles
+// GET /api/v1/audits/frameworks/controls?frameworkId={id}.
+//
+// frameworkId is a query param, not a path segment: a path segment here
+// would collide with GET /api/v1/audits/{id}/controls/{controlId} — both are
+// 3-segment patterns after /audits/ that alternate wildcard/literal in
+// opposite positions, which net/http's ServeMux refuses to register as
+// ambiguous (panics at startup, not a graceful fallback).
 func (h *frameworkHandler) listFrameworkControls(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAudits) {
 		return
 	}
-	id, ok := parseIntParam(w, r, "id")
-	if !ok {
+	id, err := strconv.Atoi(r.URL.Query().Get("frameworkId"))
+	if err != nil {
+		response.WriteError(w, http.StatusBadRequest, "invalid frameworkId parameter")
 		return
 	}
 	if !frameworkInScope(w, r, h.svc, id) {
@@ -138,13 +147,12 @@ func (h *frameworkHandler) listFrameworkControls(w http.ResponseWriter, r *http.
 	})
 }
 
-// createFrameworkControl handles POST /api/v1/audits/frameworks/{id}/controls.
+// createFrameworkControl handles POST /api/v1/audits/frameworks/controls.
+//
+// frameworkId is a body field, not a path segment — see listFrameworkControls
+// for why this route can't carry it in the path.
 func (h *frameworkHandler) createFrameworkControl(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageFrameworks) {
-		return
-	}
-	id, ok := parseIntParam(w, r, "id")
-	if !ok {
 		return
 	}
 	var req model.CreateFrameworkControlRequest
@@ -152,7 +160,7 @@ func (h *frameworkHandler) createFrameworkControl(w http.ResponseWriter, r *http
 		return
 	}
 	actor := auth.FromContext(r.Context()).Subject
-	fc, err := h.svc.CreateFrameworkControl(r.Context(), id, req, actor)
+	fc, err := h.svc.CreateFrameworkControl(r.Context(), req.FrameworkID, req, actor)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return

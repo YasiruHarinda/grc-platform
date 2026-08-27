@@ -111,8 +111,11 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	// Lookup data for Create Audit form dropdowns.
 	mux.HandleFunc("GET /api/v1/audits/frameworks", fh.listFrameworks)
 	mux.HandleFunc("POST /api/v1/audits/frameworks", fh.createFramework)
-	mux.HandleFunc("GET /api/v1/audits/frameworks/{id}/controls", fh.listFrameworkControls)
-	mux.HandleFunc("POST /api/v1/audits/frameworks/{id}/controls", fh.createFrameworkControl)
+	// frameworkId is a query param (GET) / body field (POST), not a path
+	// segment — a path segment here collides with GET/PUT
+	// /api/v1/audits/{id}/... (see listFrameworkControls).
+	mux.HandleFunc("GET /api/v1/audits/frameworks/controls", fh.listFrameworkControls)
+	mux.HandleFunc("POST /api/v1/audits/frameworks/controls", fh.createFrameworkControl)
 	mux.HandleFunc("GET /api/v1/audits/products", fh.listProducts)
 	mux.HandleFunc("POST /api/v1/audits/products", fh.createProduct)
 	mux.HandleFunc("GET /api/v1/audits/users", uh.listUsers)

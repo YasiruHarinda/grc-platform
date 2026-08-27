@@ -236,8 +236,8 @@ Every route below requires `MANAGE_USERS` GLOBAL.
 | `GET` | `/api/v1/audits/work-queue` | Auditor's work queue |
 | `GET` | `/api/v1/audits/frameworks` | List frameworks |
 | `POST` | `/api/v1/audits/frameworks` | Create framework |
-| `GET` | `/api/v1/audits/frameworks/{id}/controls` | List a framework's controls |
-| `POST` | `/api/v1/audits/frameworks/{id}/controls` | Add a control to a framework |
+| `GET` | `/api/v1/audits/frameworks/controls?frameworkId={id}` | List a framework's controls |
+| `POST` | `/api/v1/audits/frameworks/controls` | Add a control to a framework (frameworkId in body) |
 | `GET` | `/api/v1/audits/products` | List products |
 | `POST` | `/api/v1/audits/products` | Create product |
 | `GET` | `/api/v1/audits/users` | List Audit Hub users |

@@ -193,11 +193,12 @@ paths:
           $ref: '#/components/responses/UnprocessableEntity'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/audits/frameworks/{id}/controls:
+  /api/v1/audits/frameworks/controls:
     get:
       tags:
       - Audit Framework Controls
       summary: List current controls for a framework
+      description: frameworkId is a query param, not a path segment — a path segment here would collide with GET /api/v1/audits/{id}/controls/{controlId} (net/http's ServeMux treats the two as an ambiguous registration).
       operationId: listAuditFrameworkControls
       parameters:
       - $ref: '#/components/parameters/FrameworkId'
@@ -221,8 +222,6 @@ paths:
       - Audit Framework Controls
       summary: Create a framework control
       operationId: createAuditFrameworkControl
-      parameters:
-      - $ref: '#/components/parameters/FrameworkId'
       requestBody:
         required: true
         content:
@@ -3545,8 +3544,8 @@ components:
       schema:
         type: integer
     FrameworkId:
-      name: id
-      in: path
+      name: frameworkId
+      in: query
       required: true
       description: Framework ID.
       schema:
@@ -3812,12 +3811,15 @@ components:
     CreateFrameworkControlRequest:
       type: object
       required:
+      - frameworkId
       - controlNumber
       - description
       - requirementType
       - controlType
       - scope
       properties:
+        frameworkId:
+          type: integer
         controlNumber:
           type: string
         description:
