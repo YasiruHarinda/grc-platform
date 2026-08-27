@@ -26,10 +26,10 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
-// handleListComplianceReferences serves GET /api/v1/compliance-references.
+// handleListComplianceReferences serves GET /api/v1/risk/compliance-references.
 //
-// Gated on ViewRisks OR ManageRiskHub — same shape as GET /api/v1/teams and
-// GET /api/v1/users (team.go, users.go): read here was ungated while its
+// Gated on ViewRisks OR ManageRiskHub — same shape as GET /api/v1/risk/teams and
+// GET /api/v1/risk/users (team.go, users.go): read here was ungated while its
 // write counterparts (Create/Update/Delete below) were already gated on
 // ManageRiskHub, letting any authenticated caller enumerate the compliance
 // reference data.
@@ -50,7 +50,7 @@ func (d *Deps) handleListComplianceReferences(w http.ResponseWriter, r *http.Req
 	response.WriteJSONValue(w, http.StatusOK, refs)
 }
 
-// handleCreateComplianceReference serves POST /api/v1/compliance-references —
+// handleCreateComplianceReference serves POST /api/v1/risk/compliance-references —
 // the Admin Console's Compliance References "Add Reference" dialog. Gated on
 // MANAGE_RISK_HUB, same boundary as the other reference-data write routes.
 func (d *Deps) handleCreateComplianceReference(w http.ResponseWriter, r *http.Request) {
@@ -80,7 +80,7 @@ func (d *Deps) handleCreateComplianceReference(w http.ResponseWriter, r *http.Re
 	response.WriteJSONValue(w, http.StatusCreated, ref)
 }
 
-// handleUpdateComplianceReference serves PUT /api/v1/compliance-references/{id}.
+// handleUpdateComplianceReference serves PUT /api/v1/risk/compliance-references/{id}.
 func (d *Deps) handleUpdateComplianceReference(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageRiskHub) {
 		return
@@ -114,7 +114,7 @@ func (d *Deps) handleUpdateComplianceReference(w http.ResponseWriter, r *http.Re
 	response.WriteJSONValue(w, http.StatusOK, ref)
 }
 
-// handleDeleteComplianceReference serves DELETE /api/v1/compliance-references/{id}.
+// handleDeleteComplianceReference serves DELETE /api/v1/risk/compliance-references/{id}.
 // The entity refuses (409) when the reference is still tagged on a risk — see
 // repository.ComplianceReferenceRepository.Delete's doc comment.
 func (d *Deps) handleDeleteComplianceReference(w http.ResponseWriter, r *http.Request) {

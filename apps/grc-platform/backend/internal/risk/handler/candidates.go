@@ -28,7 +28,7 @@ import (
 	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
 
-// handleListManagementApprovers serves GET /api/v1/management-approvers:
+// handleListManagementApprovers serves GET /api/v1/risk/management-approvers:
 // every user who holds RISK_MANAGEMENT_APPROVE, GLOBAL or scoped to one of the
 // given teamId query params (repeatable — pass the risk's source register and
 // assignment team). A candidate returned here is guaranteed to pass the same
@@ -38,7 +38,7 @@ func (d *Deps) handleListManagementApprovers(w http.ResponseWriter, r *http.Requ
 	d.handleListCandidates(w, r, privilege.ManagementApproveRisk)
 }
 
-// handleListRiskOwnerCandidates serves GET /api/v1/risk-owner-candidates:
+// handleListRiskOwnerCandidates serves GET /api/v1/risk/owner-candidates:
 // every user who holds RISK_OWNER_APPROVE, GLOBAL or scoped to one of the
 // given teamId query params. See handleListManagementApprovers — same
 // mechanism, different privilege.
@@ -46,7 +46,7 @@ func (d *Deps) handleListRiskOwnerCandidates(w http.ResponseWriter, r *http.Requ
 	d.handleListCandidates(w, r, privilege.OwnerApproveRisk)
 }
 
-// handleListRiskAssignerCandidates serves GET /api/v1/risk-assigner-candidates:
+// handleListRiskAssignerCandidates serves GET /api/v1/risk/assigner-candidates:
 // every user who holds RISK_CREATE, GLOBAL or scoped to one of the given
 // teamId query params (Add Risk passes the chosen source register). Assigning
 // a risk to someone who holds no CreateRisk grant in that register is
@@ -152,7 +152,7 @@ func (d *Deps) resolveCandidates(ctx context.Context, candidates []idUUID, keepU
 		}
 		// RiskTeamIDs is set to an empty (never nil) slice: team membership no
 		// longer decides eligibility here — the scoped query upstream already
-		// did that — but the response shape is shared with GET /users, whose
+		// did that — but the response shape is shared with GET /api/v1/risk/users, whose
 		// callers expect this field to always be an array.
 		out = append(out, &userentity.User{ID: c.id, UUID: c.uuid, Email: p.Email, DisplayName: p.DisplayName, RiskTeamIDs: []int{}})
 	}

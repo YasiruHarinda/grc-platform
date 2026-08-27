@@ -26,7 +26,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
-// handleAnalyticsSummary serves GET /api/v1/risks/analytics/summary.
+// handleAnalyticsSummary serves GET /api/v1/risk/analytics/summary.
 // Optional query param register_id scopes the payload to one register.
 func (d *Deps) handleAnalyticsSummary(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAnalytics) {

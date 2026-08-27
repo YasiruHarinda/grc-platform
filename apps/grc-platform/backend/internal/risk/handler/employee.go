@@ -30,14 +30,14 @@ import (
 // a huge/meaningless result) before the user has typed enough to search on.
 const minEmployeeSearchQueryLen = 2
 
-// handleSearchEmployees serves GET /api/v1/employees/search?q=.
+// handleSearchEmployees serves GET /api/v1/risk/employees/search?q=.
 // Looks up active WSO2 employees by email substring, live from the HR
 // entity service — this data is never read from or written to the GRC
 // platform's own database. On upstream failure, the caller (Add/Edit Risk
 // form) is expected to show an inline error and block employee selection
 // rather than fall back to free text.
 //
-// Gated on the same privileges as /users/resolve: every caller of this
+// Gated on the same privileges as /api/v1/risk/users/resolve: every caller of this
 // endpoint (the "Identified By" and "Action Owner" pickers, in both Add Risk
 // and Edit Risk) only appears inside the create/update-risk flow, so there is
 // no legitimate caller holding neither privilege.

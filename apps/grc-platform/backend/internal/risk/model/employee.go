@@ -16,7 +16,7 @@
 
 package model
 
-// EmployeeOption is a WSO2 employee returned by GET /api/v1/employees/search,
+// EmployeeOption is a WSO2 employee returned by GET /api/v1/risk/employees/search,
 // used to populate the "Risk Identified By: Employee" dropdown. Sourced live
 // from the HR entity service on every search — never persisted in the GRC
 // platform's own database.

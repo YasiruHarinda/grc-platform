@@ -16,7 +16,7 @@
 
 package model
 
-// AnalyticsSummary is the full payload for GET /api/v1/risks/analytics/summary.
+// AnalyticsSummary is the full payload for GET /api/v1/risk/analytics/summary.
 // It is the "over time" and cross-cutting companion to DashboardSummary's
 // point-in-time snapshot — charts here intentionally avoid duplicating what
 // the dashboard already shows.

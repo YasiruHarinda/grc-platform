@@ -44,7 +44,7 @@ import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
 
 // Minimum characters before searching — matches the backend's own floor
-// (GET /api/v1/employees/search ignores shorter queries) so we don't fire
+// (GET /api/v1/risk/employees/search ignores shorter queries) so we don't fire
 // requests that would just come back empty.
 const MIN_EMPLOYEE_SEARCH_LEN = 2;
 const EMPLOYEE_SEARCH_DEBOUNCE_MS = 300;

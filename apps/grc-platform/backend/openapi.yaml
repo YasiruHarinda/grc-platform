@@ -1851,7 +1851,7 @@ paths:
   # ---------------------------------------------------------------------------
   # Risk Hub
   # ---------------------------------------------------------------------------
-  /api/v1/teams:
+  /api/v1/risk/teams:
     get:
       tags:
       - Risk Teams
@@ -1926,7 +1926,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/teams/{id}:
+  /api/v1/risk/teams/{id}:
     put:
       tags:
       - Risk Teams
@@ -1957,7 +1957,7 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/risk-scores:
+  /api/v1/risk/scores:
     get:
       tags:
       - Risk Scores
@@ -1979,7 +1979,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/compliance-references:
+  /api/v1/risk/compliance-references:
     get:
       tags:
       - Risk Compliance References
@@ -2027,7 +2027,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/compliance-references/{id}:
+  /api/v1/risk/compliance-references/{id}:
     put:
       tags:
       - Risk Compliance References
@@ -2089,7 +2089,7 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/risk-categories:
+  /api/v1/risk/categories:
     get:
       tags:
       - Risk Categories
@@ -2138,7 +2138,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/risk-categories/{id}:
+  /api/v1/risk/categories/{id}:
     put:
       tags:
       - Risk Categories
@@ -2200,7 +2200,7 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/management-approvers:
+  /api/v1/risk/management-approvers:
     get:
       tags:
       - Risk User Pickers
@@ -2220,7 +2220,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/risk-owner-candidates:
+  /api/v1/risk/owner-candidates:
     get:
       tags:
       - Risk User Pickers
@@ -2240,7 +2240,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/risk-assigner-candidates:
+  /api/v1/risk/assigner-candidates:
     get:
       tags:
       - Risk User Pickers
@@ -2286,7 +2286,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/employees/search:
+  /api/v1/risk/employees/search:
     get:
       tags:
       - Employees
@@ -2792,7 +2792,7 @@ paths:
           $ref: '#/components/responses/UnprocessableEntity'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/risks/dashboard:
+  /api/v1/risk/dashboard:
     get:
       tags:
       - Risk Dashboard
@@ -2819,7 +2819,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/risks/analytics/summary:
+  /api/v1/risk/analytics/summary:
     get:
       tags:
       - Risk Analytics
@@ -3264,12 +3264,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/users:
+  /api/v1/risk/users:
     get:
       tags:
       - Users
       summary: List active users
-      description: Risk-module-only despite the shared route name — used by the Risk module's general user dropdowns (e.g. Add Risk). Audit Hub has its own, separate GET /api/v1/audit/users.
+      description: Used by the Risk module's general user dropdowns (e.g. Add Risk). Risk-only — Audit Hub has its own, separate GET /api/v1/audit/users.
       operationId: listUsers
       responses:
         '200':
@@ -3286,12 +3286,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/users/resolve:
+  /api/v1/risk/users/resolve:
     post:
       tags:
       - Users
       summary: Resolve an employee's email to an internal user, provisioning one if needed
-      description: Links an HR entity employee (as returned by GET /api/v1/employees/search) to an internal user.id, creating the row on the fly when it doesn't exist. The display name is always looked up from the HR entity, never taken from the request body.
+      description: Links an HR entity employee (as returned by GET /api/v1/risk/employees/search) to an internal user.id, creating the row on the fly when it doesn't exist. The display name is always looked up from the HR entity, never taken from the request body.
       operationId: resolveUser
       requestBody:
         required: true
@@ -5616,7 +5616,7 @@ components:
           nullable: true
     DashboardSummary:
       type: object
-      description: Full payload for GET /api/v1/risks/dashboard. CANCELLED risks are excluded everywhere; every field is open-risks-only except registers[].status_levels.
+      description: Full payload for GET /api/v1/risk/dashboard. CANCELLED risks are excluded everywhere; every field is open-risks-only except registers[].status_levels.
       properties:
         summary:
           $ref: '#/components/schemas/RiskStatusSummary'
@@ -5749,7 +5749,7 @@ components:
           type: integer
     AnalyticsSummary:
       type: object
-      description: Full payload for GET /api/v1/risks/analytics/summary — the "over time" companion to DashboardSummary's point-in-time snapshot.
+      description: Full payload for GET /api/v1/risk/analytics/summary — the "over time" companion to DashboardSummary's point-in-time snapshot.
       properties:
         kpis:
           $ref: '#/components/schemas/AnalyticsKPIs'

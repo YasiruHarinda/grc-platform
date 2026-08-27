@@ -16,7 +16,7 @@
 
 package model
 
-// DashboardSummary is the full payload for GET /api/v1/risks/dashboard.
+// DashboardSummary is the full payload for GET /api/v1/risk/dashboard.
 // Everything the risk dashboard renders comes from this single response.
 //
 // Scope rules shared by all fields:

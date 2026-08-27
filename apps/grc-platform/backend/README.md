@@ -158,14 +158,12 @@ HTTP request
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/v1/users` | List users |
-| `GET` | `/api/v1/users/me` | Current user profile |
-| `GET` | `/api/v1/teams` | List risk teams |
-| `POST` | `/api/v1/teams` | Create team |
-| `PUT` | `/api/v1/teams/{id}` | Update team |
-| `GET` | `/api/v1/risk-scores` | List risk scores |
-| `POST` | `/api/v1/risk-scores` | Create risk score |
-| `PUT` | `/api/v1/risk-scores/{id}` | Update risk score |
+| `GET` | `/api/v1/risk/users` | List users |
+| `GET` | `/api/v1/me/profile` | Current user profile |
+| `GET` | `/api/v1/risk/teams` | List risk teams |
+| `POST` | `/api/v1/risk/teams` | Create team |
+| `PUT` | `/api/v1/risk/teams/{id}` | Update team |
+| `GET` | `/api/v1/risk/scores` | List risk scores |
 | `GET` | `/api/v1/risks` | List risks |
 | `POST` | `/api/v1/risks` | Register a risk |
 | `GET` | `/api/v1/risks/{id}` | Get risk by ID |
@@ -192,9 +190,9 @@ HTTP request
 | `GET` | `/api/v1/risks/{id}/escalations` | Escalation history |
 | `GET` | `/api/v1/notifications` | List notifications |
 | `PATCH` | `/api/v1/notifications/{id}/read` | Mark notification read |
-| `GET` | `/api/v1/compliance-references` | List compliance references |
-| `POST` | `/api/v1/compliance-references` | Create compliance reference |
-| `GET` | `/api/v1/risks/analytics/summary` | Risk analytics summary |
+| `GET` | `/api/v1/risk/compliance-references` | List compliance references |
+| `POST` | `/api/v1/risk/compliance-references` | Create compliance reference |
+| `GET` | `/api/v1/risk/analytics/summary` | Risk analytics summary |
 
 ### Audit Hub
 
@@ -249,7 +247,7 @@ JWT="<your-jwt-token>"
 curl http://localhost:8081/health
 
 # Get current user profile
-curl -H "Authorization: Bearer $JWT" http://localhost:8081/api/v1/users/me
+curl -H "Authorization: Bearer $JWT" http://localhost:8081/api/v1/me/profile
 
 # List risks
 curl -H "Authorization: Bearer $JWT" http://localhost:8081/api/v1/risks

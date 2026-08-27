@@ -26,7 +26,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
-// handleDashboard serves GET /api/v1/risks/dashboard.
+// handleDashboard serves GET /api/v1/risk/dashboard.
 // Optional query param register_id scopes the payload to one register.
 func (d *Deps) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewRiskDashboard) {
