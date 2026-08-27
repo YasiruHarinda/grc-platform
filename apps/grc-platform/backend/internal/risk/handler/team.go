@@ -55,7 +55,7 @@ import (
 // register — raising a risk under a register you don't belong to is a
 // legitimate action this scoping was never meant to restrict.
 func (d *Deps) handleListTeams(w http.ResponseWriter, r *http.Request) {
-	if !auth.HasPrivilege(r.Context(), privilege.ViewRisks) && !auth.RequirePrivilege(r.Context(), w, privilege.ManageRiskHub) {
+	if !auth.RequireAnyPrivilege(r.Context(), w, privilege.ViewRisks, privilege.ManageRiskHub) {
 		return
 	}
 

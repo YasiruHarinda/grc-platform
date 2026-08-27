@@ -34,7 +34,7 @@ import (
 // No write route exists"), so it was simply ungated outright, letting any
 // authenticated caller read the score matrix.
 func (d *Deps) handleListRiskScores(w http.ResponseWriter, r *http.Request) {
-	if !auth.HasPrivilege(r.Context(), privilege.ViewRisks) && !auth.RequirePrivilege(r.Context(), w, privilege.ManageRiskHub) {
+	if !auth.RequireAnyPrivilege(r.Context(), w, privilege.ViewRisks, privilege.ManageRiskHub) {
 		return
 	}
 

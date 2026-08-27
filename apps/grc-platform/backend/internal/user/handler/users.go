@@ -45,7 +45,7 @@ import (
 // other picker (see candidates.go's resolveCandidates).
 func handleListUsers(repo userentity.Repository, dir *directory.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !auth.HasPrivilege(r.Context(), privilege.ViewRisks) && !auth.RequirePrivilege(r.Context(), w, privilege.ManageRiskHub) {
+		if !auth.RequireAnyPrivilege(r.Context(), w, privilege.ViewRisks, privilege.ManageRiskHub) {
 			return
 		}
 
