@@ -31,7 +31,8 @@ type aiValidationHandler struct {
 	evidenceSvc service.EvidenceService
 }
 
-// listValidations handles GET /api/v1/evidence/{evidenceId}/ai-validations.
+// listValidations handles
+// GET /api/v1/audits/{id}/controls/{controlId}/evidence/{evidenceId}/ai-validations.
 //
 // Advisory review hints. Visible to anyone permitted to see the evidence —
 // submitters (for the pre-review feedback loop) and reviewers (for the hint) —

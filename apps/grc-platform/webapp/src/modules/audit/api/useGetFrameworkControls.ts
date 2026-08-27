@@ -30,7 +30,7 @@ export function useGetFrameworkControls(frameworkId: number | null) {
     enabled: frameworkId !== null && frameworkId > 0,
     queryFn: async (): Promise<AuditFrameworkControl[]> => {
       const res = await authFetch(
-        `${BACKEND_BASE_URL}/api/v1/audit/frameworks/${frameworkId}/controls`,
+        `${BACKEND_BASE_URL}/api/v1/audits/frameworks/${frameworkId}/controls`,
       );
       if (!res.ok) throw new Error(`Failed to load framework controls (${res.status})`);
       const data = await res.json() as FrameworkControlListResponse;

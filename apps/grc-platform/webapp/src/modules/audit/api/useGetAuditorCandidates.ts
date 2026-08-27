@@ -30,7 +30,7 @@ export function useGetAuditorCandidates() {
   return useQuery({
     queryKey: AUDIT_AUDITOR_CANDIDATES_QUERY_KEY,
     queryFn: async (): Promise<AuditUser[]> => {
-      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audit/auditor-candidates`);
+      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audits/auditor-candidates`);
       if (!res.ok) throw new Error(`Failed to load auditor candidates (${res.status})`);
       return res.json() as Promise<AuditUser[]>;
     },

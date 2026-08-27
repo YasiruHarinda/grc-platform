@@ -105,21 +105,21 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /api/v1/me/privileges", deps.handleGetMyPrivileges)
 
 	// Dashboard.
-	mux.HandleFunc("GET /api/v1/audit/dashboard", dh.getDashboard)
-	mux.HandleFunc("GET /api/v1/audit/work-queue", dh.getWorkQueue)
+	mux.HandleFunc("GET /api/v1/audits/dashboard", dh.getDashboard)
+	mux.HandleFunc("GET /api/v1/audits/work-queue", dh.getWorkQueue)
 
 	// Lookup data for Create Audit form dropdowns.
-	mux.HandleFunc("GET /api/v1/audit/frameworks", fh.listFrameworks)
-	mux.HandleFunc("POST /api/v1/audit/frameworks", fh.createFramework)
-	mux.HandleFunc("GET /api/v1/audit/frameworks/{id}/controls", fh.listFrameworkControls)
-	mux.HandleFunc("POST /api/v1/audit/frameworks/{id}/controls", fh.createFrameworkControl)
-	mux.HandleFunc("GET /api/v1/audit/products", fh.listProducts)
-	mux.HandleFunc("POST /api/v1/audit/products", fh.createProduct)
-	mux.HandleFunc("GET /api/v1/audit/users", uh.listUsers)
-	mux.HandleFunc("GET /api/v1/audit/auditor-candidates", uh.listAuditorCandidates)
-	mux.HandleFunc("GET /api/v1/audit/teams", th.listTeams)
-	mux.HandleFunc("POST /api/v1/audit/teams", th.createTeam)
-	mux.HandleFunc("PUT /api/v1/audit/teams/{id}", th.updateTeam)
+	mux.HandleFunc("GET /api/v1/audits/frameworks", fh.listFrameworks)
+	mux.HandleFunc("POST /api/v1/audits/frameworks", fh.createFramework)
+	mux.HandleFunc("GET /api/v1/audits/frameworks/{id}/controls", fh.listFrameworkControls)
+	mux.HandleFunc("POST /api/v1/audits/frameworks/{id}/controls", fh.createFrameworkControl)
+	mux.HandleFunc("GET /api/v1/audits/products", fh.listProducts)
+	mux.HandleFunc("POST /api/v1/audits/products", fh.createProduct)
+	mux.HandleFunc("GET /api/v1/audits/users", uh.listUsers)
+	mux.HandleFunc("GET /api/v1/audits/auditor-candidates", uh.listAuditorCandidates)
+	mux.HandleFunc("GET /api/v1/audits/teams", th.listTeams)
+	mux.HandleFunc("POST /api/v1/audits/teams", th.createTeam)
+	mux.HandleFunc("PUT /api/v1/audits/teams/{id}", th.updateTeam)
 
 	// Manual trigger for the daily due-date reminder digest — QA/ops
 	// convenience so the job can be tested/re-run without waiting for its
@@ -175,9 +175,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("DELETE /api/v1/audits/{id}/controls/{controlId}/evidence/{evidenceId}", eh.deleteEvidenceRound)
 	mux.HandleFunc("GET /api/v1/audits/{id}/controls/{controlId}/evidence", eh.listEvidence)
 	// Proxied file download by file ID (bytes streamed via the Compliance Entity).
-	mux.HandleFunc("GET /api/v1/evidence/files/{fileId}/download", eh.downloadEvidenceFile)
-	// Remove a single file from an evidence submission (DB record only).
-	mux.HandleFunc("DELETE /api/v1/evidence/files/{fileId}", eh.deleteEvidenceFile)
+	mux.HandleFunc("GET /api/v1/audits/{id}/controls/{controlId}/evidence/files/{fileId}/download", eh.downloadEvidenceFile)
 
 	// Population submission (OE controls; same proxied upload flow as evidence).
 	mux.HandleFunc("GET /api/v1/audits/{id}/controls/{controlId}/population/upload-link", eh.getPopulationUploadLink)
@@ -195,7 +193,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	// (see deletePopulationAttestation) — the round itself is never deleted.
 	mux.HandleFunc("DELETE /api/v1/audits/{id}/controls/{controlId}/population/attestation", eh.deletePopulationAttestation)
 	// Proxied file download by file ID (mirrors the evidence download route).
-	mux.HandleFunc("GET /api/v1/population/files/{fileId}/download", eh.downloadPopulationFile)
+	mux.HandleFunc("GET /api/v1/audits/{id}/controls/{controlId}/population/files/{fileId}/download", eh.downloadPopulationFile)
 
 	// Sample selection (auditor-gated — see requireAssignedAuditor). Reuses the
 	// population round; files land in a "sample/" subfolder of it.
@@ -212,5 +210,5 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("DELETE /api/v1/audits/{id}/controls/{controlId}/comments/{commentId}", cmh.deleteComment)
 
 	// AI validation advisory results (read-only hint; SUBMIT or REVIEW evidence).
-	mux.HandleFunc("GET /api/v1/evidence/{evidenceId}/ai-validations", avh.listValidations)
+	mux.HandleFunc("GET /api/v1/audits/{id}/controls/{controlId}/evidence/{evidenceId}/ai-validations", avh.listValidations)
 }

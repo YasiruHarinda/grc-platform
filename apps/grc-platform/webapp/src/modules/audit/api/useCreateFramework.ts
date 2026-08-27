@@ -30,7 +30,7 @@ export function useCreateFramework() {
 
   return useMutation({
     mutationFn: async (req: CreateFrameworkPayload): Promise<AuditFramework> => {
-      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audit/frameworks`, {
+      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audits/frameworks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(req),

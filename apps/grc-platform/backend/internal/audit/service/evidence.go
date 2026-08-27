@@ -428,7 +428,7 @@ func (s *evidenceService) List(ctx context.Context, auditID, controlID int) ([]*
 			if f.ID == 0 {
 				continue
 			}
-			downloadURL := fmt.Sprintf("/api/v1/evidence/files/%d/download", f.ID)
+			downloadURL := fmt.Sprintf("/api/v1/audits/%d/controls/%d/evidence/files/%d/download", auditID, controlID, f.ID)
 			f.ReadURL = &downloadURL
 		}
 	}

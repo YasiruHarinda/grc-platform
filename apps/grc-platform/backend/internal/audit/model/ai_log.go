@@ -37,7 +37,7 @@ type AIValidationLog struct {
 }
 
 // AIValidationListResponse is the payload of
-// GET /api/v1/evidence/{evidenceId}/ai-validations (latest row first).
+// GET .../evidence/{evidenceId}/ai-validations (latest row first).
 type AIValidationListResponse struct {
 	Validations []*AIValidationLog `json:"validations"`
 }

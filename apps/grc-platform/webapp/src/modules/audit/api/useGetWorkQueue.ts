@@ -58,7 +58,7 @@ export function useGetWorkQueue(tab: WorkQueueTab, page: number, filters: WorkQu
       statuses.forEach((s) => params.append("statuses", s));
       if (controlNumber.trim()) params.set("controlNumber", controlNumber.trim());
       if (dueSort === "desc") params.set("dueSort", "desc");
-      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audit/work-queue?${params.toString()}`);
+      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audits/work-queue?${params.toString()}`);
       if (!res.ok) throw new Error(`Failed to load work queue (${res.status})`);
       return res.json() as Promise<WorkQueuePage>;
     },

@@ -34,13 +34,13 @@ type AuditFrameworkControl struct {
 	CreatedOn           time.Time `json:"createdOn"`
 }
 
-// FrameworkControlListResponse is returned by GET /api/v1/audit/frameworks/{id}/controls.
+// FrameworkControlListResponse is returned by GET /api/v1/audits/frameworks/{id}/controls.
 type FrameworkControlListResponse struct {
 	Controls []*AuditFrameworkControl `json:"controls"`
 	Total    int                      `json:"total"`
 }
 
-// CreateFrameworkControlRequest is the payload for POST /api/v1/audit/frameworks/{id}/controls.
+// CreateFrameworkControlRequest is the payload for POST /api/v1/audits/frameworks/{id}/controls.
 type CreateFrameworkControlRequest struct {
 	ControlNumber       string  `json:"controlNumber"`
 	Description         string  `json:"description"`

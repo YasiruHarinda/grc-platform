@@ -27,7 +27,7 @@ export function useGetUsers() {
   return useQuery({
     queryKey: AUDIT_USERS_QUERY_KEY,
     queryFn: async (): Promise<AuditUser[]> => {
-      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audit/users`);
+      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audits/users`);
       if (!res.ok) throw new Error(`Failed to load users (${res.status})`);
       return res.json() as Promise<AuditUser[]>;
     },

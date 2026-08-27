@@ -100,14 +100,16 @@ export const aiValidationQueryKey = (evidenceId: number) =>
  * self-disables on any terminal state or once PENDING goes stale, so no global
  * polling is introduced.
  */
-export function useGetAIValidation(evidenceId: number | null) {
+export function useGetAIValidation(auditId: number, controlId: number, evidenceId: number | null) {
   const authFetch = useAuthApiClient();
 
   return useQuery({
     queryKey: aiValidationQueryKey(evidenceId ?? 0),
     enabled: evidenceId !== null,
     queryFn: async (): Promise<AIValidationLog[]> => {
-      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/evidence/${evidenceId}/ai-validations`);
+      const res = await authFetch(
+        `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}/evidence/${evidenceId}/ai-validations`,
+      );
       if (!res.ok) {
         throw new Error(await extractErrorMessage(res, `Failed to load AI validation (${res.status})`));
       }

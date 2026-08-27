@@ -16,7 +16,7 @@
 
 package model
 
-// AuditTeam is a team record returned by GET /api/v1/audit/teams. Status is
+// AuditTeam is a team record returned by GET /api/v1/audits/teams. Status is
 // populated only when ?includeInactive=true was requested (the Manage Audit
 // Hub admin table) — every other caller only ever sees ACTIVE teams, so it's
 // implicitly "ACTIVE" and omitted rather than sent on every dropdown response.
@@ -26,7 +26,7 @@ type AuditTeam struct {
 	Status string `json:"status,omitempty"`
 }
 
-// CreateTeamRequest is the payload for POST /api/v1/audit/teams — the Manage
+// CreateTeamRequest is the payload for POST /api/v1/audits/teams — the Manage
 // Audit Hub "Add Team" dialog. No team_type/code, unlike Risk's teams: a
 // audit_team is just a name and a status.
 type CreateTeamRequest struct {
@@ -34,7 +34,7 @@ type CreateTeamRequest struct {
 	Status string `json:"status"`
 }
 
-// UpdateTeamRequest is the payload for PUT /api/v1/audit/teams/{id}. Both
+// UpdateTeamRequest is the payload for PUT /api/v1/audits/teams/{id}. Both
 // fields are required (not partial-update pointers) — the entity's PATCH
 // treats an omitted field as "leave unchanged", but this handler always sends
 // both, matching the Risk Teams admin form's full-replace behaviour.

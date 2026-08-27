@@ -17,7 +17,7 @@ Backend starts at `http://localhost:8081`.
 - Runtime: Go `1.23+`
 - Entry point: `cmd/server/main.go`
 - Authentication: Asgardeo JWT Bearer token — validated via JWKS endpoint; pass as `Authorization: Bearer <token>` header
-- Two modules: **Risk Hub** (`/api/v1/risks/`) and **Audit Hub** (`/api/v1/audit/`)
+- Two modules: **Risk Hub** (`/api/v1/`) and **Audit Hub** (`/api/v1/audits/`)
 
 ## Prerequisites
 
@@ -197,34 +197,63 @@ HTTP request
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/v1/audit/frameworks` | List audit frameworks |
-| `POST` | `/api/v1/audit/frameworks` | Create framework |
-| `GET` | `/api/v1/audit/products` | List products |
-| `POST` | `/api/v1/audit/products` | Create product |
+| `GET` | `/api/v1/audits/dashboard` | Audit Hub dashboard |
+| `GET` | `/api/v1/audits/work-queue` | Auditor's work queue |
+| `GET` | `/api/v1/audits/frameworks` | List frameworks |
+| `POST` | `/api/v1/audits/frameworks` | Create framework |
+| `GET` | `/api/v1/audits/frameworks/{id}/controls` | List a framework's controls |
+| `POST` | `/api/v1/audits/frameworks/{id}/controls` | Add a control to a framework |
+| `GET` | `/api/v1/audits/products` | List products |
+| `POST` | `/api/v1/audits/products` | Create product |
+| `GET` | `/api/v1/audits/users` | List Audit Hub users |
+| `GET` | `/api/v1/audits/auditor-candidates` | List auditor candidates |
+| `GET` | `/api/v1/audits/teams` | List audit teams |
+| `POST` | `/api/v1/audits/teams` | Create audit team |
+| `PUT` | `/api/v1/audits/teams/{id}` | Update audit team |
+| `POST` | `/api/v1/audits/reminders/run` | Manually trigger the due-date reminder digest |
 | `GET` | `/api/v1/audits` | List audits |
 | `POST` | `/api/v1/audits` | Create audit |
 | `GET` | `/api/v1/audits/{id}` | Get audit by ID |
 | `PUT` | `/api/v1/audits/{id}` | Update audit |
-| `POST` | `/api/v1/audits/{id}/fieldwork` | Move to fieldwork |
-| `POST` | `/api/v1/audits/{id}/review` | Submit for review |
-| `POST` | `/api/v1/audits/{id}/complete` | Complete audit |
+| `DELETE` | `/api/v1/audits/{id}` | Delete audit |
 | `GET` | `/api/v1/audits/{id}/controls` | List controls |
 | `POST` | `/api/v1/audits/{id}/controls` | Add control |
+| `POST` | `/api/v1/audits/{id}/controls/bulk` | Bulk-add controls |
 | `GET` | `/api/v1/audits/{id}/controls/{controlId}` | Get control |
 | `PUT` | `/api/v1/audits/{id}/controls/{controlId}` | Update control |
-| `GET` | `/api/v1/audits/{id}/controls/{controlId}/population` | List population |
-| `POST` | `/api/v1/audits/{id}/controls/{controlId}/population` | Upload population |
-| `DELETE` | `/api/v1/audits/{id}/controls/{controlId}/population/{populationId}` | Delete population entry |
+| `DELETE` | `/api/v1/audits/{id}/controls/{controlId}` | Delete control |
+| `PATCH` | `/api/v1/audits/{id}/controls/{controlId}/status` | Update control status |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/status/override` | Override control status |
+| `GET` | `/api/v1/audits/{id}/controls/{controlId}/trail` | Per-control history |
+| `GET` | `/api/v1/audits/{id}/trail` | Audit-wide activity log |
+| `GET` | `/api/v1/audits/{id}/controls/{controlId}/evidence/upload-link` | Get an evidence upload link |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/evidence/upload` | Upload an evidence file |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/evidence/submit` | Submit an evidence round |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/evidence/files` | Add files to the current evidence round |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/evidence/withdraw` | Withdraw an evidence submission |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/evidence/review` | Internal review decision on evidence |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/evidence/validate` | Auditor decision on evidence |
+| `DELETE` | `/api/v1/audits/{id}/controls/{controlId}/evidence/files/{fileId}` | Delete one evidence file |
+| `DELETE` | `/api/v1/audits/{id}/controls/{controlId}/evidence/{evidenceId}` | Delete an evidence round |
 | `GET` | `/api/v1/audits/{id}/controls/{controlId}/evidence` | List evidence |
-| `POST` | `/api/v1/audits/{id}/controls/{controlId}/evidence` | Upload evidence |
-| `DELETE` | `/api/v1/audits/{id}/controls/{controlId}/evidence/{evidenceId}` | Delete evidence |
-| `POST` | `/api/v1/audits/{id}/controls/{controlId}/evidence/{evidenceId}/review` | Review evidence |
+| `GET` | `/api/v1/audits/{id}/controls/{controlId}/evidence/files/{fileId}/download` | Download an evidence file |
+| `GET` | `/api/v1/audits/{id}/controls/{controlId}/population/upload-link` | Get a population upload link |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/population/upload` | Upload a population file |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/population/submit` | Submit a population round |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/population/review` | Internal review decision on population |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/population/validate` | Auditor decision on population |
+| `GET` | `/api/v1/audits/{id}/controls/{controlId}/population` | View the current population round |
+| `DELETE` | `/api/v1/audits/{id}/controls/{controlId}/population/files/{fileId}` | Delete a population/sample file |
+| `DELETE` | `/api/v1/audits/{id}/controls/{controlId}/population/attestation` | Clear the population submission note |
+| `GET` | `/api/v1/audits/{id}/controls/{controlId}/population/files/{fileId}/download` | Download a population file |
+| `GET` | `/api/v1/audits/{id}/controls/{controlId}/sample/upload-link` | Get a sample upload link |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/sample/upload` | Upload a sample file |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/sample/submit` | Submit a sample selection |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/sample/request-time` | Request more time for sample selection |
 | `GET` | `/api/v1/audits/{id}/controls/{controlId}/comments` | List comments |
 | `POST` | `/api/v1/audits/{id}/controls/{controlId}/comments` | Add comment |
-| `GET` | `/api/v1/audits/{id}/assignments` | List assignments |
-| `POST` | `/api/v1/audits/{id}/assignments` | Create assignment |
-| `DELETE` | `/api/v1/audits/{id}/assignments/{assignmentId}` | Remove assignment |
-| `GET` | `/api/v1/audits/{id}/trail` | Audit trail |
+| `DELETE` | `/api/v1/audits/{id}/controls/{controlId}/comments/{commentId}` | Delete comment |
+| `GET` | `/api/v1/audits/{id}/controls/{controlId}/evidence/{evidenceId}/ai-validations` | List AI validation results |
 
 ## Run Locally
 

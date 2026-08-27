@@ -567,30 +567,6 @@ func triggerAIValidation(aiClient *aiagent.Client, auditID, controlID, evidenceI
 	}()
 }
 
-// deleteEvidenceFile handles DELETE /api/v1/evidence/files/{fileId}.
-//
-// Removes a single file from an evidence submission (DB record only; the blob
-// in Azure is not deleted). The caller must be the file's original uploader or
-// hold ManageControls.
-//
-// This route carries no audit/control context, so it cannot reconcile the
-// control status when the last file is removed. The web app uses the
-// audit-scoped variant below; this one remains for clients that only hold a
-// file id.
-func (h *evidenceHandler) deleteEvidenceFile(w http.ResponseWriter, r *http.Request) {
-	if !auth.RequirePrivilege(r.Context(), w, privilege.SubmitEvidence) {
-		return
-	}
-	fileID, ok := parseIntParam(w, r, "fileId")
-	if !ok {
-		return
-	}
-	if !h.deleteFile(w, r, fileID) {
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // teamEditableControlStatuses are the control statuses from which the team may
 // still delete an evidence file or round — exactly the statuses where the
 // frontend (DesignEvidenceSection/OEEvidenceSection) passes canDelete to
@@ -631,10 +607,10 @@ func (h *evidenceHandler) requireEditableEvidenceControl(w http.ResponseWriter, 
 // deleteControlEvidenceFile handles
 // DELETE /api/v1/audits/{id}/controls/{controlId}/evidence/files/{fileId}.
 //
-// Same deletion as deleteEvidenceFile, but because the audit and control are in
-// the path it can also keep the control status honest: a submission with no
-// files left is not something a reviewer can act on, so the control drops back
-// to EVIDENCE_PENDING and the submitter can upload again.
+// Because the audit and control are in the path it can keep the control
+// status honest: a submission with no files left is not something a reviewer
+// can act on, so the control drops back to EVIDENCE_PENDING and the submitter
+// can upload again.
 func (h *evidenceHandler) deleteControlEvidenceFile(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.SubmitEvidence) {
 		return
@@ -765,14 +741,13 @@ func (h *evidenceHandler) reconcileAfterDelete(ctx context.Context, auditID, con
 	return "EVIDENCE_PENDING", nil
 }
 
-// downloadEvidenceFile handles GET /api/v1/evidence/files/{fileId}/download.
+// downloadEvidenceFile handles
+// GET /api/v1/audits/{id}/controls/{controlId}/evidence/files/{fileId}/download.
 // It proxies the file bytes from the Compliance Entity (which reads them from
 // Azure) so the browser never contacts Azure directly.
 // requireEvidenceFileAccess authorizes downloadEvidenceFile with the same rule
-// as canViewEvidence, but resolved from a file id instead of a control — the
-// download route (GET /api/v1/evidence/files/{fileId}/download) carries no
-// auditId/controlId to look a control up by, so FileAuditorID returns the
-// owning control's team alongside the auditor id in one round trip.
+// as canViewEvidence, but resolved from a file id instead of a control —
+// FileAuditorID returns the owning control's team alongside the auditor id.
 // ManageControls, SubmitEvidence, ReviewEvidence, and ViewAllAudits bypass —
 // checked against that team (HasPrivilegeIn), since all four can be granted
 // scoped to a single team (module=AUDIT) and the unscoped HasPrivilege would

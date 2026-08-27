@@ -30,7 +30,7 @@ type frameworkHandler struct {
 	svc service.FrameworkService
 }
 
-// listFrameworks handles GET /api/v1/audit/frameworks.
+// listFrameworks handles GET /api/v1/audits/frameworks.
 func (h *frameworkHandler) listFrameworks(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAudits) {
 		return
@@ -53,7 +53,7 @@ func (h *frameworkHandler) listFrameworks(w http.ResponseWriter, r *http.Request
 	response.WriteJSONValue(w, http.StatusOK, frameworks)
 }
 
-// createFramework handles POST /api/v1/audit/frameworks.
+// createFramework handles POST /api/v1/audits/frameworks.
 func (h *frameworkHandler) createFramework(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageFrameworks) {
 		return
@@ -71,7 +71,7 @@ func (h *frameworkHandler) createFramework(w http.ResponseWriter, r *http.Reques
 	response.WriteJSONValue(w, http.StatusCreated, fw)
 }
 
-// listProducts handles GET /api/v1/audit/products.
+// listProducts handles GET /api/v1/audits/products.
 func (h *frameworkHandler) listProducts(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAudits) {
 		return
@@ -94,7 +94,7 @@ func (h *frameworkHandler) listProducts(w http.ResponseWriter, r *http.Request) 
 	response.WriteJSONValue(w, http.StatusOK, products)
 }
 
-// createProduct handles POST /api/v1/audit/products.
+// createProduct handles POST /api/v1/audits/products.
 func (h *frameworkHandler) createProduct(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageFrameworks) {
 		return
@@ -112,7 +112,7 @@ func (h *frameworkHandler) createProduct(w http.ResponseWriter, r *http.Request)
 	response.WriteJSONValue(w, http.StatusCreated, p)
 }
 
-// listFrameworkControls handles GET /api/v1/audit/frameworks/{id}/controls.
+// listFrameworkControls handles GET /api/v1/audits/frameworks/{id}/controls.
 func (h *frameworkHandler) listFrameworkControls(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAudits) {
 		return
@@ -138,7 +138,7 @@ func (h *frameworkHandler) listFrameworkControls(w http.ResponseWriter, r *http.
 	})
 }
 
-// createFrameworkControl handles POST /api/v1/audit/frameworks/{id}/controls.
+// createFrameworkControl handles POST /api/v1/audits/frameworks/{id}/controls.
 func (h *frameworkHandler) createFrameworkControl(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageFrameworks) {
 		return
