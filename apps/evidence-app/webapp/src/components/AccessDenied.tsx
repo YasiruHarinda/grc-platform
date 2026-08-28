@@ -5,8 +5,15 @@ import Button from "@mui/material/Button";
 import Typography from "@mui/material/Typography";
 import Snackbar from "@mui/material/Snackbar";
 import Alert from "@mui/material/Alert";
-import { useCurrentUser } from "../hooks/useCurrentUser";
 import { clearFileUrlCache } from "../utils/stableFileUrl";
+
+// message comes in as a prop, not from useCurrentUser() here - calling that
+// hook in this component adds a second subscriber to the errored identity
+// query, which refetches it, resets it to loading, and unmounts this page -
+// an endless loop.
+interface AccessDeniedProps {
+  message?: string;
+}
 
 /**
  * Shown instead of the app shell when /api/me comes back 403: signed in to
@@ -21,9 +28,8 @@ import { clearFileUrlCache } from "../utils/stableFileUrl";
  * ever succeed. Signing out and back in is the only cure, which is why
  * Sign out is the one action on this page.
  */
-export default function AccessDenied() {
+export default function AccessDenied({ message }: AccessDeniedProps) {
   const { state, signOut } = useAuthContext();
-  const { forbiddenMessage } = useCurrentUser();
   const [signOutError, setSignOutError] = useState<string | null>(null);
 
   const account = state.email ?? state.username;
@@ -58,7 +64,7 @@ export default function AccessDenied() {
     >
       <Typography variant="h4">You don't have access to the Evidence App</Typography>
       <Typography color="text.secondary" sx={{ maxWidth: 480 }}>
-        {forbiddenMessage}
+        {message}
       </Typography>
       {account && (
         <Typography color="text.secondary">
