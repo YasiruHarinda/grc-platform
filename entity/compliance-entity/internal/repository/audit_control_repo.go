@@ -479,14 +479,34 @@ func (r *controlRepo) DeleteControl(ctx context.Context, auditID, controlID int)
 		return fmt.Errorf("control.Delete(%d,%d) lock populations: %w", auditID, controlID, err)
 	}
 
-	// Clear the send-log rows first: fk_notif_control / fk_notif_population are
-	// ON DELETE RESTRICT, so the audit_control cascade would otherwise fail 1451.
+	// fk_notif_control / fk_notif_population are ON DELETE RESTRICT, so unlink
+	// the send-log rows before the cascade. Non-reminder rows (no dedup key)
+	// are always safe to null and are kept.
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM audit_notification
-		 WHERE control_id = ?
-		    OR population_id IN (SELECT id FROM audit_population WHERE control_id = ?)`,
+		`UPDATE audit_notification SET control_id = NULL, population_id = NULL
+		 WHERE (control_id = ? OR population_id IN (SELECT id FROM audit_population WHERE control_id = ?))
+		   AND reminder_dedup_key IS NULL`,
 		controlID, controlID); err != nil {
 		return fmt.Errorf("control.Delete(%d,%d) notifications: %w", auditID, controlID, err)
+	}
+	// Reminder rows can collide on uq_notif_reminder_dedup once nulled (same
+	// recipient/tier/date) — null them if we can, else drop them (a deleted
+	// control's reminder log has no further use).
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE audit_notification SET control_id = NULL, population_id = NULL
+		 WHERE (control_id = ? OR population_id IN (SELECT id FROM audit_population WHERE control_id = ?))
+		   AND reminder_dedup_key IS NOT NULL`,
+		controlID, controlID); err != nil {
+		if !isDuplicateKey(err) {
+			return fmt.Errorf("control.Delete(%d,%d) notifications: %w", auditID, controlID, err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM audit_notification
+			 WHERE (control_id = ? OR population_id IN (SELECT id FROM audit_population WHERE control_id = ?))
+			   AND reminder_dedup_key IS NOT NULL`,
+			controlID, controlID); err != nil {
+			return fmt.Errorf("control.Delete(%d,%d) notifications: %w", auditID, controlID, err)
+		}
 	}
 
 	result, err := tx.ExecContext(ctx,
