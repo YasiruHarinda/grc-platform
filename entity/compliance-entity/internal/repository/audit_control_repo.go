@@ -458,7 +458,23 @@ func (r *controlRepo) BulkCreateControls(ctx context.Context, auditID int, reqs 
 }
 
 func (r *controlRepo) DeleteControl(ctx context.Context, auditID, controlID int) error {
-	result, err := r.db.ExecContext(ctx,
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("control.Delete(%d,%d) begin: %w", auditID, controlID, err)
+	}
+	defer tx.Rollback()
+
+	// Clear the send-log rows first: fk_notif_control / fk_notif_population are
+	// ON DELETE RESTRICT, so the audit_control cascade would otherwise fail 1451.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM audit_notification
+		 WHERE control_id = ?
+		    OR population_id IN (SELECT id FROM audit_population WHERE control_id = ?)`,
+		controlID, controlID); err != nil {
+		return fmt.Errorf("control.Delete(%d,%d) notifications: %w", auditID, controlID, err)
+	}
+
+	result, err := tx.ExecContext(ctx,
 		"DELETE FROM audit_control WHERE audit_id = ? AND id = ?", auditID, controlID)
 	if err != nil {
 		return fmt.Errorf("control.Delete(%d,%d): %w", auditID, controlID, err)
@@ -466,6 +482,9 @@ func (r *controlRepo) DeleteControl(ctx context.Context, auditID, controlID int)
 	n, _ := result.RowsAffected()
 	if n == 0 {
 		return &apierror.NotFoundError{Msg: fmt.Sprintf("control %d not found in audit %d", controlID, auditID)}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("control.Delete(%d,%d) commit: %w", auditID, controlID, err)
 	}
 	return nil
 }
