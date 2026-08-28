@@ -133,10 +133,11 @@ export default function RiskScoresPage(): JSX.Element {
                         height: 56,
                         borderRadius: 1.5,
                         bgcolor: cell?.color_code || "#ccc",
-                        // Fixed dark text for the score-less fallback: #ccc is a
-                        // theme-independent background, so a theme token here
-                        // would go low-contrast in dark mode.
-                        color: cell ? "#fff" : "#1a1a1a",
+                        // Dark text on every cell: #fff drops below WCAG AA on the
+                        // score colours (~2-4:1), worse here than in the Add Risk
+                        // form because this cell also carries a 10px risk_level.
+                        // The fallback #ccc is a fixed, theme-independent colour.
+                        color: "#1a1a1a",
                         display: "flex",
                         flexDirection: "column",
                         alignItems: "center",
