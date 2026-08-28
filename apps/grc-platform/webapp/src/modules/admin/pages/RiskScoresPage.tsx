@@ -93,7 +93,7 @@ export default function RiskScoresPage(): JSX.Element {
 
           <Box sx={{ flex: 1 }}>
             {/* Column headers */}
-            <Box sx={{ display: "grid", gridTemplateColumns: "90px repeat(3, 1fr)", gap: 1.5, mb: 1.5 }}>
+            <Box sx={{ display: "grid", gridTemplateColumns: "90px repeat(3, 1fr)", gap: 0.75, mb: 1.5 }}>
               <Box />
               {IMPACT_COLS.map((col) => (
                 <Typography
