@@ -17,18 +17,7 @@
 import { Box, Typography } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
 import type { RiskScore } from "../../api/riskApi";
-
-const LIKELIHOOD_ROWS = [
-  { value: 3, label: "High 3" },
-  { value: 2, label: "Medium 2" },
-  { value: 1, label: "Low 1" },
-] as const;
-
-const IMPACT_COLS = [
-  { value: 1, label: "Minor 1" },
-  { value: 2, label: "Moderate 2" },
-  { value: 3, label: "Major 3" },
-] as const;
+import { IMPACT_COLS, LIKELIHOOD_ROWS } from "../../riskMatrix";
 
 interface RiskScoreGridProps {
   riskScores: RiskScore[];

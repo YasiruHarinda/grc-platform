@@ -18,20 +18,9 @@ import { Alert, Box, CircularProgress, Paper, Typography } from "@wso2/oxygen-ui
 import { type JSX, useEffect, useState } from "react";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { fetchRiskScores, type RiskScore } from "../api/adminApi";
-
-// Orientation mirrors the Add Risk form matrix (RiskAssessmentStep): Likelihood
-// Y-axis top (High 3) → bottom (Low 1), Impact X-axis left (Minor 1) → right (Major 3).
-const LIKELIHOOD_ROWS = [
-  { value: 3, label: "High 3" },
-  { value: 2, label: "Medium 2" },
-  { value: 1, label: "Low 1" },
-] as const;
-
-const IMPACT_COLS = [
-  { value: 1, label: "Minor 1" },
-  { value: 2, label: "Moderate 2" },
-  { value: 3, label: "Major 3" },
-] as const;
+// Same axes as the Add Risk form matrix (RiskAssessmentStep) and the Edit /
+// Reassess grid (RiskScoreGrid) — single-sourced so the orientation stays in step.
+import { IMPACT_COLS, LIKELIHOOD_ROWS } from "@modules/risk/riskMatrix";
 
 // Read-only, deliberately — no add/edit UI at all, not even for color. The
 // 3x3 likelihood x impact matrix is a fixed set of 9 load-bearing constants
