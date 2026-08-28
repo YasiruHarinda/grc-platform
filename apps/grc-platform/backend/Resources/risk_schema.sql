@@ -342,25 +342,6 @@ CREATE TABLE IF NOT EXISTS risk_evidence (
   CONSTRAINT fk_risk_evidence_plan FOREIGN KEY (action_plan_id) REFERENCES risk_action_plan(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- action_plan_id: added by the risk-evidence-per-plan change. risk_evidence
--- pre-dates it (evidence upload shipped before a risk could carry more than
--- one STANDARD action plan), so CREATE TABLE IF NOT EXISTS above is a no-op
--- against an existing database and this column would otherwise never appear —
--- same guard pattern as user.uuid and role.module above.
-SET @evidence_has_action_plan_id = (
-  SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'risk_evidence' AND COLUMN_NAME = 'action_plan_id'
-);
-SET @add_evidence_action_plan_id_sql = IF(@evidence_has_action_plan_id = 0,
-  'ALTER TABLE risk_evidence '
-  'ADD COLUMN action_plan_id INT NULL AFTER risk_id, '
-  'ADD KEY idx_risk_evidence_plan (action_plan_id), '
-  'ADD CONSTRAINT fk_risk_evidence_plan FOREIGN KEY (action_plan_id) REFERENCES risk_action_plan(id) ON DELETE CASCADE',
-  'SELECT 1');
-PREPARE add_evidence_action_plan_id_stmt FROM @add_evidence_action_plan_id_sql;
-EXECUTE add_evidence_action_plan_id_stmt;
-DEALLOCATE PREPARE add_evidence_action_plan_id_stmt;
-
 
 -- -----------------------------------------------------------------------------
 -- risk_escalation
@@ -397,63 +378,6 @@ CREATE TABLE IF NOT EXISTS risk_escalation (
   CONSTRAINT fk_escalation_risk         FOREIGN KEY (risk_id)        REFERENCES risk(id)             ON DELETE CASCADE,
   CONSTRAINT fk_escalation_action_plan  FOREIGN KEY (action_plan_id) REFERENCES risk_action_plan(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- assigner_lead_uuid / action_owner_lead_uuid: added by the identity
--- migration. Guarded the same way shared.sql guards user.uuid, so re-running
--- this file against an existing database is a no-op past the first run.
-SET @esc_has_lead_uuid = (
-  SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'risk_escalation' AND COLUMN_NAME = 'assigner_lead_uuid'
-);
-SET @add_esc_lead_uuid_sql = IF(@esc_has_lead_uuid = 0,
-  'ALTER TABLE risk_escalation '
-  'ADD COLUMN assigner_lead_uuid CHAR(36) NULL AFTER action_plan_id, '
-  'ADD COLUMN action_owner_lead_uuid CHAR(36) NULL AFTER assigner_lead_uuid',
-  'SELECT 1');
-PREPARE add_esc_lead_uuid_stmt FROM @add_esc_lead_uuid_sql;
-EXECUTE add_esc_lead_uuid_stmt;
-DEALLOCATE PREPARE add_esc_lead_uuid_stmt;
-
--- assigner_lead_email / action_owner_lead_email: dropped only once every row
--- that has one also has the matching uuid resolved — leads are always
--- Asgardeo-provisioned WSO2 employees, so uuid alone is sufficient once that
--- holds. A lead need not be a platform `user` row, so unlike
--- user.email/display_name (kept around and staged the same way, see
--- shared.sql) there is nowhere else to recover a frozen lead's identity from
--- once these columns are gone — so this is deliberately NOT an unconditional
--- drop the way it first shipped. Run cmd/backfill-escalation-leads and apply
--- its output to populate the *_uuid columns for any pre-existing escalation;
--- until that has happened for every row, this block leaves the email columns
--- in place (dead to new code, exactly like user.email/display_name) rather
--- than risk losing data. Re-run this file once the backfill is applied and
--- the columns will drop on that pass.
-SET @esc_has_lead_email = (
-  SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'risk_escalation' AND COLUMN_NAME = 'assigner_lead_email'
-);
--- Counted via dynamic SQL, not a literal subquery: on a fresh install
--- risk_escalation never had email columns at all (the CREATE TABLE above
--- only defines the uuid ones), so a literal reference to assigner_lead_email
--- would fail to resolve at parse time even though @esc_has_lead_email's IF()
--- would have skipped it at runtime. Same reason the ADD/DROP below goes
--- through PREPARE/EXECUTE instead of an inline ALTER.
-SET @esc_count_unbackfilled_sql = IF(@esc_has_lead_email > 0,
-  'SELECT COUNT(*) INTO @esc_unbackfilled_leads FROM risk_escalation '
-  'WHERE (assigner_lead_email IS NOT NULL AND assigner_lead_uuid IS NULL) '
-  'OR (action_owner_lead_email IS NOT NULL AND action_owner_lead_uuid IS NULL)',
-  'SELECT 0 INTO @esc_unbackfilled_leads');
-PREPARE esc_count_unbackfilled_stmt FROM @esc_count_unbackfilled_sql;
-EXECUTE esc_count_unbackfilled_stmt;
-DEALLOCATE PREPARE esc_count_unbackfilled_stmt;
-
-SET @drop_esc_lead_email_sql = IF(@esc_has_lead_email > 0 AND @esc_unbackfilled_leads = 0,
-  'ALTER TABLE risk_escalation '
-  'DROP COLUMN assigner_lead_email, '
-  'DROP COLUMN action_owner_lead_email',
-  'SELECT 1');
-PREPARE drop_esc_lead_email_stmt FROM @drop_esc_lead_email_sql;
-EXECUTE drop_esc_lead_email_stmt;
-DEALLOCATE PREPARE drop_esc_lead_email_stmt;
 
 
 -- -----------------------------------------------------------------------------
