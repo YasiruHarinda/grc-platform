@@ -24,6 +24,11 @@ export function useCurrentUser() {
     queryKey: ["me"],
     queryFn: meApi.whoami,
     staleTime: 5 * 60 * 1000, // 5 min — identity rarely changes within a session
+    // A 403 leaves the query with no data, and by default a newly mounted
+    // component re-runs a failed query like that, which resets it to
+    // loading. False here means any component reading this hook cannot
+    // restart the refusal.
+    retryOnMount: false,
     // A 4xx here will never turn into a 200 on retry, so retrying wastes
     // seconds a person with no role would spend staring at a spinner.
     // 408 and 429 are the exceptions: a timeout or a rate limit can succeed

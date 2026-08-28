@@ -134,7 +134,7 @@ export default function App() {
 // declaration order. Rendering this where <AppRoutes /> used to sit keeps it
 // after the tokenReady guard, same as every page already gets its token.
 function Gate() {
-  const { isLoaded, isForbidden } = useCurrentUser();
+  const { isLoaded, isForbidden, forbiddenMessage } = useCurrentUser();
 
   if (!isLoaded) {
     return (
@@ -149,7 +149,7 @@ function Gate() {
   // someone they have no access when the server is merely down would send
   // them to an administrator for nothing.
   if (isForbidden) {
-    return <AccessDenied />;
+    return <AccessDenied message={forbiddenMessage} />;
   }
 
   return <AppRoutes />;
