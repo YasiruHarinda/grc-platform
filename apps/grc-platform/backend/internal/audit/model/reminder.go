@@ -31,7 +31,7 @@ type ReminderItem struct {
 	ControlID    *int
 	PopulationID *int
 	// Type is the audit_notification.type value for this item's tier:
-	// REMINDER_DUE_10 | REMINDER_DUE_5 | REMINDER_OVERDUE.
+	// REMINDER_DUE_10 | REMINDER_DUE_5 | REMINDER_DUE_TODAY | REMINDER_OVERDUE.
 	Type string
 	// ControlNumber/Description/DueDate/Tier/RequirementType mirror
 	// emailer.AuditEventItem's display fields.
@@ -62,11 +62,11 @@ type ReminderItem struct {
 	OwnerName string
 	// DedupSnapshot is the date written to audit_notification.due_date_snapshot
 	// for this item's log row — distinct from DueDate (which is always the
-	// item's real due date, for display). For the DUE_10/DUE_5 tiers it's the
-	// same value as DueDate, so each tier logs (and therefore fires) exactly
-	// once per due date. For OVERDUE it is instead the date the reminder was
-	// sent, so — unlike the other two tiers — an overdue item logs a new row,
-	// and therefore re-sends, every day it stays overdue.
+	// item's real due date, for display). For the DUE_10/DUE_5/DUE_TODAY tiers
+	// it's the same value as DueDate, so each tier logs (and therefore fires)
+	// exactly once per due date. For OVERDUE it is instead the date the
+	// reminder was sent, so — unlike the other three tiers — an overdue item
+	// logs a new row, and therefore re-sends, every day it stays overdue.
 	DedupSnapshot string
 	// NotificationID is the audit_notification row ID this item's claim
 	// reserved — set by internal/audit/job.ReminderJob's queue closure once

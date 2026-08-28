@@ -39,6 +39,7 @@ var validNotificationTypes = map[string]bool{
 	"AUDITOR_ASSIGNED_CONTROL":          true,
 	"REMINDER_DUE_10":                   true,
 	"REMINDER_DUE_5":                    true,
+	"REMINDER_DUE_TODAY":                true,
 	"REMINDER_OVERDUE":                  true,
 	"RESUBMISSION_NEEDED":               true,
 	"SAMPLE_SUBMITTED":                  true,
@@ -55,9 +56,10 @@ var validNotificationTypes = map[string]bool{
 // release apply to — the other five types are single-event triggers with no
 // overlapping-run problem to guard against.
 var validReminderTypes = map[string]bool{
-	"REMINDER_DUE_10":  true,
-	"REMINDER_DUE_5":   true,
-	"REMINDER_OVERDUE": true,
+	"REMINDER_DUE_10":    true,
+	"REMINDER_DUE_5":     true,
+	"REMINDER_DUE_TODAY": true,
+	"REMINDER_OVERDUE":   true,
 }
 
 func (s *auditNotificationService) CreateAuditNotification(ctx context.Context, req domain.CreateAuditNotificationRequest) (domain.AuditNotification, error) {
