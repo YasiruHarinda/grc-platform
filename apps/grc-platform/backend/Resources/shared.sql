@@ -49,6 +49,14 @@
 --   mysql -u <user> -p < risk_schema.sql
 --
 -- Seed data lives outside this directory and is applied afterwards.
+--
+-- This file defines the CURRENT table structure only. It carries no
+-- conditional `ALTER TABLE` / `information_schema`-guarded backfills for
+-- legacy columns (e.g. the old user.email / display_name migration): every
+-- database this runs against has already been migrated to the shape below,
+-- so none is needed. `CREATE TABLE IF NOT EXISTS` keeps a re-run against an
+-- up-to-date database a safe no-op. Ship any future migration for an
+-- existing database as a separate step, not inline here.
 -- =============================================================================
 
 USE grc_platform;

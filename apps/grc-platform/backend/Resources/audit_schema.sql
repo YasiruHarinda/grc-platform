@@ -19,6 +19,14 @@
 --   audit_trail              — immutable event log for an audit
 --   audit_notification       — send-log for every audit-module email (also the
 --                              reminder job's de-dup mechanism)
+--
+-- This file defines the CURRENT table structure only. It carries no
+-- conditional `ALTER TABLE` / `information_schema`-guarded backfills for
+-- legacy columns, enum values, or FK actions: every database this runs
+-- against has already been migrated to the shape below, so none is needed.
+-- `CREATE TABLE IF NOT EXISTS` keeps a re-run against an up-to-date database
+-- a safe no-op. Ship any future migration for an existing database as a
+-- separate step, not inline here.
 -- =============================================================================
 
 USE grc_platform;

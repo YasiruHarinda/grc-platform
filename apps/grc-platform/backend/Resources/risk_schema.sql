@@ -29,6 +29,17 @@
 --     widening risk_id to nullable.
 --   • Junction tables (risk_compliance_reference,
 --     user_risk_team)                                     ............... CASCADE
+--
+-- This file defines the CURRENT table structure only. It carries no
+-- conditional `ALTER TABLE` / `information_schema`-guarded backfills for
+-- legacy columns (e.g. the old risk_evidence.action_plan_id and
+-- risk_escalation lead-column migrations): every database this runs against
+-- has already been migrated to the shape below, so none is needed.
+-- `CREATE TABLE IF NOT EXISTS` keeps a re-run against an up-to-date database
+-- a safe no-op. The one remaining guarded `ALTER TABLE` (fk_action_plan_risk)
+-- is not a migration — it resolves the risk_action_plan <-> risk circular FK
+-- and is required on a fresh database too. Ship any future migration for an
+-- existing database as a separate step, not inline here.
 -- =============================================================================
 
 USE grc_platform;
