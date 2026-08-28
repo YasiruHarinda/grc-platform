@@ -62,7 +62,7 @@ paths:
   # ---------------------------------------------------------------------------
   # Audit Hub
   # ---------------------------------------------------------------------------
-  /api/v1/audit/dashboard:
+  /api/v1/audits/dashboard:
     get:
       tags:
       - Audit Dashboard
@@ -82,7 +82,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/audit/work-queue:
+  /api/v1/audits/work-queue:
     get:
       tags:
       - Audit Dashboard
@@ -141,7 +141,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/audit/frameworks:
+  /api/v1/audits/frameworks:
     get:
       tags:
       - Audit Frameworks
@@ -193,11 +193,12 @@ paths:
           $ref: '#/components/responses/UnprocessableEntity'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/audit/frameworks/{id}/controls:
+  /api/v1/audits/frameworks/controls:
     get:
       tags:
       - Audit Framework Controls
       summary: List current controls for a framework
+      description: frameworkId is a query param, not a path segment — a path segment here would collide with GET /api/v1/audits/{id}/controls/{controlId} (net/http's ServeMux treats the two as an ambiguous registration).
       operationId: listAuditFrameworkControls
       parameters:
       - $ref: '#/components/parameters/FrameworkId'
@@ -221,8 +222,6 @@ paths:
       - Audit Framework Controls
       summary: Create a framework control
       operationId: createAuditFrameworkControl
-      parameters:
-      - $ref: '#/components/parameters/FrameworkId'
       requestBody:
         required: true
         content:
@@ -248,7 +247,7 @@ paths:
           $ref: '#/components/responses/UnprocessableEntity'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/audit/products:
+  /api/v1/audits/products:
     get:
       tags:
       - Audit Products
@@ -300,7 +299,7 @@ paths:
           $ref: '#/components/responses/UnprocessableEntity'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/audit/users:
+  /api/v1/audits/users:
     get:
       tags:
       - Audit Users
@@ -321,7 +320,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/audit/auditor-candidates:
+  /api/v1/audits/auditor-candidates:
     get:
       tags:
       - Audit Users
@@ -343,7 +342,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/audit/teams:
+  /api/v1/audits/teams:
     get:
       tags:
       - Audit Teams
@@ -400,7 +399,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/audit/teams/{id}:
+  /api/v1/audits/teams/{id}:
     put:
       tags:
       - Audit Teams
@@ -1163,8 +1162,8 @@ paths:
     delete:
       tags:
       - Audit Evidence
-      summary: Delete a file from an evidence submission (audit-scoped)
-      description: Same deletion as DELETE /api/v1/evidence/files/{fileId}, but because audit/control are known it also reconciles the control back to EVIDENCE_PENDING when the last file is removed.
+      summary: Delete a file from an evidence submission
+      description: Reconciles the control back to EVIDENCE_PENDING when the last file is removed.
       operationId: deleteAuditControlEvidenceFile
       parameters:
       - $ref: '#/components/parameters/AuditId'
@@ -1247,7 +1246,7 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/evidence/files/{fileId}/download:
+  /api/v1/audits/{id}/controls/{controlId}/evidence/files/{fileId}/download:
     get:
       tags:
       - Audit Evidence
@@ -1255,6 +1254,8 @@ paths:
       description: Proxies the file bytes from the Compliance Entity (which reads them from Azure) so the browser never contacts Azure directly.
       operationId: downloadEvidenceFile
       parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
       - $ref: '#/components/parameters/FileId'
       responses:
         '200':
@@ -1274,26 +1275,34 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/evidence/files/{fileId}:
-    delete:
+  /api/v1/audits/{id}/controls/{controlId}/evidence/{evidenceId}/ai-validations:
+    get:
       tags:
-      - Audit Evidence
-      summary: Delete an evidence file
-      description: Removes a single file's DB record (the Azure blob itself is not deleted). Caller must be the file's original uploader or hold ManageControls.
-      operationId: deleteEvidenceFile
+      - AI Validations
+      summary: List AI validation results for an evidence round
+      description: Advisory review hints only; the frontend never gates the workflow on these.
+      operationId: listAIValidations
       parameters:
-      - $ref: '#/components/parameters/FileId'
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
+      - name: evidenceId
+        in: path
+        required: true
+        schema:
+          type: integer
       responses:
-        '204':
-          description: File deleted
+        '200':
+          description: AI validation results, latest first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIValidationListResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/audits/{id}/controls/{controlId}/population/upload-link:
@@ -1565,13 +1574,15 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/v1/population/files/{fileId}/download:
+  /api/v1/audits/{id}/controls/{controlId}/population/files/{fileId}/download:
     get:
       tags:
       - Audit Population
       summary: Download a population or sample file
       operationId: downloadPopulationFile
       parameters:
+      - $ref: '#/components/parameters/AuditId'
+      - $ref: '#/components/parameters/ControlId'
       - $ref: '#/components/parameters/FileId'
       responses:
         '200':
@@ -1818,34 +1829,6 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-  /api/v1/evidence/{evidenceId}/ai-validations:
-    get:
-      tags:
-      - AI Validations
-      summary: List AI validation results for an evidence round
-      description: Advisory review hints only; the frontend never gates the workflow on these.
-      operationId: listAIValidations
-      parameters:
-      - name: evidenceId
-        in: path
-        required: true
-        schema:
-          type: integer
-      responses:
-        '200':
-          description: AI validation results, latest first
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AIValidationListResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
   # ---------------------------------------------------------------------------
@@ -3230,7 +3213,7 @@ paths:
       tags:
       - Users
       summary: List active users
-      description: Used by the Risk module's general user dropdowns (e.g. Add Risk). Risk-only — Audit Hub has its own, separate GET /api/v1/audit/users.
+      description: Risk-module-only despite the shared route name — used by the Risk module's general user dropdowns (e.g. Add Risk). Audit Hub has its own, separate GET /api/v1/audits/users.
       operationId: listUsers
       responses:
         '200':
@@ -3561,8 +3544,8 @@ components:
       schema:
         type: integer
     FrameworkId:
-      name: id
-      in: path
+      name: frameworkId
+      in: query
       required: true
       description: Framework ID.
       schema:
@@ -3828,12 +3811,15 @@ components:
     CreateFrameworkControlRequest:
       type: object
       required:
+      - frameworkId
       - controlNumber
       - description
       - requirementType
       - controlType
       - scope
       properties:
+        frameworkId:
+          type: integer
         controlNumber:
           type: string
         description:

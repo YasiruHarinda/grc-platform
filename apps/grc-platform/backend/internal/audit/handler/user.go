@@ -37,7 +37,7 @@ type userHandler struct {
 	grants grant.Repository
 }
 
-// listUsers handles GET /api/v1/audit/users.
+// listUsers handles GET /api/v1/audits/users.
 // Returns all active users for owner/auditor assignment dropdowns. The user
 // table stores no display name or email (see model.UserRef.UUID), so those
 // are resolved in bulk via the identity directory before responding.
@@ -78,7 +78,7 @@ func (h *userHandler) listUsers(w http.ResponseWriter, r *http.Request) {
 	response.WriteJSONValue(w, http.StatusOK, users)
 }
 
-// listAuditorCandidates handles GET /api/v1/audit/auditor-candidates.
+// listAuditorCandidates handles GET /api/v1/audits/auditor-candidates.
 // Returns all users who hold AUDIT_SELECT_SAMPLE (INTERNAL or EXTERNAL —
 // the role is assignable to either) for the Auditor POC picker in Create
 // Audit / Manage Controls.

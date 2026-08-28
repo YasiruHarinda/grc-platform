@@ -27,7 +27,7 @@ export function useGetTeams() {
   return useQuery({
     queryKey: AUDIT_TEAMS_QUERY_KEY,
     queryFn: async (): Promise<AuditTeam[]> => {
-      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audit/teams`);
+      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audits/teams`);
       if (!res.ok) throw new Error(`Failed to load teams (${res.status})`);
       return res.json() as Promise<AuditTeam[]>;
     },

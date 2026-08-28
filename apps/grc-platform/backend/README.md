@@ -17,7 +17,7 @@ Backend starts at `http://localhost:8081`.
 - Runtime: Go `1.23+`
 - Entry point: `cmd/server/main.go`
 - Authentication: Asgardeo JWT Bearer token — validated via JWKS endpoint; pass as `Authorization: Bearer <token>` header
-- Two modules: **Risk Hub** (`/api/v1/risks/`) and **Audit Hub** (`/api/v1/audit/`)
+- Two modules: **Risk Hub** (`/api/v1/risks/`) and **Audit Hub** (`/api/v1/audits/`)
 
 ## Prerequisites
 
@@ -154,77 +154,141 @@ HTTP request
 
 ## API Endpoints
 
+### Current User
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/me/profile` | Current user's profile |
+| `GET` | `/api/v1/me/privileges` | Current user's resolved privilege set (unions RISK_* and AUDIT_* names; both hubs' frontends call this same endpoint) |
+
+### Admin
+
+Every route below requires `MANAGE_USERS` GLOBAL.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/admin/directory/search` | Search the WSO2-org directory |
+| `GET` | `/api/v1/admin/directory/search-external` | Search the external-org directory |
+| `POST` | `/api/v1/admin/users` | Provision a platform user |
+| `GET` | `/api/v1/admin/users` | List platform users |
+| `PATCH` | `/api/v1/admin/users/{id}/status` | Update a user's status |
+| `POST` | `/api/v1/admin/users/{id}/grants` | Create a (role, scope) grant |
+| `DELETE` | `/api/v1/admin/users/{id}/grants/{grantId}` | Revoke a grant |
+| `GET` | `/api/v1/admin/roles` | List roles |
+
 ### Risk Hub
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/v1/risks/users` | List users |
-| `POST` | `/api/v1/risks/users/resolve` | Resolve an employee email to an internal user, provisioning one if needed |
-| `GET` | `/api/v1/me/profile` | Current user profile |
 | `GET` | `/api/v1/risks/teams` | List risk teams |
 | `POST` | `/api/v1/risks/teams` | Create team |
 | `PUT` | `/api/v1/risks/teams/{id}` | Update team |
-| `GET` | `/api/v1/risks/scores` | List risk scores |
+| `GET` | `/api/v1/risks/scores` | List risk scores (read-only; the likelihood x impact matrix is fixed) |
+| `GET` | `/api/v1/risks/compliance-references` | List compliance references |
+| `POST` | `/api/v1/risks/compliance-references` | Create compliance reference |
+| `PUT` | `/api/v1/risks/compliance-references/{id}` | Update compliance reference |
+| `DELETE` | `/api/v1/risks/compliance-references/{id}` | Delete compliance reference |
+| `GET` | `/api/v1/risks/categories` | List risk categories |
+| `POST` | `/api/v1/risks/categories` | Create risk category |
+| `PUT` | `/api/v1/risks/categories/{id}` | Update risk category |
+| `DELETE` | `/api/v1/risks/categories/{id}` | Delete risk category |
+| `GET` | `/api/v1/risks/users` | List users |
+| `POST` | `/api/v1/risks/users/resolve` | Resolve an employee email to an internal user, provisioning one if needed |
+| `GET` | `/api/v1/risks/management-approvers` | List management-approver candidates |
+| `GET` | `/api/v1/risks/owner-candidates` | List risk-owner candidates |
+| `GET` | `/api/v1/risks/assigner-candidates` | List risk-assigner candidates |
+| `GET` | `/api/v1/risks/employees/search` | Search employees (HR entity) |
+| `GET` | `/api/v1/risks/next-sequence-id` | Preview the next risk sequence ID for a register/year/quarter |
 | `GET` | `/api/v1/risks` | List risks |
 | `POST` | `/api/v1/risks` | Register a risk |
 | `GET` | `/api/v1/risks/{id}` | Get risk by ID |
 | `PUT` | `/api/v1/risks/{id}` | Update risk |
-| `POST` | `/api/v1/risks/{id}/submit` | Submit for compliance review |
+| `POST` | `/api/v1/risks/{id}/owner-approve` | Risk owner approves closure |
+| `POST` | `/api/v1/risks/{id}/management-approve` | Management approves |
 | `POST` | `/api/v1/risks/{id}/approve` | Compliance approves |
 | `POST` | `/api/v1/risks/{id}/reject` | Compliance rejects |
 | `POST` | `/api/v1/risks/{id}/complete` | Complete remediation |
-| `POST` | `/api/v1/risks/{id}/owner-approve` | Risk owner approves closure |
+| `POST` | `/api/v1/risks/{id}/resubmit` | Resubmit after rejection |
 | `POST` | `/api/v1/risks/{id}/close` | Compliance closes |
-| `POST` | `/api/v1/risks/{id}/escalate` | Escalate to management |
+| `POST` | `/api/v1/risks/{id}/cancel` | Cancel risk |
 | `POST` | `/api/v1/risks/{id}/assess` | Management assessment |
-| `GET` | `/api/v1/risks/{id}/changelog` | Risk change history |
-| `GET` | `/api/v1/risks/{id}/action-plans` | List action plans |
-| `POST` | `/api/v1/risks/{id}/action-plans` | Create action plan |
-| `GET` | `/api/v1/risks/{id}/action-plans/{planId}` | Get action plan |
-| `PUT` | `/api/v1/risks/{id}/action-plans/{planId}` | Update action plan |
-| `GET` | `/api/v1/risks/{id}/action-plans/{planId}/steps` | List steps |
-| `POST` | `/api/v1/risks/{id}/action-plans/{planId}/steps` | Add step |
-| `PUT` | `/api/v1/risks/{id}/action-plans/{planId}/steps/{stepId}` | Update step |
-| `GET` | `/api/v1/risks/{id}/evidence` | List evidence |
-| `POST` | `/api/v1/risks/{id}/evidence` | Upload evidence |
-| `DELETE` | `/api/v1/risks/{id}/evidence/{evidenceId}` | Delete evidence |
-| `GET` | `/api/v1/risks/{id}/escalations` | Escalation history |
-| `GET` | `/api/v1/risks/compliance-references` | List compliance references |
-| `POST` | `/api/v1/risks/compliance-references` | Create compliance reference |
+| `GET` | `/api/v1/risks/dashboard` | Risk Hub dashboard |
 | `GET` | `/api/v1/risks/analytics/summary` | Risk analytics summary |
+| `POST` | `/api/v1/risks/{id}/action-plans` | Create action plan |
+| `GET` | `/api/v1/risks/{id}/action-plans` | List action plans |
+| `GET` | `/api/v1/risks/{id}/action-plans/{planId}/steps` | List an action plan's steps |
+| `PATCH` | `/api/v1/risks/{id}/action-plans/{planId}/steps/{stepId}` | Update a step |
+| `POST` | `/api/v1/risks/{id}/action-plans/{planId}/complete` | Complete an action plan |
+| `POST` | `/api/v1/risks/{id}/escalate` | Escalate to management |
+| `GET` | `/api/v1/risks/{id}/escalations` | Escalation history |
+| `GET` | `/api/v1/risks/{id}/history` | Full risk history (workflow events + field edits) |
+| `POST` | `/api/v1/risks/{id}/escalations/{escalationId}/comment` | Answer an escalation, returning the risk to its assigner |
+| `POST` | `/api/v1/risks/{id}/evidence` | Upload evidence |
+| `GET` | `/api/v1/risks/{id}/evidence` | List evidence |
+| `DELETE` | `/api/v1/risks/{id}/evidence/{fileId}` | Delete an evidence file |
+| `GET` | `/api/v1/risks/{id}/evidence/{fileId}/download` | Download an evidence file |
 
 ### Audit Hub
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/v1/audit/frameworks` | List audit frameworks |
-| `POST` | `/api/v1/audit/frameworks` | Create framework |
-| `GET` | `/api/v1/audit/products` | List products |
-| `POST` | `/api/v1/audit/products` | Create product |
+| `GET` | `/api/v1/audits/dashboard` | Audit Hub dashboard |
+| `GET` | `/api/v1/audits/work-queue` | Auditor's work queue |
+| `GET` | `/api/v1/audits/frameworks` | List frameworks |
+| `POST` | `/api/v1/audits/frameworks` | Create framework |
+| `GET` | `/api/v1/audits/frameworks/controls?frameworkId={id}` | List a framework's controls |
+| `POST` | `/api/v1/audits/frameworks/controls` | Add a control to a framework (frameworkId in body) |
+| `GET` | `/api/v1/audits/products` | List products |
+| `POST` | `/api/v1/audits/products` | Create product |
+| `GET` | `/api/v1/audits/users` | List Audit Hub users |
+| `GET` | `/api/v1/audits/auditor-candidates` | List auditor candidates |
+| `GET` | `/api/v1/audits/teams` | List audit teams |
+| `POST` | `/api/v1/audits/teams` | Create audit team |
+| `PUT` | `/api/v1/audits/teams/{id}` | Update audit team |
+| `POST` | `/api/v1/audits/reminders/run` | Manually trigger the due-date reminder digest |
 | `GET` | `/api/v1/audits` | List audits |
 | `POST` | `/api/v1/audits` | Create audit |
 | `GET` | `/api/v1/audits/{id}` | Get audit by ID |
 | `PUT` | `/api/v1/audits/{id}` | Update audit |
-| `POST` | `/api/v1/audits/{id}/fieldwork` | Move to fieldwork |
-| `POST` | `/api/v1/audits/{id}/review` | Submit for review |
-| `POST` | `/api/v1/audits/{id}/complete` | Complete audit |
+| `DELETE` | `/api/v1/audits/{id}` | Delete audit |
 | `GET` | `/api/v1/audits/{id}/controls` | List controls |
 | `POST` | `/api/v1/audits/{id}/controls` | Add control |
+| `POST` | `/api/v1/audits/{id}/controls/bulk` | Bulk-add controls |
 | `GET` | `/api/v1/audits/{id}/controls/{controlId}` | Get control |
 | `PUT` | `/api/v1/audits/{id}/controls/{controlId}` | Update control |
-| `GET` | `/api/v1/audits/{id}/controls/{controlId}/population` | List population |
-| `POST` | `/api/v1/audits/{id}/controls/{controlId}/population` | Upload population |
-| `DELETE` | `/api/v1/audits/{id}/controls/{controlId}/population/{populationId}` | Delete population entry |
+| `DELETE` | `/api/v1/audits/{id}/controls/{controlId}` | Delete control |
+| `PATCH` | `/api/v1/audits/{id}/controls/{controlId}/status` | Update control status |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/status/override` | Override control status |
+| `GET` | `/api/v1/audits/{id}/controls/{controlId}/trail` | Per-control history |
+| `GET` | `/api/v1/audits/{id}/trail` | Audit-wide activity log |
+| `GET` | `/api/v1/audits/{id}/controls/{controlId}/evidence/upload-link` | Get an evidence upload link |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/evidence/upload` | Upload an evidence file |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/evidence/submit` | Submit an evidence round |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/evidence/files` | Add files to the current evidence round |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/evidence/withdraw` | Withdraw an evidence submission |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/evidence/review` | Internal review decision on evidence |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/evidence/validate` | Auditor decision on evidence |
+| `DELETE` | `/api/v1/audits/{id}/controls/{controlId}/evidence/files/{fileId}` | Delete one evidence file |
+| `DELETE` | `/api/v1/audits/{id}/controls/{controlId}/evidence/{evidenceId}` | Delete an evidence round |
 | `GET` | `/api/v1/audits/{id}/controls/{controlId}/evidence` | List evidence |
-| `POST` | `/api/v1/audits/{id}/controls/{controlId}/evidence` | Upload evidence |
-| `DELETE` | `/api/v1/audits/{id}/controls/{controlId}/evidence/{evidenceId}` | Delete evidence |
-| `POST` | `/api/v1/audits/{id}/controls/{controlId}/evidence/{evidenceId}/review` | Review evidence |
+| `GET` | `/api/v1/audits/{id}/controls/{controlId}/evidence/files/{fileId}/download` | Download an evidence file |
+| `GET` | `/api/v1/audits/{id}/controls/{controlId}/population/upload-link` | Get a population upload link |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/population/upload` | Upload a population file |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/population/submit` | Submit a population round |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/population/review` | Internal review decision on population |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/population/validate` | Auditor decision on population |
+| `GET` | `/api/v1/audits/{id}/controls/{controlId}/population` | View the current population round |
+| `DELETE` | `/api/v1/audits/{id}/controls/{controlId}/population/files/{fileId}` | Delete a population/sample file |
+| `DELETE` | `/api/v1/audits/{id}/controls/{controlId}/population/attestation` | Clear the population submission note |
+| `GET` | `/api/v1/audits/{id}/controls/{controlId}/population/files/{fileId}/download` | Download a population file |
+| `GET` | `/api/v1/audits/{id}/controls/{controlId}/sample/upload-link` | Get a sample upload link |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/sample/upload` | Upload a sample file |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/sample/submit` | Submit a sample selection |
+| `POST` | `/api/v1/audits/{id}/controls/{controlId}/sample/request-time` | Request more time for sample selection |
 | `GET` | `/api/v1/audits/{id}/controls/{controlId}/comments` | List comments |
 | `POST` | `/api/v1/audits/{id}/controls/{controlId}/comments` | Add comment |
-| `GET` | `/api/v1/audits/{id}/assignments` | List assignments |
-| `POST` | `/api/v1/audits/{id}/assignments` | Create assignment |
-| `DELETE` | `/api/v1/audits/{id}/assignments/{assignmentId}` | Remove assignment |
-| `GET` | `/api/v1/audits/{id}/trail` | Audit trail |
+| `DELETE` | `/api/v1/audits/{id}/controls/{controlId}/comments/{commentId}` | Delete comment |
+| `GET` | `/api/v1/audits/{id}/controls/{controlId}/evidence/{evidenceId}/ai-validations` | List AI validation results |
 
 ## Run Locally
 

@@ -29,7 +29,7 @@ import (
 
 // handleListUsers serves GET /api/v1/risks/users: every active user, for the
 // Risk module's general user dropdowns (e.g. the Add Risk form). Risk-only —
-// Audit Hub has its own GET /api/v1/audit/users backed by a completely
+// Audit Hub has its own GET /api/v1/audits/users backed by a completely
 // separate handler/service/repository stack.
 //
 // Gated on ViewRisks OR ManageRiskHub — same shape as GET /api/v1/risks/teams

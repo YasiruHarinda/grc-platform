@@ -27,7 +27,7 @@ export function useGetProducts() {
   return useQuery({
     queryKey: PRODUCTS_QUERY_KEY,
     queryFn: async (): Promise<AuditProduct[]> => {
-      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audit/products`);
+      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audits/products`);
       if (!res.ok) throw new Error(`Failed to load products (${res.status})`);
       return res.json() as Promise<AuditProduct[]>;
     },

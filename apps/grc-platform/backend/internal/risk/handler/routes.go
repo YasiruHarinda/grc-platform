@@ -118,7 +118,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("DELETE /api/v1/risks/categories/{id}", d.handleDeleteRiskCategory)
 
 	// Shared user endpoints — Risk-module-only in practice (Audit Hub has its
-	// own GET /api/v1/audit/users). Handlers in users.go.
+	// own GET /api/v1/audits/users). Handlers in users.go.
 	mux.HandleFunc("GET /api/v1/risks/users", d.handleListUsers)
 	mux.HandleFunc("POST /api/v1/risks/users/resolve", d.handleResolveUser)
 
@@ -157,7 +157,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /api/v1/risks/{id}/assess", d.handleAssessRisk)
 
 	// Dashboard — a module-level aggregate view, not a sub-resource of one
-	// risk, so it sits under /api/v1/risks/ (cf. GET /api/v1/audit/dashboard).
+	// risk, so it sits under /api/v1/risks/ (cf. GET /api/v1/audits/dashboard).
 	mux.HandleFunc("GET /api/v1/risks/dashboard", d.handleDashboard)
 
 	// Analytics — module-level aggregate view, same rationale as dashboard.

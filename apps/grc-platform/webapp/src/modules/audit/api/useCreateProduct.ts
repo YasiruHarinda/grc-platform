@@ -30,7 +30,7 @@ export function useCreateProduct() {
 
   return useMutation({
     mutationFn: async (req: CreateProductPayload): Promise<AuditProduct> => {
-      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audit/products`, {
+      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audits/products`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(req),

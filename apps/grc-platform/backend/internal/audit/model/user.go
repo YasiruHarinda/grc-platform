@@ -17,7 +17,7 @@
 // Package model defines the domain types for the Audit Hub module.
 package model
 
-// UserRef is a lightweight user record returned by GET /api/v1/audit/users.
+// UserRef is a lightweight user record returned by GET /api/v1/audits/users.
 // Used to populate owner/auditor dropdowns in the UI.
 
 type UserRef struct {

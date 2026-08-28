@@ -197,7 +197,7 @@ export async function fetchScopeTeams(
 // scope picker — a different backend route (audit_team, not risk_team), same
 // ScopeTeam shape the picker already renders either kind through.
 export async function fetchAuditScopeTeams(authFetch: AuthFetch): Promise<ScopeTeam[]> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audit/teams`);
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audits/teams`);
   return handleResponse<ScopeTeam[]>(res);
 }
 
@@ -386,12 +386,12 @@ export interface AuditTeamPayload {
 // unlike fetchAuditScopeTeams, which the grant picker uses and which implicitly
 // means ACTIVE only. Same reasoning as fetchAllTeams vs fetchScopeTeams.
 export async function fetchAllAuditTeams(authFetch: AuthFetch): Promise<AdminAuditTeam[]> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audit/teams?includeInactive=true`);
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audits/teams?includeInactive=true`);
   return handleResponse<AdminAuditTeam[]>(res);
 }
 
 export async function createAuditTeam(authFetch: AuthFetch, payload: AuditTeamPayload): Promise<AdminAuditTeam> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audit/teams`, {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audits/teams`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -403,7 +403,7 @@ export async function updateAuditTeam(
   id: number,
   payload: AuditTeamPayload,
 ): Promise<AdminAuditTeam> {
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audit/teams/${id}`, {
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audits/teams/${id}`, {
     method: "PUT",
     body: JSON.stringify(payload),
   });

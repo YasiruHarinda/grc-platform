@@ -239,7 +239,9 @@ export default function ControlHistoryTimeline({
     queries: evidenceIds.map((id) => ({
       queryKey: aiValidationQueryKey(id),
       queryFn: async (): Promise<AIValidationLog[]> => {
-        const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/evidence/${id}/ai-validations`);
+        const res = await authFetch(
+          `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}/evidence/${id}/ai-validations`,
+        );
         if (!res.ok) throw new Error(String(res.status));
         return ((await res.json()) as { validations?: AIValidationLog[] }).validations ?? [];
       },

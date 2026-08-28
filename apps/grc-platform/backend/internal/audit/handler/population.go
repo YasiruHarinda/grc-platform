@@ -234,9 +234,9 @@ func (h *evidenceHandler) resolvePopulationUploaders(ctx context.Context, files 
 }
 
 // withReadURLs computes the backend proxy download URL for each population file.
-func withReadURLs(files []*model.PopulationFile) []*model.PopulationFile {
+func withReadURLs(auditID, controlID int, files []*model.PopulationFile) []*model.PopulationFile {
 	for _, f := range files {
-		url := fmt.Sprintf("/api/v1/population/files/%d/download", f.ID)
+		url := fmt.Sprintf("/api/v1/audits/%d/controls/%d/population/files/%d/download", auditID, controlID, f.ID)
 		f.ReadURL = &url
 	}
 	return files
@@ -295,8 +295,8 @@ func (h *evidenceHandler) listPopulation(w http.ResponseWriter, r *http.Request)
 			view.PopulationFiles = append(view.PopulationFiles, f)
 		}
 	}
-	withReadURLs(view.PopulationFiles)
-	withReadURLs(view.SampleFiles)
+	withReadURLs(auditID, controlID, view.PopulationFiles)
+	withReadURLs(auditID, controlID, view.SampleFiles)
 	// One resolve over both slices, so a person who uploaded both a population
 	// and a sample file is looked up once.
 	h.resolvePopulationUploaders(r.Context(), append(append([]*model.PopulationFile{}, view.PopulationFiles...), view.SampleFiles...))
@@ -305,7 +305,7 @@ func (h *evidenceHandler) listPopulation(w http.ResponseWriter, r *http.Request)
 }
 
 // downloadPopulationFile handles
-// GET /api/v1/population/files/{fileId}/download.
+// GET /api/v1/audits/{id}/controls/{controlId}/population/files/{fileId}/download.
 // It proxies the file bytes the same way downloadEvidenceFile does — the
 // backend reads the blob directly from Azure using its own storage credential.
 //
