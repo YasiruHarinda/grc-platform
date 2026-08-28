@@ -508,7 +508,7 @@ DEALLOCATE PREPARE add_trail_overridden_stmt;
 -- One row per email actually sent (not per event-trigger — a triggered event
 -- with zero deliverable recipients, or that fails to send, writes no row).
 -- Also the de-dup mechanism for the daily reminder job (REMINDER_DUE_10 /
--- REMINDER_DUE_5 / REMINDER_OVERDUE): the job atomically CLAIMS an item by
+-- REMINDER_DUE_5 / REMINDER_DUE_TODAY / REMINDER_OVERDUE): the job atomically CLAIMS an item by
 -- inserting its row *before* sending — the insert's success or failure IS the
 -- de-dup decision — rather than checking-then-writing, which left a window
 -- for two overlapping runs (e.g. two backend replicas both waking at the
@@ -522,9 +522,9 @@ DEALLOCATE PREPARE add_trail_overridden_stmt;
 -- nullable columns, and MySQL's unique-index NULL semantics (NULL never
 -- equals NULL) mean two rows that are both, say, control_id=NULL would never
 -- collide. reminder_dedup_key sidesteps this by being a generated, non-NULL
--- string ONLY for the three REMINDER_* types (COALESCE folds whichever of
+-- string ONLY for the four REMINDER_* types (COALESCE folds whichever of
 -- control_id/population_id is unset into '', so the two can't collide with
--- each other); for the other five notification types it's NULL, and MySQL's
+-- each other); for the other twelve notification types it's NULL, and MySQL's
 -- unique index — unlike NULL-safe equality — ignores NULL for uniqueness, so
 -- uq_notif_reminder_dedup imposes no constraint on them at all.
 --
@@ -555,6 +555,7 @@ CREATE TABLE IF NOT EXISTS audit_notification (
                          'AUDITOR_ASSIGNED_CONTROL',
                          'REMINDER_DUE_10',
                          'REMINDER_DUE_5',
+                         'REMINDER_DUE_TODAY',
                          'REMINDER_OVERDUE',
                          'RESUBMISSION_NEEDED',
                          'SAMPLE_SUBMITTED',
@@ -572,7 +573,7 @@ CREATE TABLE IF NOT EXISTS audit_notification (
   created_at         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by         VARCHAR(255) NULL,
   reminder_dedup_key VARCHAR(64) GENERATED ALWAYS AS (
-                         CASE WHEN type IN ('REMINDER_DUE_10', 'REMINDER_DUE_5', 'REMINDER_OVERDUE')
+                         CASE WHEN type IN ('REMINDER_DUE_10', 'REMINDER_DUE_5', 'REMINDER_DUE_TODAY', 'REMINDER_OVERDUE')
                            THEN CONCAT_WS('|',
                                   recipient_id, type,
                                   COALESCE(control_id, ''), COALESCE(population_id, ''),
@@ -585,8 +586,8 @@ CREATE TABLE IF NOT EXISTS audit_notification (
   UNIQUE KEY uq_notif_reminder_dedup (reminder_dedup_key),
   CONSTRAINT fk_notif_recipient  FOREIGN KEY (recipient_id)  REFERENCES `user`(id)           ON DELETE RESTRICT,
   CONSTRAINT fk_notif_audit      FOREIGN KEY (audit_id)      REFERENCES audit(id)            ON DELETE SET NULL,
-  CONSTRAINT fk_notif_control    FOREIGN KEY (control_id)    REFERENCES audit_control(id)    ON DELETE SET NULL,
-  CONSTRAINT fk_notif_population FOREIGN KEY (population_id) REFERENCES audit_population(id) ON DELETE SET NULL
+  CONSTRAINT fk_notif_control    FOREIGN KEY (control_id)    REFERENCES audit_control(id)    ON DELETE RESTRICT,
+  CONSTRAINT fk_notif_population FOREIGN KEY (population_id) REFERENCES audit_population(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Backfill the seven status-reached/comment-added type values onto an
@@ -647,6 +648,85 @@ SET @add_notif_dedup_key_sql = IF(@notif_has_dedup_key = 0,
 PREPARE add_notif_dedup_key_stmt FROM @add_notif_dedup_key_sql;
 EXECUTE add_notif_dedup_key_stmt;
 DEALLOCATE PREPARE add_notif_dedup_key_stmt;
+
+-- Repoint fk_notif_control / fk_notif_population from ON DELETE SET NULL to
+-- ON DELETE RESTRICT on an audit_notification table created before this fix
+-- (see [[audit-notification-fk-bug]]): control_id/population_id are read by
+-- the reminder_dedup_key generated column, and MySQL/MariaDB reject re-
+-- validating a generated column's expression — which the MODIFY COLUMN below
+-- does — while a column it depends on still carries a SET NULL/CASCADE FK
+-- action (error 3106, ER_UNSUPPORTED_ACTION_ON_GENERATED_COLUMN). A table
+-- created fresh already gets RESTRICT from the CREATE TABLE above; this only
+-- fires for a table that predates that change.
+SET @notif_control_fk_is_set_null = (
+  SELECT COUNT(*) FROM information_schema.REFERENTIAL_CONSTRAINTS
+  WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_notification'
+    AND CONSTRAINT_NAME = 'fk_notif_control' AND DELETE_RULE = 'SET NULL'
+);
+-- MySQL rejects DROP FOREIGN KEY + ADD CONSTRAINT of the same name in one
+-- ALTER TABLE statement ("Duplicate foreign key constraint name"), so this
+-- has to be two separate statements rather than one comma-joined ALTER.
+SET @drop_notif_fk_sql = IF(@notif_control_fk_is_set_null > 0,
+  'ALTER TABLE audit_notification
+     DROP FOREIGN KEY fk_notif_control,
+     DROP FOREIGN KEY fk_notif_population',
+  'SELECT 1');
+PREPARE drop_notif_fk_stmt FROM @drop_notif_fk_sql;
+EXECUTE drop_notif_fk_stmt;
+DEALLOCATE PREPARE drop_notif_fk_stmt;
+
+SET @add_notif_fk_sql = IF(@notif_control_fk_is_set_null > 0,
+  'ALTER TABLE audit_notification
+     ADD CONSTRAINT fk_notif_control    FOREIGN KEY (control_id)    REFERENCES audit_control(id)    ON DELETE RESTRICT,
+     ADD CONSTRAINT fk_notif_population FOREIGN KEY (population_id) REFERENCES audit_population(id) ON DELETE RESTRICT',
+  'SELECT 1');
+PREPARE add_notif_fk_stmt FROM @add_notif_fk_sql;
+EXECUTE add_notif_fk_stmt;
+DEALLOCATE PREPARE add_notif_fk_stmt;
+
+-- Backfill the REMINDER_DUE_TODAY type value (and fold it into the reminder
+-- dedup generated column) onto an audit_notification table created before
+-- the due-date-itself reminder tier existed — same information_schema-guard
+-- pattern as the other audit_notification backfills above. type and
+-- reminder_dedup_key are altered together: a REMINDER_DUE_TODAY row can't be
+-- inserted at all until both are current.
+SET @notif_has_due_today_type = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_notification' AND COLUMN_NAME = 'type'
+    AND COLUMN_TYPE LIKE '%''REMINDER_DUE_TODAY''%'
+);
+SET @add_notif_due_today_sql = IF(@notif_has_due_today_type = 0,
+  'ALTER TABLE audit_notification MODIFY COLUMN type ENUM(
+     ''OWNER_ASSIGNED_CONTROL'',
+     ''OWNER_ASSIGNED_POPULATION'',
+     ''AUDITOR_ASSIGNED_CONTROL'',
+     ''REMINDER_DUE_10'',
+     ''REMINDER_DUE_5'',
+     ''REMINDER_DUE_TODAY'',
+     ''REMINDER_OVERDUE'',
+     ''RESUBMISSION_NEEDED'',
+     ''SAMPLE_SUBMITTED'',
+     ''EVIDENCE_INTERNAL_REVIEW'',
+     ''POPULATION_INTERNAL_REVIEW'',
+     ''EVIDENCE_UNDER_VALIDATION'',
+     ''POPULATION_UNDER_VALIDATION'',
+     ''POPULATION_COMPLETE_SAMPLE_NEEDED'',
+     ''CONTROL_COMPLETE'',
+     ''COMMENT_ADDED''
+   ) NOT NULL,
+   MODIFY COLUMN reminder_dedup_key VARCHAR(64) GENERATED ALWAYS AS (
+     CASE WHEN type IN (''REMINDER_DUE_10'', ''REMINDER_DUE_5'', ''REMINDER_DUE_TODAY'', ''REMINDER_OVERDUE'')
+       THEN CONCAT_WS(''|'',
+              recipient_id, type,
+              COALESCE(control_id, ''''), COALESCE(population_id, ''''),
+              due_date_snapshot)
+       ELSE NULL
+     END
+   ) VIRTUAL',
+  'SELECT 1');
+PREPARE add_notif_due_today_stmt FROM @add_notif_due_today_sql;
+EXECUTE add_notif_due_today_stmt;
+DEALLOCATE PREPARE add_notif_due_today_stmt;
 
 SET FOREIGN_KEY_CHECKS = 1;
 

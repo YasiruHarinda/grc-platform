@@ -194,8 +194,8 @@ func (j *ReminderJob) RunOnce(ctx context.Context) error {
 }
 
 // reminderTier returns "REMINDER_DUE_10", "REMINDER_DUE_5",
-// "REMINDER_OVERDUE", or "" (no tier applies today) for dueDate
-// ("YYYY-MM-DD") relative to today (UTC, date-only comparison).
+// "REMINDER_DUE_TODAY", "REMINDER_OVERDUE", or "" (no tier applies today)
+// for dueDate ("YYYY-MM-DD") relative to today (UTC, date-only comparison).
 func reminderTier(dueDate string, today time.Time) string {
 	due, err := time.Parse("2006-01-02", dueDate)
 	if err != nil {
@@ -205,6 +205,8 @@ func reminderTier(dueDate string, today time.Time) string {
 	switch {
 	case daysUntil < 0:
 		return "REMINDER_OVERDUE"
+	case daysUntil == 0:
+		return "REMINDER_DUE_TODAY"
 	case daysUntil == 5:
 		return "REMINDER_DUE_5"
 	case daysUntil == 10:
@@ -232,6 +234,8 @@ func tierLabel(tier string) string {
 		return "Due in 10 days"
 	case "REMINDER_DUE_5":
 		return "Due in 5 days"
+	case "REMINDER_DUE_TODAY":
+		return "Due today"
 	case "REMINDER_OVERDUE":
 		return "Overdue"
 	default:
