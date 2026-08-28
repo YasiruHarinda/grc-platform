@@ -464,6 +464,21 @@ func (r *controlRepo) DeleteControl(ctx context.Context, auditID, controlID int)
 	}
 	defer tx.Rollback()
 
+	// Lock the control and its populations so a concurrent audit_notification
+	// insert can't slip between the cleanup below and the DELETE and re-trip 1451.
+	var lockedID int
+	if err := tx.QueryRowContext(ctx,
+		"SELECT id FROM audit_control WHERE audit_id = ? AND id = ? FOR UPDATE",
+		auditID, controlID).Scan(&lockedID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("control.Delete(%d,%d) lock: %w", auditID, controlID, err)
+	}
+	var popCount int
+	if err := tx.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM audit_population WHERE control_id = ? FOR UPDATE",
+		controlID).Scan(&popCount); err != nil {
+		return fmt.Errorf("control.Delete(%d,%d) lock populations: %w", auditID, controlID, err)
+	}
+
 	// Clear the send-log rows first: fk_notif_control / fk_notif_population are
 	// ON DELETE RESTRICT, so the audit_control cascade would otherwise fail 1451.
 	if _, err := tx.ExecContext(ctx,
