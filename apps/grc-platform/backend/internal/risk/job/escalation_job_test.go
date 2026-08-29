@@ -22,6 +22,8 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
@@ -186,5 +188,59 @@ func TestRunOnceToleratesNilNotify(t *testing.T) {
 	NewEscalationJob(risks, esc, nil).runOnce(context.Background())
 	if len(esc.escalated) != 1 {
 		t.Errorf("escalated %v, want one", esc.escalated)
+	}
+}
+
+// RunOnce is wired to both the scheduler's daily tick and the manual-trigger
+// endpoint on the same instance. A manual call landing on the tick must be
+// refused, not run a second overlapping sweep — mirrors
+// internal/audit/job's TestRunOnceRejectsOverlappingRun.
+func TestRunOnceRejectsOverlappingRun(t *testing.T) {
+	risks := &fakeRisks{remaining: []int{1}}
+	esc := &fakeEscalator{risks: risks, failIDs: map[int]bool{}}
+
+	inNotify := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var notifyCalls atomic.Int32
+
+	j := NewEscalationJob(risks, esc, func(context.Context, int, string) error {
+		notifyCalls.Add(1)
+		select {
+		case inNotify <- struct{}{}:
+		default:
+		}
+		<-release
+		return nil
+	})
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	var firstErr error
+	go func() {
+		defer wg.Done()
+		firstErr = j.RunOnce(context.Background())
+	}()
+
+	<-inNotify // first sweep is mid-run inside notify, holding the guard
+	if err := j.RunOnce(context.Background()); err == nil {
+		t.Error("overlapping RunOnce should have been refused with an error")
+	}
+	close(release)
+	wg.Wait()
+
+	if firstErr != nil {
+		t.Errorf("first RunOnce should complete without error, got %v", firstErr)
+	}
+	if got := notifyCalls.Load(); got != 1 {
+		t.Errorf("notify ran %d times, want 1 — the refused run must do no work", got)
+	}
+
+	// Guard releases on completion: a later, non-overlapping run proceeds.
+	risks.remaining = []int{2}
+	if err := j.RunOnce(context.Background()); err != nil {
+		t.Errorf("post-completion RunOnce should proceed, got %v", err)
+	}
+	if len(esc.escalated) != 2 {
+		t.Errorf("escalated %v across the two successful runs, want risks 1 and 2", esc.escalated)
 	}
 }
