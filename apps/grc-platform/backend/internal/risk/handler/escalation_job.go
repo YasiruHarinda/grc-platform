@@ -56,9 +56,15 @@ type escalationJobHandler struct {
 // against a retry (from that same timeout-driven failure) starting an
 // overlapping second sweep.
 func (h *escalationJobHandler) run(w http.ResponseWriter, r *http.Request) {
-	// Unscoped: this gates only whether the caller may escalate risks at all,
-	// not in which register — the sweep spans every register.
-	if !auth.RequirePrivilege(r.Context(), w, privilege.EscalateRisk) {
+	// ManageRiskHub, not RISK_ESCALATE. This fires a sweep that escalates
+	// overdue risks and emails management across EVERY register. RISK_ESCALATE
+	// is register-scoped — the single-risk endpoint gates it with
+	// RequirePrivilegeIn(..., sourceRegisterID) — so an unscoped RISK_ESCALATE
+	// check here would let someone holding it in one register act hub-wide.
+	// ManageRiskHub is the GLOBAL-only, platform-admin privilege every other
+	// Risk Hub bulk/admin route already gates on; it is the risk-side
+	// equivalent of the audit reminder trigger's ManageControls gate.
+	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageRiskHub) {
 		return
 	}
 	if h.trigger == nil {
