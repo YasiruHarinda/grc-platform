@@ -35,11 +35,12 @@ import (
 	"time"
 )
 
-// ReminderHourUTC is the hour (UTC) the daily sweep fires at. UTC to match how
-// the database's own DATETIME columns are pinned (see internal/db), and a fixed
-// wall-clock hour rather than an interval so the audit digest email always
-// arrives at the same time regardless of when the server last restarted.
-const ReminderHourUTC = 8
+// SweepHourUTC is the hour (UTC) every registered sweep fires at. UTC to match
+// how the database's own DATETIME columns are pinned (see internal/db), and a
+// fixed wall-clock hour rather than an interval so time-sensitive output — the
+// audit digest email above all — lands at the same time regardless of when the
+// server last restarted.
+const SweepHourUTC = 8
 
 // Sweep is one unit of scheduled work.
 type Sweep struct {

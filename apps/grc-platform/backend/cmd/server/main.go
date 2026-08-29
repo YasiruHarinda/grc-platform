@@ -204,7 +204,7 @@ func main() {
 	jobCtx, jobCancel := context.WithCancel(ctx)
 	defer jobCancel()
 	if cfg.SchedulerEnabled {
-		go scheduler.New(scheduler.ReminderHourUTC,
+		go scheduler.New(scheduler.SweepHourUTC,
 			scheduler.Sweep{Name: "overdue-risk-escalation", Run: escalationJob.RunOnce},
 			scheduler.Sweep{Name: "audit-due-date-reminders", Run: reminderJob.RunOnce},
 		).Run(jobCtx)
