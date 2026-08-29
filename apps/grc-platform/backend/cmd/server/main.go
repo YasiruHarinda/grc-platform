@@ -37,6 +37,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/middleware"
 	riskhandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/handler"
 	riskjob "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/job"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scheduler"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/file"
@@ -159,6 +160,13 @@ func main() {
 
 	userhandler.RegisterRoutes(mux, userDeps)
 	riskDeps := buildRiskDeps(entityCli, fileSvc, hrClient, grantRepo, dirSvc, scimClient, cfg.Email)
+	// Overdue-risk escalation sweep. Constructed here regardless of
+	// SCHEDULER_ENABLED: the scheduler below runs it on the daily tick, and
+	// riskDeps.TriggerEscalationJob exposes the same RunOnce behind
+	// POST /api/v1/risks/escalations/run for QA/ops — mirrors auditDeps.
+	// TriggerReminderJob. Wired before RegisterRoutes so the handler sees it.
+	escalationJob := riskjob.NewEscalationJob(riskDeps.Risk, riskDeps.Escalation, riskDeps.NotifyEscalationSync)
+	riskDeps.TriggerEscalationJob = escalationJob.RunOnce
 	riskhandler.RegisterRoutes(mux, riskDeps)
 	// The HR client reaches the audit module only when lead escalation is on;
 	// nil otherwise, so no line manager is ever resolved.
@@ -181,19 +189,29 @@ func main() {
 		Directory: dirSvc,
 	})
 
-	// Daily overdue-risk escalation. This lives here rather than in the
-	// compliance-entity because escalation now resolves line managers from the
-	// HR entity and sends email — neither of which the entity has a client for.
-	// It shares the handler's own notifier so an automatic escalation notifies
-	// exactly as a manual one does.
-	jobCtx, jobCancel := context.WithCancel(context.Background())
+	// Background sweeps, both fired daily at a fixed 08:00 UTC by one shared
+	// scheduler (internal/scheduler) so a single switch — SCHEDULER_ENABLED —
+	// turns them on or off together. Both jobs (escalationJob above,
+	// reminderJob above) are constructed regardless of this switch, so their
+	// manual-trigger endpoints (POST /api/v1/risks/escalations/run and
+	// POST /api/v1/audits/reminders/run) keep working when it is off.
+	//
+	// jobCtx derives from ctx (the signal context) so a SIGINT/SIGTERM cancels
+	// an in-flight scheduled sweep during the shutdown window, rather than
+	// leaving it to be hard-killed when main returns. A sweep can run for up to
+	// 30 minutes (job runTimeout); the manual-trigger goroutines deliberately
+	// use their own context.Background() and are unaffected.
+	jobCtx, jobCancel := context.WithCancel(ctx)
 	defer jobCancel()
-	go riskjob.NewEscalationJob(riskDeps.Risk, riskDeps.Escalation, riskDeps.NotifyEscalationSync).Start(jobCtx)
-
-	// Daily audit due-date reminder digest — fixed 08:00 UTC send time (not a
-	// 24h-since-boot ticker like the escalation job above), so the digest
-	// arrives at a predictable time regardless of server restarts.
-	go reminderJob.Start(jobCtx)
+	if cfg.SchedulerEnabled {
+		go scheduler.New(scheduler.SweepHourUTC,
+			scheduler.Sweep{Name: "overdue-risk-escalation", Run: escalationJob.RunOnce},
+			scheduler.Sweep{Name: "audit-due-date-reminders", Run: reminderJob.RunOnce},
+		).Run(jobCtx)
+	} else {
+		slog.Warn("background scheduler disabled (SCHEDULER_ENABLED=false); " +
+			"overdue-risk escalation and audit due-date reminders will not run automatically")
+	}
 	handler := middleware.SecurityHeaders(
 		middleware.CORS(cfg.CORSAllowedOrigin)(
 			middleware.CorrelationID(

@@ -35,6 +35,34 @@ type Config struct {
 	// AuditLeadEscalationEnabled turns on emailing an overdue item's owner's
 	// HR line manager. See AuditLeadEscalationDefault.
 	AuditLeadEscalationEnabled bool
+	// SchedulerEnabled turns the background scheduler (internal/scheduler) on
+	// or off. It is the single switch for every daily sweep at once — today
+	// the overdue-risk escalation and the audit due-date reminder digest. See
+	// SchedulerEnabledDefault.
+	SchedulerEnabled bool
+}
+
+// SchedulerEnabledDefault is the built-in setting for the background
+// scheduler, used by every environment that does not override it. On by
+// default: the daily sweeps are core behaviour, and an operator disabling them
+// is the exception.
+//
+// SCHEDULER_ENABLED overrides it with exactly "true" or "false"; any other
+// value — including unset — leaves this default alone, so a typo can never
+// silently stop the sweeps.
+const SchedulerEnabledDefault = true
+
+// schedulerEnabled resolves the SCHEDULER_ENABLED override against the default
+// above.
+func schedulerEnabled() bool {
+	switch os.Getenv("SCHEDULER_ENABLED") {
+	case "true":
+		return true
+	case "false":
+		return false
+	default:
+		return SchedulerEnabledDefault
+	}
 }
 
 // AuditLeadEscalationDefault is the built-in setting for the overdue lead
@@ -321,6 +349,7 @@ func Load() (Config, error) {
 			TokenURL:        emailTokenURL,
 		},
 		AuditLeadEscalationEnabled: auditLeadEscalationEnabled(),
+		SchedulerEnabled:           schedulerEnabled(),
 	}, nil
 }
 

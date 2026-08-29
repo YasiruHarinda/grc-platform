@@ -49,9 +49,6 @@ type claimer interface {
 }
 
 const (
-	// reminderHourUTC is when the daily digest fires. UTC, matching how the
-	// database's own DATETIME columns are pinned (see internal/db).
-	reminderHourUTC = 8
 	// runTimeout bounds a single sweep.
 	runTimeout = 30 * time.Minute
 	// releaseTimeout bounds a claim release, on its own short deadline instead
@@ -159,36 +156,10 @@ type adminAuditKey struct {
 	auditID int
 }
 
-// Start waits until the next reminderHourUTC, runs the sweep, then repeats
-// daily until ctx is cancelled. Not a ticker fired at boot: the digest wants
-// a fixed daily send time, not "24h since whenever the process started."
-func (j *ReminderJob) Start(ctx context.Context) {
-	for {
-		timer := time.NewTimer(durationUntilNext(reminderHourUTC, time.Now().UTC()))
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-			_ = j.runOnce(ctx)
-		}
-	}
-}
-
-// durationUntilNext returns the wait until the next occurrence of hour:00
-// UTC — today's if it hasn't passed yet, tomorrow's otherwise. A pure
-// function of (hour, now) so it's unit-testable without mocking time.Now.
-func durationUntilNext(hour int, now time.Time) time.Duration {
-	next := time.Date(now.Year(), now.Month(), now.Day(), hour, 0, 0, 0, time.UTC)
-	if !next.After(now) {
-		next = next.AddDate(0, 0, 1)
-	}
-	return next.Sub(now)
-}
-
-// RunOnce runs the sweep synchronously and returns its error, if any — the
-// manual-trigger endpoint's entry point (POST /api/v1/audits/reminders/run),
-// for QA/ops convenience without waiting for the fixed daily time.
+// RunOnce runs the sweep synchronously and returns its error, if any. Two
+// callers share it: the scheduler's daily tick (internal/scheduler) and the
+// manual-trigger endpoint (POST /api/v1/audits/reminders/run), which lets
+// QA/ops fire a sweep without waiting for the fixed daily time.
 func (j *ReminderJob) RunOnce(ctx context.Context) error {
 	return j.runOnce(ctx)
 }
