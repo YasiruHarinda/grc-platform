@@ -159,23 +159,23 @@ func TestAuditLeadEscalationDefaultIsOff(t *testing.T) {
 func TestSchedulerEnabledOverride(t *testing.T) {
 	tests := []struct {
 		name string
-		set  bool
 		env  string
 		want bool
 	}{
-		{"unset uses the code default", false, "", SchedulerEnabledDefault},
-		{"empty uses the code default", true, "", SchedulerEnabledDefault},
-		{"true enables", true, "true", true},
-		{"false disables", true, "false", false},
-		{"typo uses the code default", true, "flase", SchedulerEnabledDefault},
-		{"FALSE is not false", true, "FALSE", SchedulerEnabledDefault},
-		{"0 is not false", true, "0", SchedulerEnabledDefault},
+		{"empty (as good as unset) uses the code default", "", SchedulerEnabledDefault},
+		{"true enables", "true", true},
+		{"false disables", "false", false},
+		{"typo uses the code default", "flase", SchedulerEnabledDefault},
+		{"FALSE is not false", "FALSE", SchedulerEnabledDefault},
+		{"0 is not false", "0", SchedulerEnabledDefault},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.set {
-				t.Setenv("SCHEDULER_ENABLED", tt.env)
-			}
+			// Set it on every row — including the empty default case — so a
+			// SCHEDULER_ENABLED already in the process env (CI, a sourced
+			// .env) can't decide the outcome. os.Getenv can't tell unset from
+			// empty, so "" exercises the same default path as unset.
+			t.Setenv("SCHEDULER_ENABLED", tt.env)
 			if got := schedulerEnabled(); got != tt.want {
 				t.Errorf("schedulerEnabled() = %v, want %v", got, tt.want)
 			}
