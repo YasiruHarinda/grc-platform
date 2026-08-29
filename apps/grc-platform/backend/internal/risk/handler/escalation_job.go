@@ -40,9 +40,11 @@ type escalationJobHandler struct {
 	// which would import back into handler and cycle — same reasoning as the
 	// job.notify function field. Nil (job wiring not configured) answers 503.
 	trigger func(ctx context.Context) error
-	// running guards against a second manual trigger starting a sweep while
-	// one is already in flight — the sweep itself (job.runOnce) has no such
-	// guard, and one sweep can take up to 30 minutes (job.runTimeout).
+	// running turns a concurrent second trigger into a synchronous 409 (below)
+	// instead of a 202 followed by a run that silently fails. trigger is
+	// EscalationJob.RunOnce, which has its own in-flight guard and would
+	// reject the overlap — but only inside the detached goroutine, after this
+	// handler has already written 202. Checking here lets the caller find out.
 	running atomic.Bool
 }
 
