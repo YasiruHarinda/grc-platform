@@ -18,6 +18,7 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
@@ -83,6 +84,13 @@ type Deps struct {
 	// FrontendBaseURL is used to build the risk-detail link inside that
 	// notification email.
 	FrontendBaseURL string
+	// TriggerEscalationJob runs the daily overdue-risk escalation sweep on
+	// demand — wired in cmd/server/main.go to the escalation job's RunOnce
+	// method, kept as a plain function here so this package never imports
+	// internal/risk/job (which would import back into handler and cycle).
+	// Nil disables the manual-trigger endpoint. Mirrors audit's
+	// Deps.TriggerReminderJob.
+	TriggerEscalationJob func(ctx context.Context) error
 }
 
 // RegisterRoutes mounts all Risk Hub routes onto mux.
@@ -94,6 +102,7 @@ type Deps struct {
 // precedence over the {id} wildcard, so the two groups never collide.
 func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	d := &deps
+	ejh := &escalationJobHandler{trigger: deps.TriggerEscalationJob}
 
 	// Teams
 	mux.HandleFunc("GET /api/v1/risks/teams", d.handleListTeams)
@@ -177,6 +186,12 @@ func RegisterRoutes(mux *http.ServeMux, deps Deps) {
 	// submits for completion approval)
 	mux.HandleFunc("POST /api/v1/risks/{id}/escalate", d.handleEscalateRisk)
 	mux.HandleFunc("GET /api/v1/risks/{id}/escalations", d.handleListEscalations)
+
+	// Manual trigger for the whole daily overdue-risk escalation sweep — the
+	// same RunOnce the scheduler calls, so QA/ops can exercise the batch
+	// without waiting for its fixed daily time. Literal "escalations" first
+	// segment, so it never collides with the /{id}/escalate route above.
+	mux.HandleFunc("POST /api/v1/risks/escalations/run", ejh.run)
 
 	// Full risk history — every workflow event and field edit, behind the
 	// drawer's History tab.

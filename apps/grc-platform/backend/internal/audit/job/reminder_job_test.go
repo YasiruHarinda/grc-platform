@@ -28,43 +28,6 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 )
 
-func TestDurationUntilNextTargetHour(t *testing.T) {
-	tests := []struct {
-		name string
-		now  time.Time
-		want time.Duration
-	}{
-		{
-			name: "before target hour today",
-			now:  time.Date(2026, 3, 5, 3, 0, 0, 0, time.UTC),
-			want: 5 * time.Hour,
-		},
-		{
-			name: "after target hour today rolls to tomorrow",
-			now:  time.Date(2026, 3, 5, 14, 0, 0, 0, time.UTC),
-			want: 18 * time.Hour,
-		},
-		{
-			name: "exactly at target hour rolls to tomorrow, not zero",
-			now:  time.Date(2026, 3, 5, 8, 0, 0, 0, time.UTC),
-			want: 24 * time.Hour,
-		},
-		{
-			name: "crosses a UTC day/month boundary",
-			now:  time.Date(2026, 2, 28, 23, 0, 0, 0, time.UTC),
-			want: 9 * time.Hour,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := durationUntilNext(8, tt.now)
-			if got != tt.want {
-				t.Errorf("durationUntilNext(8, %v) = %v, want %v", tt.now, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestReminderTierBoundaries(t *testing.T) {
 	today := time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC)
 	tests := []struct {

@@ -152,3 +152,41 @@ func TestAuditLeadEscalationDefaultIsOff(t *testing.T) {
 		t.Error("lead escalation ships enabled — intended? update docs/audit-lead-escalation.md and set =false in staging")
 	}
 }
+
+// SCHEDULER_ENABLED is an operational kill-switch, so — like the lead
+// escalation flag — only the two exact spellings may override the built-in
+// default; a typo must leave it alone rather than silently stop every sweep.
+func TestSchedulerEnabledOverride(t *testing.T) {
+	tests := []struct {
+		name string
+		set  bool
+		env  string
+		want bool
+	}{
+		{"unset uses the code default", false, "", SchedulerEnabledDefault},
+		{"empty uses the code default", true, "", SchedulerEnabledDefault},
+		{"true enables", true, "true", true},
+		{"false disables", true, "false", false},
+		{"typo uses the code default", true, "flase", SchedulerEnabledDefault},
+		{"FALSE is not false", true, "FALSE", SchedulerEnabledDefault},
+		{"0 is not false", true, "0", SchedulerEnabledDefault},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.set {
+				t.Setenv("SCHEDULER_ENABLED", tt.env)
+			}
+			if got := schedulerEnabled(); got != tt.want {
+				t.Errorf("schedulerEnabled() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// Guards the shipped default: the daily sweeps run unless an operator
+// explicitly opts out.
+func TestSchedulerEnabledDefaultIsOn(t *testing.T) {
+	if !SchedulerEnabledDefault {
+		t.Error("the background scheduler ships disabled — intended? overdue-risk escalation and audit reminders will not run automatically")
+	}
+}

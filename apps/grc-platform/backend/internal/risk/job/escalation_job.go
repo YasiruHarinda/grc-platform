@@ -50,11 +50,6 @@ type escalator interface {
 // pageLimit is the page size used when walking overdue risks.
 const pageLimit = 100
 
-// runInterval is how often the job sweeps. Escalation is a daily-granularity
-// concept — a risk is overdue by whole days — so anything finer would just be
-// repeated no-ops.
-const runInterval = 24 * time.Hour
-
 // runTimeout bounds a single sweep. Each escalation does an HR lookup and an
 // email send, so a large backlog takes real time; this exists to stop a wedged
 // run from blocking every subsequent one, not to bound normal work.
@@ -89,21 +84,13 @@ func NewEscalationJob(
 	return &EscalationJob{risks: risks, escalation: escalation, notify: notify}
 }
 
-// Start runs the job once immediately, then every runInterval, until ctx is
-// cancelled. Intended to be launched in its own goroutine from main.
-func (j *EscalationJob) Start(ctx context.Context) {
+// RunOnce performs one escalation sweep synchronously, then returns. It is the
+// entry point the scheduler (internal/scheduler) calls on its daily tick. The
+// sweep logs its own outcome and has no hard-failure path, so the error result
+// is always nil and exists only to satisfy the scheduler's Sweep signature.
+func (j *EscalationJob) RunOnce(ctx context.Context) error {
 	j.runOnce(ctx)
-
-	ticker := time.NewTicker(runInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			j.runOnce(ctx)
-		}
-	}
+	return nil
 }
 
 // runOnce escalates every overdue IN_REMEDIATION risk it can find. A failure on
