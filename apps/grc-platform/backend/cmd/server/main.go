@@ -195,7 +195,13 @@ func main() {
 	// reminderJob above) are constructed regardless of this switch, so their
 	// manual-trigger endpoints (POST /api/v1/risks/escalations/run and
 	// POST /api/v1/audits/reminders/run) keep working when it is off.
-	jobCtx, jobCancel := context.WithCancel(context.Background())
+	//
+	// jobCtx derives from ctx (the signal context) so a SIGINT/SIGTERM cancels
+	// an in-flight scheduled sweep during the shutdown window, rather than
+	// leaving it to be hard-killed when main returns. A sweep can run for up to
+	// 30 minutes (job runTimeout); the manual-trigger goroutines deliberately
+	// use their own context.Background() and are unaffected.
+	jobCtx, jobCancel := context.WithCancel(ctx)
 	defer jobCancel()
 	if cfg.SchedulerEnabled {
 		go scheduler.New(scheduler.ReminderHourUTC,
