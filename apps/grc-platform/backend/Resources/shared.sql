@@ -28,6 +28,11 @@
 --   user_role_grant — WHO holds WHAT role, WHERE. The single record of a user's
 --                     standing, replacing both per-module team-membership tables
 --                     and the Asgardeo group claim. See the table comment below.
+--   admin_activity_log — append-only "who did what and when" log for the Admin
+--                     Console, covering entities across both hubs (users,
+--                     grants, risk teams/categories/compliance references,
+--                     audit teams). Separate from audit_trail, which covers
+--                     Audit Hub domain events only.
 --
 -- NOTE: role assignment is owned by this platform, not by the IdP. Asgardeo
 --       authenticates users and nothing more — no group or role claim is read
@@ -285,6 +290,30 @@ CREATE TABLE IF NOT EXISTS user_role_grant (
     (scope_type =  'GLOBAL' AND scope_id =  0) OR
     (scope_type <> 'GLOBAL' AND scope_id >  0)
   )
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -----------------------------------------------------------------------------
+-- admin_activity_log  (immutable event log, append-only)
+--
+-- The Admin Console's counterpart to audit_trail: "who did what and when"
+-- across every screen the console exposes, separate from the Audit Hub's own.
+--
+-- actor_id/entity_id are unconstrained (no FK) — entity_id is polymorphic
+-- across several tables, and actor_id must never block a write just because
+-- the caller has no `user` row yet.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS admin_activity_log (
+  id          BIGINT       NOT NULL AUTO_INCREMENT,
+  actor_id    CHAR(36)     NOT NULL,
+  action      ENUM('CREATED','UPDATED','DELETED','STATUS_CHANGED','GRANTED','REVOKED') NOT NULL,
+  entity_type ENUM('USER','GRANT','RISK_TEAM','RISK_CATEGORY','COMPLIANCE_REFERENCE','RISK_SCORE','AUDIT_TEAM') NOT NULL,
+  entity_id   INT          NOT NULL,
+  details     JSON         NULL,
+  created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_admin_activity_log_time (created_at),
+  KEY idx_admin_activity_log_actor (actor_id),
+  KEY idx_admin_activity_log_entity (entity_type, entity_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;

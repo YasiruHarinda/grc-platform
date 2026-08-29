@@ -231,3 +231,23 @@ func RequireAnyPrivilege(ctx context.Context, w http.ResponseWriter, privs ...st
 
 	return false
 }
+
+// RequireAllPrivileges writes a 403 JSON response and returns false unless the
+// caller holds every one of the given privileges:
+//
+//	if !auth.RequireAllPrivileges(r.Context(), w, privilege.ManageUsers, privilege.ManageRiskHub, privilege.ManageAuditHub) {
+//	    return
+//	}
+func RequireAllPrivileges(ctx context.Context, w http.ResponseWriter, privs ...string) bool {
+	for _, p := range privs {
+		if !HasPrivilege(ctx, p) {
+			response.WriteError(
+				w,
+				http.StatusForbidden,
+				response.ErrMsgForbidden,
+			)
+			return false
+		}
+	}
+	return true
+}

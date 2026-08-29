@@ -26,6 +26,7 @@ import (
 	riskservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/service"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/routeguard"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/adminactivity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
@@ -98,6 +99,8 @@ type Deps struct {
 	// Nil disables the manual-trigger endpoint. Mirrors audit's
 	// Deps.TriggerReminderJob.
 	TriggerEscalationJob func(ctx context.Context) error
+	// ActivityLog records reference-data mutations to admin_activity_log.
+	ActivityLog *adminactivity.Client
 }
 
 // RegisterRoutes mounts all Risk Hub routes onto mux.

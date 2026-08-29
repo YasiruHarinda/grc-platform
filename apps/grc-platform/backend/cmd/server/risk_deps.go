@@ -24,6 +24,7 @@ import (
 	riskentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/repository/entity"
 	riskservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/service"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/adminactivity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/file"
@@ -55,6 +56,7 @@ func buildRiskDeps(
 	scimClient *scim.Client,
 	emailCfg config.EmailConfig,
 	leadEscalationEmails bool,
+	activityLog *adminactivity.Client,
 ) riskhandler.Deps {
 	userRepo := userentity.NewRepository(ec)
 	actionPlanRepo := riskentity.NewActionPlanRepository(ec)
@@ -81,5 +83,6 @@ func buildRiskDeps(
 		Email:                emailer.New(emailCfg.ServiceURL, emailCfg.FromAddress, emailCfg.TokenURL, emailCfg.ClientID, emailCfg.ClientSecret, emailCfg.Enabled),
 		FrontendBaseURL:      emailCfg.FrontendBaseURL,
 		LeadEscalationEmails: leadEscalationEmails,
+		ActivityLog:          activityLog,
 	}
 }

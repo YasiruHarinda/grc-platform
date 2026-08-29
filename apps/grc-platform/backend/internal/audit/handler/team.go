@@ -24,12 +24,14 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/adminactivity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
 type teamHandler struct {
-	svc service.TeamService
+	svc         service.TeamService
+	activityLog *adminactivity.Client
 }
 
 // listTeams handles GET /api/v1/audits/teams.
@@ -104,6 +106,8 @@ func (h *teamHandler) createTeam(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	h.activityLog.Log(r.Context(), createdBy, adminactivity.ActionCreated, adminactivity.EntityAuditTeam, t.ID,
+		map[string]any{"name": t.Name})
 	response.WriteJSONValue(w, http.StatusCreated, t)
 }
 
@@ -143,5 +147,7 @@ func (h *teamHandler) updateTeam(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	h.activityLog.Log(r.Context(), updatedBy, adminactivity.ActionUpdated, adminactivity.EntityAuditTeam, id,
+		map[string]any{"name": t.Name, "status": t.Status})
 	response.WriteJSONValue(w, http.StatusOK, t)
 }

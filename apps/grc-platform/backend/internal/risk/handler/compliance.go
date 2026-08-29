@@ -22,6 +22,7 @@ import (
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/adminactivity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
@@ -77,6 +78,8 @@ func (d *Deps) handleCreateComplianceReference(w http.ResponseWriter, r *http.Re
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.ActivityLog.Log(r.Context(), createdBy, adminactivity.ActionCreated, adminactivity.EntityComplianceReference, ref.ID,
+		map[string]any{"name": ref.Name})
 	response.WriteJSONValue(w, http.StatusCreated, ref)
 }
 
@@ -111,6 +114,8 @@ func (d *Deps) handleUpdateComplianceReference(w http.ResponseWriter, r *http.Re
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.ActivityLog.Log(r.Context(), updatedBy, adminactivity.ActionUpdated, adminactivity.EntityComplianceReference, id,
+		map[string]any{"name": ref.Name})
 	response.WriteJSONValue(w, http.StatusOK, ref)
 }
 
@@ -128,9 +133,25 @@ func (d *Deps) handleDeleteComplianceReference(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Name resolved before deleting — it won't be in List anymore afterwards.
+	name := ""
+	if refs, listErr := d.Compliance.List(r.Context()); listErr == nil {
+		for _, ref := range refs {
+			if ref.ID == id {
+				name = ref.Name
+			}
+		}
+	}
+
 	if err := d.Compliance.Delete(r.Context(), id); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	deletedBy := ""
+	if user := auth.FromContext(r.Context()); user != nil {
+		deletedBy = user.Subject
+	}
+	d.ActivityLog.Log(r.Context(), deletedBy, adminactivity.ActionDeleted, adminactivity.EntityComplianceReference, id,
+		map[string]any{"name": name})
 	w.WriteHeader(http.StatusNoContent)
 }

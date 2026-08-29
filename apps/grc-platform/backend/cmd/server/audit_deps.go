@@ -25,6 +25,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/adminactivity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/aiagent"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
@@ -42,7 +43,7 @@ import (
 // hrClient is nil unless lead-escalation emails are enabled
 // (LEAD_ESCALATION_EMAILS_ENABLED), which is what keeps the disabled build from
 // resolving any lead (line manager) at all.
-func buildAuditDeps(fileSvc *file.Service, ec *entityclient.Client, aiCfg config.AIValidationConfig, emailCfg config.EmailConfig, grantRepo grant.Repository, dirSvc *directory.Service, hrClient *hrentity.Client) audithandler.Deps {
+func buildAuditDeps(fileSvc *file.Service, ec *entityclient.Client, aiCfg config.AIValidationConfig, emailCfg config.EmailConfig, grantRepo grant.Repository, dirSvc *directory.Service, hrClient *hrentity.Client, activityLog *adminactivity.Client) audithandler.Deps {
 	// ── Repositories (all Compliance Entity) ──────────────────────────────────
 	auditRepo := auditentity.NewAuditRepository(ec)
 	frameworkRepo := auditentity.NewFrameworkRepository(ec)
@@ -107,6 +108,7 @@ func buildAuditDeps(fileSvc *file.Service, ec *entityclient.Client, aiCfg config
 		Grants:          grantRepo,
 		FrontendBaseURL: emailCfg.FrontendBaseURL,
 		HR:              hrClient,
+		ActivityLog:     activityLog,
 		// Review, Assignment are wired here as their implementations are added.
 	}
 }

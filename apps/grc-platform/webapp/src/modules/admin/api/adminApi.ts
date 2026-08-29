@@ -409,3 +409,64 @@ export async function updateAuditTeam(
   });
   return handleResponse<AdminAuditTeam>(res);
 }
+
+// ── Activity Log ─────────────────────────────────────────────────────────────
+// "Who did what and when" across every Admin Console screen.
+
+export type AdminActivityAction = "CREATED" | "UPDATED" | "DELETED" | "STATUS_CHANGED" | "GRANTED" | "REVOKED";
+
+export type AdminActivityEntityType =
+  | "USER"
+  | "GRANT"
+  | "RISK_TEAM"
+  | "RISK_CATEGORY"
+  | "COMPLIANCE_REFERENCE"
+  | "RISK_SCORE"
+  | "AUDIT_TEAM";
+
+export interface AdminActivityLogEntry {
+  id: number;
+  actorId: string;
+  // Resolved server-side from the identity directory; empty on a miss.
+  actorName: string;
+  actorEmail: string;
+  action: AdminActivityAction;
+  entityType: AdminActivityEntityType;
+  entityId: number;
+  details?: Record<string, unknown>;
+  createdOn: string;
+}
+
+export interface AdminActivityLogResponse {
+  entries: AdminActivityLogEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface AdminActivityLogFilter {
+  actorId?: string;
+  action?: AdminActivityAction;
+  entityType?: AdminActivityEntityType;
+  from?: string; // YYYY-MM-DD
+  to?: string; // YYYY-MM-DD
+  limit?: number;
+  offset?: number;
+}
+
+export async function fetchActivityLog(
+  authFetch: AuthFetch,
+  filter: AdminActivityLogFilter = {},
+): Promise<AdminActivityLogResponse> {
+  const q = new URLSearchParams();
+  if (filter.actorId) q.set("actorId", filter.actorId);
+  if (filter.action) q.set("action", filter.action);
+  if (filter.entityType) q.set("entityType", filter.entityType);
+  if (filter.from) q.set("from", filter.from);
+  if (filter.to) q.set("to", filter.to);
+  q.set("limit", String(filter.limit ?? 50));
+  q.set("offset", String(filter.offset ?? 0));
+
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/admin/activity-log?${q.toString()}`);
+  return handleResponse<AdminActivityLogResponse>(res);
+}
