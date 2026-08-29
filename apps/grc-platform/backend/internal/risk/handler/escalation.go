@@ -167,16 +167,10 @@ func (d *Deps) handleEscalationComment(w http.ResponseWriter, r *http.Request) {
 //   - MEDIUM / LOW:  the assigner, action owner(s) and risk owner. Management
 //     is not troubled by a lower-level slip.
 //
-// One intended recipient is deliberately NOT mailed yet — the assigner's and
-// action owner's line managers. The leads were explicitly deferred, and it is
-// logged so the trigger point stays observable. Their Asgardeo ids are
-// already frozen on the escalation row, so enabling them later is a
-// recipient list change here (resolve uuid -> email via the identity
-// directory), not a data change.
-//
-// TODO: notify the two leads recorded on the escalation row
-// (assigner_lead_uuid / action_owner_lead_uuid), once it is decided that
-// leads should be emailed.
+// The assigner's and action owner's leads (their HR line managers) are also
+// notified, as a separate message — see notifyEscalationLeads — but only when
+// LEAD_ESCALATION_EMAILS_ENABLED is on. Their Asgardeo ids are frozen on the
+// escalation row at escalation time regardless of that switch.
 //
 // Exported because the daily escalation job calls it too (via
 // NotifyEscalationSync below) — automatic and manual escalations must notify
@@ -195,7 +189,7 @@ func (d *Deps) NotifyEscalation(ctx context.Context, riskID int, by string) {
 	}
 	d.notifyRiskEvent(emailer.EventEscalated, riskID, recipients, by, "")
 	d.notifyComplianceAdmins(emailer.EventEscalated, riskID, registerID, by, "")
-	notifyEscalationLeads(riskID)
+	d.notifyEscalationLeads(riskID, by)
 }
 
 // NotifyEscalationSync is NotifyEscalation's synchronous counterpart, used
@@ -213,7 +207,7 @@ func (d *Deps) NotifyEscalationSync(ctx context.Context, riskID int, by string) 
 	}
 	sendErr := d.sendRiskEventSync(ctx, emailer.EventEscalated, riskID, recipients, by, "")
 	d.notifyComplianceAdmins(emailer.EventEscalated, riskID, registerID, by, "")
-	notifyEscalationLeads(riskID)
+	d.notifyEscalationLeads(riskID, by)
 	return sendErr
 }
 

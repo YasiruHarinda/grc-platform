@@ -46,6 +46,11 @@ type Client struct {
 	clientID     string
 	clientSecret string
 	http         *http.Client
+	// enabled is the master switch (config EMAIL_NOTIFICATIONS_ENABLED). When
+	// false, SendRiskEvent and SendAuditEvent return nil immediately — before
+	// any token fetch or HTTP call — so no module sends any email. Callers are
+	// unchanged: a disabled send looks exactly like a successful one.
+	enabled bool
 
 	tokenMu     sync.Mutex
 	cachedToken string
@@ -67,14 +72,16 @@ const sendAttempts = 2
 
 // New constructs a client pointed at the email-service base URL, sending as
 // from, authenticating via OAuth2 client-credentials at tokenURL using
-// clientID and clientSecret.
-func New(baseURL, from, tokenURL, clientID, clientSecret string) *Client {
+// clientID and clientSecret. When enabled is false every send is a no-op (see
+// the Client.enabled field) and the connection fields may be empty.
+func New(baseURL, from, tokenURL, clientID, clientSecret string, enabled bool) *Client {
 	return &Client{
 		baseURL:      strings.TrimRight(baseURL, "/"),
 		from:         from,
 		tokenURL:     tokenURL,
 		clientID:     clientID,
 		clientSecret: clientSecret,
+		enabled:      enabled,
 		http:         &http.Client{Timeout: 10 * time.Second},
 	}
 }
@@ -183,6 +190,15 @@ const (
 	EventRejected            RiskEvent = "REJECTED"
 	EventEscalated           RiskEvent = "ESCALATED"
 	EventEscalationCommented RiskEvent = "ESCALATION_COMMENTED"
+	// EventEscalatedLead notifies the Risk Assigner's and/or Action Owner's
+	// lead (their HR line manager, frozen on the escalation row as an Asgardeo
+	// id at escalation time) that a risk they sit above has been escalated.
+	// Sent as its own message, separate from EventEscalated's internal
+	// recipients, and only when LEAD_ESCALATION_EMAILS_ENABLED is on. Purely
+	// informational: it declares no actions, so the "Who needs to act" block is
+	// absent — a lead is being told, not tasked. The audit-module counterpart
+	// is AuditEventReminderOverdueLead.
+	EventEscalatedLead RiskEvent = "ESCALATED_LEAD"
 	// EventPendingComplianceReview and EventPendingComplianceClosure notify
 	// the Compliance Admin role — not a named individual, see
 	// notifyComplianceAdmins — that a risk has cleared owner/management
@@ -367,6 +383,12 @@ var eventTemplates = map[RiskEvent]eventTemplate{
 			{RoleRiskAssigner, "Bring remediation back on track and keep the risk updated."},
 		},
 	},
+	EventEscalatedLead: {
+		lead:       "A risk owned by someone who reports to you has passed its implementation date without completing remediation and has been escalated.",
+		actorLabel: "Escalated by",
+		// No actions: a lead is being informed, not assigned a step. The
+		// "Who needs to act" block is omitted entirely.
+	},
 	EventClosed: {
 		lead:       "This risk has cleared compliance closure and is now closed. No further action is required.",
 		actorLabel: "Closed by",
@@ -468,6 +490,10 @@ func (c *Client) SendRiskCreated(ctx context.Context, ownerEmail string, info Ri
 // sendAttempts. Callers must expect this to block for up to two full client
 // timeouts and so should not run it on a request path.
 func (c *Client) SendRiskEvent(ctx context.Context, ev RiskEvent, to []string, info RiskEventInfo) error {
+	if !c.enabled {
+		slog.Info("emailer: notifications disabled, skipping risk send", "event", ev)
+		return nil
+	}
 	tpl, ok := eventTemplates[ev]
 	if !ok {
 		return fmt.Errorf("emailer: no template for event %q", ev)

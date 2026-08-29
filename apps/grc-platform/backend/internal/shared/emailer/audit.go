@@ -351,6 +351,10 @@ var auditBodyTemplate = template.Must(template.New("auditEvent").Parse(`<html>
 // sendAttempts. Callers must expect this to block for up to two full client
 // timeouts and so should not run it on a request path.
 func (c *Client) SendAuditEvent(ctx context.Context, ev AuditEvent, to string, info AuditEventInfo) error {
+	if !c.enabled {
+		slog.Info("emailer: notifications disabled, skipping audit send", "event", ev)
+		return nil
+	}
 	tpl, ok := auditEventTemplates[ev]
 	if !ok {
 		return fmt.Errorf("emailer: no template for event %q", ev)

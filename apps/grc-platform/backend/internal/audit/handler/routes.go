@@ -74,9 +74,10 @@ type Deps struct {
 	// FrontendBaseURL builds the "View in Audit Hub" link inside notification
 	// emails.
 	FrontendBaseURL string
-	// HR resolves an owner's line manager for the overdue lead escalation.
-	// Nil when AUDIT_LEAD_ESCALATION_ENABLED is false, in which case no lead
-	// is ever resolved — same nil-when-disabled pattern as AIAgent.
+	// HR resolves an overdue item owner's lead (their line manager) for the
+	// overdue lead escalation. Nil when LEAD_ESCALATION_EMAILS_ENABLED is
+	// false, in which case no lead is ever resolved — same nil-when-disabled
+	// pattern as AIAgent.
 	HR *hrentity.Client
 	// TriggerReminderJob runs the daily due-date reminder sweep on demand —
 	// wired in cmd/server/main.go to the reminder job's RunOnce method, kept

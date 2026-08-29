@@ -115,42 +115,131 @@ func TestLoadDefaultTokenValidatorEnabledIgnoresAppEnv(t *testing.T) {
 	}
 }
 
-// The lead escalation mails people outside the audit, so only the two exact
-// spellings may override the built-in default — a typo must leave it alone
-// rather than resolve to "on".
-func TestAuditLeadEscalationOverride(t *testing.T) {
+// Lead-escalation emails reach people outside the risk/audit itself, so only
+// the two exact spellings may override the built-in default — a typo must leave
+// it alone rather than resolve to "on". Replaces AUDIT_LEAD_ESCALATION_ENABLED.
+func TestLeadEscalationEmailsOverride(t *testing.T) {
 	tests := []struct {
 		name string
-		set  bool
-		env  string
+		env  string // always set (possibly to ""), so an ambient value can't leak in
 		want bool
 	}{
-		{"unset uses the code default", false, "", AuditLeadEscalationDefault},
-		{"empty uses the code default", true, "", AuditLeadEscalationDefault},
-		{"true enables", true, "true", true},
-		{"false disables", true, "false", false},
-		{"typo uses the code default", true, "ture", AuditLeadEscalationDefault},
-		{"TRUE is not true", true, "TRUE", AuditLeadEscalationDefault},
-		{"1 is not true", true, "1", AuditLeadEscalationDefault},
+		{"unset/empty uses the code default", "", LeadEscalationEmailsDefault},
+		{"true enables", "true", true},
+		{"false disables", "false", false},
+		{"typo uses the code default", "ture", LeadEscalationEmailsDefault},
+		{"TRUE is not true", "TRUE", LeadEscalationEmailsDefault},
+		{"1 is not true", "1", LeadEscalationEmailsDefault},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.set {
-				t.Setenv("AUDIT_LEAD_ESCALATION_ENABLED", tt.env)
-			}
-			if got := auditLeadEscalationEnabled(); got != tt.want {
-				t.Errorf("auditLeadEscalationEnabled() = %v, want %v", got, tt.want)
+			t.Setenv("LEAD_ESCALATION_EMAILS_ENABLED", tt.env)
+			if got := leadEscalationEmailsEnabled(); got != tt.want {
+				t.Errorf("leadEscalationEmailsEnabled() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
 // Guards the shipped default. Flipping it is a deliberate release decision, so
-// this failing is the reminder to update the docs and staging's override.
-func TestAuditLeadEscalationDefaultIsOff(t *testing.T) {
-	if AuditLeadEscalationDefault {
-		t.Error("lead escalation ships enabled — intended? update docs/audit-lead-escalation.md and set =false in staging")
+// this failing is the reminder to update the docs and each environment's
+// override.
+func TestLeadEscalationEmailsDefaultIsOff(t *testing.T) {
+	if LeadEscalationEmailsDefault {
+		t.Error("lead-escalation emails ship enabled — intended? update the design docs and .env.example")
 	}
+}
+
+// EMAIL_NOTIFICATIONS_ENABLED is the master mute for both modules, so only the
+// two exact spellings override the default; a typo must not silence every
+// notification.
+func TestEmailNotificationsOverride(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string // always set (possibly to ""), so an ambient value can't leak in
+		want bool
+	}{
+		{"unset/empty uses the code default", "", EmailNotificationsDefault},
+		{"true enables", "true", true},
+		{"false disables", "false", false},
+		{"typo uses the code default", "flase", EmailNotificationsDefault},
+		{"FALSE is not false", "FALSE", EmailNotificationsDefault},
+		{"0 is not false", "0", EmailNotificationsDefault},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("EMAIL_NOTIFICATIONS_ENABLED", tt.env)
+			if got := emailNotificationsEnabled(); got != tt.want {
+				t.Errorf("emailNotificationsEnabled() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// Guards the shipped default: email is the platform's only notification
+// channel, so it must be on unless an operator explicitly mutes it.
+func TestEmailNotificationsDefaultIsOn(t *testing.T) {
+	if !EmailNotificationsDefault {
+		t.Error("email notifications ship disabled — intended? no module would send any email")
+	}
+}
+
+// With the master switch off, the five EMAIL_* service vars are relaxed from
+// mustEnv to optional so "run with no email" is a first-class local/CI mode;
+// with it on (the default) they stay required.
+func TestLoadEmailVarsRequiredUnlessDisabled(t *testing.T) {
+	setAuthEnv := func(t *testing.T) {
+		t.Helper()
+		t.Setenv("AUTH_TOKEN_VALIDATOR_ENABLED", "false")
+		t.Setenv("APP_ENV", "local")
+	}
+
+	// Explicitly blank the five EMAIL_* so an ambient value (a dev who ran
+	// `source .env` before `go test`) can't make the "unset" cases pass or
+	// fail for the wrong reason — mustEnv treats "" as missing.
+	clearEmailEnv := func(t *testing.T) {
+		t.Helper()
+		for _, k := range []string{
+			"EMAIL_SERVICE_URL", "EMAIL_FROM_ADDRESS", "EMAIL_CLIENT_ID",
+			"EMAIL_CLIENT_SECRET", "EMAIL_TOKEN_URL",
+		} {
+			t.Setenv(k, "")
+		}
+	}
+
+	t.Run("missing EMAIL_* fails when notifications enabled", func(t *testing.T) {
+		setAuthEnv(t)
+		clearEmailEnv(t)
+		t.Setenv("EMAIL_NOTIFICATIONS_ENABLED", "true") // explicit, not ambient
+		for _, k := range []string{
+			"COMPLIANCE_ENTITY_BASE_URL", "HR_ENTITY_GRAPHQL_URL", "HR_ENTITY_TOKEN_URL",
+			"HR_ENTITY_CLIENT_ID", "HR_ENTITY_CLIENT_SECRET", "FRONTEND_BASE_URL",
+		} {
+			t.Setenv(k, "x")
+		}
+		if _, err := Load(); err == nil {
+			t.Fatal("Load() with EMAIL_* unset and notifications enabled = nil error, want failure")
+		}
+	})
+
+	t.Run("missing EMAIL_* is fine when notifications disabled", func(t *testing.T) {
+		setAuthEnv(t)
+		clearEmailEnv(t)
+		t.Setenv("EMAIL_NOTIFICATIONS_ENABLED", "false")
+		for _, k := range []string{
+			"COMPLIANCE_ENTITY_BASE_URL", "HR_ENTITY_GRAPHQL_URL", "HR_ENTITY_TOKEN_URL",
+			"HR_ENTITY_CLIENT_ID", "HR_ENTITY_CLIENT_SECRET", "FRONTEND_BASE_URL",
+		} {
+			t.Setenv(k, "x")
+		}
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() with EMAIL_* unset and notifications disabled = %v, want success", err)
+		}
+		if cfg.Email.Enabled {
+			t.Error("cfg.Email.Enabled = true, want false")
+		}
+	})
 }
 
 // SCHEDULER_ENABLED is an operational kill-switch, so — like the lead

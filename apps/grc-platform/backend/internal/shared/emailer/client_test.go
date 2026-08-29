@@ -41,7 +41,19 @@ func newTestClient(t *testing.T, sendHandler http.HandlerFunc) *Client {
 	mux.HandleFunc("/send-email", sendHandler)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return New(srv.URL, "noreply@example.com", srv.URL+"/token", "id", "secret")
+	return New(srv.URL, "noreply@example.com", srv.URL+"/token", "id", "secret", true)
+}
+
+// newDisabledClient wires a Client with enabled=false pointed at a server that
+// fails the test if it is ever hit — the master switch must short-circuit every
+// send before any network call.
+func newDisabledClient(t *testing.T) *Client {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Errorf("disabled emailer.Client made an HTTP call")
+	}))
+	t.Cleanup(srv.Close)
+	return New(srv.URL, "noreply@example.com", srv.URL+"/token", "id", "secret", false)
 }
 
 // dropConnection simulates a transport failure — the request never produces a
@@ -133,7 +145,7 @@ func TestEveryRiskEventHasATemplate(t *testing.T) {
 	all := []RiskEvent{
 		EventCreated, EventPendingMgmtApproval, EventComplianceApproved,
 		EventActionPlanCompleted, EventPendingOwnerClosure, EventPendingMgmtClosure,
-		EventRejected, EventEscalated, EventEscalationCommented,
+		EventRejected, EventEscalated, EventEscalationCommented, EventEscalatedLead,
 		EventPendingComplianceReview, EventPendingComplianceClosure, EventClosed,
 	}
 	for _, ev := range all {
@@ -472,5 +484,27 @@ func TestActionRolesMatchesTemplates(t *testing.T) {
 	}
 	if ActionRoles(RiskEvent("NOPE")) != nil {
 		t.Error("unknown event should return no roles")
+	}
+}
+
+// TestDisabledClientSkipsRiskSend verifies the master switch
+// (EMAIL_NOTIFICATIONS_ENABLED=false) short-circuits SendRiskEvent to a nil
+// return before any token fetch or HTTP call. newDisabledClient fails the test
+// if its server is hit.
+func TestDisabledClientSkipsRiskSend(t *testing.T) {
+	c := newDisabledClient(t)
+	if err := c.SendRiskEvent(context.Background(), EventCreated, []string{"a@b.com"},
+		RiskEventInfo{RiskCode: "R-1", RiskTitle: "t"}); err != nil {
+		t.Fatalf("SendRiskEvent on disabled client: want nil, got %v", err)
+	}
+}
+
+// TestDisabledClientSkipsAuditSend is TestDisabledClientSkipsRiskSend for the
+// audit send path.
+func TestDisabledClientSkipsAuditSend(t *testing.T) {
+	c := newDisabledClient(t)
+	if err := c.SendAuditEvent(context.Background(), AuditEventOwnerAssigned, "a@b.com",
+		AuditEventInfo{AuditName: "A"}); err != nil {
+		t.Fatalf("SendAuditEvent on disabled client: want nil, got %v", err)
 	}
 }
