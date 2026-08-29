@@ -273,15 +273,20 @@ func (d *Deps) SendReminderDigestSync(ctx context.Context, ownerUserID int, item
 	}
 
 	// Pick the event constant that best fits the batch's subject line: the
-	// most urgent tier present (overdue > due-in-5 > due-in-10), since an
-	// owner with items across multiple tiers still gets exactly one email.
+	// most urgent tier present (overdue > due-today > due-in-5 > due-in-10),
+	// since an owner with items across multiple tiers still gets exactly one
+	// email.
 	ev := emailer.AuditEventReminderDue10
 	for _, it := range items {
 		switch it.Type {
 		case "REMINDER_OVERDUE":
 			ev = emailer.AuditEventReminderOverdue
-		case "REMINDER_DUE_5":
+		case "REMINDER_DUE_TODAY":
 			if ev != emailer.AuditEventReminderOverdue {
+				ev = emailer.AuditEventReminderDueToday
+			}
+		case "REMINDER_DUE_5":
+			if ev != emailer.AuditEventReminderOverdue && ev != emailer.AuditEventReminderDueToday {
 				ev = emailer.AuditEventReminderDue5
 			}
 		}

@@ -43,6 +43,7 @@ const (
 	AuditEventAuditorAssigned    AuditEvent = "AUDIT_AUDITOR_ASSIGNED"
 	AuditEventReminderDue10      AuditEvent = "AUDIT_REMINDER_DUE_10"
 	AuditEventReminderDue5       AuditEvent = "AUDIT_REMINDER_DUE_5"
+	AuditEventReminderDueToday   AuditEvent = "AUDIT_REMINDER_DUE_TODAY"
 	AuditEventReminderOverdue    AuditEvent = "AUDIT_REMINDER_OVERDUE"
 	AuditEventResubmissionNeeded AuditEvent = "AUDIT_RESUBMISSION_NEEDED"
 	AuditEventSampleSubmitted    AuditEvent = "AUDIT_SAMPLE_SUBMITTED"
@@ -220,6 +221,11 @@ var auditEventTemplates = map[AuditEvent]auditEventTemplate{
 	AuditEventReminderDue5: {
 		subject:    reminderSubject("Due in 5 days"),
 		lead:       "The following item(s) you own are due in 5 days.",
+		actorLabel: "",
+	},
+	AuditEventReminderDueToday: {
+		subject:    reminderSubject("Due today"),
+		lead:       "The following item(s) you own are due today.",
 		actorLabel: "",
 	},
 	AuditEventReminderOverdue: {

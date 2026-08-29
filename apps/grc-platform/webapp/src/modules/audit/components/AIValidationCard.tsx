@@ -86,7 +86,11 @@ const POPULATION_PLACEHOLDER_TEXT =
 export default function AIValidationCard({ auditId, controlId, variant, phase = "evidence" }: AIValidationCardProps): JSX.Element | null {
   const { data: submissions } = useGetEvidence(auditId, controlId, phase === "evidence" && AI_VALIDATION_ENABLED);
   const latestEvidenceId = phase === "evidence" ? (submissions?.[0]?.id ?? null) : null;
-  const { data: validations, isLoading } = useGetAIValidation(AI_VALIDATION_ENABLED ? latestEvidenceId : null);
+  const { data: validations, isLoading } = useGetAIValidation(
+    auditId,
+    controlId,
+    AI_VALIDATION_ENABLED ? latestEvidenceId : null,
+  );
 
   if (!AI_VALIDATION_ENABLED) return null;
 

@@ -22,12 +22,15 @@ import (
 	"github.com/go-sql-driver/mysql"
 )
 
-// isFKViolation reports whether err is a MySQL 1452 foreign-key constraint
-// failure (ER_NO_REFERENCED_ROW_2), which means the parent row referenced by
-// the INSERT does not exist.
+// isFKViolation reports whether err is a MySQL foreign-key constraint failure
+// in either direction: 1452 (ER_NO_REFERENCED_ROW_2) — the parent row an
+// INSERT/UPDATE points at does not exist — or 1451 (ER_ROW_IS_REFERENCED_2) —
+// a DELETE/UPDATE of this row is blocked because a child still references it
+// through an ON DELETE RESTRICT/NO ACTION constraint. Callers map both to a
+// client-facing 4xx rather than a 500.
 func isFKViolation(err error) bool {
 	var myErr *mysql.MySQLError
-	return errors.As(err, &myErr) && myErr.Number == 1452
+	return errors.As(err, &myErr) && (myErr.Number == 1451 || myErr.Number == 1452)
 }
 
 // isDuplicateKey reports whether err is a MySQL 1062 duplicate-entry error

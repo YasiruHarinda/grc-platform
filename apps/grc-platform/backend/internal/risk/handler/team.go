@@ -29,7 +29,7 @@ import (
 // handleListTeams serves GET /api/v1/risks/teams.
 //
 // Gated on ViewRisks OR ManageRiskHub — same shape as the Audit Hub's
-// analogous GET /api/v1/audit/teams (audit/handler/team.go): every Risk Hub
+// analogous GET /api/v1/audits/teams (audit/handler/team.go): every Risk Hub
 // role that has any business here (Assigner/Owner/Compliance/Management, all
 // seeded with RISK_VIEW_RISKS) is let in, and grc-platform-admin
 // (ManageRiskHub only, no ViewRisks) still reaches it for the Admin Console

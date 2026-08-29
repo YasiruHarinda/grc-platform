@@ -10,12 +10,23 @@ import { useTheme } from "@mui/material/styles";
 import Navbar from "./components/Navbar";
 import Sidebar from "./components/Sidebar";
 import Footer from "./components/Footer";
+import AccessDenied from "./components/AccessDenied";
 import Dashboard from "./pages/Dashboard";
 import EvidenceList from "./pages/EvidenceList";
 import SubmitEvidence from "./pages/SubmitEvidence";
 import AgentRunner from "./pages/AgentRunner";
 import Cost from "./pages/Cost";
 import { registerAuth } from "./api/client";
+import { useCurrentUser } from "./hooks/useCurrentUser";
+
+function CostRoute() {
+  const { isAdmin, isLoaded } = useCurrentUser();
+  // Wait for the first /me roundtrip before deciding: bouncing an admin off
+  // their own page during that first round trip would be worse than the one
+  // extra render this costs everyone else.
+  if (!isLoaded) return null;
+  return isAdmin ? <Cost /> : <Navigate to="/" replace />;
+}
 
 function AppRoutes() {
   const theme = useTheme();
@@ -53,7 +64,7 @@ function AppRoutes() {
                 <Route path="/submit" element={<SubmitEvidence />} />
                 <Route path="/history" element={<Navigate to="/evidence" replace />} />
                 <Route path="/agent" element={<AgentRunner />} />
-                <Route path="/cost" element={<Cost />} />
+                <Route path="/cost" element={<CostRoute />} />
               </Routes>
             </Box>
             <Footer />
@@ -111,6 +122,34 @@ export default function App() {
         </Button>
       </Box>
     );
+  }
+
+  return <Gate />;
+}
+
+// Separate from App's own body on purpose. App registers the auth token in
+// the useEffect above, and effects run after the first render - a /api/me
+// call started from App's own body could race that registration and go out
+// with no Authorization header, with the outcome depending on hook
+// declaration order. Rendering this where <AppRoutes /> used to sit keeps it
+// after the tokenReady guard, same as every page already gets its token.
+function Gate() {
+  const { isLoaded, isForbidden, forbiddenMessage } = useCurrentUser();
+
+  if (!isLoaded) {
+    return (
+      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh" }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  // Only a 403 blocks. A 500, a timeout, a dead backend or a 401 all fall
+  // through to <AppRoutes />, which shows its own per-page errors - telling
+  // someone they have no access when the server is merely down would send
+  // them to an administrator for nothing.
+  if (isForbidden) {
+    return <AccessDenied message={forbiddenMessage} />;
   }
 
   return <AppRoutes />;

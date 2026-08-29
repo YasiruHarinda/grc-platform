@@ -27,7 +27,7 @@ export function useGetDashboard() {
   return useQuery({
     queryKey: AUDIT_DASHBOARD_QUERY_KEY,
     queryFn: async (): Promise<DashboardData> => {
-      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audit/dashboard`);
+      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audits/dashboard`);
       if (!res.ok) throw new Error(`Failed to load dashboard (${res.status})`);
       return res.json() as Promise<DashboardData>;
     },

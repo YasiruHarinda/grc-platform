@@ -46,6 +46,19 @@ class Settings(BaseSettings):
     # comfortably under Postgres's own max_connections.
     DB_POOL_SIZE: int = 30
 
+    # Optional schema for the app to create and own, instead of using the
+    # database's default "public" schema. Postgres 15+ only lets a schema's
+    # owner create objects in it, so on a server where the app user does not
+    # own "public" (Azure Database for PostgreSQL is one — it hands "public"
+    # to its own admin role), migrations fail with a permission error before
+    # a single table exists. Setting this gives the app a schema of its own
+    # to create, which it therefore owns outright, with no administrator
+    # needed. See alembic/env.py for where this is applied.
+    #
+    # Left unset, nothing changes: tables land in "public" exactly as they do
+    # today. Neon, local development and the test suite all leave this unset.
+    DB_SCHEMA: str | None = None
+
     @model_validator(mode="after")
     def _client_ids_must_be_set_and_distinct(self):
         """Refuse to start unless the two client IDs are present and differ.

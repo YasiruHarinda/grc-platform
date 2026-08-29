@@ -27,8 +27,10 @@ package job
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"runtime/debug"
+	"sync/atomic"
 	"time"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
@@ -68,6 +70,15 @@ type EscalationJob struct {
 	// dependency so this package doesn't import the handler package (which
 	// imports services, and would cycle).
 	notify func(ctx context.Context, riskID int, by string) error
+	// running serializes RunOnce against itself: the scheduler's daily tick
+	// (internal/scheduler) and the manual-trigger endpoint
+	// (handler.escalationJobHandler.run) both call RunOnce on this same
+	// instance. Without this, a manual trigger landing on the daily tick runs
+	// two overlapping sweeps — both list overdue risks and fire Escalate
+	// calls; the entity's atomic status guard stops the double mutation, but
+	// the loser still does the wasted work and logs every already-handled risk
+	// as a failure. Mirrors internal/audit/job.ReminderJob.running.
+	running atomic.Bool
 }
 
 // escalatedBy is recorded as created_by on job-driven escalations, to
@@ -85,10 +96,16 @@ func NewEscalationJob(
 }
 
 // RunOnce performs one escalation sweep synchronously, then returns. It is the
-// entry point the scheduler (internal/scheduler) calls on its daily tick. The
-// sweep logs its own outcome and has no hard-failure path, so the error result
-// is always nil and exists only to satisfy the scheduler's Sweep signature.
+// entry point both the scheduler (internal/scheduler) and the manual-trigger
+// endpoint (POST /api/v1/risks/escalations/run) call. A second call while a
+// sweep is already in flight is refused rather than run concurrently — see
+// EscalationJob.running. The sweep itself logs its per-risk outcome; the only
+// error RunOnce ever returns is that contention signal.
 func (j *EscalationJob) RunOnce(ctx context.Context) error {
+	if !j.running.CompareAndSwap(false, true) {
+		return errors.New("escalation job: a sweep is already running")
+	}
+	defer j.running.Store(false)
 	j.runOnce(ctx)
 	return nil
 }
@@ -97,9 +114,9 @@ func (j *EscalationJob) RunOnce(ctx context.Context) error {
 // one risk is logged and does not stop the rest — a transient error on one row
 // shouldn't block the batch, and the next run picks up anything still overdue.
 func (j *EscalationJob) runOnce(parent context.Context) {
-	// This executes in a bare goroutine (see Start), where an unrecovered panic
-	// would take the whole process down. Recover so a bad run is logged with
-	// its stack and the ticker keeps scheduling future runs.
+	// This can execute in a bare goroutine (the scheduler runs each sweep in
+	// its own), where an unrecovered panic would take the whole process down.
+	// Recover so a bad run is logged with its stack and future runs still fire.
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("escalation job: recovered from panic", "panic", r, "stack", string(debug.Stack()))

@@ -19,6 +19,9 @@
 --   audit_trail              — immutable event log for an audit
 --   audit_notification       — send-log for every audit-module email (also the
 --                              reminder job's de-dup mechanism)
+--
+-- Target structure only, no migrations. Schema changes are rolled out to
+-- existing databases out of band; this file just carries the finished shape.
 -- =============================================================================
 
 USE grc_platform;
@@ -217,44 +220,6 @@ CREATE TABLE IF NOT EXISTS audit_control (
   CONSTRAINT fk_control_auditor FOREIGN KEY (auditor_id)           REFERENCES `user`(id)                  ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Backfill the status-override columns onto an audit_control table created
--- before this feature existed. Deliberately not `ADD COLUMN IF NOT EXISTS`:
--- that syntax needs MySQL 8.0.29+, and nothing in this repo pins a MySQL
--- patch version — the information_schema guard below is portable to any
--- MySQL 8, matching the pattern in shared.sql's role table migration.
-SET @control_has_status_overridden = (
-  SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_control' AND COLUMN_NAME = 'status_overridden'
-);
-SET @add_status_overridden_sql = IF(@control_has_status_overridden = 0,
-  'ALTER TABLE audit_control ADD COLUMN status_overridden BOOLEAN NOT NULL DEFAULT FALSE AFTER control_source',
-  'SELECT 1');
-PREPARE add_status_overridden_stmt FROM @add_status_overridden_sql;
-EXECUTE add_status_overridden_stmt;
-DEALLOCATE PREPARE add_status_overridden_stmt;
-
-SET @control_has_overridden_by = (
-  SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_control' AND COLUMN_NAME = 'overridden_by'
-);
-SET @add_overridden_by_sql = IF(@control_has_overridden_by = 0,
-  'ALTER TABLE audit_control ADD COLUMN overridden_by VARCHAR(255) NULL AFTER status_overridden',
-  'SELECT 1');
-PREPARE add_overridden_by_stmt FROM @add_overridden_by_sql;
-EXECUTE add_overridden_by_stmt;
-DEALLOCATE PREPARE add_overridden_by_stmt;
-
-SET @control_has_overridden_at = (
-  SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_control' AND COLUMN_NAME = 'overridden_at'
-);
-SET @add_overridden_at_sql = IF(@control_has_overridden_at = 0,
-  'ALTER TABLE audit_control ADD COLUMN overridden_at DATETIME NULL AFTER overridden_by',
-  'SELECT 1');
-PREPARE add_overridden_at_stmt FROM @add_overridden_at_sql;
-EXECUTE add_overridden_at_stmt;
-DEALLOCATE PREPARE add_overridden_at_stmt;
-
 -- =============================================================================
 -- audit_population  (OE-type control population phase record)
 --
@@ -290,21 +255,6 @@ CREATE TABLE IF NOT EXISTS audit_population (
   CONSTRAINT fk_pop_team    FOREIGN KEY (team_id)    REFERENCES audit_team(id)    ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Backfill the attestation column onto an audit_population table created
--- before fileless population completion existed (see audit_control's
--- status-override backfill above for why an information_schema guard instead
--- of `ADD COLUMN IF NOT EXISTS`).
-SET @pop_has_attestation = (
-  SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_population' AND COLUMN_NAME = 'attestation'
-);
-SET @add_pop_attestation_sql = IF(@pop_has_attestation = 0,
-  'ALTER TABLE audit_population ADD COLUMN attestation TEXT NULL COMMENT ''Written note standing in for population files'' AFTER comments',
-  'SELECT 1');
-PREPARE add_pop_attestation_stmt FROM @add_pop_attestation_sql;
-EXECUTE add_pop_attestation_stmt;
-DEALLOCATE PREPARE add_pop_attestation_stmt;
-
 -- =============================================================================
 -- audit_evidence  (evidence submission for a control)
 --
@@ -337,34 +287,6 @@ CREATE TABLE IF NOT EXISTS audit_evidence (
   CONSTRAINT fk_evidence_reused    FOREIGN KEY (reused_from_evidence_id) REFERENCES audit_evidence(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Backfill the attestation column onto an audit_evidence table created before
--- fileless evidence completion existed (see audit_control's status-override
--- backfill above for why an information_schema guard instead of
--- `ADD COLUMN IF NOT EXISTS`).
-SET @evidence_has_attestation = (
-  SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_evidence' AND COLUMN_NAME = 'attestation'
-);
-SET @add_evidence_attestation_sql = IF(@evidence_has_attestation = 0,
-  'ALTER TABLE audit_evidence ADD COLUMN attestation TEXT NULL COMMENT ''Written justification for a round with no files'' AFTER folder_path',
-  'SELECT 1');
-PREPARE add_evidence_attestation_stmt FROM @add_evidence_attestation_sql;
-EXECUTE add_evidence_attestation_stmt;
-DEALLOCATE PREPARE add_evidence_attestation_stmt;
-
--- submitted_by/fk_evidence_submitter were dropped from the CREATE TABLE above;
--- this drops them from a database that still has them.
-SET @evidence_has_submitted_by = (
-  SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_evidence' AND COLUMN_NAME = 'submitted_by'
-);
-SET @drop_evidence_submitted_by_sql = IF(@evidence_has_submitted_by > 0,
-  'ALTER TABLE audit_evidence DROP FOREIGN KEY fk_evidence_submitter, DROP COLUMN submitted_by',
-  'SELECT 1');
-PREPARE drop_evidence_submitted_by_stmt FROM @drop_evidence_submitted_by_sql;
-EXECUTE drop_evidence_submitted_by_stmt;
-DEALLOCATE PREPARE drop_evidence_submitted_by_stmt;
-
 -- =============================================================================
 -- audit_evidence_file  (files attached to evidence or population)
 --
@@ -393,19 +315,6 @@ CREATE TABLE IF NOT EXISTS audit_evidence_file (
   CONSTRAINT chk_file_owner CHECK ((evidence_id IS NOT NULL) <> (population_id IS NOT NULL)),
   CONSTRAINT chk_file_kind  CHECK ((population_id IS NULL) = (file_kind IS NULL))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- uploaded_by/fk_file_uploader were dropped from the CREATE TABLE above; this
--- drops them from a database that still has them.
-SET @file_has_uploaded_by = (
-  SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_evidence_file' AND COLUMN_NAME = 'uploaded_by'
-);
-SET @drop_file_uploaded_by_sql = IF(@file_has_uploaded_by > 0,
-  'ALTER TABLE audit_evidence_file DROP FOREIGN KEY fk_file_uploader, DROP COLUMN uploaded_by',
-  'SELECT 1');
-PREPARE drop_file_uploaded_by_stmt FROM @drop_file_uploaded_by_sql;
-EXECUTE drop_file_uploaded_by_stmt;
-DEALLOCATE PREPARE drop_file_uploaded_by_stmt;
 
 -- =============================================================================
 -- audit_comment  (threaded comments on a control — one thread per control,
@@ -484,31 +393,13 @@ CREATE TABLE IF NOT EXISTS audit_trail (
   CONSTRAINT fk_trail_evidence FOREIGN KEY (evidence_id) REFERENCES audit_evidence(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Backfill the OVERRIDDEN action value onto an audit_trail table created
--- before status override existed (see audit_control's status-override
--- backfill above for why an information_schema guard instead of a bare
--- MODIFY COLUMN — this keeps the migration idempotent and avoids rewriting
--- the column on every deploy once it's already current).
-SET @trail_has_overridden_action = (
-  SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_trail' AND COLUMN_NAME = 'action'
-    AND COLUMN_TYPE LIKE '%''OVERRIDDEN''%'
-);
-SET @add_trail_overridden_sql = IF(@trail_has_overridden_action = 0,
-  'ALTER TABLE audit_trail MODIFY COLUMN action ENUM(''CREATED'',''UPLOADED'',''RESUBMITTED'',''APPROVED'',''REJECTED'',
-  ''COMMENTED'',''ESCALATED'',''AI_VALIDATED'',''EXPORTED'',''UPDATED'',''DELETED'',''OVERRIDDEN'') NOT NULL',
-  'SELECT 1');
-PREPARE add_trail_overridden_stmt FROM @add_trail_overridden_sql;
-EXECUTE add_trail_overridden_stmt;
-DEALLOCATE PREPARE add_trail_overridden_stmt;
-
 -- =============================================================================
 -- audit_notification  (universal send-log for every audit-module email)
 --
 -- One row per email actually sent (not per event-trigger — a triggered event
 -- with zero deliverable recipients, or that fails to send, writes no row).
 -- Also the de-dup mechanism for the daily reminder job (REMINDER_DUE_10 /
--- REMINDER_DUE_5 / REMINDER_OVERDUE): the job atomically CLAIMS an item by
+-- REMINDER_DUE_5 / REMINDER_DUE_TODAY / REMINDER_OVERDUE): the job atomically CLAIMS an item by
 -- inserting its row *before* sending — the insert's success or failure IS the
 -- de-dup decision — rather than checking-then-writing, which left a window
 -- for two overlapping runs (e.g. two backend replicas both waking at the
@@ -522,9 +413,9 @@ DEALLOCATE PREPARE add_trail_overridden_stmt;
 -- nullable columns, and MySQL's unique-index NULL semantics (NULL never
 -- equals NULL) mean two rows that are both, say, control_id=NULL would never
 -- collide. reminder_dedup_key sidesteps this by being a generated, non-NULL
--- string ONLY for the three REMINDER_* types (COALESCE folds whichever of
+-- string ONLY for the four REMINDER_* types (COALESCE folds whichever of
 -- control_id/population_id is unset into '', so the two can't collide with
--- each other); for the other five notification types it's NULL, and MySQL's
+-- each other); for the other twelve notification types it's NULL, and MySQL's
 -- unique index — unlike NULL-safe equality — ignores NULL for uniqueness, so
 -- uq_notif_reminder_dedup imposes no constraint on them at all.
 --
@@ -555,6 +446,7 @@ CREATE TABLE IF NOT EXISTS audit_notification (
                          'AUDITOR_ASSIGNED_CONTROL',
                          'REMINDER_DUE_10',
                          'REMINDER_DUE_5',
+                         'REMINDER_DUE_TODAY',
                          'REMINDER_OVERDUE',
                          'RESUBMISSION_NEEDED',
                          'SAMPLE_SUBMITTED',
@@ -572,7 +464,7 @@ CREATE TABLE IF NOT EXISTS audit_notification (
   created_at         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by         VARCHAR(255) NULL,
   reminder_dedup_key VARCHAR(64) GENERATED ALWAYS AS (
-                         CASE WHEN type IN ('REMINDER_DUE_10', 'REMINDER_DUE_5', 'REMINDER_OVERDUE')
+                         CASE WHEN type IN ('REMINDER_DUE_10', 'REMINDER_DUE_5', 'REMINDER_DUE_TODAY', 'REMINDER_OVERDUE')
                            THEN CONCAT_WS('|',
                                   recipient_id, type,
                                   COALESCE(control_id, ''), COALESCE(population_id, ''),
@@ -585,69 +477,8 @@ CREATE TABLE IF NOT EXISTS audit_notification (
   UNIQUE KEY uq_notif_reminder_dedup (reminder_dedup_key),
   CONSTRAINT fk_notif_recipient  FOREIGN KEY (recipient_id)  REFERENCES `user`(id)           ON DELETE RESTRICT,
   CONSTRAINT fk_notif_audit      FOREIGN KEY (audit_id)      REFERENCES audit(id)            ON DELETE SET NULL,
-  CONSTRAINT fk_notif_control    FOREIGN KEY (control_id)    REFERENCES audit_control(id)    ON DELETE SET NULL,
-  CONSTRAINT fk_notif_population FOREIGN KEY (population_id) REFERENCES audit_population(id) ON DELETE SET NULL
+  CONSTRAINT fk_notif_control    FOREIGN KEY (control_id)    REFERENCES audit_control(id)    ON DELETE RESTRICT,
+  CONSTRAINT fk_notif_population FOREIGN KEY (population_id) REFERENCES audit_population(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Backfill the seven status-reached/comment-added type values onto an
--- audit_notification table created before notifyControlStatusReached and
--- notifyCommentAdded existed (handler/notify.go) — same information_schema-guard
--- pattern as audit_trail's OVERRIDDEN backfill above. Without this, every log
--- write for those seven types fails against an ENUM that doesn't contain them.
-SET @notif_has_comment_added_type = (
-  SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_notification' AND COLUMN_NAME = 'type'
-    AND COLUMN_TYPE LIKE '%''COMMENT_ADDED''%'
-);
-SET @add_notif_status_types_sql = IF(@notif_has_comment_added_type = 0,
-  'ALTER TABLE audit_notification MODIFY COLUMN type ENUM(
-     ''OWNER_ASSIGNED_CONTROL'',
-     ''OWNER_ASSIGNED_POPULATION'',
-     ''AUDITOR_ASSIGNED_CONTROL'',
-     ''REMINDER_DUE_10'',
-     ''REMINDER_DUE_5'',
-     ''REMINDER_OVERDUE'',
-     ''RESUBMISSION_NEEDED'',
-     ''SAMPLE_SUBMITTED'',
-     ''EVIDENCE_INTERNAL_REVIEW'',
-     ''POPULATION_INTERNAL_REVIEW'',
-     ''EVIDENCE_UNDER_VALIDATION'',
-     ''POPULATION_UNDER_VALIDATION'',
-     ''POPULATION_COMPLETE_SAMPLE_NEEDED'',
-     ''CONTROL_COMPLETE'',
-     ''COMMENT_ADDED''
-   ) NOT NULL',
-  'SELECT 1');
-PREPARE add_notif_status_types_stmt FROM @add_notif_status_types_sql;
-EXECUTE add_notif_status_types_stmt;
-DEALLOCATE PREPARE add_notif_status_types_stmt;
-
--- Backfill reminder_dedup_key (+ its unique index) onto an audit_notification
--- table created before the atomic-claim de-dup mechanism existed — same
--- information_schema-guard pattern as the status-override columns above.
--- Column and index are added together: nothing in this schema ever adds one
--- without the other, so a single guard on the column's existence is enough.
-SET @notif_has_dedup_key = (
-  SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_notification' AND COLUMN_NAME = 'reminder_dedup_key'
-);
-SET @add_notif_dedup_key_sql = IF(@notif_has_dedup_key = 0,
-  'ALTER TABLE audit_notification
-     ADD COLUMN reminder_dedup_key VARCHAR(64) GENERATED ALWAYS AS (
-       CASE WHEN type IN (''REMINDER_DUE_10'', ''REMINDER_DUE_5'', ''REMINDER_OVERDUE'')
-         THEN CONCAT_WS(''|'',
-                recipient_id, type,
-                COALESCE(control_id, ''''), COALESCE(population_id, ''''),
-                due_date_snapshot)
-         ELSE NULL
-       END
-     ) VIRTUAL AFTER created_by,
-     ADD UNIQUE KEY uq_notif_reminder_dedup (reminder_dedup_key)',
-  'SELECT 1');
-PREPARE add_notif_dedup_key_stmt FROM @add_notif_dedup_key_sql;
-EXECUTE add_notif_dedup_key_stmt;
-DEALLOCATE PREPARE add_notif_dedup_key_stmt;
-
 SET FOREIGN_KEY_CHECKS = 1;
-
-

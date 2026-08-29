@@ -35,19 +35,20 @@ func postToEscalationRun(t *testing.T, h *escalationJobHandler, grants map[strin
 	return rr
 }
 
-// Without RISK_ESCALATE the sweep must not be reachable, and the trigger must
-// never be called.
-func TestEscalationJobRun_RequiresEscalatePrivilege(t *testing.T) {
+// The bulk sweep spans every register, so RISK_ESCALATE alone — even held
+// widely — must not reach it; only the GLOBAL-only MANAGE_RISK_HUB does. The
+// trigger must never be called on a 403.
+func TestEscalationJobRun_RequiresManageRiskHub(t *testing.T) {
 	called := false
 	h := &escalationJobHandler{trigger: func(context.Context) error { called = true; return nil }}
 
-	rr := postToEscalationRun(t, h, map[string]bool{privilege.ViewRisks: true})
+	rr := postToEscalationRun(t, h, map[string]bool{privilege.EscalateRisk: true})
 
 	if rr.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403", rr.Code)
+		t.Fatalf("status = %d, want 403 — RISK_ESCALATE must not be enough for the hub-wide sweep", rr.Code)
 	}
 	if called {
-		t.Error("trigger was called despite the caller lacking RISK_ESCALATE")
+		t.Error("trigger was called despite the caller lacking MANAGE_RISK_HUB")
 	}
 }
 
@@ -55,7 +56,7 @@ func TestEscalationJobRun_RequiresEscalatePrivilege(t *testing.T) {
 func TestEscalationJobRun_NotConfigured(t *testing.T) {
 	h := &escalationJobHandler{trigger: nil}
 
-	rr := postToEscalationRun(t, h, map[string]bool{privilege.EscalateRisk: true})
+	rr := postToEscalationRun(t, h, map[string]bool{privilege.ManageRiskHub: true})
 
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", rr.Code)
@@ -67,7 +68,7 @@ func TestEscalationJobRun_Accepts202AndRunsSweep(t *testing.T) {
 	ran := make(chan struct{}, 1)
 	h := &escalationJobHandler{trigger: func(context.Context) error { ran <- struct{}{}; return nil }}
 
-	rr := postToEscalationRun(t, h, map[string]bool{privilege.EscalateRisk: true})
+	rr := postToEscalationRun(t, h, map[string]bool{privilege.ManageRiskHub: true})
 
 	if rr.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202", rr.Code)
@@ -90,13 +91,13 @@ func TestEscalationJobRun_ConflictWhileRunning(t *testing.T) {
 		return nil
 	}}
 
-	first := postToEscalationRun(t, h, map[string]bool{privilege.EscalateRisk: true})
+	first := postToEscalationRun(t, h, map[string]bool{privilege.ManageRiskHub: true})
 	if first.Code != http.StatusAccepted {
 		t.Fatalf("first call status = %d, want 202", first.Code)
 	}
 	<-started // the sweep goroutine is now inside trigger, holding running
 
-	second := postToEscalationRun(t, h, map[string]bool{privilege.EscalateRisk: true})
+	second := postToEscalationRun(t, h, map[string]bool{privilege.ManageRiskHub: true})
 	if second.Code != http.StatusConflict {
 		t.Fatalf("second call status = %d, want 409", second.Code)
 	}

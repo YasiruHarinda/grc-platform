@@ -29,13 +29,13 @@ type AuditFramework struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// CreateFrameworkRequest is the payload for POST /api/v1/audit/frameworks.
+// CreateFrameworkRequest is the payload for POST /api/v1/audits/frameworks.
 type CreateFrameworkRequest struct {
 	Name    string  `json:"name"`
 	Version *string `json:"version"`
 }
 
-// CreateProductRequest is the payload for POST /api/v1/audit/products.
+// CreateProductRequest is the payload for POST /api/v1/audits/products.
 type CreateProductRequest struct {
 	Name string `json:"name"`
 }

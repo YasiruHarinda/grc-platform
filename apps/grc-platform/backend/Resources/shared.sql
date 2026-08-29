@@ -49,6 +49,14 @@
 --   mysql -u <user> -p < risk_schema.sql
 --
 -- Seed data lives outside this directory and is applied afterwards.
+--
+-- This file defines the CURRENT table structure only. It carries no
+-- conditional `ALTER TABLE` / `information_schema`-guarded backfills for
+-- legacy columns (e.g. the old user.email / display_name migration): every
+-- database this runs against has already been migrated to the shape below,
+-- so none is needed. `CREATE TABLE IF NOT EXISTS` keeps a re-run against an
+-- up-to-date database a safe no-op. Ship any future migration for an
+-- existing database as a separate step, not inline here.
 -- =============================================================================
 
 USE grc_platform;
@@ -89,61 +97,8 @@ CREATE TABLE IF NOT EXISTS `user` (
 
 -- uuid is the Asgardeo `sub` claim, and this table's only identity: a
 -- security review required that the platform stop storing user emails and
--- display names, and the Audit Hub module (the last consumer still reading
--- email/display_name directly) has since been converted to resolve both
--- through the identity directory instead. No real user rows existed at the
--- time of that conversion, so no backfill was needed and the column drop
--- below lands in the same push, not staged.
---
--- Guarded the same way as role.module/scope_basis below, so re-running this
--- file against an existing database is a no-op past the first run.
-SET @user_has_uuid = (
-  SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user' AND COLUMN_NAME = 'uuid'
-);
-SET @add_uuid_sql = IF(@user_has_uuid = 0,
-  'ALTER TABLE `user` ADD COLUMN uuid CHAR(36) NULL AFTER id, ADD UNIQUE KEY uq_user_uuid (uuid)',
-  'SELECT 1');
-PREPARE add_uuid_stmt FROM @add_uuid_sql;
-EXECUTE add_uuid_stmt;
-DEALLOCATE PREPARE add_uuid_stmt;
-
--- email becomes NULLable: "Add User" provisions a user by uuid alone, and
--- uq_user_email can't take a second "" once one uuid-only row has it.
--- display_name stays NOT NULL — it already gets "" from every caller
--- migrating off it, so no schema change is needed there.
---
--- Guarded on email existing AND still NOT NULL — a fresh database has no
--- email column at all, and running MODIFY COLUMN against a column that
--- doesn't exist errors out rather than no-opping.
-SET @user_email_not_nullable = (
-  SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user' AND COLUMN_NAME = 'email' AND IS_NULLABLE = 'NO'
-);
-SET @make_email_nullable_sql = IF(@user_email_not_nullable > 0,
-  'ALTER TABLE `user` MODIFY COLUMN email VARCHAR(255) NULL',
-  'SELECT 1');
-PREPARE make_email_nullable_stmt FROM @make_email_nullable_sql;
-EXECUTE make_email_nullable_stmt;
-DEALLOCATE PREPARE make_email_nullable_stmt;
-
--- Then drops email/display_name and tightens uuid to NOT NULL, taking a
--- database in either the pre-nullable shape above or the just-staged
--- nullable-email shape the rest of the way to the final one this file's
--- CREATE TABLE now produces on a fresh database. Guarded on email's
--- existence, so it's a no-op once already applied. `uq_user_email` is
--- dropped first: MySQL refuses to drop a column a unique key still
--- references.
-SET @user_has_email = (
-  SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user' AND COLUMN_NAME = 'email'
-);
-SET @drop_email_sql = IF(@user_has_email > 0,
-  'ALTER TABLE `user` DROP INDEX uq_user_email, DROP COLUMN email, DROP COLUMN display_name, MODIFY COLUMN uuid CHAR(36) NOT NULL',
-  'SELECT 1');
-PREPARE drop_email_stmt FROM @drop_email_sql;
-EXECUTE drop_email_stmt;
-DEALLOCATE PREPARE drop_email_stmt;
+-- display names. The Audit Hub module resolves both through the identity
+-- directory instead.
 
 
 -- -----------------------------------------------------------------------------
@@ -201,66 +156,6 @@ CREATE TABLE IF NOT EXISTS `role` (
   PRIMARY KEY (id),
   UNIQUE KEY uq_role_name (role_name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- Evolution guard for `role` — module and scope_basis are new columns on a
--- table that pre-dates them. On a FRESH database the CREATE TABLE above already
--- creates both, so this is a no-op there. On an EXISTING database (staging,
--- production), CREATE TABLE IF NOT EXISTS silently does nothing when `role`
--- already exists, and without this block the two columns would never appear —
--- not as NULL, but genuinely MISSING, which fails every query the moment the
--- new backend queries them (GetRoleByID, ListRoles, grantSelect).
---
--- Deliberately not `ADD COLUMN IF NOT EXISTS`: that syntax needs MySQL
--- 8.0.29+, and nothing in this repo pins a MySQL patch version. The
--- information_schema guard below is portable to any MySQL 8.
---
--- module gets a DEFAULT so existing rows backfill immediately rather than
--- failing the NOT NULL constraint; shared_seed_data.sql's role INSERT (ON
--- DUPLICATE KEY UPDATE module = VALUES(module)) corrects it to the real value
--- for every seeded role right after this runs. scope_basis is nullable by
--- design (NULL means GLOBAL-only) and needs no default for the same reason.
-SET @role_has_module = (
-  SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'role' AND COLUMN_NAME = 'module'
-);
-SET @add_module_sql = IF(@role_has_module = 0,
-  'ALTER TABLE `role` ADD COLUMN module ENUM(''RISK'',''AUDIT'',''SHARED'') NOT NULL DEFAULT ''RISK'' AFTER description',
-  'SELECT 1');
-PREPARE add_module_stmt FROM @add_module_sql;
-EXECUTE add_module_stmt;
-DEALLOCATE PREPARE add_module_stmt;
-
-SET @role_has_scope_basis = (
-  SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'role' AND COLUMN_NAME = 'scope_basis'
-);
-SET @add_scope_basis_sql = IF(@role_has_scope_basis = 0,
-  'ALTER TABLE `role` ADD COLUMN scope_basis ENUM(''SOURCE_REGISTER'',''ASSIGNMENT_TEAM'') NULL '
-  'COMMENT ''Which risk column a grant on this role scopes by; NULL for GLOBAL-only roles. See table comment'' '
-  'AFTER module',
-  'SELECT 1');
-PREPARE add_scope_basis_stmt FROM @add_scope_basis_sql;
-EXECUTE add_scope_basis_stmt;
-DEALLOCATE PREPARE add_scope_basis_stmt;
-
--- assignable_user_type gets a DEFAULT ('INTERNAL') so existing rows backfill
--- immediately — every pre-existing role is in fact INTERNAL-only today, so
--- the default is also the correct final value for all of them except
--- grc-platform-audit-external-auditor, which shared_seed_data.sql's role
--- INSERT (ON DUPLICATE KEY UPDATE assignable_user_type = VALUES(...))
--- corrects to EXTERNAL right after this runs.
-SET @role_has_assignable_user_type = (
-  SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'role' AND COLUMN_NAME = 'assignable_user_type'
-);
-SET @add_assignable_user_type_sql = IF(@role_has_assignable_user_type = 0,
-  'ALTER TABLE `role` ADD COLUMN assignable_user_type ENUM(''INTERNAL'',''EXTERNAL'') NOT NULL DEFAULT ''INTERNAL'' '
-  'COMMENT ''Which kind of person this role may be granted to. See table comment'' '
-  'AFTER scope_basis',
-  'SELECT 1');
-PREPARE add_assignable_user_type_stmt FROM @add_assignable_user_type_sql;
-EXECUTE add_assignable_user_type_stmt;
-DEALLOCATE PREPARE add_assignable_user_type_stmt;
 
 
 -- -----------------------------------------------------------------------------

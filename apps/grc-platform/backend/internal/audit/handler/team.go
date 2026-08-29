@@ -32,7 +32,7 @@ type teamHandler struct {
 	svc service.TeamService
 }
 
-// listTeams handles GET /api/v1/audit/teams.
+// listTeams handles GET /api/v1/audits/teams.
 //
 // Gated on ViewAudits OR ManageAuditHub: every audit user needs this for the
 // dropdown, and grc-platform-admin (ManageAuditHub only, no ViewAudits) needs
@@ -69,7 +69,7 @@ func (h *teamHandler) listTeams(w http.ResponseWriter, r *http.Request) {
 	response.WriteJSONValue(w, http.StatusOK, teams)
 }
 
-// createTeam handles POST /api/v1/audit/teams — the Manage Audit Hub "Add
+// createTeam handles POST /api/v1/audits/teams — the Manage Audit Hub "Add
 // Team" dialog. Gated on ManageAuditHub, not ManageUsers: reference-data
 // management, a separate authorisation boundary from user provisioning, same
 // precedent as Risk Teams' MANAGE_RISK_HUB gate.
@@ -107,7 +107,7 @@ func (h *teamHandler) createTeam(w http.ResponseWriter, r *http.Request) {
 	response.WriteJSONValue(w, http.StatusCreated, t)
 }
 
-// updateTeam handles PUT /api/v1/audit/teams/{id}.
+// updateTeam handles PUT /api/v1/audits/teams/{id}.
 func (h *teamHandler) updateTeam(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageAuditHub) {
 		return

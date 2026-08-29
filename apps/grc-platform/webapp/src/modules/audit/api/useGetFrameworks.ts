@@ -27,7 +27,7 @@ export function useGetFrameworks() {
   return useQuery({
     queryKey: FRAMEWORKS_QUERY_KEY,
     queryFn: async (): Promise<AuditFramework[]> => {
-      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audit/frameworks`);
+      const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/audits/frameworks`);
       if (!res.ok) throw new Error(`Failed to load frameworks (${res.status})`);
       return res.json() as Promise<AuditFramework[]>;
     },

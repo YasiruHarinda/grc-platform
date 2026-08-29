@@ -56,7 +56,11 @@ def _find_control_id_fk_name(conn) -> str:
           ON ccu.constraint_name = tc.constraint_name
          AND ccu.constraint_schema = tc.constraint_schema
         WHERE tc.constraint_type = 'FOREIGN KEY'
-          AND tc.table_schema = 'public'
+          -- current_schema() rather than a hardcoded 'public': it is
+          -- whatever schema an unqualified table name resolves to right
+          -- now, which is exactly what this lookup needs, and it is
+          -- 'public' unless DB_SCHEMA (see app/config.py) says otherwise.
+          AND tc.table_schema = current_schema()
           AND tc.table_name = 'agent_tasks'
           AND kcu.column_name = 'control_id'
           AND ccu.table_name = 'controls'

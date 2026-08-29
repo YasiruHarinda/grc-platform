@@ -15,7 +15,7 @@
 // under the License.
 
 /**
- * User returned by GET /api/v1/audit/users.
+ * User returned by GET /api/v1/audits/users.
  * Currently sourced from the MySQL `user` table.
  * When Asgardeo SCIM2 is integrated, `asgardeoId: string` will be added alongside.
  */

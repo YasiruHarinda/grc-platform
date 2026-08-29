@@ -39,7 +39,7 @@ func TestReminderTierBoundaries(t *testing.T) {
 		{"9 days out — no tier", "2026-03-14", ""},
 		{"11 days out — no tier", "2026-03-16", ""},
 		{"exactly 5 days out", "2026-03-10", "REMINDER_DUE_5"},
-		{"due today — no tier", "2026-03-05", ""},
+		{"due today", "2026-03-05", "REMINDER_DUE_TODAY"},
 		{"1 day overdue", "2026-03-04", "REMINDER_OVERDUE"},
 		{"far overdue", "2026-01-01", "REMINDER_OVERDUE"},
 		{"unparseable date", "not-a-date", ""},

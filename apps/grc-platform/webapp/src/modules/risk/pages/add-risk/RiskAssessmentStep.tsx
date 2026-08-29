@@ -31,6 +31,7 @@ import { Info } from "@wso2/oxygen-ui-icons-react";
 import type { JSX, ReactNode } from "react";
 import type { AddRiskFormValues, ImpactLevel, LikelihoodLevel } from "./types";
 import type { RiskScore } from "../../api/riskApi";
+import { IMPACT_COLS, LIKELIHOOD_ROWS } from "../../riskMatrix";
 
 const { DatePicker, LocalizationProvider } = DatePickers;
 
@@ -69,19 +70,6 @@ function SectionHeader({ title }: { title: string }): JSX.Element {
     </Box>
   );
 }
-
-// Matrix: Likelihood Y-axis top (High 3) → bottom (Low 1), Impact X-axis left (Minor 1) → right (Major 3)
-const LIKELIHOOD_ROWS: { value: LikelihoodLevel; label: string }[] = [
-  { value: 3, label: "High 3" },
-  { value: 2, label: "Medium 2" },
-  { value: 1, label: "Low 1" },
-];
-
-const IMPACT_COLS: { value: ImpactLevel; label: string }[] = [
-  { value: 1, label: "Minor 1" },
-  { value: 2, label: "Moderate 2" },
-  { value: 3, label: "Major 3" },
-];
 
 interface RiskAssessmentStepProps {
   riskScores: RiskScore[];

@@ -95,7 +95,7 @@ type OverdueControl struct {
 	OwnerID              *int   `json:"ownerId"`
 }
 
-// DashboardData is the full payload returned by GET /api/v1/audit/dashboard.
+// DashboardData is the full payload returned by GET /api/v1/audits/dashboard.
 type DashboardData struct {
 	AuditStats             AuditStats        `json:"auditStats"`
 	Stats                  DashboardStats    `json:"stats"`
@@ -120,7 +120,7 @@ const (
 	WorkQueueTabOverdue     WorkQueueTab = "overdue"
 )
 
-// WorkQueuePage is the paginated response for GET /api/v1/audit/work-queue.
+// WorkQueuePage is the paginated response for GET /api/v1/audits/work-queue.
 type WorkQueuePage struct {
 	Items []ActionItem `json:"items"`
 	Total int          `json:"total"`

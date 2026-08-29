@@ -114,12 +114,12 @@ func (r *auditNotificationRepo) ClaimAuditNotification(ctx context.Context, req 
 
 // ReleaseAuditNotificationClaim deletes a claim row so its item becomes
 // retryable — used only when the owner's digest failed to send after the
-// claim succeeded. Scoped to the three REMINDER_* types so this can never be
+// claim succeeded. Scoped to the four REMINDER_* types so this can never be
 // pointed at a delivered, non-reminder log row.
 func (r *auditNotificationRepo) ReleaseAuditNotificationClaim(ctx context.Context, id int64) error {
 	_, err := r.db.ExecContext(ctx,
 		`DELETE FROM audit_notification
-		 WHERE id = ? AND type IN ('REMINDER_DUE_10', 'REMINDER_DUE_5', 'REMINDER_OVERDUE')`, id)
+		 WHERE id = ? AND type IN ('REMINDER_DUE_10', 'REMINDER_DUE_5', 'REMINDER_DUE_TODAY', 'REMINDER_OVERDUE')`, id)
 	if err != nil {
 		return fmt.Errorf("audit_notification.ReleaseClaim: %w", err)
 	}
