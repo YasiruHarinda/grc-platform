@@ -25,6 +25,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/routeguard"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/adminactivity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/aiagent"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
@@ -85,6 +86,8 @@ type Deps struct {
 	// (which would import back into handler and cycle). Nil disables the
 	// manual-trigger endpoint.
 	TriggerReminderJob func(ctx context.Context) error
+	// ActivityLog records Audit Team mutations to admin_activity_log.
+	ActivityLog *adminactivity.Client
 }
 
 // RegisterRoutes mounts all Audit Hub routes onto mux.
@@ -94,7 +97,7 @@ func RegisterRoutes(mux routeguard.Router, deps Deps) {
 	tlh := &trailHandler{svc: deps.Trail, controlSvc: deps.Control, auditSvc: deps.Audit, directory: deps.Directory}
 	fh := &frameworkHandler{svc: deps.Framework}
 	uh := &userHandler{svc: deps.User, directory: deps.Directory, grants: deps.Grants}
-	th := &teamHandler{svc: deps.Team}
+	th := &teamHandler{svc: deps.Team, activityLog: deps.ActivityLog}
 	dh := &dashboardHandler{svc: deps.Dashboard}
 	eh := &evidenceHandler{svc: deps.Evidence, controlSvc: deps.Control, popSvc: deps.Population, trailSvc: deps.Trail, aiClient: deps.AIAgent, notify: &deps, directory: deps.Directory}
 	cmh := &commentHandler{svc: deps.Comment, controlSvc: deps.Control, notify: &deps, directory: deps.Directory}

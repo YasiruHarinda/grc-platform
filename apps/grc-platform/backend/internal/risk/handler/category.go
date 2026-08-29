@@ -22,6 +22,7 @@ import (
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/adminactivity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
@@ -76,6 +77,8 @@ func (d *Deps) handleCreateRiskCategory(w http.ResponseWriter, r *http.Request) 
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.ActivityLog.Log(r.Context(), createdBy, adminactivity.ActionCreated, adminactivity.EntityRiskCategory, cat.ID,
+		map[string]any{"name": cat.Name})
 	response.WriteJSONValue(w, http.StatusCreated, cat)
 }
 
@@ -110,6 +113,8 @@ func (d *Deps) handleUpdateRiskCategory(w http.ResponseWriter, r *http.Request) 
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.ActivityLog.Log(r.Context(), updatedBy, adminactivity.ActionUpdated, adminactivity.EntityRiskCategory, id,
+		map[string]any{"name": cat.Name})
 	response.WriteJSONValue(w, http.StatusOK, cat)
 }
 
@@ -128,9 +133,25 @@ func (d *Deps) handleDeleteRiskCategory(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Name resolved before deleting — it won't be in List anymore afterwards.
+	name := ""
+	if cats, listErr := d.Category.List(r.Context()); listErr == nil {
+		for _, c := range cats {
+			if c.ID == id {
+				name = c.Name
+			}
+		}
+	}
+
 	if err := d.Category.Delete(r.Context(), id); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	deletedBy := ""
+	if user := auth.FromContext(r.Context()); user != nil {
+		deletedBy = user.Subject
+	}
+	d.ActivityLog.Log(r.Context(), deletedBy, adminactivity.ActionDeleted, adminactivity.EntityRiskCategory, id,
+		map[string]any{"name": name})
 	w.WriteHeader(http.StatusNoContent)
 }

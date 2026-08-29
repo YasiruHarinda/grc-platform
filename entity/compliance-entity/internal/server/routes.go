@@ -66,6 +66,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	grantRepo := repository.NewGrantRepository(db)
 	riskDashboardRepo := repository.NewRiskDashboardRepository(db)
 	riskAnalyticsRepo := repository.NewRiskAnalyticsRepository(db)
+	adminActivityLogRepo := repository.NewAdminActivityLogRepository(db)
 
 	// ── Services ─────────────────────────────────────────────────────────────
 	userSvc := service.NewCachedUserService(service.NewUserService(userRepo))
@@ -106,6 +107,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	grantSvc := service.NewGrantService(grantRepo)
 	riskDashboardSvc := service.NewRiskDashboardService(riskDashboardRepo)
 	riskAnalyticsSvc := service.NewRiskAnalyticsService(riskAnalyticsRepo)
+	adminActivityLogSvc := service.NewAdminActivityLogService(adminActivityLogRepo)
 
 	// ── Handlers ─────────────────────────────────────────────────────────────
 	userH := handler.NewUserHandler(userSvc, grantSvc)
@@ -138,6 +140,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	grantH := handler.NewGrantHandler(grantSvc)
 	riskDashboardH := handler.NewRiskDashboardHandler(riskDashboardSvc)
 	riskAnalyticsH := handler.NewRiskAnalyticsHandler(riskAnalyticsSvc)
+	adminActivityLogH := handler.NewAdminActivityLogHandler(adminActivityLogSvc)
 
 	// ── Routes ───────────────────────────────────────────────────────────────
 	mux := http.NewServeMux()
@@ -363,6 +366,10 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	// Risk assessments (nested under risks)
 	mux.HandleFunc("POST /risks/{riskId}/assessments", riskAssessmentH.CreateRiskAssessment)
 	mux.HandleFunc("GET /risks/{riskId}/assessments", riskAssessmentH.ListRiskAssessments)
+
+	// Admin activity log
+	mux.HandleFunc("POST /admin-activity-log", adminActivityLogH.CreateAdminActivityLog)
+	mux.HandleFunc("GET /admin-activity-log", adminActivityLogH.ListAdminActivityLog)
 
 	// ── Middleware chain ──────────────────────────────────────────────────────
 	// Order (outermost first): CorrelationID → Recovery → Logger → UserIDToken

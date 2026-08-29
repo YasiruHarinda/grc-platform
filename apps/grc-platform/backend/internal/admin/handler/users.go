@@ -25,6 +25,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/admin"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/adminactivity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
@@ -179,6 +180,14 @@ func (d *Deps) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	userLabel := u.UUID
+	if strings.TrimSpace(person.DisplayName) != "" {
+		userLabel = strings.TrimSpace(person.DisplayName)
+	} else if person.Email != "" {
+		userLabel = person.Email
+	}
+	d.ActivityLog.Log(r.Context(), createdBy, adminactivity.ActionCreated, adminactivity.EntityUser, u.ID,
+		map[string]any{"user": userLabel, "userType": req.UserType})
 
 	response.WriteJSONValue(w, http.StatusCreated, createUserResponse{
 		ID: u.ID, UUID: u.UUID, DisplayName: person.DisplayName, Email: person.Email,
@@ -224,7 +233,8 @@ func (d *Deps) handleUpdateUserStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := d.Users.UpdateStatus(r.Context(), userID, req.Status, actor(r))
+	callerUUID := actor(r)
+	u, err := d.Users.UpdateStatus(r.Context(), userID, req.Status, callerUUID)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
@@ -233,6 +243,8 @@ func (d *Deps) handleUpdateUserStatus(w http.ResponseWriter, r *http.Request) {
 		response.WriteError(w, http.StatusNotFound, "user not found")
 		return
 	}
+	d.ActivityLog.Log(r.Context(), callerUUID, adminactivity.ActionStatusChanged, adminactivity.EntityUser, userID,
+		map[string]any{"user": resolveUserLabel(r.Context(), d, userID), "status": req.Status})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -240,6 +252,38 @@ type createGrantRequest struct {
 	RoleID    int    `json:"roleId"`
 	ScopeType string `json:"scopeType"`
 	ScopeID   int    `json:"scopeId"`
+}
+
+// grantScopeLabel renders a grant's scope for the activity log — a resolved
+// team name reads better than a bare scope_id an admin has to go look up.
+func grantScopeLabel(scopeType, scopeName string) string {
+	if scopeType == "GLOBAL" {
+		return "Global (ALL)"
+	}
+	if scopeName != "" {
+		return scopeName
+	}
+	return scopeType
+}
+
+// resolveUserLabel resolves a userID to a display name, falling back to
+// email then the bare uuid so a grant entry always names who it affected.
+func resolveUserLabel(ctx context.Context, d *Deps, userID int) string {
+	u, err := d.Users.GetByID(ctx, userID)
+	if err != nil || u == nil || u.UUID == "" {
+		return ""
+	}
+	if d.Directory != nil {
+		if p, ok := d.Directory.LookupTyped(ctx, u.UUID, ""); ok {
+			if name := strings.TrimSpace(p.DisplayName); name != "" {
+				return name
+			}
+			if p.Email != "" {
+				return p.Email
+			}
+		}
+	}
+	return u.UUID
 }
 
 // handleCreateGrant serves POST /api/v1/admin/users/{id}/grants.
@@ -263,13 +307,20 @@ func (d *Deps) handleCreateGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	createdBy := actor(r)
 	g, err := d.Grants.CreateGrant(r.Context(), userID, grant.CreateGrantRequest{
-		RoleID: req.RoleID, ScopeType: req.ScopeType, ScopeID: req.ScopeID, CreatedBy: actor(r),
+		RoleID: req.RoleID, ScopeType: req.ScopeType, ScopeID: req.ScopeID, CreatedBy: createdBy,
 	})
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	// grant.Grant carries no id of its own — entityId is the affected user.
+	grantDetails := map[string]any{"role": g.RoleName, "scope": grantScopeLabel(req.ScopeType, g.ScopeName)}
+	if label := resolveUserLabel(r.Context(), d, userID); label != "" {
+		grantDetails["user"] = label
+	}
+	d.ActivityLog.Log(r.Context(), createdBy, adminactivity.ActionGranted, adminactivity.EntityGrant, userID, grantDetails)
 	response.WriteJSONValue(w, http.StatusCreated, g)
 }
 
@@ -300,9 +351,33 @@ func (d *Deps) handleRevokeGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := d.Grants.RevokeGrant(r.Context(), userID, grantID, actor(r)); err != nil {
+	// Resolved before revoking — SearchUsers won't return an INACTIVE grant.
+	details := map[string]any{"grantId": grantID}
+	if users, searchErr := d.Admin.SearchUsers(r.Context()); searchErr == nil {
+		for _, u := range users {
+			if u.ID != userID {
+				continue
+			}
+			for _, g := range u.Grants {
+				if g.ID == grantID {
+					details["role"] = g.RoleName
+					details["scope"] = grantScopeLabel(g.ScopeType, g.ScopeName)
+				}
+			}
+			break
+		}
+	}
+	if label := resolveUserLabel(r.Context(), d, userID); label != "" {
+		details["user"] = label
+	}
+
+	revokedBy := actor(r)
+	if err := d.Grants.RevokeGrant(r.Context(), userID, grantID, revokedBy); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	// entityId is the affected user (not the now-dead grant row), matching
+	// handleCreateGrant's GRANTED entries — grantId lives in details instead.
+	d.ActivityLog.Log(r.Context(), revokedBy, adminactivity.ActionRevoked, adminactivity.EntityGrant, userID, details)
 	w.WriteHeader(http.StatusNoContent)
 }
