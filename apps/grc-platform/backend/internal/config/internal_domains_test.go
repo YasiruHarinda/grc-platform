@@ -43,6 +43,8 @@ func TestLoadInternalEmailDomains(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Clear first: an inherited value would leak into the unset cases.
+			t.Setenv("AUTH_INTERNAL_EMAIL_DOMAINS", "")
 			if tc.env != "" {
 				t.Setenv("AUTH_INTERNAL_EMAIL_DOMAINS", tc.env)
 			}
