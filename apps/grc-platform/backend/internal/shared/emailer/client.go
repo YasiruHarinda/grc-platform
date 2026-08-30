@@ -384,7 +384,7 @@ var eventTemplates = map[RiskEvent]eventTemplate{
 		},
 	},
 	EventEscalatedLead: {
-		lead:       "A risk owned by someone who reports to you has passed its implementation date without completing remediation and has been escalated.",
+		lead:       "A risk assigned to someone who reports to you has passed its implementation date without completing remediation and has been escalated.",
 		actorLabel: "Escalated by",
 		// No actions: a lead is being informed, not assigned a step. The
 		// "Who needs to act" block is omitted entirely.
