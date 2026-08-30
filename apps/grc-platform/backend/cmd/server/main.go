@@ -161,6 +161,13 @@ func main() {
 	if !cfg.Email.Enabled {
 		slog.Warn("email notifications disabled (EMAIL_NOTIFICATIONS_ENABLED=false); neither module will send email")
 	}
+	// AUDIT_LEAD_ESCALATION_ENABLED was renamed to LEAD_ESCALATION_EMAILS_ENABLED
+	// (now covering both modules). The old name is no longer read at all, so an
+	// environment still exporting it =true would silently lose the feature on
+	// deploy — warn loudly instead of going quiet.
+	if os.Getenv("AUDIT_LEAD_ESCALATION_ENABLED") != "" {
+		slog.Warn("AUDIT_LEAD_ESCALATION_ENABLED is ignored; use LEAD_ESCALATION_EMAILS_ENABLED")
+	}
 
 	userhandler.RegisterRoutes(mux, userDeps)
 	riskDeps := buildRiskDeps(entityCli, fileSvc, hrClient, grantRepo, dirSvc, scimClient, cfg.Email, cfg.LeadEscalationEmailsEnabled)
