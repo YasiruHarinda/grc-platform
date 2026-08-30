@@ -210,6 +210,23 @@ func TestGuard_EmailVerified(t *testing.T) {
 	}
 }
 
+// The row's EXTERNAL must win over a domain match: it must not ride a
+// wso2.com email onto the internal surface, and stays confined to the same
+// audit-visible routes as a token classified external outright.
+func TestGuard_ExternalRowOverridesInternalDomain(t *testing.T) {
+	cfg := guardCfg(guardMux())
+	cfg.PrivilegeStore = privilege.NewForTest(map[string]map[string]bool{})
+	cfg.Grants = &stubGrants{userType: "EXTERNAL"}
+	tok := guardToken("staff@wso2.com", nil)
+
+	if code := serveGuarded(cfg, http.MethodGet, "/api/v1/risks", tok); code != http.StatusForbidden {
+		t.Errorf("EXTERNAL row, wso2.com email, off-surface route: got %d, want 403", code)
+	}
+	if code := serveGuarded(cfg, http.MethodGet, "/api/v1/audits", tok); code != http.StatusOK {
+		t.Errorf("EXTERNAL row, wso2.com email, allow-listed route: got %d, want 200", code)
+	}
+}
+
 // Records the accepted error-code shift: an external caller sees 403 where an
 // internal one sees 404 or 405.
 func TestGuard_UnmatchedRouteDeniesExternalCaller(t *testing.T) {

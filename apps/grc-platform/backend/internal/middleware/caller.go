@@ -116,6 +116,15 @@ func (g callerGuard) isInternal(email string, verified emailVerification) bool {
 	return ok
 }
 
+// externallyVisible resolves r's matched route and reports whether it is on
+// the external allow-list. An unmatched path and a method mismatch both give
+// "". A redirect branch gives the real pattern, so a dirty path cleaning onto
+// a Risk route is still denied as that route.
+func (g callerGuard) externallyVisible(r *http.Request) (pattern string, visible bool) {
+	_, pattern = g.router.Handler(r)
+	return pattern, routeguard.ExternalVisible(pattern)
+}
+
 // evaluate classifies the caller and reports whether to block this request,
 // logging the verdict when it blocks. Domain only, never the address — the
 // correlation ID already identifies the caller.
@@ -124,11 +133,8 @@ func (g callerGuard) evaluate(r *http.Request, email string, verified emailVerif
 	if !g.enabled || internal {
 		return internal, false
 	}
-	// An unmatched path and a method mismatch both give "". A redirect branch
-	// gives the real pattern, so a dirty path cleaning onto a Risk route is
-	// still denied as that route.
-	_, pattern := g.router.Handler(r)
-	if routeguard.ExternalVisible(pattern) {
+	pattern, visible := g.externallyVisible(r)
+	if visible {
 		return internal, false
 	}
 	domain, wellFormed := emailDomain(email)

@@ -335,13 +335,24 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 					return
 				}
 				info.UserID = caller.UserID
-				// Log-only: the two are allowed to disagree and neither is
-				// corrected from the other.
+				// Log-only for a mismatch that only narrows access on its own.
+				// Corrected for the one direction where believing the token
+				// would grant more access than the row intends: an EXTERNAL
+				// row must never ride a domain-internal classification onto
+				// the internal surface.
 				if guard.enabled && caller.UserType != "" {
-					if wantInternal := caller.UserType != externalUserType; wantInternal != internal {
+					wantInternal := caller.UserType != externalUserType
+					if wantInternal != internal {
 						slog.WarnContext(r.Context(), "auth: caller classification disagrees with user_type",
 							"internalCaller", internal,
 							"userType", caller.UserType)
+						if internal && !wantInternal {
+							internal = false
+							if _, visible := guard.externallyVisible(r); !visible {
+								writeForbidden(w)
+								return
+							}
+						}
 					}
 				}
 				set := grant.Resolve(caller.Grants, cfg.PrivilegeStore)
