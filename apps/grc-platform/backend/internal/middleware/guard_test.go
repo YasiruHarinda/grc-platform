@@ -82,7 +82,7 @@ func guardCfg(mux *http.ServeMux, domains ...string) middleware.Config {
 // Auth wraps cfg.Router itself, matching production, so an allowed request is
 // answered by the real mux — including its own 404/405.
 func serveGuarded(cfg middleware.Config, method, path, token string) int {
-	var next http.Handler = okHandler()
+	next := okHandler()
 	if cfg.Router != nil {
 		next = cfg.Router
 	}
