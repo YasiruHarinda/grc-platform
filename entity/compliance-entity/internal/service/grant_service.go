@@ -114,11 +114,11 @@ func (s *grantService) GrantsForUserUUID(ctx context.Context, uuid string) (doma
 	if uuid == "" {
 		return domain.UserGrantsResponse{}, &apierror.ValidationError{Msg: "uuid is required"}
 	}
-	userID, grants, err := s.repo.GrantsForUserUUID(ctx, uuid)
+	userID, userType, grants, err := s.repo.GrantsForUserUUID(ctx, uuid)
 	if err != nil {
 		return domain.UserGrantsResponse{}, err
 	}
-	return domain.UserGrantsResponse{UserID: userID, Grants: orEmpty(grants)}, nil
+	return domain.UserGrantsResponse{UserID: userID, UserType: userType, Grants: orEmpty(grants)}, nil
 }
 
 // orEmpty guarantees a slice serialises as [] rather than null. A caller must

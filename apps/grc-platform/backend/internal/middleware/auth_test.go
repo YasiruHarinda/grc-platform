@@ -297,20 +297,21 @@ func TestAuth_UnknownIssuer_Returns401(t *testing.T) {
 
 // stubGrants is a grant.Repository returning fixed grants.
 type stubGrants struct {
-	userID int
-	grants []grant.Grant
-	err    error
-	calls  int
+	userID   int
+	userType string
+	grants   []grant.Grant
+	err      error
+	calls    int
 	// gotKey records the value the lookup was keyed on, so a test can assert
 	// WHICH identity the middleware authorised against — not merely that it
 	// authorised something.
 	gotKey string
 }
 
-func (s *stubGrants) ForUUID(_ context.Context, uuid string) (int, []grant.Grant, error) {
+func (s *stubGrants) ForUUID(_ context.Context, uuid string) (grant.Caller, error) {
 	s.calls++
 	s.gotKey = uuid
-	return s.userID, s.grants, s.err
+	return grant.Caller{UserID: s.userID, UserType: s.userType, Grants: s.grants}, s.err
 }
 
 func (s *stubGrants) Candidates(_ context.Context, _ string, _ []int) ([]grant.Candidate, error) {
@@ -328,9 +329,9 @@ func (s *stubGrants) RevokeGrant(_ context.Context, _, _ int, _ string) error {
 // failingGrants fails the test if it is ever consulted.
 type failingGrants struct{ t *testing.T }
 
-func (f *failingGrants) ForUUID(_ context.Context, uuid string) (int, []grant.Grant, error) {
+func (f *failingGrants) ForUUID(_ context.Context, uuid string) (grant.Caller, error) {
 	f.t.Errorf("grants must not be loaded for this caller (uuid %q)", uuid)
-	return 0, nil, nil
+	return grant.Caller{}, nil
 }
 
 func (f *failingGrants) Candidates(_ context.Context, _ string, _ []int) ([]grant.Candidate, error) {

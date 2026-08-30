@@ -32,7 +32,9 @@ import (
 type GrantRepository interface {
 	GrantsForUserID(ctx context.Context, userID int) ([]domain.UserGrant, error)
 	GrantsForUserIDs(ctx context.Context, userIDs []int) (map[int][]domain.UserGrant, error)
-	GrantsForUserUUID(ctx context.Context, uuid string) (int, []domain.UserGrant, error)
+	// GrantsForUserUUID also returns user_type, which the GRC backend's auth
+	// middleware cross-checks against its own caller classification.
+	GrantsForUserUUID(ctx context.Context, uuid string) (int, string, []domain.UserGrant, error)
 	CreateGrant(ctx context.Context, userID int, req domain.CreateUserGrantRequest) (*domain.UserGrant, error)
 	RevokeGrant(ctx context.Context, userID, grantID int, revokedBy string) error
 	GetRoleByID(ctx context.Context, roleID int) (*domain.Role, error)
@@ -185,25 +187,27 @@ func (r *grantRepo) GrantsForUserIDs(ctx context.Context, userIDs []int) (map[in
 //
 // An empty uuid is NotFound rather than a query — refusing it here keeps a
 // blank string from ever becoming a way to resolve an arbitrary user's grants.
-func (r *grantRepo) GrantsForUserUUID(ctx context.Context, uuid string) (int, []domain.UserGrant, error) {
+func (r *grantRepo) GrantsForUserUUID(ctx context.Context, uuid string) (int, string, []domain.UserGrant, error) {
 	if strings.TrimSpace(uuid) == "" {
-		return 0, nil, &apierror.NotFoundError{Msg: "user not found: empty uuid"}
+		return 0, "", nil, &apierror.NotFoundError{Msg: "user not found: empty uuid"}
 	}
 	var userID int
+	var userType string
+	// user_type rides along on the lookup already running here.
 	err := r.db.QueryRowContext(ctx,
-		"SELECT id FROM `user` WHERE uuid = ? AND status = 'ACTIVE'", uuid).Scan(&userID)
+		"SELECT id, user_type FROM `user` WHERE uuid = ? AND status = 'ACTIVE'", uuid).Scan(&userID, &userType)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil, &apierror.NotFoundError{Msg: "user not found for uuid"}
+		return 0, "", nil, &apierror.NotFoundError{Msg: "user not found for uuid"}
 	}
 	if err != nil {
-		return 0, nil, fmt.Errorf("grant.GrantsForUserUUID lookup: %w", err)
+		return 0, "", nil, fmt.Errorf("grant.GrantsForUserUUID lookup: %w", err)
 	}
 
 	grants, err := r.GrantsForUserID(ctx, userID)
 	if err != nil {
-		return 0, nil, err
+		return 0, "", nil, err
 	}
-	return userID, grants, nil
+	return userID, userType, grants, nil
 }
 
 // CreateGrant inserts a grant and returns it as stored.

@@ -99,6 +99,9 @@ type UserGrant struct {
 // TTL elapses on whichever replica happens to serve it.
 type UserGrantsResponse struct {
 	UserID int `json:"userId"`
+	// UserType is the user row's INTERNAL/EXTERNAL. Omitted by the by-id path,
+	// which resolves no user row.
+	UserType string `json:"userType,omitempty"`
 	// Grants is always a slice, never null. A user with no grants is a normal,
 	// expected state — an Action Owner may be any employee, holding no role at
 	// all and reaching only the risks they are personally named on.

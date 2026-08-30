@@ -19,6 +19,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -167,6 +168,14 @@ type AuthConfig struct {
 	IdPs                  []IdPConfig
 	ClockSkew             time.Duration
 	TokenValidatorEnabled bool
+	// InternalEmailDomains decides whether a caller is internal, and so whether
+	// the endpoint guard confines them to the audit surface. From
+	// AUTH_INTERNAL_EMAIL_DOMAINS, defaulting to SCIM_USER_DOMAIN's value.
+	//
+	// It only defaults to SCIM_USER_DOMAIN, never reads it: that one is the
+	// directory cache's SCIM filter, so sharing it would let a cache tweak lock
+	// out the company, or a widened list here silently empty the cache.
+	InternalEmailDomains []string
 }
 
 // HREntityConfig holds the connection details for the WSO2 HR entity GraphQL
@@ -282,9 +291,16 @@ func Load() (Config, error) {
 				"this doesn't take effect from a single accidentally-set variable")
 	}
 
+	scimUserDomain := envOrDefault("SCIM_USER_DOMAIN", "wso2.com")
+	internalEmailDomains, err := loadInternalEmailDomains(scimUserDomain)
+	if err != nil {
+		return Config{}, err
+	}
+
 	authCfg := AuthConfig{
 		ClockSkew:             5 * time.Second,
 		TokenValidatorEnabled: tokenValidatorEnabled,
+		InternalEmailDomains:  internalEmailDomains,
 	}
 	if tokenValidatorEnabled {
 		idps, err := loadIdPs()
@@ -366,7 +382,7 @@ func Load() (Config, error) {
 		},
 		SCIM: SCIMConfig{
 			BaseURL:    os.Getenv("SCIM_BASE_URL"),
-			UserDomain: envOrDefault("SCIM_USER_DOMAIN", "wso2.com"),
+			UserDomain: scimUserDomain,
 
 			Org:          os.Getenv("SCIM_INTERNAL_ORG"),
 			ClientID:     os.Getenv("SCIM_INTERNAL_CLIENT_ID"),
@@ -420,6 +436,32 @@ func loadIdPs() ([]IdPConfig, error) {
 		return nil, err
 	}
 	return []IdPConfig{idp1}, nil
+}
+
+// loadInternalEmailDomains reads AUTH_INTERNAL_EMAIL_DOMAINS, comma-separated,
+// falling back to the SCIM user domain.
+//
+// Empty set and empty element are both startup failures: an empty set would 403
+// the whole company, and a "" element from a stray comma matches any address
+// with an empty domain part, failing open.
+func loadInternalEmailDomains(scimUserDomain string) ([]string, error) {
+	raw := envOrDefault("AUTH_INTERNAL_EMAIL_DOMAINS", scimUserDomain)
+	if strings.TrimSpace(raw) == "" {
+		return nil, fmt.Errorf(
+			"AUTH_INTERNAL_EMAIL_DOMAINS (or SCIM_USER_DOMAIN, its default) resolved to an empty set; " +
+				"every caller would be classified external and blocked from all but the audit routes")
+	}
+	parts := strings.Split(raw, ",")
+	domains := make([]string, 0, len(parts))
+	for _, p := range parts {
+		d := strings.ToLower(strings.TrimSpace(p))
+		if d == "" {
+			return nil, fmt.Errorf(
+				"AUTH_INTERNAL_EMAIL_DOMAINS contains an empty domain (check for a stray comma): %q", raw)
+		}
+		domains = append(domains, d)
+	}
+	return domains, nil
 }
 
 func mustEnv(key string) (string, error) {

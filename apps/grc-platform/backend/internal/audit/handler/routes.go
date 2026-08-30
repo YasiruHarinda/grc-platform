@@ -19,12 +19,12 @@ package handler
 
 import (
 	"context"
-	"net/http"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/repository"
 	auditservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/routeguard"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/aiagent"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
@@ -88,7 +88,7 @@ type Deps struct {
 }
 
 // RegisterRoutes mounts all Audit Hub routes onto mux.
-func RegisterRoutes(mux *http.ServeMux, deps Deps) {
+func RegisterRoutes(mux routeguard.Router, deps Deps) {
 	ah := &auditHandler{svc: deps.Audit}
 	ch := &controlHandler{svc: deps.Control, notify: &deps}
 	tlh := &trailHandler{svc: deps.Trail, controlSvc: deps.Control, auditSvc: deps.Audit, directory: deps.Directory}
