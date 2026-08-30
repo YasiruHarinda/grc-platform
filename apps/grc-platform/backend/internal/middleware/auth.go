@@ -34,7 +34,6 @@ import (
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
-	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/routeguard"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
@@ -285,10 +284,13 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 		}
 	}
 
-	internalDomains := internalDomainSet(cfg.InternalEmailDomains)
 	// An unverified token's email claim proves nothing, so the guard is skipped
 	// in local dev alongside signature and privilege checks.
-	guardEnabled := cfg.TokenValidatorEnabled && cfg.Router != nil
+	guard := callerGuard{
+		router:  cfg.Router,
+		domains: internalDomainSet(cfg.InternalEmailDomains),
+		enabled: cfg.TokenValidatorEnabled && cfg.Router != nil,
+	}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -313,24 +315,10 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 			// Second fence: confine an external caller to the audit surface
 			// before any handler runs, so a route missing its privilege check
 			// is still unreachable.
-			internal := isInternalCaller(info.Email, verified, internalDomains)
-			if guardEnabled && !internal {
-				pattern := matchedPattern(cfg.Router, r)
-				if !routeguard.ExternalVisible(pattern) {
-					// Domain only, never the address; the correlation ID
-					// already identifies the caller. Without this line a
-					// company-wide lockout is just a wall of bare 403s.
-					domain, wellFormed := emailDomain(info.Email)
-					slog.WarnContext(r.Context(), "auth: external caller blocked",
-						"emailDomain", domain,
-						"wellFormedEmail", wellFormed,
-						// .String() so a JSON handler cannot marshal the int
-						// and lose absent-vs-false.
-						"emailVerified", verified.String(),
-						"pattern", pattern)
-					writeForbidden(w)
-					return
-				}
+			internal, blocked := guard.evaluate(r, info.Email, verified)
+			if blocked {
+				writeForbidden(w)
+				return
 			}
 
 			ctx := context.WithValue(r.Context(), userInfoKey, info)
@@ -347,13 +335,10 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 					return
 				}
 				info.UserID = caller.UserID
-				// Log-only consistency check between the request-time
-				// classification and the stored user_type. The two are allowed
-				// to disagree — neither is corrected from the other — but a
-				// disagreement is worth seeing. Only reachable for requests the
-				// guard let through, since the guard rejects before this call.
-				if guardEnabled && caller.UserType != "" {
-					if wantInternal := caller.UserType == "INTERNAL"; wantInternal != internal {
+				// Log-only: the two are allowed to disagree and neither is
+				// corrected from the other.
+				if guard.enabled && caller.UserType != "" {
+					if wantInternal := caller.UserType != externalUserType; wantInternal != internal {
 						slog.WarnContext(r.Context(), "auth: caller classification disagrees with user_type",
 							"internalCaller", internal,
 							"userType", caller.UserType)
@@ -459,13 +444,4 @@ func extractUserInfo(tokenStr string, cfg Config, idps map[string]idpRuntime) (*
 		Email:   c.Email,
 		Issuer:  rt.cfg.Issuer,
 	}, parseEmailVerified(c.EmailVerified), nil
-}
-
-// matchedPattern asks the mux which route a request would hit without serving
-// it. An unmatched path and a method mismatch both return "". A redirect branch
-// returns the real pattern, so a dirty path cleaning onto a Risk route is still
-// denied as that route.
-func matchedPattern(mux *http.ServeMux, r *http.Request) string {
-	_, pattern := mux.Handler(r)
-	return pattern
 }

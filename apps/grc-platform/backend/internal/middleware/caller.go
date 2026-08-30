@@ -18,8 +18,17 @@ package middleware
 
 import (
 	"encoding/json"
+	"log/slog"
+	"net/http"
 	"strings"
+
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/routeguard"
 )
+
+// externalUserType is the user row's value for an external identity. Anything
+// else counts as internal, matching the column's NOT NULL DEFAULT 'INTERNAL'
+// and directory.Service.LookupTyped.
+const externalUserType = "EXTERNAL"
 
 // emailVerification is the email_verified claim's tri-state. Absent must stay
 // distinct from false: reading a missing claim as "not verified" would classify
@@ -32,7 +41,7 @@ const (
 	emailVerificationFalse
 )
 
-// String keeps the two non-true cases distinguishable in the rejection log.
+// String keeps the two non-true cases apart in the rejection log.
 func (v emailVerification) String() string {
 	switch v {
 	case emailVerificationTrue:
@@ -45,9 +54,8 @@ func (v emailVerification) String() string {
 }
 
 // parseEmailVerified decodes email_verified, which Asgardeo emits as a bool in
-// some configurations and the string "true" in others — a plain bool field
-// would read the string form as false. An unrecognised shape is treated as
-// absent rather than locking the caller out.
+// some configurations and the string "true" in others. An unrecognised shape
+// reads as absent rather than locking the caller out.
 func parseEmailVerified(raw json.RawMessage) emailVerification {
 	s := strings.TrimSpace(string(raw))
 	if s == "" || s == "null" {
@@ -62,11 +70,9 @@ func parseEmailVerified(raw json.RawMessage) emailVerification {
 	return emailVerificationAbsent
 }
 
-// emailDomain returns the lowercased domain part of email.
-//
-// Both halves must be non-empty. LastIndex returns -1 with no "@", and slicing
-// from idx+1 would then yield the whole string — a bare "wso2.com" claim would
-// pass as the corporate domain.
+// emailDomain returns the lowercased domain part of email. Both halves must be
+// non-empty: LastIndex returns -1 with no "@", and slicing from idx+1 would
+// then yield the whole string, passing a bare "wso2.com" as the domain.
 func emailDomain(email string) (string, bool) {
 	email = strings.TrimSpace(email)
 	at := strings.LastIndex(email, "@")
@@ -87,10 +93,18 @@ func internalDomainSet(domains []string) map[string]struct{} {
 	return set
 }
 
-// isInternalCaller decides from the token alone. Org claims and user_type are
-// not consulted. A verified-false address is external even under a corporate
+// callerGuard confines an external caller to the audit surface. Built once per
+// Auth; router must be the same mux Auth wraps.
+type callerGuard struct {
+	router  *http.ServeMux
+	domains map[string]struct{}
+	enabled bool
+}
+
+// isInternal decides from the token alone. Org claims and user_type are not
+// consulted. A verified-false address is external even under a corporate
 // domain; an absent claim is not held against the caller.
-func isInternalCaller(email string, verified emailVerification, internal map[string]struct{}) bool {
+func (g callerGuard) isInternal(email string, verified emailVerification) bool {
 	if verified == emailVerificationFalse {
 		return false
 	}
@@ -98,6 +112,34 @@ func isInternalCaller(email string, verified emailVerification, internal map[str
 	if !ok {
 		return false
 	}
-	_, ok = internal[domain]
+	_, ok = g.domains[domain]
 	return ok
+}
+
+// evaluate classifies the caller and reports whether to block this request,
+// logging the verdict when it blocks. Domain only, never the address — the
+// correlation ID already identifies the caller.
+func (g callerGuard) evaluate(r *http.Request, email string, verified emailVerification) (internal, blocked bool) {
+	internal = g.isInternal(email, verified)
+	if !g.enabled || internal {
+		return internal, false
+	}
+	// An unmatched path and a method mismatch both give "". A redirect branch
+	// gives the real pattern, so a dirty path cleaning onto a Risk route is
+	// still denied as that route.
+	_, pattern := g.router.Handler(r)
+	if routeguard.ExternalVisible(pattern) {
+		return internal, false
+	}
+	domain, wellFormed := emailDomain(email)
+	_, matched := g.domains[domain]
+	slog.WarnContext(r.Context(), "auth: external caller blocked",
+		"emailDomain", domain,
+		"wellFormedEmail", wellFormed,
+		"domainMatched", matched,
+		// .String() so a JSON handler cannot marshal the int and lose
+		// absent-vs-false.
+		"emailVerified", verified.String(),
+		"pattern", pattern)
+	return internal, true
 }

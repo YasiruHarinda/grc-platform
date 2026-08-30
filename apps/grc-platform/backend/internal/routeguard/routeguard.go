@@ -27,12 +27,9 @@ type Router interface {
 }
 
 // externalVisible answers, per exact route pattern, whether an external caller
-// may reach the handler. Every registered pattern must appear here — a test
-// fails otherwise, so a new route forces the decision.
-//
-// Derived from the external auditor's privileges, the only EXTERNAL-assignable
-// role today. A second such role means re-deriving this: the test watches
-// routes, not roles.
+// may reach the handler. Every registered pattern must appear here; a test
+// fails otherwise. Derived from the external auditor's privileges, the only
+// EXTERNAL-assignable role — a second one means re-deriving the whole map.
 var externalVisible = map[string]bool{
 	// ── Bootstrap ────────────────────────────────────────────────────────────
 	// Called unconditionally by the app shell; blocking either dead-ends login.

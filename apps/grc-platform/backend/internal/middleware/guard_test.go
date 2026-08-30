@@ -17,8 +17,11 @@
 package middleware_test
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -273,5 +276,47 @@ func TestGuard_HealthUnaffected(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("got %d, want 200", rec.Code)
+	}
+}
+
+// captureLogs swaps the default slog handler for the duration of fn.
+func captureLogs(fn func()) string {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(prev)
+	fn()
+	return buf.String()
+}
+
+// An unrecognised user_type counts as internal, matching the column's
+// NOT NULL DEFAULT 'INTERNAL' and directory.Service.LookupTyped. Comparing
+// against "INTERNAL" instead would warn on every such row.
+func TestGuard_UserTypeCrossCheck(t *testing.T) {
+	cases := []struct {
+		userType string
+		email    string
+		wantWarn bool
+	}{
+		{"INTERNAL", "staff@wso2.com", false},
+		{"EXTERNAL", "staff@wso2.com", true},  // external row, corporate email
+		{"", "staff@wso2.com", false},         // no user row: skipped
+		{"internal", "staff@wso2.com", false}, // unrecognised => internal
+		{"SOMETHING_NEW", "staff@wso2.com", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.userType, func(t *testing.T) {
+			cfg := guardCfg(guardMux())
+			cfg.PrivilegeStore = privilege.NewForTest(map[string]map[string]bool{})
+			cfg.Grants = &stubGrants{userType: tc.userType}
+
+			out := captureLogs(func() {
+				serveGuarded(cfg, http.MethodGet, "/api/v1/risks", guardToken(tc.email, nil))
+			})
+			got := strings.Contains(out, "disagrees with user_type")
+			if got != tc.wantWarn {
+				t.Fatalf("warned=%v, want %v (log: %s)", got, tc.wantWarn, out)
+			}
+		})
 	}
 }

@@ -21,6 +21,7 @@ package routeguard_test
 import (
 	"net/http"
 	"sort"
+	"strings"
 	"testing"
 
 	adminhandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/admin/handler"
@@ -120,23 +121,9 @@ func TestRiskAndAdminAreNeverExternallyVisible(t *testing.T) {
 			continue
 		}
 		for _, prefix := range []string{"/api/v1/risks", "/api/v1/admin"} {
-			if idx := indexOfPath(pattern); idx >= 0 && hasPrefix(pattern[idx:], prefix) {
+			if idx := strings.Index(pattern, "/"); idx >= 0 && strings.HasPrefix(pattern[idx:], prefix) {
 				t.Errorf("route %q is externally visible; no Risk Hub or Admin route may be", pattern)
 			}
 		}
 	}
-}
-
-// indexOfPath returns where the path starts in a "METHOD /path" pattern.
-func indexOfPath(pattern string) int {
-	for i := 0; i < len(pattern); i++ {
-		if pattern[i] == '/' {
-			return i
-		}
-	}
-	return -1
-}
-
-func hasPrefix(s, prefix string) bool {
-	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }

@@ -168,13 +168,10 @@ type AuthConfig struct {
 	IdPs                  []IdPConfig
 	ClockSkew             time.Duration
 	TokenValidatorEnabled bool
-	// InternalEmailDomains decides whether a caller is internal, and so whether
-	// the endpoint guard confines them to the audit surface. From
-	// AUTH_INTERNAL_EMAIL_DOMAINS, defaulting to SCIM_USER_DOMAIN's value.
-	//
-	// It only defaults to SCIM_USER_DOMAIN, never reads it: that one is the
-	// directory cache's SCIM filter, so sharing it would let a cache tweak lock
-	// out the company, or a widened list here silently empty the cache.
+	// InternalEmailDomains decides whether a caller is internal. From
+	// AUTH_INTERNAL_EMAIL_DOMAINS, which only defaults to SCIM_USER_DOMAIN and
+	// never reads it — that one is the directory cache's filter, and sharing
+	// it would let a cache tweak lock the company out.
 	InternalEmailDomains []string
 }
 
@@ -439,11 +436,9 @@ func loadIdPs() ([]IdPConfig, error) {
 }
 
 // loadInternalEmailDomains reads AUTH_INTERNAL_EMAIL_DOMAINS, comma-separated,
-// falling back to the SCIM user domain.
-//
-// Empty set and empty element are both startup failures: an empty set would 403
-// the whole company, and a "" element from a stray comma matches any address
-// with an empty domain part, failing open.
+// falling back to the SCIM user domain. Empty set and empty element are both
+// startup failures: the first 403s the whole company, the second (a stray
+// comma) matches any address with an empty domain part, failing open.
 func loadInternalEmailDomains(scimUserDomain string) ([]string, error) {
 	raw := envOrDefault("AUTH_INTERNAL_EMAIL_DOMAINS", scimUserDomain)
 	if strings.TrimSpace(raw) == "" {
