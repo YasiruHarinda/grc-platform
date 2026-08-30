@@ -84,6 +84,13 @@ type Deps struct {
 	// FrontendBaseURL is used to build the risk-detail link inside that
 	// notification email.
 	FrontendBaseURL string
+	// LeadEscalationEmails gates the escalation email to the Risk Assigner's
+	// and Action Owner's leads (LEAD_ESCALATION_EMAILS_ENABLED). When false,
+	// notifyEscalationLeads is a no-op — but the leads are still resolved and
+	// frozen on the escalation row regardless (escalationService.resolveLeads),
+	// because the escalation-comment gate and the visibility carve-out depend
+	// on them whether or not the email goes out.
+	LeadEscalationEmails bool
 	// TriggerEscalationJob runs the daily overdue-risk escalation sweep on
 	// demand — wired in cmd/server/main.go to the escalation job's RunOnce
 	// method, kept as a plain function here so this package never imports

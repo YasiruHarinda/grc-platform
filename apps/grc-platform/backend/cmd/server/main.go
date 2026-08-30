@@ -158,8 +158,19 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	if !cfg.Email.Enabled {
+		slog.Warn("email notifications disabled (EMAIL_NOTIFICATIONS_ENABLED=false); neither module will send email")
+	}
+	// AUDIT_LEAD_ESCALATION_ENABLED was renamed to LEAD_ESCALATION_EMAILS_ENABLED
+	// (now covering both modules). The old name is no longer read at all, so an
+	// environment still exporting it =true would silently lose the feature on
+	// deploy — warn loudly instead of going quiet.
+	if os.Getenv("AUDIT_LEAD_ESCALATION_ENABLED") != "" {
+		slog.Warn("AUDIT_LEAD_ESCALATION_ENABLED is ignored; use LEAD_ESCALATION_EMAILS_ENABLED")
+	}
+
 	userhandler.RegisterRoutes(mux, userDeps)
-	riskDeps := buildRiskDeps(entityCli, fileSvc, hrClient, grantRepo, dirSvc, scimClient, cfg.Email)
+	riskDeps := buildRiskDeps(entityCli, fileSvc, hrClient, grantRepo, dirSvc, scimClient, cfg.Email, cfg.LeadEscalationEmailsEnabled)
 	// Overdue-risk escalation sweep. Constructed here regardless of
 	// SCHEDULER_ENABLED: the scheduler below runs it on the daily tick, and
 	// riskDeps.TriggerEscalationJob exposes the same RunOnce behind
@@ -168,17 +179,17 @@ func main() {
 	escalationJob := riskjob.NewEscalationJob(riskDeps.Risk, riskDeps.Escalation, riskDeps.NotifyEscalationSync)
 	riskDeps.TriggerEscalationJob = escalationJob.RunOnce
 	riskhandler.RegisterRoutes(mux, riskDeps)
-	// The HR client reaches the audit module only when lead escalation is on;
-	// nil otherwise, so no line manager is ever resolved.
+	// The HR client reaches the audit module only when lead-escalation emails
+	// are on; nil otherwise, so no lead (line manager) is ever resolved there.
 	var auditHRClient *hrentity.Client
-	if cfg.AuditLeadEscalationEnabled {
+	if cfg.LeadEscalationEmailsEnabled {
 		auditHRClient = hrClient
 	}
 	auditDeps := buildAuditDeps(fileSvc, entityCli, cfg.AIValidation, cfg.Email, grantRepo, dirSvc, auditHRClient)
 	reminderJob := auditjob.NewReminderJob(auditDeps.Audit, auditDeps.Control, auditDeps.Notification, auditDeps.SendReminderDigestSync)
-	if cfg.AuditLeadEscalationEnabled {
+	if cfg.LeadEscalationEmailsEnabled {
 		reminderJob = reminderJob.WithLeadAlerts(auditDeps.ResolveOwnerLeads, auditDeps.SendOverdueLeadDigestSync)
-		slog.Info("audit overdue lead escalation enabled")
+		slog.Info("lead-escalation emails enabled (audit overdue digest + risk escalation notice)")
 	}
 	auditDeps.TriggerReminderJob = reminderJob.RunOnce
 	audithandler.RegisterRoutes(mux, auditDeps)

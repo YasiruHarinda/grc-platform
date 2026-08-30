@@ -39,8 +39,9 @@ import (
 // the reminder job (internal/audit/job), which itself needs Control/Audit/
 // Notification from the Deps this function returns, so main.go wires it in
 // after calling this function and before RegisterRoutes.
-// hrClient is nil unless the overdue lead escalation is enabled, which is what
-// keeps the disabled build from resolving any line manager at all.
+// hrClient is nil unless lead-escalation emails are enabled
+// (LEAD_ESCALATION_EMAILS_ENABLED), which is what keeps the disabled build from
+// resolving any lead (line manager) at all.
 func buildAuditDeps(fileSvc *file.Service, ec *entityclient.Client, aiCfg config.AIValidationConfig, emailCfg config.EmailConfig, grantRepo grant.Repository, dirSvc *directory.Service, hrClient *hrentity.Client) audithandler.Deps {
 	// ── Repositories (all Compliance Entity) ──────────────────────────────────
 	auditRepo := auditentity.NewAuditRepository(ec)
@@ -100,7 +101,7 @@ func buildAuditDeps(fileSvc *file.Service, ec *entityclient.Client, aiCfg config
 		AIAgent:      aiAgent,
 		// Reuses the same email-service credentials already loaded for risk —
 		// one email-service client for the whole backend, no new env vars.
-		Email:           emailer.New(emailCfg.ServiceURL, emailCfg.FromAddress, emailCfg.TokenURL, emailCfg.ClientID, emailCfg.ClientSecret),
+		Email:           emailer.New(emailCfg.ServiceURL, emailCfg.FromAddress, emailCfg.TokenURL, emailCfg.ClientID, emailCfg.ClientSecret, emailCfg.Enabled),
 		Users:           userRepo,
 		Directory:       dirSvc,
 		Grants:          grantRepo,

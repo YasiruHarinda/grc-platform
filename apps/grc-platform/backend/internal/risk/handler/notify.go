@@ -148,6 +148,16 @@ func (d *Deps) sendRiskEvent(ctx context.Context, ev emailer.RiskEvent, riskID i
 		return fmt.Errorf("no deliverable recipients")
 	}
 
+	return d.sendRiskEventToEmails(ctx, ev, riskID, emails, actor, comment)
+}
+
+// sendRiskEventToEmails is the tail of sendRiskEvent — load the risk detail,
+// build RiskEventInfo, send — split out for callers whose recipients are raw
+// addresses rather than platform user ids. Today that is only
+// notifyEscalationLeads: a lead is frozen on the escalation row as an Asgardeo
+// id, resolved to an email through the directory, and need not be a `user` row
+// at all, so it can't go through sendRiskEvent's id resolution.
+func (d *Deps) sendRiskEventToEmails(ctx context.Context, ev emailer.RiskEvent, riskID int, emails []string, actor, comment string) error {
 	detail, err := d.Risk.GetByID(ctx, riskID)
 	if err != nil {
 		slog.Warn("risk notification: failed to load risk detail", "event", ev, "riskId", riskID, "err", err)
@@ -168,10 +178,10 @@ func (d *Deps) sendRiskEvent(ctx context.Context, ev emailer.RiskEvent, riskID i
 		People:         d.peopleForEvent(ctx, ev, riskID, detail),
 		DetailURL:      fmt.Sprintf("%s/risk/registers?riskId=%d", d.FrontendBaseURL, riskID),
 	}); err != nil {
-		slog.Warn("risk notification: send failed", "event", ev, "riskId", riskID, "recipients", len(emails), "userIds", recipientUserIDs, "err", err)
+		slog.Warn("risk notification: send failed", "event", ev, "riskId", riskID, "recipients", len(emails), "err", err)
 		return fmt.Errorf("send: %w", err)
 	}
-	slog.Info("risk notification sent", "event", ev, "riskId", riskID, "recipients", len(emails), "userIds", recipientUserIDs)
+	slog.Info("risk notification sent", "event", ev, "riskId", riskID, "recipients", len(emails))
 	return nil
 }
 
@@ -350,18 +360,87 @@ func (d *Deps) notifyComplianceAdmins(ev emailer.RiskEvent, riskID, registerID i
 	}()
 }
 
-// notifyEscalationLeads is a deliberate no-op, for the same reason as
-// notifyComplianceAdmins: the recipients were explicitly deferred.
+// notifyEscalationLeads emails the Risk Assigner's and Action Owner's leads
+// (their HR line managers) that riskID has been escalated. by is the actor that
+// triggered the escalation — a real user for the manual button, the escalation
+// job's "system" sentinel for the daily sweep (describeActor tolerates both).
 //
-// The assigner's and action owner's line managers are already resolved from the
-// HR entity and frozen on the escalation row (as Asgardeo ids) at escalation
-// time, so the data is there — only the send is withheld. That ordering is
-// intentional: resolving them later would risk a reorg changing who a
-// historical escalation belonged to.
+// Gated on d.LeadEscalationEmails (LEAD_ESCALATION_EMAILS_ENABLED): a no-op
+// when off. The leads themselves are resolved and frozen on the escalation row
+// at escalation time regardless of this switch (escalationService.resolveLeads)
+// — only the send is gated here — because the escalation-comment gate and the
+// visibility carve-out read those frozen ids whether or not email is on.
 //
-// TODO: send to assigner_lead_uuid / action_owner_lead_uuid (resolved to an
-// email via the identity directory) on the risk's open escalation once it is
-// decided that leads should be emailed.
-func notifyEscalationLeads(riskID int) {
-	slog.Info("escalation lead notification suppressed (not yet wired)", "riskId", riskID)
+// Detached and best-effort, exactly like notifyComplianceAdmins: the
+// escalation is already committed, the recipient lookup is itself a round trip,
+// and both the request path (NotifyEscalation) and the daily job
+// (NotifyEscalationSync) call it the same fire-and-forget way.
+func (d *Deps) notifyEscalationLeads(riskID int, by string) {
+	if !d.LeadEscalationEmails {
+		return
+	}
+	go func() {
+		defer func() {
+			if p := recover(); p != nil {
+				slog.Error("escalation lead notification: panic", "riskId", riskID, "panic", p)
+			}
+		}()
+		notifySem <- struct{}{}
+		defer func() { <-notifySem }()
+		ctx, cancel := context.WithTimeout(context.Background(), notifyTimeout)
+		defer cancel()
+
+		escalations, err := d.Escalation.List(ctx, riskID)
+		if err != nil {
+			slog.Warn("escalation lead notification: failed to list escalations", "riskId", riskID, "err", err)
+			return
+		}
+		var open *model.Escalation
+		for _, e := range escalations {
+			if e.Status == "OPEN" {
+				open = e
+				break
+			}
+		}
+		if open == nil {
+			slog.Warn("escalation lead notification: no open escalation", "riskId", riskID)
+			return
+		}
+
+		emails := dedupeLeadEmails(ctx, open, d.resolvePerson)
+		if len(emails) == 0 {
+			slog.Info("escalation lead notification: no reachable leads", "riskId", riskID)
+			return
+		}
+
+		_ = d.sendRiskEventToEmails(ctx, emailer.EventEscalatedLead, riskID, emails, by, "")
+	}()
+}
+
+// dedupeLeadEmails resolves an escalation's two frozen lead ids
+// (AssignerLeadUUID, ActionOwnerLeadUUID) to deliverable addresses through
+// resolve, drops nils and unresolvable entries, and deduplicates
+// case-insensitively — the assigner's and action owner's line manager are
+// frequently the same person and must get one email, not two. Order is
+// assigner's lead first. resolve has resolvePerson's shape: (name, email).
+func dedupeLeadEmails(ctx context.Context, esc *model.Escalation, resolve func(context.Context, string) (string, string)) []string {
+	seen := make(map[string]bool, 2)
+	emails := make([]string, 0, 2)
+	for _, uuid := range []*string{esc.AssignerLeadUUID, esc.ActionOwnerLeadUUID} {
+		if uuid == nil || strings.TrimSpace(*uuid) == "" {
+			continue
+		}
+		_, email := resolve(ctx, *uuid)
+		email = strings.TrimSpace(email)
+		if email == "" {
+			continue
+		}
+		key := strings.ToLower(email)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		emails = append(emails, email)
+	}
+	return emails
 }

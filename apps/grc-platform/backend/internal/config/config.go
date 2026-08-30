@@ -32,9 +32,13 @@ type Config struct {
 	CORSAllowedOrigin       string
 	AIValidation            AIValidationConfig
 	Email                   EmailConfig
-	// AuditLeadEscalationEnabled turns on emailing an overdue item's owner's
-	// HR line manager. See AuditLeadEscalationDefault.
-	AuditLeadEscalationEnabled bool
+	// LeadEscalationEmailsEnabled turns on emailing a person's HR line manager
+	// (their "lead" — see EmailConfig's comment) when work they are responsible
+	// for is escalated: an overdue audit item's owner's lead (the audit
+	// reminder sweep), and a risk's assigner/action-owner leads (on
+	// escalation). One switch for both modules — it replaces the old
+	// AUDIT_LEAD_ESCALATION_ENABLED. See LeadEscalationEmailsDefault.
+	LeadEscalationEmailsEnabled bool
 	// SchedulerEnabled turns the background scheduler (internal/scheduler) on
 	// or off. It is the single switch for every daily sweep at once — today
 	// the overdue-risk escalation and the audit due-date reminder digest. See
@@ -65,40 +69,68 @@ func schedulerEnabled() bool {
 	}
 }
 
-// AuditLeadEscalationDefault is the built-in setting for the overdue lead
-// escalation, used by every environment that does not override it. Deliberately
-// a constant rather than a required env var: production takes no config
-// changes, so enabling this is a one-line edit here plus a deploy.
+// LeadEscalationEmailsDefault is the built-in setting for the lead-escalation
+// emails, used by every environment that does not override it. Off by default:
+// this preserves the behaviour before the switch existed — audit already
+// defaulted off (as AUDIT_LEAD_ESCALATION_ENABLED, which this replaces), and
+// risk never sent a lead email at all — so turning it on is a deliberate
+// per-environment opt-in.
 //
-// AUDIT_LEAD_ESCALATION_ENABLED overrides it with exactly "true" or "false",
-// which is how staging opts out independently of this default.
-const AuditLeadEscalationDefault = false
+// LEAD_ESCALATION_EMAILS_ENABLED overrides it with exactly "true" or "false".
+const LeadEscalationEmailsDefault = false
 
-// auditLeadEscalationEnabled resolves the override against the default above.
+// leadEscalationEmailsEnabled resolves the override against the default above.
 // Any other value — including unset — leaves the default alone, so a typo can
-// never silently start mailing line managers.
-func auditLeadEscalationEnabled() bool {
-	switch os.Getenv("AUDIT_LEAD_ESCALATION_ENABLED") {
+// never silently start mailing leads.
+func leadEscalationEmailsEnabled() bool {
+	switch os.Getenv("LEAD_ESCALATION_EMAILS_ENABLED") {
 	case "true":
 		return true
 	case "false":
 		return false
 	default:
-		return AuditLeadEscalationDefault
+		return LeadEscalationEmailsDefault
+	}
+}
+
+// EmailNotificationsDefault is the built-in setting for the master email
+// switch. On by default: email is the platform's only notification channel, so
+// an environment sending no email at all is the exception. Set
+// EMAIL_NOTIFICATIONS_ENABLED to exactly "false" to disable every send from
+// both modules — see EmailConfig.Enabled.
+const EmailNotificationsDefault = true
+
+// emailNotificationsEnabled resolves EMAIL_NOTIFICATIONS_ENABLED against the
+// default above. Any other value — including unset — leaves the default alone,
+// so a typo can never silently mute every notification.
+func emailNotificationsEnabled() bool {
+	switch os.Getenv("EMAIL_NOTIFICATIONS_ENABLED") {
+	case "true":
+		return true
+	case "false":
+		return false
+	default:
+		return EmailNotificationsDefault
 	}
 }
 
 // EmailConfig holds the connection details for the shared email-sending
 // service (email-service), used to notify a risk's owner when the risk is
-// created. Required (mustEnv) like HREntityConfig: unlike AI validation, a
-// misconfigured/disabled notifier fails silently from the product's
+// created. Normally required (mustEnv) like HREntityConfig: unlike AI
+// validation, a misconfigured notifier fails silently from the product's
 // perspective (nobody gets told the risk exists), so this is treated as
-// load-bearing rather than optional.
+// load-bearing rather than optional — EXCEPT when Enabled is false, where the
+// five service fields are relaxed to optional (see Load) because a disabled
+// client never reads them.
 //
 // The service's own code (service.bal) has no inbound auth check, but the
 // real Choreo-hosted instance sits behind API Manager with OAuth2
 // client-credentials, same as HREntityConfig — ClientID/ClientSecret/TokenURL
 // are required for real calls to succeed.
+//
+// "lead" (used throughout both modules for the recipient of an escalation
+// email) means a person's HR line manager, resolved from the HR entity's
+// managerEmail — frozen per-escalation in risk, resolved per-sweep in audit.
 type EmailConfig struct {
 	ServiceURL      string
 	FromAddress     string
@@ -106,6 +138,12 @@ type EmailConfig struct {
 	ClientID        string
 	ClientSecret    string
 	TokenURL        string
+	// Enabled is the master switch (EMAIL_NOTIFICATIONS_ENABLED). When false,
+	// emailer.Client short-circuits every send to a no-op before any token
+	// fetch or HTTP call — no module sends any email. Upstream work
+	// (recipient resolution, lead resolution, compliance-admin lookups, the
+	// daily sweeps) still runs; only the send is suppressed.
+	Enabled bool
 }
 
 // AIValidationConfig configures the fire-and-forget trigger to the AI Validation
@@ -278,27 +316,40 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
-	emailServiceURL, err := mustEnv("EMAIL_SERVICE_URL")
-	if err != nil {
-		return Config{}, err
-	}
-	emailFromAddress, err := mustEnv("EMAIL_FROM_ADDRESS")
-	if err != nil {
-		return Config{}, err
-	}
+	// FRONTEND_BASE_URL stays required regardless of the email switch — it is
+	// also the CORS-allowed origin (see CORSAllowedOrigin below).
 	frontendBaseURL, err := mustEnv("FRONTEND_BASE_URL")
 	if err != nil {
 		return Config{}, err
 	}
-	emailClientID, err := mustEnv("EMAIL_CLIENT_ID")
+
+	// EMAIL_NOTIFICATIONS_ENABLED=false relaxes the five email-service vars
+	// from required to optional: a disabled emailer.Client never reads them,
+	// which makes "run with no email" a first-class mode for local dev and CI.
+	// Any other value keeps them required — a half-configured notifier is
+	// worse than a loud startup failure.
+	emailEnabled := emailNotificationsEnabled()
+	emailEnv := mustEnv
+	if !emailEnabled {
+		emailEnv = func(key string) (string, error) { return os.Getenv(key), nil }
+	}
+	emailServiceURL, err := emailEnv("EMAIL_SERVICE_URL")
 	if err != nil {
 		return Config{}, err
 	}
-	emailClientSecret, err := mustEnv("EMAIL_CLIENT_SECRET")
+	emailFromAddress, err := emailEnv("EMAIL_FROM_ADDRESS")
 	if err != nil {
 		return Config{}, err
 	}
-	emailTokenURL, err := mustEnv("EMAIL_TOKEN_URL")
+	emailClientID, err := emailEnv("EMAIL_CLIENT_ID")
+	if err != nil {
+		return Config{}, err
+	}
+	emailClientSecret, err := emailEnv("EMAIL_CLIENT_SECRET")
+	if err != nil {
+		return Config{}, err
+	}
+	emailTokenURL, err := emailEnv("EMAIL_TOKEN_URL")
 	if err != nil {
 		return Config{}, err
 	}
@@ -347,9 +398,10 @@ func Load() (Config, error) {
 			ClientID:        emailClientID,
 			ClientSecret:    emailClientSecret,
 			TokenURL:        emailTokenURL,
+			Enabled:         emailEnabled,
 		},
-		AuditLeadEscalationEnabled: auditLeadEscalationEnabled(),
-		SchedulerEnabled:           schedulerEnabled(),
+		LeadEscalationEmailsEnabled: leadEscalationEmailsEnabled(),
+		SchedulerEnabled:            schedulerEnabled(),
 	}, nil
 }
 
