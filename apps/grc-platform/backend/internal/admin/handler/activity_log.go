@@ -29,6 +29,10 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
 
+// maxActivityLogPageSize bounds one page so a privileged caller cannot pull the
+// whole table (and trigger a directory lookup per row) in a single request.
+const maxActivityLogPageSize = 200
+
 // handleListActivityLog serves GET /api/v1/admin/activity-log, gated on
 // holding MANAGE_USERS, MANAGE_RISK_HUB, AND MANAGE_AUDIT_HUB together.
 func (d *Deps) handleListActivityLog(w http.ResponseWriter, r *http.Request) {
@@ -49,6 +53,10 @@ func (d *Deps) handleListActivityLog(w http.ResponseWriter, r *http.Request) {
 		v, err := strconv.Atoi(raw)
 		if err != nil || v <= 0 {
 			response.WriteError(w, http.StatusBadRequest, "limit must be a positive integer")
+			return
+		}
+		if v > maxActivityLogPageSize {
+			response.WriteError(w, http.StatusBadRequest, "limit must not exceed "+strconv.Itoa(maxActivityLogPageSize))
 			return
 		}
 		limit = v
