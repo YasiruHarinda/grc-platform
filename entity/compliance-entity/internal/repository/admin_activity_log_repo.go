@@ -100,7 +100,7 @@ func (r *adminActivityLogRepo) ListAdminActivityLog(ctx context.Context, filter 
 
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT`+adminActivityLogSelectCols+adminActivityLogFromClause+" "+where+
-			" ORDER BY t.created_at DESC LIMIT ? OFFSET ?",
+			" ORDER BY t.created_at DESC, t.id DESC LIMIT ? OFFSET ?",
 		append(append([]any{}, args...), limit, offset)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("admin_activity_log.List: %w", err)
