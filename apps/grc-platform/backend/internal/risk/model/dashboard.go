@@ -158,7 +158,7 @@ type RegisterCertCount struct {
 // RegisterStatusFact is one aggregated repository row of every non-cancelled
 // risk (open and closed) grouped by register × effective residual level ×
 // status bucket. Bucket is "CLOSED" for closed risks, else the risk's own
-// treatment strategy (REMEDIATE/ACCEPT/TRANSFER/VOID). The dashboard service
+// treatment strategy (REMEDIATE/ACCEPT/TRANSFER/AVOID). The dashboard service
 // composes each register's status chart from these rows.
 type RegisterStatusFact struct {
 	RegisterID   int

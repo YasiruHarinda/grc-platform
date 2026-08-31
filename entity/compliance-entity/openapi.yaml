@@ -4926,7 +4926,7 @@ components:
           - MITIGATE
           - ACCEPT
           - TRANSFER
-          - VOID
+          - AVOID
           nullable: true
         grossScoreId: &id020
           type: integer
@@ -5097,7 +5097,7 @@ components:
           - MITIGATE
           - ACCEPT
           - TRANSFER
-          - VOID
+          - AVOID
           nullable: true
         implementationDate:
           type: string
@@ -5180,7 +5180,7 @@ components:
           - MITIGATE
           - ACCEPT
           - TRANSFER
-          - VOID
+          - AVOID
           nullable: true
         grossScoreId:
           type: integer

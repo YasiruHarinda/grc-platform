@@ -221,7 +221,7 @@ CREATE TABLE IF NOT EXISTS risk (
   management_approver_id   INT           NOT NULL COMMENT 'Named by the Risk Assigner at creation, on every risk regardless of level/treatment; approves PENDING_MANAGEMENT_APPROVAL and is the target an ESCALATED risk conceptually escalates to (no notification wired yet)',
   impact_description       TEXT          NULL,
   gross_score_id           INT           NULL,
-  treatment_strategy       ENUM('REMEDIATE','ACCEPT','TRANSFER','VOID') NULL,
+  treatment_strategy       ENUM('REMEDIATE','ACCEPT','TRANSFER','AVOID') NULL,
   action_plan_id           INT           NULL,
   assignment_team_id       INT           NOT NULL,
   progress                 TEXT          NULL,

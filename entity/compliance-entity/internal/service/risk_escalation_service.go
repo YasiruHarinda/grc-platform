@@ -46,7 +46,7 @@ func (s *riskEscalationService) CreateRiskEscalation(ctx context.Context, riskID
 	if req.NewTreatmentStrategy != nil {
 		up := strings.ToUpper(*req.NewTreatmentStrategy)
 		if !validTreatmentStrategies[up] {
-			return domain.RiskEscalation{}, &apierror.ValidationError{Msg: "newTreatmentStrategy must be REMEDIATE, ACCEPT, TRANSFER, or VOID"}
+			return domain.RiskEscalation{}, &apierror.ValidationError{Msg: "newTreatmentStrategy must be REMEDIATE, ACCEPT, TRANSFER, or AVOID"}
 		}
 		req.NewTreatmentStrategy = &up
 	}
@@ -94,7 +94,7 @@ func (s *riskEscalationService) UpdateRiskEscalation(ctx context.Context, riskID
 	if req.NewTreatmentStrategy != nil {
 		up := strings.ToUpper(*req.NewTreatmentStrategy)
 		if !validTreatmentStrategies[up] {
-			return domain.RiskEscalation{}, &apierror.ValidationError{Msg: "newTreatmentStrategy must be REMEDIATE, ACCEPT, TRANSFER, or VOID"}
+			return domain.RiskEscalation{}, &apierror.ValidationError{Msg: "newTreatmentStrategy must be REMEDIATE, ACCEPT, TRANSFER, or AVOID"}
 		}
 		req.NewTreatmentStrategy = &up
 	}

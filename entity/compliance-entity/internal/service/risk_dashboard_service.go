@@ -45,7 +45,7 @@ func NewRiskDashboardService(repo repository.RiskDashboardRepository) RiskDashbo
 }
 
 // statusBucketOrder fixes the x-axis order of each register's status chart.
-var statusBucketOrder = []string{"CLOSED", "REMEDIATE", "ACCEPT", "TRANSFER", "VOID"}
+var statusBucketOrder = []string{"CLOSED", "REMEDIATE", "ACCEPT", "TRANSFER", "AVOID"}
 
 func (s *riskDashboardService) Summary(ctx context.Context, req domain.RiskDashboardRequest) (domain.RiskDashboardSummary, error) {
 	if req.RegisterID != nil && *req.RegisterID <= 0 {
