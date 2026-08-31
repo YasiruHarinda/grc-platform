@@ -40,6 +40,9 @@ func (d *Deps) handleListActivityLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Actor identity + admin action history: never let a shared browser cache it.
+	w.Header().Set("Cache-Control", "no-store")
+
 	q := r.URL.Query()
 	limit, offset := 50, 0
 	if raw := q.Get("limit"); raw != "" {
