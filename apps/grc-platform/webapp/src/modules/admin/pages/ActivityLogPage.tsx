@@ -63,6 +63,18 @@ const ENTITY_TYPE_LABELS: Record<AdminActivityEntityType, string> = {
   AUDIT_TEAM: "Audit Team",
 };
 
+// RISK_SCORE is deliberately absent: risk scores have no mutating endpoint, so
+// filtering by it could only ever come back empty. It stays in the label map
+// above so a row would still render should one ever be written.
+const FILTERABLE_ENTITY_TYPES: AdminActivityEntityType[] = [
+  "USER",
+  "GRANT",
+  "RISK_TEAM",
+  "RISK_CATEGORY",
+  "COMPLIANCE_REFERENCE",
+  "AUDIT_TEAM",
+];
+
 const PAGE_SIZE = 25;
 
 // One-line human summary of an entry's details, tolerant of unknown fields.
@@ -148,7 +160,7 @@ export default function ActivityLogPage(): JSX.Element {
           sx={{ minWidth: 180 }}
         >
           <MenuItem value="">All entity types</MenuItem>
-          {(Object.keys(ENTITY_TYPE_LABELS) as AdminActivityEntityType[]).map((t) => (
+          {FILTERABLE_ENTITY_TYPES.map((t) => (
             <MenuItem key={t} value={t}>
               {ENTITY_TYPE_LABELS[t]}
             </MenuItem>
