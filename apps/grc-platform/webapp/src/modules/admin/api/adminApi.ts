@@ -467,6 +467,10 @@ export async function fetchActivityLog(
   q.set("limit", String(filter.limit ?? 50));
   q.set("offset", String(filter.offset ?? 0));
 
-  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/admin/activity-log?${q.toString()}`);
+  // Activity-log rows carry actor identity + admin actions; keep them out of the
+  // browser disk cache.
+  const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/admin/activity-log?${q.toString()}`, {
+    cache: "no-store",
+  });
   return handleResponse<AdminActivityLogResponse>(res);
 }
