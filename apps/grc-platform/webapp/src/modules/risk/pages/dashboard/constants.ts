@@ -21,13 +21,13 @@ import { parseDateStr } from "../risk-registers/utils";
 // separation. Segment labels stay visible because two hues sit below 3:1
 // contrast on light surfaces.
 
-export const TREATMENT_ORDER = ["REMEDIATE", "ACCEPT", "TRANSFER", "VOID", "UNSPECIFIED"] as const;
+export const TREATMENT_ORDER = ["REMEDIATE", "ACCEPT", "TRANSFER", "AVOID", "UNSPECIFIED"] as const;
 
 export const TREATMENT_LABELS: Record<string, string> = {
   REMEDIATE: "To be Remediated",
   ACCEPT: "Risk Accepted",
   TRANSFER: "Transfer",
-  VOID: "Avoid",
+  AVOID: "Avoid",
   UNSPECIFIED: "Unspecified",
 };
 
@@ -35,7 +35,7 @@ export const TREATMENT_COLORS: Record<string, string> = {
   REMEDIATE: "#2a78d6",
   ACCEPT: "#1baf7a",
   TRANSFER: "#eda100",
-  VOID: "#4a3aa7",
+  AVOID: "#4a3aa7",
   UNSPECIFIED: "#8a8a8a",
 };
 
@@ -67,14 +67,14 @@ export const LEVEL_LABELS: Record<string, string> = {
 
 // X-axis order for each register's status chart: closed risks, then every
 // open-risk treatment strategy.
-export const STATUS_BUCKET_ORDER = ["CLOSED", "REMEDIATE", "ACCEPT", "TRANSFER", "VOID"] as const;
+export const STATUS_BUCKET_ORDER = ["CLOSED", "REMEDIATE", "ACCEPT", "TRANSFER", "AVOID"] as const;
 
 export const STATUS_BUCKET_LABELS: Record<string, string> = {
   CLOSED: "Closed",
   REMEDIATE: "To be Remediated",
   ACCEPT: "Accepted",
   TRANSFER: "Transfer",
-  VOID: "Avoid",
+  AVOID: "Avoid",
 };
 
 // Severity palette shared across the risk module: dashboard charts use it as

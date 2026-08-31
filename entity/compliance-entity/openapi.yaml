@@ -4923,10 +4923,10 @@ components:
         treatmentStrategy: &id019
           type: string
           enum:
-          - MITIGATE
+          - REMEDIATE
           - ACCEPT
           - TRANSFER
-          - VOID
+          - AVOID
           nullable: true
         grossScoreId: &id020
           type: integer
@@ -5094,10 +5094,10 @@ components:
         treatmentStrategy:
           type: string
           enum:
-          - MITIGATE
+          - REMEDIATE
           - ACCEPT
           - TRANSFER
-          - VOID
+          - AVOID
           nullable: true
         implementationDate:
           type: string
@@ -5177,10 +5177,10 @@ components:
         treatmentStrategy:
           type: string
           enum:
-          - MITIGATE
+          - REMEDIATE
           - ACCEPT
           - TRANSFER
-          - VOID
+          - AVOID
           nullable: true
         grossScoreId:
           type: integer

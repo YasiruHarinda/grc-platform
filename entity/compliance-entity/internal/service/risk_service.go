@@ -148,10 +148,10 @@ func isValidRiskTransition(from, to string) bool {
 // and risk.identified_by_type ENUMs in risk_schema.sql. Both columns are nullable,
 // so these are only enforced when a value is provided.
 // REMEDIATE, not MITIGATE: the risk.treatment_strategy ENUM is
-// ('REMEDIATE','ACCEPT','TRANSFER','VOID'). MITIGATE was accepted here and then
+// ('REMEDIATE','ACCEPT','TRANSFER','AVOID'). MITIGATE was accepted here and then
 // rejected by MySQL as a truncated value, while every real REMEDIATE row was
 // refused — the validator had it exactly backwards.
-var validTreatmentStrategies = map[string]bool{"REMEDIATE": true, "ACCEPT": true, "TRANSFER": true, "VOID": true}
+var validTreatmentStrategies = map[string]bool{"REMEDIATE": true, "ACCEPT": true, "TRANSFER": true, "AVOID": true}
 var validIdentifiedByTypes = map[string]bool{"EMPLOYEE": true, "EXTERNAL_PERSON": true, "TOOL": true}
 
 // validRiskLevels mirrors the distinct risk_score.risk_level values;
@@ -255,7 +255,7 @@ func (s *riskService) CreateRisk(ctx context.Context, req domain.CreateRiskReque
 		return domain.Risk{}, &apierror.ValidationError{Msg: "impact must be 1, 2, or 3"}
 	}
 	if req.TreatmentStrategy != nil && !validTreatmentStrategies[strings.ToUpper(*req.TreatmentStrategy)] {
-		return domain.Risk{}, &apierror.ValidationError{Msg: "treatmentStrategy must be REMEDIATE, ACCEPT, TRANSFER, or VOID"}
+		return domain.Risk{}, &apierror.ValidationError{Msg: "treatmentStrategy must be REMEDIATE, ACCEPT, TRANSFER, or AVOID"}
 	}
 	if req.TreatmentStrategy != nil {
 		up := strings.ToUpper(*req.TreatmentStrategy)
@@ -326,7 +326,7 @@ func (s *riskService) UpdateRisk(ctx context.Context, id int, req domain.UpdateR
 		}
 	}
 	if req.TreatmentStrategy != nil && !validTreatmentStrategies[strings.ToUpper(*req.TreatmentStrategy)] {
-		return domain.Risk{}, &apierror.ValidationError{Msg: "treatmentStrategy must be REMEDIATE, ACCEPT, TRANSFER, or VOID"}
+		return domain.Risk{}, &apierror.ValidationError{Msg: "treatmentStrategy must be REMEDIATE, ACCEPT, TRANSFER, or AVOID"}
 	}
 	if req.TreatmentStrategy != nil {
 		up := strings.ToUpper(*req.TreatmentStrategy)
