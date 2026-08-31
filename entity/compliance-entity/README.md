@@ -20,9 +20,10 @@ Service starts at `http://localhost:8080`.
 - Entry point: `cmd/api/main.go`
 - Authentication: handled upstream by the Choreo API Gateway — this service
   applies **no** auth middleware itself. The GRC Backend is a trusted internal
-  caller: it validates the Asgardeo JWT, then forwards the actor's email as
-  `createdBy`/`updatedBy` in the JSON body of every request. Handler code reads
-  actor identity from the decoded request struct, never from request headers.
+  caller: it validates the Asgardeo JWT, then forwards the actor's Asgardeo
+  user UUID (the JWT `sub` claim) as `createdBy`/`updatedBy` in the JSON body of
+  every request — names and emails are not stored here. Handler code reads actor
+  identity from the decoded request struct, never from request headers.
 - Owns two external dependencies the backend cannot reach directly: the MySQL
   `grc_platform` database, and Azure Blob Storage (evidence/risk file bytes).
 - Serves both the Risk Hub and Audit Hub domains from one service.
@@ -338,7 +339,7 @@ curl -X POST http://localhost:8080/risks/1/escalations \
 # Create an audit
 curl -X POST http://localhost:8080/audits \
   -H "Content-Type: application/json" \
-  -d '{"title":"Q2 SOC2 Audit","frameworkId":1,"productId":2,"assignedLeadId":5,"createdBy":"alice@wso2.com"}'
+  -d '{"title":"Q2 SOC2 Audit","frameworkId":1,"productId":2,"assignedLeadId":5,"createdBy":"<asgardeo-user-uuid>"}'
 ```
 
 Note: unlike the GRC Backend, this service does **not** validate a bearer

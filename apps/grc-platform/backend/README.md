@@ -298,6 +298,7 @@ Every route below requires `MANAGE_USERS` GLOBAL.
 | `GET` | `/api/v1/risks/{id}/escalations` | Escalation history |
 | `GET` | `/api/v1/risks/{id}/history` | Full risk history (workflow events + field edits) |
 | `POST` | `/api/v1/risks/{id}/escalations/{escalationId}/comment` | Answer an escalation, returning the risk to its assigner |
+| `POST` | `/api/v1/risks/escalations/run` | Manually trigger the daily overdue-risk escalation sweep (whole batch; requires `MANAGE_RISK_HUB` GLOBAL) |
 | `POST` | `/api/v1/risks/{id}/evidence` | Upload evidence |
 | `GET` | `/api/v1/risks/{id}/evidence` | List evidence |
 | `DELETE` | `/api/v1/risks/{id}/evidence/{fileId}` | Delete an evidence file |
@@ -405,7 +406,7 @@ curl -X POST http://localhost:8081/api/v1/risks \
         "reassessment_date": "2026-08-01", "assignment_team_id": 1,
         "owner_id": 5, "management_approver_id": 6, "action_owner_id": 5,
         "action_plan_description": "...", "action_steps": [{"description":"..."}],
-        "treatment_strategy": "MITIGATE", "email_subject": "New risk registered"
+        "treatment_strategy": "REMEDIATE", "email_subject": "New risk registered"
       }'
 
 # Compliance approves a risk (moves PENDING_COMPLIANCE_REVIEW → IN_REMEDIATION)
