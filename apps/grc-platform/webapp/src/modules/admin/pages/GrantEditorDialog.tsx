@@ -31,7 +31,7 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { X } from "@wso2/oxygen-ui-icons-react";
-import { type JSX, useState } from "react";
+import { type JSX, useEffect, useState } from "react";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { createGrant, revokeGrant, type AdminUser, type Grant, type Role } from "../api/adminApi";
 import { dialogPaperSx } from "../cardStyles";
@@ -55,6 +55,15 @@ export default function GrantEditorDialog({ open, user, roles, onClose, onChange
   const [pendingRevoke, setPendingRevoke] = useState<Grant | null>(null);
   const [revoking, setRevoking] = useState(false);
   const [revokeError, setRevokeError] = useState<string | null>(null);
+
+  // Dialog stays mounted while closed; drop any pending revoke so reopening
+  // doesn't flash a stale confirmation.
+  useEffect(() => {
+    if (!open) {
+      setPendingRevoke(null);
+      setRevokeError(null);
+    }
+  }, [open]);
 
   const handleAdd = async (grant: PendingGrant) => {
     if (!user) return;
@@ -181,7 +190,7 @@ export default function GrantEditorDialog({ open, user, roles, onClose, onChange
       </DialogActions>
 
       <Dialog
-        open={!!pendingRevoke}
+        open={open && !!pendingRevoke}
         onClose={() => (revoking ? undefined : setPendingRevoke(null))}
         maxWidth="xs"
         fullWidth
