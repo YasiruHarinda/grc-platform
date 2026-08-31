@@ -39,6 +39,7 @@ import (
 	riskjob "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/job"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scheduler"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/adminactivity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/file"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
@@ -84,6 +85,9 @@ func main() {
 	// local dev — which is exactly the mode most manual admin-console testing
 	// runs in.
 	grantRepo := grant.NewRepository(entityCli)
+
+	// One Admin Activity Log client, shared by the admin/risk/audit handlers.
+	activityLog := adminactivity.NewClient(entityCli)
 
 	// Load the role→privilege mapping from the Compliance Entity. Built after
 	// entityCli because it needs it.
@@ -170,7 +174,7 @@ func main() {
 	}
 
 	userhandler.RegisterRoutes(mux, userDeps)
-	riskDeps := buildRiskDeps(entityCli, fileSvc, hrClient, grantRepo, dirSvc, scimClient, cfg.Email, cfg.LeadEscalationEmailsEnabled)
+	riskDeps := buildRiskDeps(entityCli, fileSvc, hrClient, grantRepo, dirSvc, scimClient, cfg.Email, cfg.LeadEscalationEmailsEnabled, activityLog)
 	// Overdue-risk escalation sweep. Constructed here regardless of
 	// SCHEDULER_ENABLED: the scheduler below runs it on the daily tick, and
 	// riskDeps.TriggerEscalationJob exposes the same RunOnce behind
@@ -185,7 +189,7 @@ func main() {
 	if cfg.LeadEscalationEmailsEnabled {
 		auditHRClient = hrClient
 	}
-	auditDeps := buildAuditDeps(fileSvc, entityCli, cfg.AIValidation, cfg.Email, grantRepo, dirSvc, auditHRClient)
+	auditDeps := buildAuditDeps(fileSvc, entityCli, cfg.AIValidation, cfg.Email, grantRepo, dirSvc, auditHRClient, activityLog)
 	reminderJob := auditjob.NewReminderJob(auditDeps.Audit, auditDeps.Control, auditDeps.Notification, auditDeps.SendReminderDigestSync)
 	if cfg.LeadEscalationEmailsEnabled {
 		reminderJob = reminderJob.WithLeadAlerts(auditDeps.ResolveOwnerLeads, auditDeps.SendOverdueLeadDigestSync)
@@ -194,10 +198,11 @@ func main() {
 	auditDeps.TriggerReminderJob = reminderJob.RunOnce
 	audithandler.RegisterRoutes(mux, auditDeps)
 	adminhandler.RegisterRoutes(mux, adminhandler.Deps{
-		Admin:     adminentity.NewRepository(entityCli),
-		Users:     userDeps.Users,
-		Grants:    grantRepo,
-		Directory: dirSvc,
+		Admin:       adminentity.NewRepository(entityCli),
+		Users:       userDeps.Users,
+		Grants:      grantRepo,
+		Directory:   dirSvc,
+		ActivityLog: activityLog,
 	})
 
 	// Background sweeps, both fired daily at a fixed 08:00 UTC by one shared

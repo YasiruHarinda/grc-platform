@@ -27,6 +27,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/admin"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/routeguard"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/adminactivity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
@@ -50,6 +51,9 @@ type Deps struct {
 	// (local dev without SCIM credentials) — search then returns no results
 	// and provisioning always 422s, rather than panicking.
 	Directory *directory.Service
+	// ActivityLog records mutations to admin_activity_log and backs the read
+	// side (GET /api/v1/admin/activity-log).
+	ActivityLog *adminactivity.Client
 }
 
 // RegisterRoutes mounts every Admin Console route onto mux under
@@ -68,4 +72,5 @@ func RegisterRoutes(mux routeguard.Router, deps Deps) {
 	mux.HandleFunc("POST /api/v1/admin/users/{id}/grants", d.handleCreateGrant)
 	mux.HandleFunc("DELETE /api/v1/admin/users/{id}/grants/{grantId}", d.handleRevokeGrant)
 	mux.HandleFunc("GET /api/v1/admin/roles", d.handleListRoles)
+	mux.HandleFunc("GET /api/v1/admin/activity-log", d.handleListActivityLog)
 }

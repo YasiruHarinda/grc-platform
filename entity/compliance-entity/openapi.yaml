@@ -37,9 +37,11 @@ tags:
 - name: Risk Action Steps
 - name: Risk Escalations
 - name: Risk Change Log
-- name: Risk Notifications
 - name: Risk Evidence
 - name: Risk Assessments
+- name: Risk Categories
+- name: Audit Notifications
+- name: Admin Activity Log
 paths:
   /health:
     get:
@@ -181,31 +183,6 @@ paths:
                 $ref: '#/components/schemas/SearchUsersResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-  /users/by-email/{email}:
-    get:
-      tags:
-      - Users
-      summary: Get a user by email
-      operationId: getUserByEmail
-      parameters:
-      - name: email
-        in: path
-        required: true
-        schema:
-          type: string
-      responses:
-        '200':
-          description: Get a user by email
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/User'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '404':
-          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /users/by-uuid/{uuid}:
@@ -634,7 +611,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ListFrameworkControlsResponse'
+                $ref: '#/components/schemas/ListFrameworkControlVersionsResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -2079,6 +2056,25 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+      - Risk Compliance References
+      summary: Delete a compliance reference
+      description: Conflicts when the reference is still linked to a risk.
+      operationId: deleteRiskReference
+      parameters:
+      - $ref: '#/components/parameters/IntId'
+      responses:
+        '204':
+          description: No content
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /risk/compliance-references:
     post:
       tags:
@@ -2212,45 +2208,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ListRolesResponse'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-  /grants/by-email/{email}:
-    get:
-      tags:
-      - Role Grants
-      summary: Get a user's role grants by email
-      description: >-
-        Resolves a user by email and returns their active grants in one round
-        trip. This is the hot path — the GRC backend calls it on every
-        authenticated request to build the caller's scoped privilege set.
-
-
-        Responses are never cached (Cache-Control: no-store) and must not be
-        cached by callers either. Revoking a grant has to take effect on the
-        caller's next request, which is why this data does not ride along on the
-        user payload, which is cached for five minutes.
-
-
-        A user who does not exist returns 404 rather than an empty grant list,
-        so callers can distinguish "holds no roles" from "not provisioned here".
-      operationId: getGrantsByEmail
-      parameters:
-      - name: email
-        in: path
-        required: true
-        schema:
-          type: string
-      responses:
-        '200':
-          description: The user's active grants
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserGrantsResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '404':
-          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /grants/by-uuid/{uuid}:
@@ -3113,75 +3070,6 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /notifications:
-    post:
-      tags:
-      - Risk Notifications
-      summary: Create a risk notification
-      operationId: createRiskNotification
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateRiskNotificationRequest'
-      responses:
-        '201':
-          description: Notification created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RiskNotification'
-        '400': *id002
-        '500': *id001
-    get:
-      tags:
-      - Risk Notifications
-      summary: List notifications for a recipient
-      operationId: listRiskNotifications
-      parameters:
-      - name: recipientId
-        in: query
-        schema:
-          type: integer
-        required: true
-      responses:
-        '200':
-          description: Notifications for the recipient
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ListRiskNotificationsResponse'
-        '400': *id002
-        '500': *id001
-  /notifications/{id}/read:
-    patch:
-      tags:
-      - Risk Notifications
-      summary: Mark a notification read
-      operationId: markRiskNotificationRead
-      parameters:
-      - name: id
-        in: path
-        schema:
-          type: integer
-        required: true
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MarkRiskNotificationReadRequest'
-      responses:
-        '200':
-          description: Notification marked read
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RiskNotification'
-        '400': *id002
-        '404': *id003
-        '500': *id001
   /risks/{riskId}/evidence:
     post:
       tags:
@@ -3234,11 +3122,11 @@ paths:
         '500':
           $ref: '#/components/responses/InternalServerError'
   /risk-evidence/{fileId}:
-    delete:
+    get:
       tags:
       - Risk Evidence
-      summary: Delete a risk evidence file
-      operationId: deleteRiskEvidence
+      summary: Get a risk evidence file by ID
+      operationId: getRiskEvidence
       parameters:
       - name: fileId
         in: path
@@ -3246,8 +3134,12 @@ paths:
         schema:
           type: integer
       responses:
-        '204':
-          description: No content
+        '200':
+          description: Get a risk evidence file by ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskEvidenceFile'
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -3301,6 +3193,300 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ListRiskAssessmentsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /risks/{riskId}/evidence/{fileId}:
+    delete:
+      tags:
+      - Risk Evidence
+      summary: Delete a risk evidence file
+      description: Scoped by riskId as well as fileId, so a file cannot be deleted through the wrong risk.
+      operationId: deleteRiskEvidenceForRisk
+      parameters:
+      - name: riskId
+        in: path
+        required: true
+        schema:
+          type: integer
+      - name: fileId
+        in: path
+        required: true
+        schema:
+          type: integer
+      responses:
+        '204':
+          description: No content
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /risks/{riskId}/escalations/{escalationId}/comment:
+    patch:
+      tags:
+      - Risk Escalations
+      summary: Record a management decision on an escalation
+      operationId: commentEscalation
+      parameters:
+      - name: riskId
+        in: path
+        required: true
+        schema:
+          type: integer
+      - name: escalationId
+        in: path
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentEscalationRequest'
+      responses:
+        '200':
+          description: The updated escalation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskEscalation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /risk/categories:
+    get:
+      tags:
+      - Risk Categories
+      summary: List risk categories
+      operationId: listRiskCategories
+      responses:
+        '200':
+          description: List risk categories
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListRiskCategoriesResponse'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+      - Risk Categories
+      summary: Create a risk category
+      operationId: createRiskCategory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRiskCategoryRequest'
+      responses:
+        '201':
+          description: The created category
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskCategory'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /risk/categories/{id}:
+    patch:
+      tags:
+      - Risk Categories
+      summary: Update a risk category
+      operationId: updateRiskCategory
+      parameters:
+      - $ref: '#/components/parameters/IntId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRiskCategoryRequest'
+      responses:
+        '200':
+          description: The updated category
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskCategory'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+      - Risk Categories
+      summary: Delete a risk category
+      description: Conflicts when the category is still referenced by a risk.
+      operationId: deleteRiskCategory
+      parameters:
+      - $ref: '#/components/parameters/IntId'
+      responses:
+        '204':
+          description: No content
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /audit/notifications:
+    post:
+      tags:
+      - Audit Notifications
+      summary: Record a sent notification
+      description: The send log written on every outbound notification. Exactly one of controlId or populationId is required.
+      operationId: createAuditNotification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAuditNotificationRequest'
+      responses:
+        '201':
+          description: The recorded notification
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditNotification'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /audit/notifications/claim:
+    post:
+      tags:
+      - Audit Notifications
+      summary: Atomically claim a reminder before sending it
+      description: The reminder job's de-dup guard against overlapping runs. Losing the race returns claimed=false with a 200 — a normal outcome, not an error. POST rather than GET because the claim writes a row. Type must be one of the four REMINDER_* values.
+      operationId: claimAuditNotification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimAuditNotificationRequest'
+      responses:
+        '200':
+          description: Whether this caller now owns sending the item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimAuditNotificationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /audit/notifications/{id}/claim:
+    delete:
+      tags:
+      - Audit Notifications
+      summary: Release a claim whose send failed
+      description: Puts the item back in play so a later run retries it.
+      operationId: releaseAuditNotificationClaim
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        '204':
+          description: No content
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /admin-activity-log:
+    post:
+      tags:
+      - Admin Activity Log
+      summary: Append an admin activity log entry
+      description: The Admin Console's counterpart to /audits/{auditId}/trail — append-only, and covering mutations across both hubs rather than Audit Hub domain events.
+      operationId: createAdminActivityLog
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAdminActivityLogRequest'
+      responses:
+        '201':
+          description: The appended entry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminActivityLog'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    get:
+      tags:
+      - Admin Activity Log
+      summary: List admin activity log entries
+      description: Newest first. Every filter is optional; omitting all of them returns the whole log, subject to pagination.
+      operationId: listAdminActivityLog
+      parameters:
+      - name: limit
+        in: query
+        schema:
+          type: integer
+      - name: offset
+        in: query
+        schema:
+          type: integer
+      - name: actorId
+        in: query
+        schema:
+          type: string
+        description: Filter to one actor's uuid.
+      - name: action
+        in: query
+        schema:
+          $ref: '#/components/schemas/AdminActivityAction'
+      - name: entityType
+        in: query
+        schema:
+          $ref: '#/components/schemas/AdminActivityEntityType'
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date
+        description: YYYY-MM-DD, inclusive.
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date
+        description: YYYY-MM-DD, inclusive of the whole day.
+      responses:
+        '200':
+          description: List admin activity log entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAdminActivityLogResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '500':
@@ -3548,6 +3734,12 @@ components:
       properties:
         userId:
           type: integer
+        userType:
+          type: string
+          enum: [INTERNAL, EXTERNAL]
+          description: >-
+            The user row's user_type. Present on the by-uuid path only; the
+            by-id path resolves no user row and omits it.
         grants:
           type: array
           description: >-
@@ -4685,6 +4877,273 @@ components:
             $ref: '#/components/schemas/AuditTrail'
         total:
           type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+    RiskCategory:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+    ListRiskCategoriesResponse:
+      type: object
+      properties:
+        categories:
+          type: array
+          items:
+            $ref: '#/components/schemas/RiskCategory'
+    CreateRiskCategoryRequest:
+      type: object
+      required:
+      - name
+      - createdBy
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        createdBy:
+          type: string
+    UpdateRiskCategoryRequest:
+      type: object
+      required:
+      - updatedBy
+      properties:
+        name:
+          type: string
+          nullable: true
+          description: Omit to leave unchanged; cannot be set to an empty string.
+        description:
+          type: string
+          nullable: true
+        updatedBy:
+          type: string
+    CommentEscalationRequest:
+      type: object
+      required:
+      - decision
+      - updatedBy
+      properties:
+        decision:
+          type: string
+        updatedBy:
+          type: string
+    AuditNotificationType:
+      type: string
+      enum:
+      - OWNER_ASSIGNED_CONTROL
+      - OWNER_ASSIGNED_POPULATION
+      - AUDITOR_ASSIGNED_CONTROL
+      - REMINDER_DUE_10
+      - REMINDER_DUE_5
+      - REMINDER_DUE_TODAY
+      - REMINDER_OVERDUE
+      - RESUBMISSION_NEEDED
+      - SAMPLE_SUBMITTED
+      - EVIDENCE_INTERNAL_REVIEW
+      - POPULATION_INTERNAL_REVIEW
+      - EVIDENCE_UNDER_VALIDATION
+      - POPULATION_UNDER_VALIDATION
+      - POPULATION_COMPLETE_SAMPLE_NEEDED
+      - CONTROL_COMPLETE
+      - COMMENT_ADDED
+    AuditNotificationReminderType:
+      type: string
+      description: The subset of AuditNotificationType that claim/release apply to — the other types are single-event triggers with no overlapping-run problem to guard against.
+      enum:
+      - REMINDER_DUE_10
+      - REMINDER_DUE_5
+      - REMINDER_DUE_TODAY
+      - REMINDER_OVERDUE
+    AuditNotification:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        recipientId:
+          type: integer
+          nullable: true
+          description: Nullable in the column, but the FK is ON DELETE RESTRICT, so it is never NULL for a real row.
+        auditId:
+          type: integer
+          nullable: true
+        controlId:
+          type: integer
+          nullable: true
+        populationId:
+          type: integer
+          nullable: true
+        type:
+          $ref: '#/components/schemas/AuditNotificationType'
+        channel:
+          type: string
+          enum:
+          - EMAIL
+        dueDateSnapshot:
+          type: string
+          format: date
+          nullable: true
+        message:
+          type: string
+          nullable: true
+        createdBy:
+          type: string
+          nullable: true
+        createdOn:
+          type: string
+          format: date-time
+    CreateAuditNotificationRequest:
+      type: object
+      required:
+      - recipientId
+      - type
+      properties:
+        recipientId:
+          type: integer
+          description: Must be a positive integer.
+        auditId:
+          type: integer
+          nullable: true
+        controlId:
+          type: integer
+          nullable: true
+          description: Exactly one of controlId or populationId is required.
+        populationId:
+          type: integer
+          nullable: true
+        type:
+          $ref: '#/components/schemas/AuditNotificationType'
+        dueDateSnapshot:
+          type: string
+          format: date
+          nullable: true
+        message:
+          type: string
+          nullable: true
+        createdBy:
+          type: string
+          nullable: true
+    ClaimAuditNotificationRequest:
+      type: object
+      required:
+      - recipientId
+      - type
+      properties:
+        recipientId:
+          type: integer
+          description: Must be a positive integer.
+        auditId:
+          type: integer
+          nullable: true
+        type:
+          $ref: '#/components/schemas/AuditNotificationReminderType'
+        controlId:
+          type: integer
+          nullable: true
+          description: Exactly one of controlId or populationId is required.
+        populationId:
+          type: integer
+          nullable: true
+        dueDateSnapshot:
+          type: string
+          format: date
+          nullable: true
+    ClaimAuditNotificationResponse:
+      type: object
+      properties:
+        claimed:
+          type: boolean
+        id:
+          type: integer
+          format: int64
+          description: Omitted when claimed is false.
+    AdminActivityAction:
+      type: string
+      enum:
+      - CREATED
+      - UPDATED
+      - DELETED
+      - STATUS_CHANGED
+      - GRANTED
+      - REVOKED
+    AdminActivityEntityType:
+      type: string
+      enum:
+      - USER
+      - GRANT
+      - RISK_TEAM
+      - RISK_CATEGORY
+      - COMPLIANCE_REFERENCE
+      - RISK_SCORE
+      - AUDIT_TEAM
+    AdminActivityLog:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        actorId:
+          type: string
+          description: The acting user's uuid, not user.id. Unconstrained — no FK — so a write is never blocked by the actor having no user row yet.
+        action:
+          $ref: '#/components/schemas/AdminActivityAction'
+        entityType:
+          $ref: '#/components/schemas/AdminActivityEntityType'
+        entityId:
+          type: integer
+          description: Polymorphic across several tables, so unconstrained.
+        details:
+          type: string
+          nullable: true
+          description: Raw JSON, returned as a string rather than an object.
+        actorUserType:
+          type: string
+          enum:
+          - INTERNAL
+          - EXTERNAL
+          description: Joined from actor_id; empty when the actor has no user row.
+        createdOn:
+          type: string
+          format: date-time
+    CreateAdminActivityLogRequest:
+      type: object
+      required:
+      - actorId
+      - action
+      - entityType
+      - entityId
+      properties:
+        actorId:
+          type: string
+        action:
+          $ref: '#/components/schemas/AdminActivityAction'
+        entityType:
+          $ref: '#/components/schemas/AdminActivityEntityType'
+        entityId:
+          type: integer
+          description: Must be a positive integer.
+        details:
+          type: string
+          nullable: true
+          description: Raw JSON, sent as a string rather than an object.
+    ListAdminActivityLogResponse:
+      type: object
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminActivityLog'
+        total:
+          type: integer
+          description: Total matching the filter, ignoring limit/offset.
         limit:
           type: integer
         offset:

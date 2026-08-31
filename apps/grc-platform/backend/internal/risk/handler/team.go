@@ -22,6 +22,7 @@ import (
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/adminactivity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
@@ -153,6 +154,8 @@ func (d *Deps) handleCreateTeam(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.ActivityLog.Log(r.Context(), createdBy, adminactivity.ActionCreated, adminactivity.EntityRiskTeam, t.ID,
+		map[string]any{"name": t.Name, "teamType": t.TeamType})
 	response.WriteJSONValue(w, http.StatusCreated, t)
 }
 
@@ -191,5 +194,7 @@ func (d *Deps) handleUpdateTeam(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	d.ActivityLog.Log(r.Context(), updatedBy, adminactivity.ActionUpdated, adminactivity.EntityRiskTeam, id,
+		map[string]any{"name": req.Name})
 	w.WriteHeader(http.StatusNoContent)
 }

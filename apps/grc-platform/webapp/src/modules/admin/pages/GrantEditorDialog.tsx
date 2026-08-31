@@ -31,9 +31,9 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { X } from "@wso2/oxygen-ui-icons-react";
-import { type JSX, useState } from "react";
+import { type JSX, useEffect, useState } from "react";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
-import { createGrant, revokeGrant, type AdminUser, type Role } from "../api/adminApi";
+import { createGrant, revokeGrant, type AdminUser, type Grant, type Role } from "../api/adminApi";
 import { dialogPaperSx } from "../cardStyles";
 import GrantPicker, { type PendingGrant } from "../components/GrantPicker";
 
@@ -52,6 +52,18 @@ export default function GrantEditorDialog({ open, user, roles, onClose, onChange
   const authFetch = useAuthApiClient();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pendingRevoke, setPendingRevoke] = useState<Grant | null>(null);
+  const [revoking, setRevoking] = useState(false);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
+
+  // Dialog stays mounted while closed; drop any pending revoke so reopening
+  // doesn't flash a stale confirmation.
+  useEffect(() => {
+    if (!open) {
+      setPendingRevoke(null);
+      setRevokeError(null);
+    }
+  }, [open]);
 
   const handleAdd = async (grant: PendingGrant) => {
     if (!user) return;
@@ -67,17 +79,18 @@ export default function GrantEditorDialog({ open, user, roles, onClose, onChange
     }
   };
 
-  const handleRevoke = async (grantId: number) => {
-    if (!user) return;
-    setError(null);
-    setBusy(true);
+  const confirmRevoke = async () => {
+    if (!user || !pendingRevoke) return;
+    setRevoking(true);
+    setRevokeError(null);
     try {
-      await revokeGrant(authFetch, user.id, grantId);
+      await revokeGrant(authFetch, user.id, pendingRevoke.id);
+      setPendingRevoke(null);
       onChanged();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to revoke grant");
+      setRevokeError(e instanceof Error ? e.message : "Failed to revoke grant");
     } finally {
-      setBusy(false);
+      setRevoking(false);
     }
   };
 
@@ -158,7 +171,7 @@ export default function GrantEditorDialog({ open, user, roles, onClose, onChange
                 color={g.module === "SHARED" ? "default" : "primary"}
                 label={`${g.roleName} @ ${g.scopeType === "GLOBAL" ? "Global (ALL)" : g.scopeName || g.scopeType}`}
                 disabled={busy}
-                onDelete={() => handleRevoke(g.id)}
+                onDelete={() => { setRevokeError(null); setPendingRevoke(g); }}
               />
             ))}
           </Stack>
@@ -175,6 +188,36 @@ export default function GrantEditorDialog({ open, user, roles, onClose, onChange
       <DialogActions sx={{ px: 3, py: 2 }}>
         <Button onClick={onClose}>Close</Button>
       </DialogActions>
+
+      <Dialog
+        open={open && !!pendingRevoke}
+        onClose={() => (revoking ? undefined : setPendingRevoke(null))}
+        maxWidth="xs"
+        fullWidth
+        PaperProps={{ sx: dialogPaperSx }}
+      >
+        <DialogTitle>Revoke grant?</DialogTitle>
+        <DialogContent>
+          {revokeError && (
+            <Alert severity="error" sx={{ mb: 2 }} onClose={() => setRevokeError(null)}>
+              {revokeError}
+            </Alert>
+          )}
+          <Typography variant="body2">
+            Revoke {pendingRevoke?.roleName} @{" "}
+            {pendingRevoke?.scopeType === "GLOBAL" ? "Global (ALL)" : pendingRevoke?.scopeName || pendingRevoke?.scopeType}{" "}
+            from {user?.displayName || user?.email || user?.uuid}?
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPendingRevoke(null)} disabled={revoking}>
+            Cancel
+          </Button>
+          <Button variant="contained" disabled={revoking} onClick={confirmRevoke}>
+            {revoking ? "Revoking…" : "Revoke"}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Dialog>
   );
 }

@@ -3016,6 +3016,32 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/escalations/run:
+    post:
+      tags:
+      - Risk Escalations
+      summary: Manually trigger the daily overdue-risk escalation sweep
+      description: QA/ops convenience so the escalation job can be tested/re-run without waiting for its fixed daily time or restarting the server. Runs the whole batch exactly as the scheduler does — distinct from POST /api/v1/risks/{id}/escalate, which escalates one named risk. The sweep runs detached; the response is returned immediately once it has started.
+      operationId: runEscalationJob
+      responses:
+        '202':
+          description: Sweep started
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: A sweep is already running
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: The escalation job is not configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/risks/{id}/escalations/{escalationId}/comment:
     post:
       tags:
@@ -3516,6 +3542,66 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/AdminRole'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/admin/activity-log:
+    get:
+      tags:
+      - Admin
+      summary: List admin_activity_log entries
+      description: Gated on holding MANAGE_USERS, MANAGE_RISK_HUB, AND MANAGE_AUDIT_HUB together — a stricter, cross-module gate than any other Admin route, since the log covers mutations from all three modules.
+      operationId: listAdminActivityLog
+      parameters:
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 50
+        description: Must be a positive integer.
+      - name: offset
+        in: query
+        schema:
+          type: integer
+          default: 0
+        description: Must be a non-negative integer.
+      - name: actorId
+        in: query
+        schema:
+          type: string
+        description: Filter to one actor's uuid.
+      - name: action
+        in: query
+        schema:
+          type: string
+      - name: entityType
+        in: query
+        schema:
+          type: string
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date
+        description: YYYY-MM-DD, inclusive.
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date
+        description: YYYY-MM-DD, inclusive.
+      responses:
+        '200':
+          description: Page of activity-log entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityLogResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -5861,6 +5947,48 @@ components:
           - EXTERNAL
         status:
           type: string
+    ActivityLogEntry:
+      type: object
+      description: One admin_activity_log row.
+      properties:
+        id:
+          type: integer
+        actorId:
+          type: string
+        actorName:
+          type: string
+        actorEmail:
+          type: string
+        actorUserType:
+          type: string
+          enum:
+          - INTERNAL
+          - EXTERNAL
+        action:
+          type: string
+        entityType:
+          type: string
+        entityId:
+          type: integer
+        details:
+          type: object
+          additionalProperties: true
+        createdOn:
+          type: string
+          format: date-time
+    ActivityLogResponse:
+      type: object
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActivityLogEntry'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
     CreateAdminUserRequest:
       type: object
       required:

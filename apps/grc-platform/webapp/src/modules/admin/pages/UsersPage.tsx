@@ -26,21 +26,28 @@ import {
   Select,
   type SelectChangeEvent,
   Stack,
+  Tab,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
+  Tabs,
   TableRow,
   TextField,
   Typography,
 } from "@wso2/oxygen-ui";
 import { Pencil, Plus, Search } from "@wso2/oxygen-ui-icons-react";
-import { type JSX, useEffect, useMemo, useRef, useState } from "react";
+import { type JSX, type SyntheticEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { fetchAdminUsers, fetchRoles, updateUserStatus, type AdminUser, type Role } from "../api/adminApi";
+import { useAdminPrivileges } from "../hooks/useAdminPrivileges";
+import { AdminPrivilege } from "../privileges";
 import AddUserDialog from "./AddUserDialog";
+import ActivityLogPage from "./ActivityLogPage";
 import GrantEditorDialog from "./GrantEditorDialog";
+
+type SubTab = "users" | "activity";
 
 type UserStatus = AdminUser["status"];
 
@@ -52,6 +59,12 @@ const statusColor: Record<UserStatus, "success" | "default" | "error"> = {
 
 export default function UsersPage(): JSX.Element {
   const authFetch = useAuthApiClient();
+  const { can } = useAdminPrivileges();
+  // Activity Log tab needs all three Admin Console privileges, not just
+  // ManageUsers (which already gates this whole page/route).
+  const canSeeActivityLog =
+    can(AdminPrivilege.ManageUsers) && can(AdminPrivilege.ManageRiskHub) && can(AdminPrivilege.ManageAuditHub);
+  const [tab, setTab] = useState<SubTab>("users");
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
@@ -149,28 +162,43 @@ export default function UsersPage(): JSX.Element {
         </Box>
       </Stack>
 
-      <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 2 }}>
-        <TextField
-          size="small"
-          placeholder="Search users by name or email"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          slotProps={{ input: { startAdornment: <Search size={15} style={{ marginRight: 8 }} /> } }}
-          sx={{ minWidth: 280 }}
-        />
-        <Box sx={{ flex: 1 }} />
-        <Button variant="contained" startIcon={<Plus size={14} />} onClick={() => setAddOpen(true)}>
-          Add User
-        </Button>
-      </Stack>
-
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
-          {error}
-        </Alert>
+      {canSeeActivityLog && (
+        <Tabs
+          value={tab}
+          onChange={(_e: SyntheticEvent, value: SubTab) => setTab(value)}
+          sx={{ mb: 2 }}
+        >
+          <Tab label="Users" value="users" />
+          <Tab label="Activity Log" value="activity" />
+        </Tabs>
       )}
 
-      <TableContainer component={Paper} variant="outlined">
+      {tab === "activity" && canSeeActivityLog ? (
+        <ActivityLogPage />
+      ) : (
+        <>
+          <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 2 }}>
+            <TextField
+              size="small"
+              placeholder="Search users by name or email"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              slotProps={{ input: { startAdornment: <Search size={15} style={{ marginRight: 8 }} /> } }}
+              sx={{ minWidth: 280 }}
+            />
+            <Box sx={{ flex: 1 }} />
+            <Button variant="contained" startIcon={<Plus size={14} />} onClick={() => setAddOpen(true)}>
+              Add User
+            </Button>
+          </Stack>
+
+          {error && (
+            <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+              {error}
+            </Alert>
+          )}
+
+          <TableContainer component={Paper} variant="outlined">
         <Table size="small">
           <TableHead>
             <TableRow>
@@ -254,9 +282,11 @@ export default function UsersPage(): JSX.Element {
                   </TableCell>
                 </TableRow>
               ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
+            </TableBody>
+          </Table>
+        </TableContainer>
+        </>
+      )}
 
       <AddUserDialog
         open={addOpen}

@@ -177,6 +177,7 @@ var externalVisible = map[string]bool{
 	"POST /api/v1/admin/users/{id}/grants":             false,
 	"DELETE /api/v1/admin/users/{id}/grants/{grantId}": false,
 	"GET /api/v1/admin/roles":                          false,
+	"GET /api/v1/admin/activity-log":                   false,
 }
 
 // ExternalVisible reports whether an external caller may reach pattern. An
