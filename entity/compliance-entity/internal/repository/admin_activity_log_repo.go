@@ -84,7 +84,9 @@ func (r *adminActivityLogRepo) ListAdminActivityLog(ctx context.Context, filter 
 		where += " AND t.entity_type = ?"
 		args = append(args, filter.EntityType)
 	}
-	where += " AND (? IS NULL OR t.created_at >= ?) AND (? IS NULL OR t.created_at <= ?)"
+	// To is exclusive: the handler already shifted it to the next midnight, so
+	// <= would also match a row created exactly at 00:00:00 the day after.
+	where += " AND (? IS NULL OR t.created_at >= ?) AND (? IS NULL OR t.created_at < ?)"
 	args = append(args,
 		nilableAny(filter.From), nilableAny(filter.From),
 		nilableAny(filter.To), nilableAny(filter.To),
