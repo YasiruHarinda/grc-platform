@@ -4923,7 +4923,7 @@ components:
         treatmentStrategy: &id019
           type: string
           enum:
-          - MITIGATE
+          - REMEDIATE
           - ACCEPT
           - TRANSFER
           - AVOID
@@ -5094,7 +5094,7 @@ components:
         treatmentStrategy:
           type: string
           enum:
-          - MITIGATE
+          - REMEDIATE
           - ACCEPT
           - TRANSFER
           - AVOID
@@ -5177,7 +5177,7 @@ components:
         treatmentStrategy:
           type: string
           enum:
-          - MITIGATE
+          - REMEDIATE
           - ACCEPT
           - TRANSFER
           - AVOID
