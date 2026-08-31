@@ -233,8 +233,12 @@ func main() {
 						TokenValidatorEnabled: cfg.Auth.TokenValidatorEnabled,
 						PrivilegeStore:        privStore,
 						Grants:                grantRepo,
+						// MUST be the same object Auth wraps below, or the
+						// guard authorises one route table while another serves.
+						Router:               mux,
+						InternalEmailDomains: cfg.Auth.InternalEmailDomains,
 					})(
-						mux,
+						mux, // same mux as Router above — see the note there
 					),
 				),
 			),

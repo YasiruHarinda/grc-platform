@@ -30,12 +30,11 @@ import (
 
 // Repository loads a caller's grants.
 type Repository interface {
-	// ForUUID returns the user's internal id and their active grants, keyed on
-	// the Asgardeo id the caller's token carries as `sub`.
-	// A user with no platform account returns (0, nil, nil) — not an error —
-	// so an authenticated caller who has never been provisioned is treated as
-	// holding nothing rather than failing the request outright.
-	ForUUID(ctx context.Context, uuid string) (int, []Grant, error)
+	// ForUUID returns the caller's id, user_type and active grants, keyed on
+	// the Asgardeo id the token carries as `sub`. A user with no platform
+	// account returns a zero Caller, not an error: unprovisioned means holding
+	// nothing, not a failed request.
+	ForUUID(ctx context.Context, uuid string) (Caller, error)
 	// Candidates returns every user who holds privilegeName — GLOBAL, or
 	// scoped to one of teamIDs. Used to populate role-gated picker fields
 	// (Risk Owner, Management Approver) with people who will actually pass
@@ -76,14 +75,26 @@ type Candidate struct {
 	UUID string `json:"uuid"`
 }
 
+// Caller is what one per-request grant load yields.
+type Caller struct {
+	// UserID is the internal user.id. Zero when no user row exists yet.
+	UserID int
+	// UserType is the user row's INTERNAL/EXTERNAL, a grant-time property —
+	// not the request-time caller classification, which nothing reconciles it
+	// with. Empty when the caller has no user row.
+	UserType string
+	Grants   []Grant
+}
+
 type entityRepository struct{ c *entityclient.Client }
 
 // NewRepository returns a Compliance Entity-backed Repository.
 func NewRepository(c *entityclient.Client) Repository { return &entityRepository{c: c} }
 
 type grantsResponse struct {
-	UserID int     `json:"userId"`
-	Grants []Grant `json:"grants"`
+	UserID   int     `json:"userId"`
+	UserType string  `json:"userType"`
+	Grants   []Grant `json:"grants"`
 }
 
 // ForUUID fetches grants from the entity, keyed on the caller's Asgardeo id.
@@ -102,7 +113,7 @@ type grantsResponse struct {
 // the identity migration a row whose uuid has not been backfilled yet resolves
 // to nothing here — the same "no grants" state as an unprovisioned account,
 // which fails closed rather than granting anything by accident.
-func (r *entityRepository) ForUUID(ctx context.Context, uuid string) (int, []Grant, error) {
+func (r *entityRepository) ForUUID(ctx context.Context, uuid string) (Caller, error) {
 	var resp grantsResponse
 	err := r.c.Get(ctx, "/grants/by-uuid/"+url.PathEscape(uuid), &resp)
 	if err != nil {
@@ -110,15 +121,15 @@ func (r *entityRepository) ForUUID(ctx context.Context, uuid string) (int, []Gra
 			// Authenticated, but no user row here yet. Holding no grants is a
 			// valid state, so this is not an error: they reach only what they
 			// are personally named on, which is nothing until provisioned.
-			return 0, nil, nil
+			return Caller{}, nil
 		}
 		// No uuid in the message: this runs on every request, gets logged via
 		// slog.ErrorContext on any entity outage, and the correlation ID
 		// already ties the log line to the request without putting a user
 		// identifier in application logs.
-		return 0, nil, fmt.Errorf("load grants: %w", err)
+		return Caller{}, fmt.Errorf("load grants: %w", err)
 	}
-	return resp.UserID, resp.Grants, nil
+	return Caller{UserID: resp.UserID, UserType: resp.UserType, Grants: resp.Grants}, nil
 }
 
 // Candidates fetches candidates from the entity.

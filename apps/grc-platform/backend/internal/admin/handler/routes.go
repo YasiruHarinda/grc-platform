@@ -24,10 +24,9 @@
 package handler
 
 import (
-	"net/http"
-
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/admin"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/routeguard"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
@@ -58,7 +57,7 @@ type Deps struct {
 // each handler, not via a wrapping middleware, to match this codebase's
 // existing per-handler auth.RequirePrivilege convention (see risk/audit
 // handlers).
-func RegisterRoutes(mux *http.ServeMux, deps Deps) {
+func RegisterRoutes(mux routeguard.Router, deps Deps) {
 	d := &deps
 
 	mux.HandleFunc("GET /api/v1/admin/directory/search", d.handleSearchDirectory)

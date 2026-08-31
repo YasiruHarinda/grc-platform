@@ -22,9 +22,8 @@
 package handler
 
 import (
-	"net/http"
-
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/routeguard"
 	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
 
@@ -35,6 +34,6 @@ type Deps struct {
 }
 
 // RegisterRoutes mounts the cross-module user routes onto mux.
-func RegisterRoutes(mux *http.ServeMux, deps Deps) {
+func RegisterRoutes(mux routeguard.Router, deps Deps) {
 	mux.HandleFunc("GET /api/v1/me/profile", handleGetMyProfile(deps.HREntity, deps.Users))
 }

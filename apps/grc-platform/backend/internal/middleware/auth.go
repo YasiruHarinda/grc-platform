@@ -33,6 +33,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
@@ -74,6 +75,13 @@ type Config struct {
 	// TestKeyFuncs maps issuer → jwt.Keyfunc, bypassing JWKS cache construction.
 	// Never set in production; used by unit tests to inject pre-built key functions.
 	TestKeyFuncs map[string]jwt.Keyfunc
+	// Router resolves a request to its route pattern before the mux serves it.
+	// Nil skips the external-caller guard, as a nil PrivilegeStore skips
+	// privilege resolution; always set in production.
+	Router *http.ServeMux
+	// InternalEmailDomains is the corporate-domain set a caller's email must
+	// fall under to count as internal. Config rejects an empty set at startup.
+	InternalEmailDomains []string
 }
 
 // idpRuntime pairs a configured IdP with its JWKS-backed key function.
@@ -87,6 +95,8 @@ type idpRuntime struct {
 // continuing to read groups would leave a second, invisible source of authority.
 type jwtClaims struct {
 	Email string `json:"email"`
+	// Raw because Asgardeo types it inconsistently; see parseEmailVerified.
+	EmailVerified json.RawMessage `json:"email_verified"`
 	jwt.RegisteredClaims
 }
 
@@ -108,6 +118,13 @@ func writeGrantLoadError(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusServiceUnavailable)
 	_ = json.NewEncoder(w).Encode(authErrorBody{Message: "Unable to verify your access right now. Please try again shortly."})
+}
+
+// writeForbidden responds 403 for an external caller off the audit surface,
+// with the same message every other 403 in the app sends — it names no reason,
+// so the allow-list is not described to a prober.
+func writeForbidden(w http.ResponseWriter) {
+	response.WriteError(w, http.StatusForbidden, response.ErrMsgForbidden)
 }
 
 // jwkEntry holds a single RSA public key extracted from a JWKS response.
@@ -267,6 +284,14 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 		}
 	}
 
+	// An unverified token's email claim proves nothing, so the guard is skipped
+	// in local dev alongside signature and privilege checks.
+	guard := callerGuard{
+		router:  cfg.Router,
+		domains: internalDomainSet(cfg.InternalEmailDomains),
+		enabled: cfg.TokenValidatorEnabled && cfg.Router != nil,
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodGet && r.URL.Path == "/health" {
@@ -280,10 +305,19 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 				return
 			}
 
-			info, err := extractUserInfo(tokenStr, cfg, idps)
+			info, verified, err := extractUserInfo(tokenStr, cfg, idps)
 			if err != nil {
 				slog.ErrorContext(r.Context(), "auth: token validation failed", "err", err)
 				writeAuthError(w, "You are not authorized to perform this action. Please try again.")
+				return
+			}
+
+			// Second fence: confine an external caller to the audit surface
+			// before any handler runs, so a route missing its privilege check
+			// is still unreachable.
+			internal, blocked := guard.evaluate(r, info.Email, verified)
+			if blocked {
+				writeForbidden(w)
 				return
 			}
 
@@ -294,14 +328,34 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 				// direction is worse than a clear error: guessing "none" looks
 				// to the user like their access was revoked, and guessing
 				// "previous" would need a cache this deliberately does not have.
-				userID, grants, gErr := cfg.Grants.ForUUID(r.Context(), info.Subject)
+				caller, gErr := cfg.Grants.ForUUID(r.Context(), info.Subject)
 				if gErr != nil {
 					slog.ErrorContext(r.Context(), "auth: failed to load grants", "err", gErr)
 					writeGrantLoadError(w)
 					return
 				}
-				info.UserID = userID
-				set := grant.Resolve(grants, cfg.PrivilegeStore)
+				info.UserID = caller.UserID
+				// Log-only for a mismatch that only narrows access on its own.
+				// Corrected for the one direction where believing the token
+				// would grant more access than the row intends: an EXTERNAL
+				// row must never ride a domain-internal classification onto
+				// the internal surface.
+				if guard.enabled && caller.UserType != "" {
+					wantInternal := caller.UserType != externalUserType
+					if wantInternal != internal {
+						slog.WarnContext(r.Context(), "auth: caller classification disagrees with user_type",
+							"internalCaller", internal,
+							"userType", caller.UserType)
+						if internal && !wantInternal {
+							internal = false
+							if _, visible := guard.externallyVisible(r); !visible {
+								writeForbidden(w)
+								return
+							}
+						}
+					}
+				}
+				set := grant.Resolve(caller.Grants, cfg.PrivilegeStore)
 				ctx = context.WithValue(ctx, userInfoKey, info)
 				ctx = grant.WithContext(ctx, set)
 				// The union is also published under the privilege key so the
@@ -348,29 +402,32 @@ func requestToken(r *http.Request) string {
 // production it selects the IdP by the token's iss claim: an unknown issuer is
 // rejected with the same generic error as any other invalid token, so the set of
 // configured issuers is not leaked.
-func extractUserInfo(tokenStr string, cfg Config, idps map[string]idpRuntime) (*UserInfo, error) {
+//
+// The email_verified verdict is returned alongside rather than put on UserInfo:
+// nothing downstream should re-decide who is internal.
+func extractUserInfo(tokenStr string, cfg Config, idps map[string]idpRuntime) (*UserInfo, emailVerification, error) {
 	if !cfg.TokenValidatorEnabled {
 		// Local dev: decode without signature verification. No IdP selection.
 		var c jwtClaims
 		if _, _, err := new(jwt.Parser).ParseUnverified(tokenStr, &c); err != nil {
-			return nil, fmt.Errorf("decode token: %w", err)
+			return nil, emailVerificationAbsent, fmt.Errorf("decode token: %w", err)
 		}
 		sub, err := c.GetSubject()
 		if err != nil || sub == "" {
-			return nil, fmt.Errorf("token missing sub claim")
+			return nil, emailVerificationAbsent, fmt.Errorf("token missing sub claim")
 		}
-		return &UserInfo{Subject: sub, Email: c.Email, Issuer: c.Issuer}, nil
+		return &UserInfo{Subject: sub, Email: c.Email, Issuer: c.Issuer}, parseEmailVerified(c.EmailVerified), nil
 	}
 
 	// Read the issuer from the unverified token only to pick the IdP; nothing else
 	// from this parse is trusted.
 	var probe jwtClaims
 	if _, _, err := new(jwt.Parser).ParseUnverified(tokenStr, &probe); err != nil {
-		return nil, fmt.Errorf("decode token: %w", err)
+		return nil, emailVerificationAbsent, fmt.Errorf("decode token: %w", err)
 	}
 	rt, ok := idps[probe.Issuer]
 	if !ok {
-		return nil, fmt.Errorf("unknown issuer")
+		return nil, emailVerificationAbsent, fmt.Errorf("unknown issuer")
 	}
 
 	var c jwtClaims
@@ -382,20 +439,20 @@ func extractUserInfo(tokenStr string, cfg Config, idps map[string]idpRuntime) (*
 		jwt.WithValidMethods([]string{"RS256"}),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("validate token: %w", err)
+		return nil, emailVerificationAbsent, fmt.Errorf("validate token: %w", err)
 	}
 	if !token.Valid {
-		return nil, fmt.Errorf("invalid token")
+		return nil, emailVerificationAbsent, fmt.Errorf("invalid token")
 	}
 
 	sub, err := c.GetSubject()
 	if err != nil || sub == "" {
-		return nil, fmt.Errorf("token missing sub claim")
+		return nil, emailVerificationAbsent, fmt.Errorf("token missing sub claim")
 	}
 
 	return &UserInfo{
 		Subject: sub,
 		Email:   c.Email,
 		Issuer:  rt.cfg.Issuer,
-	}, nil
+	}, parseEmailVerified(c.EmailVerified), nil
 }

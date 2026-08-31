@@ -20,11 +20,11 @@ package handler
 import (
 	"context"
 	"fmt"
-	"net/http"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
 	riskservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/service"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/routeguard"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
@@ -107,7 +107,7 @@ type Deps struct {
 // reference data and user pickers as literal sub-paths (/api/v1/risks/teams,
 // /api/v1/risks/scores, ...). Go's ServeMux gives a literal first segment
 // precedence over the {id} wildcard, so the two groups never collide.
-func RegisterRoutes(mux *http.ServeMux, deps Deps) {
+func RegisterRoutes(mux routeguard.Router, deps Deps) {
 	d := &deps
 	ejh := &escalationJobHandler{trigger: deps.TriggerEscalationJob}
 
