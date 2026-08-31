@@ -24,9 +24,14 @@ import (
 	"log/slog"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
 )
+
+// logTimeout bounds the detached POST in Log. The request context is cancelled
+// the moment the handler returns, so the write runs on a context of its own.
+const logTimeout = 30 * time.Second
 
 // Action names — mirror admin_activity_log.action's ENUM exactly.
 const (
@@ -88,6 +93,10 @@ type Filter struct {
 }
 
 // Log records one activity-log entry, best-effort — never blocks the caller.
+// The POST runs detached on a background context: it must still land when the
+// client disconnects right after a mutation commits, which cancels the request
+// context. The details map is marshalled synchronously so a later mutation by
+// the caller cannot race the write.
 func (cl *Client) Log(ctx context.Context, actor, action, entityType string, entityID int, details map[string]any) {
 	if cl == nil {
 		return
@@ -103,14 +112,24 @@ func (cl *Client) Log(ctx context.Context, actor, action, entityType string, ent
 		if err != nil {
 			slog.WarnContext(ctx, "admin activity log: marshal details failed", "action", action, "entityType", entityType, "err", err)
 		} else {
-			s := string(b)
-			body["details"] = s
+			body["details"] = string(b)
 		}
 	}
-	if err := cl.c.Post(ctx, "/admin-activity-log", body, nil); err != nil {
-		slog.WarnContext(ctx, "admin activity log: record failed",
-			"action", action, "entityType", entityType, "entityId", entityID, "err", err)
-	}
+	go func() {
+		// A bare goroutine has no panic net; an unguarded panic here would
+		// take the whole process down instead of losing one log entry.
+		defer func() {
+			if p := recover(); p != nil {
+				slog.Error("admin activity log: panic", "action", action, "entityType", entityType, "entityId", entityID, "panic", p)
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), logTimeout)
+		defer cancel()
+		if err := cl.c.Post(ctx, "/admin-activity-log", body, nil); err != nil {
+			slog.WarnContext(ctx, "admin activity log: record failed",
+				"action", action, "entityType", entityType, "entityId", entityID, "err", err)
+		}
+	}()
 }
 
 // List returns activity-log entries, newest first, unresolved (ActorName/
