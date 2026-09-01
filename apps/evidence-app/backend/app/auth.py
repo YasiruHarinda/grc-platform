@@ -98,10 +98,21 @@ def _role_for(claims: dict) -> str:
 def _request_token(request: Request) -> str:
     """The caller's raw JWT, read from whichever header carried it.
 
-    `Authorization: Bearer` is this app's own, fully-tested contract and is
-    tried first. `X-Jwt-Assertion` is the header Choreo's API gateway
-    forwards; it is a fallback for the case where the gateway does not also
-    pass `Authorization` through unchanged.
+    `X-Jwt-Assertion` is tried first, because that is the header Choreo's
+    API gateway puts the caller's token in. `Authorization` does not survive
+    that hop intact: the gateway consumes it for its own OAuth2 check, so a
+    request arriving through Choreo either has no `Authorization` at all or
+    has one carrying the gateway's own credential, which this app can never
+    verify against Asgardeo.
+
+    `Authorization: Bearer` stays as the fallback, for callers that reach
+    the app without passing through the gateway — local development, direct
+    access inside the cluster, and this backend's own test suite. Those are
+    unaffected by the order, because they never send `X-Jwt-Assertion`.
+
+    This order was the other way round until it was measured on a real
+    deployment, where it returned 401 for every authenticated request. Do
+    not "align" it back: `Authorization` first is what caused that outage.
 
     This function decides nothing about trust — it only picks which header
     to read the string out of. The value it returns still has to pass the
@@ -113,10 +124,13 @@ def _request_token(request: Request) -> str:
     header's mere presence as proof of anything would be an authentication
     bypass; only a signature Asgardeo actually produced is.
     """
+    assertion = request.headers.get("X-Jwt-Assertion", "")
+    if assertion:
+        return assertion
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         return auth_header[len("Bearer "):]
-    return request.headers.get("X-Jwt-Assertion", "")
+    return ""
 
 
 async def get_current_user(request: Request) -> User:

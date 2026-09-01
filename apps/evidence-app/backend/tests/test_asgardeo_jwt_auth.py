@@ -279,13 +279,14 @@ def test_audience_as_single_element_array_is_accepted(client):
     assert resp.json()["role"] == "admin"
 
 
-# --- X-Jwt-Assertion fallback (spec #89) --------------------------------
+# --- X-Jwt-Assertion, the gateway's header (specs #89 and #112) ---------
 #
-# Choreo's API gateway forwards the caller's token in `X-Jwt-Assertion`,
-# not necessarily in `Authorization`. These cases pin the fallback added in
-# `_request_token`: it must accept a token from the new header, still run
-# it through the full JWKS/issuer/audience check, and never let the new
-# header outrank the app's own `Authorization` contract.
+# Choreo's API gateway puts the caller's token in `X-Jwt-Assertion` and
+# keeps `Authorization` for its own credential, so `_request_token` reads
+# the assertion header first. These cases pin that: a token from the
+# gateway's header must be accepted, must still go through the full
+# JWKS/issuer/audience check, and must win over whatever `Authorization`
+# happens to be carrying.
 
 
 def test_valid_token_via_x_jwt_assertion_alone_is_accepted(client):
@@ -323,12 +324,14 @@ def test_x_jwt_assertion_token_gets_the_full_verification_check(client):
     assert _whoami_via_assertion(client, outside_allow_list_token).status_code == 401
 
 
-def test_authorization_wins_when_both_headers_are_present(client):
-    """Pins design decision 1: `Authorization` is tried first, always --
-    the opposite order to grc-platform's `requestToken`, and deliberately
-    so (spec #89). A valid token in `Authorization` must succeed even when
-    `X-Jwt-Assertion` carries garbage alongside it. This is the regression
-    guard against someone "aligning" the order with grc-platform later."""
+def test_x_jwt_assertion_wins_when_both_headers_are_present(client):
+    """This is the deployed shape, measured on Stage (spec #112): through
+    the Choreo gateway the caller's token arrives in `X-Jwt-Assertion`
+    while `Authorization` carries something this backend cannot verify. A
+    valid token in the assertion header must therefore succeed regardless
+    of what sits beside it. The order used to be the other way round, which
+    returned 401 for every authenticated request once deployed; this is the
+    regression guard against flipping it back."""
     token = _make_token(
         roles=[settings.ASGARDEO_ENGINEER_ROLE],
         aud=settings.ASGARDEO_WEBAPP_CLIENT_ID,
@@ -336,8 +339,8 @@ def test_authorization_wins_when_both_headers_are_present(client):
     resp = client.get(
         "/api/me",
         headers={
-            "Authorization": f"Bearer {token}",
-            "X-Jwt-Assertion": "not-a-real-token",
+            "Authorization": "Bearer not-a-real-token",
+            "X-Jwt-Assertion": token,
         },
     )
     assert resp.status_code == 200
