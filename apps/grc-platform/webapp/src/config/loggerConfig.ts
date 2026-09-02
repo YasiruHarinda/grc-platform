@@ -15,7 +15,19 @@
 // under the License.
 
 // Configuration for the Logger service.
+//
+// The level is fixed rather than read from window.config. Every call site in
+// this app is logger.error — there is not one logger.debug/info/warn — so no
+// value of the old GRC_PLATFORM_LOG_LEVEL changed a single line of console
+// output. It read as a control on production console noise and controlled
+// nothing, which is worse than having no knob at all.
+//
+// The Logger class still supports the full DEBUG..ERROR range. Reintroduce the
+// config key together with the first real debug/info/warn calls — and with the
+// raw console.* sites (RiskRegisters, RiskDashboard, RiskAnalytics,
+// useAuthApiClient, authConfig) routed through the logger, since those print in
+// production today and no level setting has ever gated them.
 export const loggerConfig = {
-  level: window.config?.GRC_PLATFORM_LOG_LEVEL || "ERROR",
+  level: "ERROR",
   prefix: "GRCPlatform",
 };

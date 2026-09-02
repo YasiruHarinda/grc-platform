@@ -279,3 +279,135 @@ func TestSchedulerEnabledDefaultIsOn(t *testing.T) {
 		t.Error("the background scheduler ships disabled — intended? overdue-risk escalation and audit reminders will not run automatically")
 	}
 }
+
+// TestListenAddr covers the PORT format change. PORT is now written bare
+// ("8081") so it agrees with .choreo/component.yaml and the Compliance
+// Entity's SERVER_PORT, but net.Listen rejects a bare port outright
+// ("missing port in address"), so listenAddr must supply the colon — and must
+// leave an already-colon-prefixed value alone, since a deployed environment
+// still holding the old ":8081" has to keep booting.
+func TestListenAddr(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		port string
+		want string
+	}{
+		{"bare port gains a colon", "8081", ":8081"},
+		{"legacy colon-prefixed value is unchanged", ":8081", ":8081"},
+		{"explicit host:port is unchanged", "0.0.0.0:8081", "0.0.0.0:8081"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := listenAddr(tt.port); got != tt.want {
+				t.Errorf("listenAddr(%q) = %q, want %q", tt.port, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestLoadPortDefaultIsListenable guards the default itself: envOrDefault's
+// fallback is now bare, so without listenAddr around it an unset PORT would
+// produce "8081" and fail at net.Listen rather than at config time.
+func TestLoadPortDefaultIsListenable(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	t.Setenv("AUTH_TOKEN_VALIDATOR_ENABLED", "false")
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("PORT", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want success", err)
+	}
+	if cfg.Port != ":8081" {
+		t.Errorf("cfg.Port = %q, want %q", cfg.Port, ":8081")
+	}
+}
+
+// TestSCIMTokenURL covers the derivation that replaced
+// SCIM_INTERNAL_TOKEN_URL / SCIM_EXTERNAL_TOKEN_URL. The empty cases matter
+// as much as the happy path: SCIMConfig.Configured tests TokenURL != "", so
+// returning a syntactically valid URL built from a missing org would flip an
+// unconfigured deployment into "configured" and hand scim.Client a URL
+// pointing at /t//oauth2/token.
+func TestSCIMTokenURL(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		baseURL string
+		org     string
+		want    string
+	}{
+		{
+			name:    "derives the Asgardeo tenant token endpoint",
+			baseURL: "https://api.asgardeo.io",
+			org:     "wso2",
+			want:    "https://api.asgardeo.io/t/wso2/oauth2/token",
+		},
+		{
+			name:    "tolerates a trailing slash on the base URL",
+			baseURL: "https://api.asgardeo.io/",
+			org:     "wso2",
+			want:    "https://api.asgardeo.io/t/wso2/oauth2/token",
+		},
+		{"empty base URL yields empty", "", "wso2", ""},
+		{"empty org yields empty", "https://api.asgardeo.io", "", ""},
+		{"both empty yields empty", "", "", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := SCIMTokenURL(tt.baseURL, tt.org); got != tt.want {
+				t.Errorf("SCIMTokenURL(%q, %q) = %q, want %q", tt.baseURL, tt.org, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestLoadDerivesSCIMTokenURLs is the drift regression test: the whole point
+// of removing the two variables is that a token URL can no longer point at a
+// different tenant than the org beside it. It also pins that a stale
+// SCIM_INTERNAL_TOKEN_URL left behind in a deployed environment is ignored
+// rather than silently winning.
+func TestLoadDerivesSCIMTokenURLs(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	t.Setenv("AUTH_TOKEN_VALIDATOR_ENABLED", "false")
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("SCIM_BASE_URL", "https://api.asgardeo.io")
+	t.Setenv("SCIM_INTERNAL_ORG", "wso2")
+	t.Setenv("SCIM_EXTERNAL_ORG", "wso2external")
+	t.Setenv("SCIM_INTERNAL_TOKEN_URL", "https://api.asgardeo.io/t/some-other-org/oauth2/token")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want success", err)
+	}
+	if want := "https://api.asgardeo.io/t/wso2/oauth2/token"; cfg.SCIM.TokenURL != want {
+		t.Errorf("cfg.SCIM.TokenURL = %q, want %q (a stale SCIM_INTERNAL_TOKEN_URL must not win)", cfg.SCIM.TokenURL, want)
+	}
+	if want := "https://api.asgardeo.io/t/wso2external/oauth2/token"; cfg.SCIM.ExternalTokenURL != want {
+		t.Errorf("cfg.SCIM.ExternalTokenURL = %q, want %q", cfg.SCIM.ExternalTokenURL, want)
+	}
+}
+
+// TestLoadSCIMUnconfiguredWithoutOrg pins the degrade-rather-than-break
+// contract in SCIMConfig's doc comment: local development frequently runs
+// with no Asgardeo credentials at all, and directory lookups are meant to go
+// quiet rather than fail startup or fire malformed requests.
+func TestLoadSCIMUnconfiguredWithoutOrg(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	t.Setenv("AUTH_TOKEN_VALIDATOR_ENABLED", "false")
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("SCIM_BASE_URL", "https://api.asgardeo.io")
+	t.Setenv("SCIM_INTERNAL_ORG", "")
+	t.Setenv("SCIM_EXTERNAL_ORG", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want success", err)
+	}
+	if cfg.SCIM.TokenURL != "" {
+		t.Errorf("cfg.SCIM.TokenURL = %q, want empty when the org is unset", cfg.SCIM.TokenURL)
+	}
+	if cfg.SCIM.Configured() {
+		t.Error("cfg.SCIM.Configured() = true with no org, want false")
+	}
+	if cfg.SCIM.ExternalConfigured() {
+		t.Error("cfg.SCIM.ExternalConfigured() = true with no org, want false")
+	}
+}

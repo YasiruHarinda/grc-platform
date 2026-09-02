@@ -58,6 +58,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
 	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user/entity"
@@ -107,10 +108,16 @@ func main() {
 
 	entityURL := mustEnv("COMPLIANCE_ENTITY_BASE_URL")
 	cli := entityclient.New(entityURL)
+	// The token endpoint is derived from the base URL and the org rather than
+	// read from SCIM_INTERNAL_TOKEN_URL, which no longer exists — via the same
+	// config.SCIMTokenURL the server uses, so this tool authenticates against
+	// exactly the tenant the running backend does.
+	scimBaseURL := mustEnv("SCIM_BASE_URL")
+	scimOrg := mustEnv("SCIM_INTERNAL_ORG")
 	scimCli := scim.NewClient(
-		mustEnv("SCIM_BASE_URL"), mustEnv("SCIM_INTERNAL_TOKEN_URL"),
+		scimBaseURL, config.SCIMTokenURL(scimBaseURL, scimOrg),
 		mustEnv("SCIM_INTERNAL_CLIENT_ID"), mustEnv("SCIM_INTERNAL_CLIENT_SECRET"),
-		mustEnv("SCIM_INTERNAL_SCOPES"), mustEnv("SCIM_INTERNAL_ORG"),
+		mustEnv("SCIM_INTERNAL_SCOPES"), scimOrg,
 	)
 	// The client's default timeout is tuned for the live request path. Nobody is
 	// waiting on a backfill, and Asgardeo can cold-start slowly on a first call:

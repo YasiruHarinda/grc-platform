@@ -1,0 +1,43 @@
+// Runtime configuration for the TrustHub GRC Platform web app.
+//
+// Loaded by index.html before the React bundle starts, and sets
+// `window.config` — the shape is declared in `src/config/portalConfig.ts`.
+// Copy this file to `config.js` (gitignored) and fill in real values for
+// local development. On Choreo, `config.js` is untracked and injected at
+// deploy time; this file only documents what it must contain.
+window.config = {
+  // ── Local development only ────────────────────────────────────────────────
+  // Both keys below must be ABSENT from every deployed config.js. MOCK_AUTH
+  // bypasses Asgardeo sign-in entirely, so it is never a thing to set to false
+  // in staging or production — omit it. The reader checks `=== true`, so
+  // absent and false behave identically and only one of them is honest about
+  // intent.
+  //
+  // MOCK_AUTH_TOKEN is a forged, unsigned JWT whose `sub` is a uuid actually
+  // present in the local `user` table. It is required whenever MOCK_AUTH is
+  // true: without it every request sends the literal "local-dev", which is not
+  // a parseable JWT and 401s outright. It needs the backend running with
+  // AUTH_TOKEN_VALIDATOR_ENABLED=false (decodes without verifying, but still
+  // wants three dot-separated segments).
+  //
+  // GRC_PLATFORM_MOCK_AUTH: true,
+  // GRC_PLATFORM_MOCK_AUTH_TOKEN: "<header>.<payload-with-your-uuid-as-sub>.",
+
+  // ── Asgardeo ──────────────────────────────────────────────────────────────
+  // CLIENT_ID must equal the backend's AUTH_AUDIENCE. BASE_URL must be the
+  // same Asgardeo org the backend's AUTH_ISSUER / AUTH_JWKS_ENDPOINT point at.
+  GRC_PLATFORM_AUTH_BASE_URL: "https://api.asgardeo.io/t/<your-org>",
+  GRC_PLATFORM_AUTH_CLIENT_ID: "<your-client-id>",
+
+  // Must both be registered as allowed redirect URLs in Asgardeo, and must
+  // match the backend's FRONTEND_BASE_URL — which is also its sole
+  // CORS-allowed origin.
+  GRC_PLATFORM_AUTH_SIGN_IN_REDIRECT_URL: "http://localhost:3000",
+  GRC_PLATFORM_AUTH_SIGN_OUT_REDIRECT_URL: "http://localhost:3000",
+
+  // Public API base the browser calls. No trailing slash, no "/api".
+  GRC_PLATFORM_BACKEND_BASE_URL: "http://localhost:8081",
+
+  // Cosmetic.
+  GRC_PLATFORM_THEME: "acrylicOrange",
+};

@@ -27,7 +27,6 @@ export interface GRCPlatformWindowConfig {
   GRC_PLATFORM_AUTH_SIGN_OUT_REDIRECT_URL?: string;
   GRC_PLATFORM_BACKEND_BASE_URL?: string;
   GRC_PLATFORM_THEME?: string;
-  GRC_PLATFORM_LOG_LEVEL?: string;
 }
 
 declare global {
