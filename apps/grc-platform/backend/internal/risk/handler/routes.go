@@ -141,6 +141,13 @@ func RegisterRoutes(mux routeguard.Router, deps Deps) {
 	mux.HandleFunc("GET /api/v1/risks/users", d.handleListUsers)
 	mux.HandleFunc("POST /api/v1/risks/users/resolve", d.handleResolveUser)
 
+	// Caller-scoped: whether the authenticated user reaches the Risk Hub
+	// through the identity axis alone (named as an action_owner_id, holding no
+	// grant). Powers the frontend nav's Risk Hub visibility for Action Owners.
+	// Handler in me.go. Literal "me" first segment, so no collision with
+	// GET /api/v1/risks/{id}.
+	mux.HandleFunc("GET /api/v1/risks/me/involvement", d.handleMyRiskInvolvement)
+
 	// Role-gated user pickers: everyone who holds the grant the corresponding
 	// action requires, GLOBAL or scoped to the given teamId(s) — see
 	// candidates.go. Stale note this replaces: these used to read Asgardeo

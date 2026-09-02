@@ -29,13 +29,14 @@ export const riskRoutes = (
     <Route index element={<Navigate to="dashboard" replace />} />
     <Route path="dashboard" element={<PrivilegeGuard privilege={RiskPrivilege.ViewRiskDashboard}><RiskDashboard /></PrivilegeGuard>} />
     {/*
-      No PrivilegeGuard on registers: the Registers list is reachable via the
-      identity axis too (being named as an Action Owner on a risk confers no
-      RISK_VIEW_RISKS privilege — see RISK_MODULE_DESIGN.md §3). Guarding the
-      route on that privilege would 403 an Action Owner out of the one tab that
-      shows the risk they were handed. The backend GET /api/v1/risks scopes the
-      response per caller (grants, or named-only), and RiskRegisters renders an
-      empty list cleanly when that scope is empty.
+      No PrivilegeGuard on registers: the Registers list is reachable by a
+      named Action Owner too, who holds no RISK_VIEW_RISKS privilege. Guarding
+      the route on that privilege would 403 an Action Owner out of the one tab that
+      shows the risk they were handed, and would tie a direct /risk/registers
+      link to the involvement fetch succeeding. The nav already hides this tab
+      from anyone with no risk privilege and no Action Owner involvement
+      (modules/risk/nav.ts); the backend GET /api/v1/risks scopes the response
+      per caller, and RiskRegisters renders an empty list cleanly.
     */}
     <Route path="registers" element={<RiskRegisters />} />
     <Route path="add" element={<PrivilegeGuard privilege={RiskPrivilege.CreateRisk}><AddRisk /></PrivilegeGuard>} />

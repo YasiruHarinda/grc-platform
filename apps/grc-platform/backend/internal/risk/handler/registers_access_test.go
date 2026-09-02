@@ -18,6 +18,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -67,12 +68,12 @@ func ownerGrantOn(registerID int) grant.Grant {
 }
 
 // These tests pin the identity axis at the HTTP layer: a person named as an
-// Action Owner holds no grants and no privileges (see RISK_MODULE_DESIGN.md
-// §3), and must still reach the Registers list and the risks they are named
-// on. A RISK_VIEW_RISKS route gate used to 403 them before the per-caller
-// scoping ran — the regression these guard against.
+// Action Owner holds no grants and no privileges, and must still reach the
+// Registers list and the risks they are named on. A RISK_VIEW_RISKS route gate
+// used to 403 them before the per-caller scoping ran — the regression these
+// guard against.
 
-func intp(n int) *int { return &n }
+func intPtr(n int) *int { return &n }
 
 // fakeRiskSvc implements riskservice.RiskService. Only List and GetByID carry
 // behaviour; the workflow methods are unused by the read paths under test.
@@ -238,7 +239,7 @@ func TestHandleGetRisk_IdentityAxis(t *testing.T) {
 		2: {ID: 2, SourceRegisterID: asgardeo, AssignmentTeamID: choreo, OwnerID: 99, AssignerID: 98, ManagementApproverID: 97},
 	}}
 	plans := &fakeActionPlanSvc{plans: []*model.ActionPlan{
-		{ID: 10, RiskID: 1, ActionOwnerID: intp(callerID)}, // caller owns a plan on risk 1 only
+		{ID: 10, RiskID: 1, ActionOwnerID: intPtr(callerID)}, // caller owns a plan on risk 1 only
 	}}
 	d := &Deps{Risk: risk, ActionPlan: plans, Users: fakeUserRepo{uuid: "test-caller-uuid", id: callerID}}
 
@@ -297,7 +298,7 @@ func TestHandleListActionPlanSteps_RequiresVisibility(t *testing.T) {
 		5: {ID: 5, SourceRegisterID: asgardeo, AssignmentTeamID: choreo, OwnerID: 99, AssignerID: 98, ManagementApproverID: 97},
 	}}
 	plans := &fakeActionPlanSvc{plans: []*model.ActionPlan{
-		{ID: 50, RiskID: 5, ActionOwnerID: intp(42)}, // owned by someone else
+		{ID: 50, RiskID: 5, ActionOwnerID: intPtr(42)}, // owned by someone else
 	}}
 	d := &Deps{Risk: risk, ActionPlan: plans, Users: fakeUserRepo{uuid: "test-caller-uuid", id: 7}}
 
@@ -312,4 +313,86 @@ func TestHandleListActionPlanSteps_RequiresVisibility(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 (caller neither named nor granted)", rec.Code)
 	}
+}
+
+// TestHandleMyRiskInvolvement covers the signal the frontend nav uses to keep
+// the Risk Hub tab visible for a grant-less Action Owner.
+func TestHandleMyRiskInvolvement(t *testing.T) {
+	decode := func(t *testing.T, body []byte) bool {
+		t.Helper()
+		var resp struct {
+			NamedOnRisk bool `json:"namedOnRisk"`
+		}
+		if err := json.Unmarshal(body, &resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return resp.NamedOnRisk
+	}
+
+	t.Run("named as an action owner -> true", func(t *testing.T) {
+		risk := &fakeRiskSvc{page: &model.RiskListPage{Total: 1}}
+		d := &Deps{Risk: risk, Users: fakeUserRepo{uuid: "test-caller-uuid", id: 7}}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/risks/me/involvement", nil).
+			WithContext(contextForGrants(t, nil, nil))
+		rec := httptest.NewRecorder()
+
+		d.handleMyRiskInvolvement(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		if !decode(t, rec.Body.Bytes()) {
+			t.Error("namedOnRisk = false, want true")
+		}
+		if risk.lastFilter.ActionOwnerID == nil || *risk.lastFilter.ActionOwnerID != 7 {
+			t.Errorf("list filter ActionOwnerID = %v, want 7", risk.lastFilter.ActionOwnerID)
+		}
+	})
+
+	t.Run("not an action owner -> false", func(t *testing.T) {
+		risk := &fakeRiskSvc{page: &model.RiskListPage{Total: 0}}
+		d := &Deps{Risk: risk, Users: fakeUserRepo{uuid: "test-caller-uuid", id: 7}}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/risks/me/involvement", nil).
+			WithContext(contextForGrants(t, nil, nil))
+		rec := httptest.NewRecorder()
+
+		d.handleMyRiskInvolvement(rec, req)
+
+		if rec.Code != http.StatusOK || decode(t, rec.Body.Bytes()) {
+			t.Errorf("status=%d body=%s, want 200 namedOnRisk=false", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("no platform user row -> false, risk store untouched", func(t *testing.T) {
+		risk := &fakeRiskSvc{page: &model.RiskListPage{Total: 99}} // would say true if consulted
+		d := &Deps{Risk: risk, Users: fakeUserRepo{uuid: "somebody-else"}}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/risks/me/involvement", nil).
+			WithContext(contextForGrants(t, nil, nil))
+		rec := httptest.NewRecorder()
+
+		d.handleMyRiskInvolvement(rec, req)
+
+		if rec.Code != http.StatusOK || decode(t, rec.Body.Bytes()) {
+			t.Errorf("status=%d body=%s, want 200 namedOnRisk=false", rec.Code, rec.Body.String())
+		}
+		if risk.lastFilter.ActionOwnerID != nil {
+			t.Error("risk list was queried for a caller with no user row")
+		}
+	})
+
+	t.Run("unauthenticated -> 401", func(t *testing.T) {
+		d := &Deps{Risk: &fakeRiskSvc{}, Users: fakeUserRepo{}}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/risks/me/involvement", nil)
+		rec := httptest.NewRecorder()
+
+		d.handleMyRiskInvolvement(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", rec.Code)
+		}
+	})
 }

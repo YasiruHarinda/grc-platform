@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
+import { mergeRiskPrivileges } from "./mergeRiskPrivileges";
 
 // Shared across every hook instance mounted at once, so a burst of
 // simultaneous mounts (SideBar + every PrivilegeGuard on a page) still fires
@@ -37,6 +38,15 @@ export interface RiskPrivilegeState {
 // simultaneous mount burst — but each new mount after that fetches fresh; see
 // _promise's own comment for why.
 //
+// Two GETs, run in parallel and merged (mergeRiskPrivileges): the grant-derived
+// privilege list, and GET /api/v1/risks/me/involvement — the identity-axis
+// signal that keeps the Risk Hub nav visible for an Action Owner holding no
+// risk role. `namedOnRisk` materialises as a synthetic RISK_VIEW_RISKS so no
+// consumer has to know the identity axis exists. The involvement call fails
+// closed to `false`, and is a harmless no-op in backend allow-all mode (local
+// dev), where the merge passes `null` through and every check returns true
+// regardless.
+//
 // Always calls the real endpoint, mock-auth mode included. This used to
 // short-circuit to "every privilege granted" whenever GRC_PLATFORM_MOCK_AUTH
 // was true — correct back when mock auth meant no backend identity existed to
@@ -55,11 +65,19 @@ export function useRiskPrivileges(): RiskPrivilegeState {
 
   useEffect(() => {
     if (!_promise) {
-      _promise = authFetch(`${BACKEND_BASE_URL}/api/v1/me/privileges`)
-        .then((res) => res.json() as Promise<{ privileges?: string[]; allowAll?: boolean }>)
-        .then((data) => {
+      _promise = Promise.all([
+        authFetch(`${BACKEND_BASE_URL}/api/v1/me/privileges`)
+          .then((res) => res.json() as Promise<{ privileges?: string[]; allowAll?: boolean }>),
+        authFetch(`${BACKEND_BASE_URL}/api/v1/risks/me/involvement`)
+          .then((res) => res.json() as Promise<{ namedOnRisk?: boolean }>)
+          .catch(() => ({ namedOnRisk: false })),
+      ])
+        .then(([privData, involvement]) => {
           _promise = null;
-          return data.allowAll ? null : new Set<string>(data.privileges ?? []);
+          return mergeRiskPrivileges(
+            privData.allowAll ? null : (privData.privileges ?? []),
+            involvement.namedOnRisk === true,
+          );
         })
         .catch(() => { _promise = null; return new Set<string>(); });
     }

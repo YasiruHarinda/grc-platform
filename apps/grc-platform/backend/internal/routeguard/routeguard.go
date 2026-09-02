@@ -133,6 +133,7 @@ var externalVisible = map[string]bool{
 	"DELETE /api/v1/risks/categories/{id}":                          false,
 	"GET /api/v1/risks/users":                                       false,
 	"POST /api/v1/risks/users/resolve":                              false,
+	"GET /api/v1/risks/me/involvement":                              false,
 	"GET /api/v1/risks/management-approvers":                        false,
 	"GET /api/v1/risks/owner-candidates":                            false,
 	"GET /api/v1/risks/assigner-candidates":                         false,

@@ -16,44 +16,59 @@
 
 import { BarChart2, ClipboardList, LayoutDashboard, PlusCircle, ShieldAlert } from "@wso2/oxygen-ui-icons-react";
 import type { NavSection } from "@components/side-nav-bar/types";
+import { RiskPrivilege } from "./privileges";
 
 // Risk Hub sidebar section. Owned by the Risk module — add Risk nav items
 // here without touching the shared SideBar component.
 //
-// Deliberately no requiredPrivilege on any item: every Risk Hub tab is always
-// visible, regardless of what the caller holds. Each route is still fully
-// gated on its own — see routes.tsx's PrivilegeGuard on every one of these
-// paths — so someone lacking the privilege gets a clear 403 page on click,
-// rather than the tab silently vanishing with no explanation of why a
-// section isn't available to them.
+// Gated like the Admin Console and Audit Hub: each item needs its route's
+// privilege, and the whole section is withheld from anyone who can open none of
+// the tabs — a hidden tab beats one that only 403s on click.
+//
+// The Registers item's requiredPrivilege (RISK_VIEW_RISKS) is also satisfied
+// by being named on a risk: a grant-less Action Owner gets a synthetic
+// RISK_VIEW_RISKS from useRiskPrivileges (GET /api/v1/risks/me/involvement), so
+// they still see the section and the Registers tab — but nothing else — for the
+// risk they were handed.
 export const riskNav: NavSection = {
   id: "risk",
   label: "Risk Hub",
   icon: ShieldAlert,
+  hideSectionWithoutPrivilege: [
+    RiskPrivilege.ViewRisks,
+    RiskPrivilege.ViewAllRisks,
+    RiskPrivilege.ViewRiskDashboard,
+    RiskPrivilege.CreateRisk,
+    RiskPrivilege.ViewAnalytics,
+  ],
   items: [
     {
       id: "risk-dashboard",
       label: "Dashboard",
       path: "/risk/dashboard",
       icon: LayoutDashboard,
+      requiredPrivilege: RiskPrivilege.ViewRiskDashboard,
     },
     {
       id: "risk-registers",
       label: "Risk Registers",
       path: "/risk/registers",
       icon: ClipboardList,
+      requiredPrivilege: RiskPrivilege.ViewRisks,
     },
     {
       id: "risk-add",
       label: "Add Risk",
       path: "/risk/add",
       icon: PlusCircle,
+      requiredPrivilege: RiskPrivilege.CreateRisk,
     },
     {
       id: "risk-analytics",
       label: "Analytics",
       path: "/risk/analytics",
       icon: BarChart2,
+      requiredPrivilege: RiskPrivilege.ViewAnalytics,
     },
   ],
 };
