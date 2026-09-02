@@ -463,3 +463,23 @@ func TestLoadSCIMConfiguredWithoutTokenURLVar(t *testing.T) {
 		t.Error("cfg.SCIM.ExternalConfigured() = false, want true")
 	}
 }
+
+// TestNormalizeBaseURL pins the ordering, which is the whole subtlety: trimming
+// the slash first is a no-op on " https://host/ " because the string ends in a
+// space, leaving both. The cmd/backfill-* tools share this function precisely
+// so they cannot drift from Load on it.
+func TestNormalizeBaseURL(t *testing.T) {
+	for _, tt := range []struct{ name, in, want string }{
+		{"already clean", "https://api.asgardeo.io", "https://api.asgardeo.io"},
+		{"trailing slash", "https://api.asgardeo.io/", "https://api.asgardeo.io"},
+		{"surrounding whitespace", "  https://api.asgardeo.io  ", "https://api.asgardeo.io"},
+		{"whitespace outside a trailing slash", " https://api.asgardeo.io/ ", "https://api.asgardeo.io"},
+		{"empty stays empty", "", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NormalizeBaseURL(tt.in); got != tt.want {
+				t.Errorf("NormalizeBaseURL(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
