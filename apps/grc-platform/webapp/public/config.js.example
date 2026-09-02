@@ -1,0 +1,33 @@
+// Runtime configuration for the TrustHub GRC Platform web app.
+//
+// Loaded by index.html before the React bundle starts; sets `window.config`,
+// whose shape is declared in `src/config/portalConfig.ts`. Copy to `config.js`
+// (gitignored) for local development. On Choreo, `config.js` is injected at
+// deploy time.
+window.config = {
+  // Local development only — both must be ABSENT from a deployed config.js.
+  // MOCK_AUTH bypasses Asgardeo sign-in entirely; the reader checks `=== true`,
+  // so absent and false behave identically. MOCK_AUTH_TOKEN is a forged
+  // unsigned JWT whose `sub` is a uuid present in the local `user` table,
+  // required whenever MOCK_AUTH is true (without it every request sends the
+  // literal "local-dev", which 401s) and needs the backend running with
+  // AUTH_TOKEN_VALIDATOR_ENABLED=false.
+  //
+  // GRC_PLATFORM_MOCK_AUTH: true,
+  // GRC_PLATFORM_MOCK_AUTH_TOKEN: "<header>.<payload-with-your-uuid-as-sub>.",
+
+  // CLIENT_ID must equal the backend's AUTH_AUDIENCE; BASE_URL must be the same
+  // Asgardeo org as its AUTH_ISSUER / AUTH_JWKS_ENDPOINT.
+  GRC_PLATFORM_AUTH_BASE_URL: "https://api.asgardeo.io/t/<your-org>",
+  GRC_PLATFORM_AUTH_CLIENT_ID: "<your-client-id>",
+
+  // Must be registered in Asgardeo, and must match the backend's
+  // FRONTEND_BASE_URL — also its sole CORS-allowed origin.
+  GRC_PLATFORM_AUTH_SIGN_IN_REDIRECT_URL: "http://localhost:3000",
+  GRC_PLATFORM_AUTH_SIGN_OUT_REDIRECT_URL: "http://localhost:3000",
+
+  // Public API base the browser calls. No trailing slash, no "/api".
+  GRC_PLATFORM_BACKEND_BASE_URL: "http://localhost:8081",
+
+  GRC_PLATFORM_THEME: "acrylicOrange",
+};

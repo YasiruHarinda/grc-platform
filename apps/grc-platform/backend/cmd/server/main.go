@@ -255,7 +255,10 @@ func main() {
 		slog.Error("failed to bind", "addr", cfg.Port, "err", err)
 		os.Exit(1)
 	}
-	slog.Info("server started", "addr", cfg.Port)
+	// Log the address actually bound, not the configured one: they differ
+	// whenever the kernel picks the port, and a wrong port is otherwise
+	// indistinguishable from a healthy start.
+	slog.Info("server started", "addr", ln.Addr().String())
 
 	srv := &http.Server{
 		Handler:           handler,

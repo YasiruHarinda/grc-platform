@@ -17,6 +17,7 @@
 package config
 
 import (
+	"net"
 	"strings"
 	"testing"
 )
@@ -277,5 +278,244 @@ func TestSchedulerEnabledOverride(t *testing.T) {
 func TestSchedulerEnabledDefaultIsOn(t *testing.T) {
 	if !SchedulerEnabledDefault {
 		t.Error("the background scheduler ships disabled — intended? overdue-risk escalation and audit reminders will not run automatically")
+	}
+}
+
+// TestListenAddr covers the PORT format change: listenAddr must supply the
+// colon net.Listen requires, and leave an already-prefixed value alone so an
+// environment still holding the old ":8081" keeps booting.
+func TestListenAddr(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		port string
+		want string
+	}{
+		{"bare port gains a colon", "8081", ":8081"},
+		{"legacy colon-prefixed value is unchanged", ":8081", ":8081"},
+		{"explicit host:port is unchanged", "0.0.0.0:8081", "0.0.0.0:8081"},
+		{"surrounding whitespace is trimmed", " 8081 ", ":8081"},
+		{"whitespace around a colon form is trimmed", " :8081", ":8081"},
+		// net.Listen reads ":" as "any free port", so these must not reach it:
+		// the process would start clean on a random port nothing can reach.
+		{"blank falls back to the default", "", ":" + DefaultPort},
+		{"whitespace-only falls back to the default", "   ", ":" + DefaultPort},
+		{"a lone colon falls back to the default", " : ", ":" + DefaultPort},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := listenAddr(tt.port); got != tt.want {
+				t.Errorf("listenAddr(%q) = %q, want %q", tt.port, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestLoadPortDefaultIsListenable guards the default end-to-end: it is bare, so
+// without listenAddr an unset PORT would fail at net.Listen.
+func TestLoadPortDefaultIsListenable(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	t.Setenv("AUTH_TOKEN_VALIDATOR_ENABLED", "false")
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("PORT", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want success", err)
+	}
+	if cfg.Port != ":8081" {
+		t.Errorf("cfg.Port = %q, want %q", cfg.Port, ":8081")
+	}
+}
+
+// TestLoadBlankPortDoesNotBindRandomly is the regression test for a
+// whitespace-only PORT. envOrDefault only substitutes on unset/empty, so " "
+// used to survive as a non-empty value, trim to "", and produce ":" — which
+// net.Listen accepts as "any free port".
+func TestLoadBlankPortDoesNotBindRandomly(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	t.Setenv("AUTH_TOKEN_VALIDATOR_ENABLED", "false")
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("PORT", "   ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want success", err)
+	}
+	if cfg.Port == ":" {
+		t.Fatal(`cfg.Port = ":" — net.Listen would bind a random port`)
+	}
+	if want := ":" + DefaultPort; cfg.Port != want {
+		t.Errorf("cfg.Port = %q, want %q", cfg.Port, want)
+	}
+
+	// The property that matters is that a concrete port is named. Asserting it
+	// by binding would skip whenever 8081 is busy — i.e. whenever a dev server
+	// is up, which is exactly when this runs. SplitHostPort reports an empty
+	// port for ":", the wildcard net.Listen turns into a random one.
+	if _, port, err := net.SplitHostPort(cfg.Port); err != nil || port == "" {
+		t.Errorf("net.SplitHostPort(%q) = port %q, err %v; want a concrete port", cfg.Port, port, err)
+	}
+}
+
+// TestSCIMTokenURL covers the derivation that replaced
+// SCIM_INTERNAL_TOKEN_URL / SCIM_EXTERNAL_TOKEN_URL. The empty cases matter:
+// a URL built from a missing org would point at /t//oauth2/token.
+func TestSCIMTokenURL(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		baseURL string
+		org     string
+		want    string
+	}{
+		{
+			name:    "derives the Asgardeo tenant token endpoint",
+			baseURL: "https://api.asgardeo.io",
+			org:     "wso2",
+			want:    "https://api.asgardeo.io/t/wso2/oauth2/token",
+		},
+		{
+			// Load strips the slash once, so this and scim.Client (which
+			// concatenates BaseURL raw) cannot disagree about the path.
+			name:    "does not normalise — that is Load's job",
+			baseURL: "https://api.asgardeo.io/",
+			org:     "wso2",
+			want:    "https://api.asgardeo.io//t/wso2/oauth2/token",
+		},
+		{"empty base URL yields empty", "", "wso2", ""},
+		{"empty org yields empty", "https://api.asgardeo.io", "", ""},
+		{"both empty yields empty", "", "", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := SCIMTokenURL(tt.baseURL, tt.org); got != tt.want {
+				t.Errorf("SCIMTokenURL(%q, %q) = %q, want %q", tt.baseURL, tt.org, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestLoadDerivesSCIMTokenURLs is the drift regression test: a token URL can
+// no longer point at a different tenant than the org beside it, and a stale
+// SCIM_INTERNAL_TOKEN_URL left in a deployed environment must not win.
+func TestLoadDerivesSCIMTokenURLs(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	t.Setenv("AUTH_TOKEN_VALIDATOR_ENABLED", "false")
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("SCIM_BASE_URL", "https://api.asgardeo.io")
+	t.Setenv("SCIM_INTERNAL_ORG", "wso2")
+	t.Setenv("SCIM_EXTERNAL_ORG", "wso2external")
+	t.Setenv("SCIM_INTERNAL_TOKEN_URL", "https://api.asgardeo.io/t/some-other-org/oauth2/token")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want success", err)
+	}
+	if want := "https://api.asgardeo.io/t/wso2/oauth2/token"; cfg.SCIM.TokenURL != want {
+		t.Errorf("cfg.SCIM.TokenURL = %q, want %q (a stale SCIM_INTERNAL_TOKEN_URL must not win)", cfg.SCIM.TokenURL, want)
+	}
+	if want := "https://api.asgardeo.io/t/wso2external/oauth2/token"; cfg.SCIM.ExternalTokenURL != want {
+		t.Errorf("cfg.SCIM.ExternalTokenURL = %q, want %q", cfg.SCIM.ExternalTokenURL, want)
+	}
+}
+
+// TestLoadSCIMUnconfiguredWithoutOrg pins the degrade-rather-than-break
+// contract: with no org, directory lookups go quiet rather than fail startup.
+func TestLoadSCIMUnconfiguredWithoutOrg(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	t.Setenv("AUTH_TOKEN_VALIDATOR_ENABLED", "false")
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("SCIM_BASE_URL", "https://api.asgardeo.io")
+	t.Setenv("SCIM_INTERNAL_ORG", "")
+	t.Setenv("SCIM_EXTERNAL_ORG", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want success", err)
+	}
+	if cfg.SCIM.TokenURL != "" {
+		t.Errorf("cfg.SCIM.TokenURL = %q, want empty when the org is unset", cfg.SCIM.TokenURL)
+	}
+	if cfg.SCIM.Configured() {
+		t.Error("cfg.SCIM.Configured() = true with no org, want false")
+	}
+	if cfg.SCIM.ExternalConfigured() {
+		t.Error("cfg.SCIM.ExternalConfigured() = true with no org, want false")
+	}
+}
+
+// TestLoadNormalisesSCIMBaseURL guards a trailing slash on SCIM_BASE_URL. It
+// must be normalised on the value itself, not inside SCIMTokenURL, because
+// scim.Client concatenates cfg.SCIM.BaseURL raw — trimming in the helper alone
+// would leave the token URL clean while every search hit a doubled "//t/..."
+// path, a half-working config that is harder to diagnose than an outright one.
+func TestLoadNormalisesSCIMBaseURL(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	t.Setenv("AUTH_TOKEN_VALIDATOR_ENABLED", "false")
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("SCIM_BASE_URL", "  https://api.asgardeo.io/  ")
+	t.Setenv("SCIM_INTERNAL_ORG", "wso2")
+	t.Setenv("SCIM_EXTERNAL_ORG", "wso2external")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want success", err)
+	}
+	if want := "https://api.asgardeo.io"; cfg.SCIM.BaseURL != want {
+		t.Errorf("cfg.SCIM.BaseURL = %q, want %q", cfg.SCIM.BaseURL, want)
+	}
+	// Spelled out the way client.go builds it, so this fails if they drift.
+	if got, want := cfg.SCIM.BaseURL+"/t/"+cfg.SCIM.Org+"/scim2/Users/.search",
+		"https://api.asgardeo.io/t/wso2/scim2/Users/.search"; got != want {
+		t.Errorf("scim search URL = %q, want %q", got, want)
+	}
+	if want := "https://api.asgardeo.io/t/wso2/oauth2/token"; cfg.SCIM.TokenURL != want {
+		t.Errorf("cfg.SCIM.TokenURL = %q, want %q", cfg.SCIM.TokenURL, want)
+	}
+}
+
+// TestLoadSCIMConfiguredWithoutTokenURLVar pins a deliberate behaviour change:
+// base URL + org + credentials is now "configured" with no token-URL variable
+// set. Such an environment previously ran with no directory at all — every user
+// "unknown" — from one forgotten URL. It now starts making live Asgardeo calls
+// on its next deploy, so that is pinned here rather than discovered.
+func TestLoadSCIMConfiguredWithoutTokenURLVar(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	t.Setenv("AUTH_TOKEN_VALIDATOR_ENABLED", "false")
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("SCIM_BASE_URL", "https://api.asgardeo.io")
+	t.Setenv("SCIM_INTERNAL_ORG", "wso2")
+	t.Setenv("SCIM_INTERNAL_CLIENT_ID", "id")
+	t.Setenv("SCIM_INTERNAL_CLIENT_SECRET", "secret")
+	t.Setenv("SCIM_EXTERNAL_ORG", "wso2external")
+	t.Setenv("SCIM_EXTERNAL_CLIENT_ID", "id")
+	t.Setenv("SCIM_EXTERNAL_CLIENT_SECRET", "secret")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want success", err)
+	}
+	if !cfg.SCIM.Configured() {
+		t.Error("cfg.SCIM.Configured() = false, want true — credentials alone now suffice")
+	}
+	if !cfg.SCIM.ExternalConfigured() {
+		t.Error("cfg.SCIM.ExternalConfigured() = false, want true")
+	}
+}
+
+// TestNormalizeBaseURL pins the ordering, which is the whole subtlety: trimming
+// the slash first is a no-op on " https://host/ " because the string ends in a
+// space, leaving both. The cmd/backfill-* tools share this function precisely
+// so they cannot drift from Load on it.
+func TestNormalizeBaseURL(t *testing.T) {
+	for _, tt := range []struct{ name, in, want string }{
+		{"already clean", "https://api.asgardeo.io", "https://api.asgardeo.io"},
+		{"trailing slash", "https://api.asgardeo.io/", "https://api.asgardeo.io"},
+		{"surrounding whitespace", "  https://api.asgardeo.io  ", "https://api.asgardeo.io"},
+		{"whitespace outside a trailing slash", " https://api.asgardeo.io/ ", "https://api.asgardeo.io"},
+		{"empty stays empty", "", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NormalizeBaseURL(tt.in); got != tt.want {
+				t.Errorf("NormalizeBaseURL(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
 	}
 }

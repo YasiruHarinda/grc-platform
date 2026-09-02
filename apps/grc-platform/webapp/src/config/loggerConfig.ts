@@ -15,7 +15,12 @@
 // under the License.
 
 // Configuration for the Logger service.
+//
+// The level is fixed: every call site here is logger.error, so the old
+// GRC_PLATFORM_LOG_LEVEL changed no output at all. Reintroduce it alongside the
+// first real debug/info/warn calls, and with the raw console.* sites routed
+// through the logger — those print in production, ungated by any level.
 export const loggerConfig = {
-  level: window.config?.GRC_PLATFORM_LOG_LEVEL || "ERROR",
+  level: "ERROR",
   prefix: "GRCPlatform",
 };

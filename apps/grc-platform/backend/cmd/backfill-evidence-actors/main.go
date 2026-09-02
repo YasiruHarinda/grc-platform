@@ -66,6 +66,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 )
 
@@ -96,10 +97,14 @@ func main() {
 		fatal("connect to database: %v", err)
 	}
 
+	// Both helpers are the ones Load uses, so this tool normalises the base URL
+	// and derives the token endpoint exactly as the running server does.
+	scimBaseURL := config.NormalizeBaseURL(mustEnv("SCIM_BASE_URL"))
+	scimOrg := mustEnv("SCIM_INTERNAL_ORG")
 	scimCli := scim.NewClient(
-		mustEnv("SCIM_BASE_URL"), mustEnv("SCIM_INTERNAL_TOKEN_URL"),
+		scimBaseURL, config.SCIMTokenURL(scimBaseURL, scimOrg),
 		mustEnv("SCIM_INTERNAL_CLIENT_ID"), mustEnv("SCIM_INTERNAL_CLIENT_SECRET"),
-		mustEnv("SCIM_INTERNAL_SCOPES"), mustEnv("SCIM_INTERNAL_ORG"),
+		mustEnv("SCIM_INTERNAL_SCOPES"), scimOrg,
 	)
 	scimCli.SetHTTPTimeout(*scimTimeout)
 

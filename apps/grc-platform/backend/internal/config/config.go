@@ -25,6 +25,8 @@ import (
 
 // Config holds all application configuration loaded from environment variables.
 type Config struct {
+	// Port is the net.Listen address, always colon-prefixed. PORT itself is
+	// written bare ("8081") to match component.yaml; listenAddr bridges them.
 	Port                    string
 	Auth                    AuthConfig
 	ComplianceEntityBaseURL string
@@ -198,10 +200,13 @@ type HREntityConfig struct {
 // organizations (see internal/scim.NewClient vs NewExternalClient), each
 // with its own OAuth2 app registration — hence the separate
 // SCIM_INTERNAL_*/SCIM_EXTERNAL_* env vars per org below (Org/ClientID/
-// ClientSecret/TokenURL/Scopes fields, unprefixed here since they're already
+// ClientSecret/Scopes fields, unprefixed here since they're already
 // disambiguated by sitting next to their External* siblings). BaseURL is the
 // one thing shared: both orgs sit under the same Asgardeo API root
 // (https://api.asgardeo.io), just a different /t/{org}/... tenant path.
+//
+// TokenURL and ExternalTokenURL have no env var: SCIMTokenURL derives them
+// from BaseURL and the org, so they cannot drift out of step with it.
 //
 // Optional, unlike HREntityConfig. An unset BaseURL disables directory
 // lookups rather than failing startup: local development frequently runs
@@ -247,13 +252,18 @@ type SCIMConfig struct {
 // rollout can have Asgardeo credentials for one org without the other, and
 // each client degrades to "unknown" on its own when unset (see
 // internal/scim.Client's nil-tolerance).
+//
+// Satisfied by credentials alone: TokenURL is derived from BaseURL and Org, so
+// testing it here could never fail. An environment that previously forgot
+// SCIM_INTERNAL_TOKEN_URL and silently ran with no directory now gets a
+// client — deliberately (see TestLoadSCIMConfiguredWithoutTokenURLVar).
 func (c SCIMConfig) Configured() bool {
-	return c.BaseURL != "" && c.Org != "" && c.TokenURL != "" && c.ClientID != "" && c.ClientSecret != ""
+	return c.BaseURL != "" && c.Org != "" && c.ClientID != "" && c.ClientSecret != ""
 }
 
 // ExternalConfigured is Configured for the external-org client.
 func (c SCIMConfig) ExternalConfigured() bool {
-	return c.BaseURL != "" && c.ExternalOrg != "" && c.ExternalTokenURL != "" &&
+	return c.BaseURL != "" && c.ExternalOrg != "" &&
 		c.ExternalClientID != "" && c.ExternalClientSecret != ""
 }
 
@@ -367,8 +377,15 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	// Token endpoints are derived, not configured — see SCIMTokenURL. The
+	// trailing slash is stripped here rather than in the helper because
+	// scim.Client concatenates this same BaseURL raw.
+	scimBaseURL := NormalizeBaseURL(os.Getenv("SCIM_BASE_URL"))
+	scimInternalOrg := os.Getenv("SCIM_INTERNAL_ORG")
+	scimExternalOrg := os.Getenv("SCIM_EXTERNAL_ORG")
+
 	return Config{
-		Port:                    envOrDefault("PORT", ":8081"),
+		Port:                    listenAddr(os.Getenv("PORT")),
 		Auth:                    authCfg,
 		ComplianceEntityBaseURL: complianceEntityBaseURL,
 		HREntity: HREntityConfig{
@@ -378,19 +395,19 @@ func Load() (Config, error) {
 			ClientSecret: hrEntityClientSecret,
 		},
 		SCIM: SCIMConfig{
-			BaseURL:    os.Getenv("SCIM_BASE_URL"),
+			BaseURL:    scimBaseURL,
 			UserDomain: scimUserDomain,
 
-			Org:          os.Getenv("SCIM_INTERNAL_ORG"),
+			Org:          scimInternalOrg,
 			ClientID:     os.Getenv("SCIM_INTERNAL_CLIENT_ID"),
 			ClientSecret: os.Getenv("SCIM_INTERNAL_CLIENT_SECRET"),
-			TokenURL:     os.Getenv("SCIM_INTERNAL_TOKEN_URL"),
+			TokenURL:     SCIMTokenURL(scimBaseURL, scimInternalOrg),
 			Scopes:       envOrDefault("SCIM_INTERNAL_SCOPES", "internal_user_mgt_view internal_user_mgt_list"),
 
-			ExternalOrg:          os.Getenv("SCIM_EXTERNAL_ORG"),
+			ExternalOrg:          scimExternalOrg,
 			ExternalClientID:     os.Getenv("SCIM_EXTERNAL_CLIENT_ID"),
 			ExternalClientSecret: os.Getenv("SCIM_EXTERNAL_CLIENT_SECRET"),
-			ExternalTokenURL:     os.Getenv("SCIM_EXTERNAL_TOKEN_URL"),
+			ExternalTokenURL:     SCIMTokenURL(scimBaseURL, scimExternalOrg),
 			ExternalScopes:       envOrDefault("SCIM_EXTERNAL_SCOPES", "internal_user_mgt_view internal_user_mgt_list"),
 		},
 		// Derived from FRONTEND_BASE_URL rather than its own env var: both are
@@ -457,6 +474,57 @@ func loadInternalEmailDomains(scimUserDomain string) ([]string, error) {
 		domains = append(domains, d)
 	}
 	return domains, nil
+}
+
+// DefaultPort is used whenever PORT carries no port number. It lives here
+// rather than at the call site so "unset" and "blank" cannot diverge.
+const DefaultPort = "8081"
+
+// listenAddr turns a bare PORT ("8081", matching component.yaml and the
+// entity's SERVER_PORT) into the colon-prefixed address net.Listen requires —
+// net.Listen("tcp", "8081") fails with "missing port in address".
+//
+// A value already containing a colon passes through, so an environment still
+// holding the old ":8081" keeps booting. Whitespace is trimmed: a trailing
+// space in a web console's variable editor is invisible but fatal.
+//
+// A value that trims away to nothing — "", " ", or a lone ":" — falls back to
+// DefaultPort rather than yielding ":". net.Listen accepts ":" as "any free
+// port", so a blank PORT would otherwise bind a random one and start cleanly,
+// leaving a healthy-looking service nothing can reach.
+func listenAddr(port string) string {
+	port = strings.TrimSpace(port)
+	if port == "" || port == ":" {
+		return ":" + DefaultPort
+	}
+	if strings.Contains(port, ":") {
+		return port
+	}
+	return ":" + port
+}
+
+// NormalizeBaseURL trims whitespace and any trailing slash from an API root so
+// every consumer that concatenates a path onto it agrees. Load applies it to
+// SCIM_BASE_URL; the cmd/backfill-* tools must apply it too, since they pass
+// the value to both SCIMTokenURL and scim.NewClient.
+func NormalizeBaseURL(u string) string {
+	return strings.TrimSuffix(strings.TrimSpace(u), "/")
+}
+
+// SCIMTokenURL builds one Asgardeo org's OAuth2 token endpoint:
+// {baseURL}/t/{org}/oauth2/token — the same shape internal/scim.Client uses for
+// /t/{org}/scim2/Users/.search. Replaces the hand-maintained
+// SCIM_INTERNAL_TOKEN_URL / SCIM_EXTERNAL_TOKEN_URL, which could drift from
+// their org. Exported for the cmd/backfill-* tools, which bypass Load.
+//
+// baseURL must have no trailing slash — Load normalises it, since scim.Client
+// concatenates the same value raw. Returns "" if either input is empty, so
+// Configured still reports false.
+func SCIMTokenURL(baseURL, org string) string {
+	if baseURL == "" || org == "" {
+		return ""
+	}
+	return baseURL + "/t/" + org + "/oauth2/token"
 }
 
 func mustEnv(key string) (string, error) {
