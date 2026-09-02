@@ -112,7 +112,9 @@ func main() {
 	// read from SCIM_INTERNAL_TOKEN_URL, which no longer exists — via the same
 	// config.SCIMTokenURL the server uses, so this tool authenticates against
 	// exactly the tenant the running backend does.
-	scimBaseURL := mustEnv("SCIM_BASE_URL")
+	// Trailing slash stripped exactly as config.Load does: this value is passed
+	// both to SCIMTokenURL and to scim.NewClient, which concatenates it raw.
+	scimBaseURL := strings.TrimSuffix(mustEnv("SCIM_BASE_URL"), "/")
 	scimOrg := mustEnv("SCIM_INTERNAL_ORG")
 	scimCli := scim.NewClient(
 		scimBaseURL, config.SCIMTokenURL(scimBaseURL, scimOrg),
