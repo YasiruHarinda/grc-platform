@@ -17,6 +17,7 @@
 package config
 
 import (
+	"net"
 	"strings"
 	"testing"
 )
@@ -294,6 +295,11 @@ func TestListenAddr(t *testing.T) {
 		{"explicit host:port is unchanged", "0.0.0.0:8081", "0.0.0.0:8081"},
 		{"surrounding whitespace is trimmed", " 8081 ", ":8081"},
 		{"whitespace around a colon form is trimmed", " :8081", ":8081"},
+		// net.Listen reads ":" as "any free port", so these must not reach it:
+		// the process would start clean on a random port nothing can reach.
+		{"blank falls back to the default", "", ":" + DefaultPort},
+		{"whitespace-only falls back to the default", "   ", ":" + DefaultPort},
+		{"a lone colon falls back to the default", " : ", ":" + DefaultPort},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := listenAddr(tt.port); got != tt.want {
@@ -303,7 +309,7 @@ func TestListenAddr(t *testing.T) {
 	}
 }
 
-// TestLoadPortDefaultIsListenable guards the default: it is now bare, so
+// TestLoadPortDefaultIsListenable guards the default end-to-end: it is bare, so
 // without listenAddr an unset PORT would fail at net.Listen.
 func TestLoadPortDefaultIsListenable(t *testing.T) {
 	setRequiredNonAuthEnv(t)
@@ -317,6 +323,36 @@ func TestLoadPortDefaultIsListenable(t *testing.T) {
 	}
 	if cfg.Port != ":8081" {
 		t.Errorf("cfg.Port = %q, want %q", cfg.Port, ":8081")
+	}
+}
+
+// TestLoadBlankPortDoesNotBindRandomly is the regression test for a
+// whitespace-only PORT. envOrDefault only substitutes on unset/empty, so " "
+// used to survive as a non-empty value, trim to "", and produce ":" — which
+// net.Listen accepts as "any free port".
+func TestLoadBlankPortDoesNotBindRandomly(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	t.Setenv("AUTH_TOKEN_VALIDATOR_ENABLED", "false")
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("PORT", "   ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want success", err)
+	}
+	if cfg.Port == ":" {
+		t.Fatal(`cfg.Port = ":" — net.Listen would bind a random port`)
+	}
+	if want := ":" + DefaultPort; cfg.Port != want {
+		t.Errorf("cfg.Port = %q, want %q", cfg.Port, want)
+	}
+
+	// The property that matters is that a concrete port is named. Asserting it
+	// by binding would skip whenever 8081 is busy — i.e. whenever a dev server
+	// is up, which is exactly when this runs. SplitHostPort reports an empty
+	// port for ":", the wildcard net.Listen turns into a random one.
+	if _, port, err := net.SplitHostPort(cfg.Port); err != nil || port == "" {
+		t.Errorf("net.SplitHostPort(%q) = port %q, err %v; want a concrete port", cfg.Port, port, err)
 	}
 }
 

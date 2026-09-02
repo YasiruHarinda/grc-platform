@@ -385,7 +385,7 @@ func Load() (Config, error) {
 	scimExternalOrg := os.Getenv("SCIM_EXTERNAL_ORG")
 
 	return Config{
-		Port:                    listenAddr(envOrDefault("PORT", "8081")),
+		Port:                    listenAddr(os.Getenv("PORT")),
 		Auth:                    authCfg,
 		ComplianceEntityBaseURL: complianceEntityBaseURL,
 		HREntity: HREntityConfig{
@@ -476,6 +476,10 @@ func loadInternalEmailDomains(scimUserDomain string) ([]string, error) {
 	return domains, nil
 }
 
+// DefaultPort is used whenever PORT carries no port number. It lives here
+// rather than at the call site so "unset" and "blank" cannot diverge.
+const DefaultPort = "8081"
+
 // listenAddr turns a bare PORT ("8081", matching component.yaml and the
 // entity's SERVER_PORT) into the colon-prefixed address net.Listen requires —
 // net.Listen("tcp", "8081") fails with "missing port in address".
@@ -483,8 +487,16 @@ func loadInternalEmailDomains(scimUserDomain string) ([]string, error) {
 // A value already containing a colon passes through, so an environment still
 // holding the old ":8081" keeps booting. Whitespace is trimmed: a trailing
 // space in a web console's variable editor is invisible but fatal.
+//
+// A value that trims away to nothing — "", " ", or a lone ":" — falls back to
+// DefaultPort rather than yielding ":". net.Listen accepts ":" as "any free
+// port", so a blank PORT would otherwise bind a random one and start cleanly,
+// leaving a healthy-looking service nothing can reach.
 func listenAddr(port string) string {
 	port = strings.TrimSpace(port)
+	if port == "" || port == ":" {
+		return ":" + DefaultPort
+	}
 	if strings.Contains(port, ":") {
 		return port
 	}
