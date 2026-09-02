@@ -257,13 +257,24 @@ type SCIMConfig struct {
 // rollout can have Asgardeo credentials for one org without the other, and
 // each client degrades to "unknown" on its own when unset (see
 // internal/scim.Client's nil-tolerance).
+//
+// TokenURL is deliberately not tested: it is derived from BaseURL and Org by
+// SCIMTokenURL, so it is non-empty exactly when both of those are, and a
+// check on it could never fail here.
+//
+// Note this is now satisfied by credentials alone. Before TokenURL was
+// derived, an environment that set BaseURL, Org and both credentials but
+// forgot SCIM_INTERNAL_TOKEN_URL reported "not configured" and silently ran
+// with no directory at all. Such an environment now gets a live client, which
+// is the intent — a fully credentialed deployment should not be one forgotten
+// URL away from quietly resolving every user to "unknown".
 func (c SCIMConfig) Configured() bool {
-	return c.BaseURL != "" && c.Org != "" && c.TokenURL != "" && c.ClientID != "" && c.ClientSecret != ""
+	return c.BaseURL != "" && c.Org != "" && c.ClientID != "" && c.ClientSecret != ""
 }
 
 // ExternalConfigured is Configured for the external-org client.
 func (c SCIMConfig) ExternalConfigured() bool {
-	return c.BaseURL != "" && c.ExternalOrg != "" && c.ExternalTokenURL != "" &&
+	return c.BaseURL != "" && c.ExternalOrg != "" &&
 		c.ExternalClientID != "" && c.ExternalClientSecret != ""
 }
 
@@ -379,7 +390,15 @@ func Load() (Config, error) {
 
 	// SCIM's two token endpoints are derived from the base URL and each org
 	// rather than read from their own variables — see SCIMTokenURL.
-	scimBaseURL := os.Getenv("SCIM_BASE_URL")
+	//
+	// The trailing slash is stripped here, once, rather than inside
+	// SCIMTokenURL: internal/scim.Client concatenates this same BaseURL raw
+	// ("baseURL + /t/{org}/scim2/Users/.search"), so trimming in the helper
+	// alone would leave the token URL clean while the SCIM2 request went to a
+	// doubled "//t/..." path — a half-working config is harder to diagnose
+	// than one that fails outright. Normalising the value itself keeps every
+	// consumer consistent.
+	scimBaseURL := strings.TrimSuffix(strings.TrimSpace(os.Getenv("SCIM_BASE_URL")), "/")
 	scimInternalOrg := os.Getenv("SCIM_INTERNAL_ORG")
 	scimExternalOrg := os.Getenv("SCIM_EXTERNAL_ORG")
 
@@ -488,7 +507,13 @@ func loadInternalEmailDomains(scimUserDomain string) ([]string, error) {
 // change cannot break a deploy that ships before the Choreo config is
 // updated. A host:port value ("0.0.0.0:8081") passes through for the same
 // reason.
+//
+// Surrounding whitespace is trimmed. A trailing space is easy to introduce in
+// a web console's variable editor and invisible in it, and " 8081" would
+// otherwise reach net.Listen as ": 8081" and fail at boot for a reason the
+// error message does not make obvious.
 func listenAddr(port string) string {
+	port = strings.TrimSpace(port)
 	if strings.Contains(port, ":") {
 		return port
 	}
@@ -509,6 +534,11 @@ func listenAddr(port string) string {
 // Exported because the cmd/backfill-* tools build their own scim.Client
 // without going through Load, and must derive the URL the same way.
 //
+// baseURL is expected to carry no trailing slash — Load normalises it once so
+// that this and internal/scim.Client, which concatenates the same value raw,
+// cannot disagree about the path. A caller outside Load (the cmd/backfill-*
+// tools) should pass the same normalised value it hands scim.NewClient.
+//
 // Returns "" when either input is empty, so SCIMConfig.Configured and
 // ExternalConfigured still report "not configured" — the unset case degrades
 // to "no directory lookups" rather than handing the client a malformed URL.
@@ -516,7 +546,7 @@ func SCIMTokenURL(baseURL, org string) string {
 	if baseURL == "" || org == "" {
 		return ""
 	}
-	return strings.TrimSuffix(baseURL, "/") + "/t/" + org + "/oauth2/token"
+	return baseURL + "/t/" + org + "/oauth2/token"
 }
 
 func mustEnv(key string) (string, error) {

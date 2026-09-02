@@ -295,6 +295,8 @@ func TestListenAddr(t *testing.T) {
 		{"bare port gains a colon", "8081", ":8081"},
 		{"legacy colon-prefixed value is unchanged", ":8081", ":8081"},
 		{"explicit host:port is unchanged", "0.0.0.0:8081", "0.0.0.0:8081"},
+		{"surrounding whitespace is trimmed", " 8081 ", ":8081"},
+		{"whitespace around a colon form is trimmed", " :8081", ":8081"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := listenAddr(tt.port); got != tt.want {
@@ -342,10 +344,14 @@ func TestSCIMTokenURL(t *testing.T) {
 			want:    "https://api.asgardeo.io/t/wso2/oauth2/token",
 		},
 		{
-			name:    "tolerates a trailing slash on the base URL",
+			// The helper does NOT normalise: Load strips the trailing slash
+			// once, so that this and internal/scim.Client (which concatenates
+			// the same BaseURL raw) can never disagree about the path. See
+			// TestLoadNormalisesSCIMBaseURL for the contract that matters.
+			name:    "does not normalise — that is Load's job",
 			baseURL: "https://api.asgardeo.io/",
 			org:     "wso2",
-			want:    "https://api.asgardeo.io/t/wso2/oauth2/token",
+			want:    "https://api.asgardeo.io//t/wso2/oauth2/token",
 		},
 		{"empty base URL yields empty", "", "wso2", ""},
 		{"empty org yields empty", "https://api.asgardeo.io", "", ""},
@@ -409,5 +415,75 @@ func TestLoadSCIMUnconfiguredWithoutOrg(t *testing.T) {
 	}
 	if cfg.SCIM.ExternalConfigured() {
 		t.Error("cfg.SCIM.ExternalConfigured() = true with no org, want false")
+	}
+}
+
+// TestLoadNormalisesSCIMBaseURL is the regression test for a trailing slash on
+// SCIM_BASE_URL. It has to be normalised on the value itself, not inside
+// SCIMTokenURL, because internal/scim.Client concatenates cfg.SCIM.BaseURL raw
+// (client.go: baseURL + "/t/" + org + "/scim2/Users/.search"). Trimming in the
+// helper alone would hand out a clean token URL while every SCIM2 request went
+// to a doubled "//t/..." path — the token exchange would succeed and only the
+// search would misbehave, which is far harder to diagnose than a config that
+// fails outright.
+func TestLoadNormalisesSCIMBaseURL(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	t.Setenv("AUTH_TOKEN_VALIDATOR_ENABLED", "false")
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("SCIM_BASE_URL", "  https://api.asgardeo.io/  ")
+	t.Setenv("SCIM_INTERNAL_ORG", "wso2")
+	t.Setenv("SCIM_EXTERNAL_ORG", "wso2external")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want success", err)
+	}
+	if want := "https://api.asgardeo.io"; cfg.SCIM.BaseURL != want {
+		t.Errorf("cfg.SCIM.BaseURL = %q, want %q", cfg.SCIM.BaseURL, want)
+	}
+	// The URL scim.Client will actually build, spelled out the way client.go
+	// builds it, so this test fails if the two ever drift apart again.
+	if got, want := cfg.SCIM.BaseURL+"/t/"+cfg.SCIM.Org+"/scim2/Users/.search",
+		"https://api.asgardeo.io/t/wso2/scim2/Users/.search"; got != want {
+		t.Errorf("scim search URL = %q, want %q", got, want)
+	}
+	if want := "https://api.asgardeo.io/t/wso2/oauth2/token"; cfg.SCIM.TokenURL != want {
+		t.Errorf("cfg.SCIM.TokenURL = %q, want %q", cfg.SCIM.TokenURL, want)
+	}
+}
+
+// TestLoadSCIMConfiguredWithoutTokenURLVar pins a deliberate behaviour change
+// from deriving the token URL: an environment holding a base URL, an org and
+// both credentials is now "configured" even though it sets no token URL
+// variable at all — because there no longer is one.
+//
+// Before deriving, that same environment reported "not configured" and ran
+// with no directory whatsoever: every user resolved to "unknown", risk
+// notifications had no deliverable recipients, and the owner/approver pickers
+// returned nothing — all from one forgotten URL, announced only by a startup
+// warning. Switching it on is the point of the change, but it does mean a
+// deployment in that state starts making live Asgardeo calls on its next
+// deploy, so it is pinned here rather than left to be discovered.
+func TestLoadSCIMConfiguredWithoutTokenURLVar(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	t.Setenv("AUTH_TOKEN_VALIDATOR_ENABLED", "false")
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("SCIM_BASE_URL", "https://api.asgardeo.io")
+	t.Setenv("SCIM_INTERNAL_ORG", "wso2")
+	t.Setenv("SCIM_INTERNAL_CLIENT_ID", "id")
+	t.Setenv("SCIM_INTERNAL_CLIENT_SECRET", "secret")
+	t.Setenv("SCIM_EXTERNAL_ORG", "wso2external")
+	t.Setenv("SCIM_EXTERNAL_CLIENT_ID", "id")
+	t.Setenv("SCIM_EXTERNAL_CLIENT_SECRET", "secret")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want success", err)
+	}
+	if !cfg.SCIM.Configured() {
+		t.Error("cfg.SCIM.Configured() = false, want true — credentials alone now suffice")
+	}
+	if !cfg.SCIM.ExternalConfigured() {
+		t.Error("cfg.SCIM.ExternalConfigured() = false, want true")
 	}
 }
