@@ -380,7 +380,7 @@ func Load() (Config, error) {
 	// Token endpoints are derived, not configured — see SCIMTokenURL. The
 	// trailing slash is stripped here rather than in the helper because
 	// scim.Client concatenates this same BaseURL raw.
-	scimBaseURL := strings.TrimSuffix(strings.TrimSpace(os.Getenv("SCIM_BASE_URL")), "/")
+	scimBaseURL := NormalizeBaseURL(os.Getenv("SCIM_BASE_URL"))
 	scimInternalOrg := os.Getenv("SCIM_INTERNAL_ORG")
 	scimExternalOrg := os.Getenv("SCIM_EXTERNAL_ORG")
 
@@ -489,6 +489,14 @@ func listenAddr(port string) string {
 		return port
 	}
 	return ":" + port
+}
+
+// NormalizeBaseURL trims whitespace and any trailing slash from an API root so
+// every consumer that concatenates a path onto it agrees. Load applies it to
+// SCIM_BASE_URL; the cmd/backfill-* tools must apply it too, since they pass
+// the value to both SCIMTokenURL and scim.NewClient.
+func NormalizeBaseURL(u string) string {
+	return strings.TrimSuffix(strings.TrimSpace(u), "/")
 }
 
 // SCIMTokenURL builds one Asgardeo org's OAuth2 token endpoint:

@@ -119,10 +119,9 @@ func main() {
 		fatal("connect to database: %v", err)
 	}
 
-	// Token endpoint derived via the same helper the server uses, so this tool
-	// hits the same tenant. Slash stripped as in Load — scim.NewClient
-	// concatenates the value raw.
-	scimBaseURL := strings.TrimSuffix(mustEnv("SCIM_BASE_URL"), "/")
+	// Both helpers are the ones Load uses, so this tool normalises the base URL
+	// and derives the token endpoint exactly as the running server does.
+	scimBaseURL := config.NormalizeBaseURL(mustEnv("SCIM_BASE_URL"))
 	scimOrg := mustEnv("SCIM_INTERNAL_ORG")
 	scimCli := scim.NewClient(
 		scimBaseURL, config.SCIMTokenURL(scimBaseURL, scimOrg),
