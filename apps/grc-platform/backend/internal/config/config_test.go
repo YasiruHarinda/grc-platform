@@ -280,12 +280,9 @@ func TestSchedulerEnabledDefaultIsOn(t *testing.T) {
 	}
 }
 
-// TestListenAddr covers the PORT format change. PORT is now written bare
-// ("8081") so it agrees with .choreo/component.yaml and the Compliance
-// Entity's SERVER_PORT, but net.Listen rejects a bare port outright
-// ("missing port in address"), so listenAddr must supply the colon — and must
-// leave an already-colon-prefixed value alone, since a deployed environment
-// still holding the old ":8081" has to keep booting.
+// TestListenAddr covers the PORT format change: listenAddr must supply the
+// colon net.Listen requires, and leave an already-prefixed value alone so an
+// environment still holding the old ":8081" keeps booting.
 func TestListenAddr(t *testing.T) {
 	for _, tt := range []struct {
 		name string
@@ -306,9 +303,8 @@ func TestListenAddr(t *testing.T) {
 	}
 }
 
-// TestLoadPortDefaultIsListenable guards the default itself: envOrDefault's
-// fallback is now bare, so without listenAddr around it an unset PORT would
-// produce "8081" and fail at net.Listen rather than at config time.
+// TestLoadPortDefaultIsListenable guards the default: it is now bare, so
+// without listenAddr an unset PORT would fail at net.Listen.
 func TestLoadPortDefaultIsListenable(t *testing.T) {
 	setRequiredNonAuthEnv(t)
 	t.Setenv("AUTH_TOKEN_VALIDATOR_ENABLED", "false")
@@ -325,11 +321,8 @@ func TestLoadPortDefaultIsListenable(t *testing.T) {
 }
 
 // TestSCIMTokenURL covers the derivation that replaced
-// SCIM_INTERNAL_TOKEN_URL / SCIM_EXTERNAL_TOKEN_URL. The empty cases matter
-// as much as the happy path: SCIMConfig.Configured tests TokenURL != "", so
-// returning a syntactically valid URL built from a missing org would flip an
-// unconfigured deployment into "configured" and hand scim.Client a URL
-// pointing at /t//oauth2/token.
+// SCIM_INTERNAL_TOKEN_URL / SCIM_EXTERNAL_TOKEN_URL. The empty cases matter:
+// a URL built from a missing org would point at /t//oauth2/token.
 func TestSCIMTokenURL(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
@@ -344,10 +337,8 @@ func TestSCIMTokenURL(t *testing.T) {
 			want:    "https://api.asgardeo.io/t/wso2/oauth2/token",
 		},
 		{
-			// The helper does NOT normalise: Load strips the trailing slash
-			// once, so that this and internal/scim.Client (which concatenates
-			// the same BaseURL raw) can never disagree about the path. See
-			// TestLoadNormalisesSCIMBaseURL for the contract that matters.
+			// Load strips the slash once, so this and scim.Client (which
+			// concatenates BaseURL raw) cannot disagree about the path.
 			name:    "does not normalise — that is Load's job",
 			baseURL: "https://api.asgardeo.io/",
 			org:     "wso2",
@@ -365,11 +356,9 @@ func TestSCIMTokenURL(t *testing.T) {
 	}
 }
 
-// TestLoadDerivesSCIMTokenURLs is the drift regression test: the whole point
-// of removing the two variables is that a token URL can no longer point at a
-// different tenant than the org beside it. It also pins that a stale
-// SCIM_INTERNAL_TOKEN_URL left behind in a deployed environment is ignored
-// rather than silently winning.
+// TestLoadDerivesSCIMTokenURLs is the drift regression test: a token URL can
+// no longer point at a different tenant than the org beside it, and a stale
+// SCIM_INTERNAL_TOKEN_URL left in a deployed environment must not win.
 func TestLoadDerivesSCIMTokenURLs(t *testing.T) {
 	setRequiredNonAuthEnv(t)
 	t.Setenv("AUTH_TOKEN_VALIDATOR_ENABLED", "false")
@@ -392,9 +381,7 @@ func TestLoadDerivesSCIMTokenURLs(t *testing.T) {
 }
 
 // TestLoadSCIMUnconfiguredWithoutOrg pins the degrade-rather-than-break
-// contract in SCIMConfig's doc comment: local development frequently runs
-// with no Asgardeo credentials at all, and directory lookups are meant to go
-// quiet rather than fail startup or fire malformed requests.
+// contract: with no org, directory lookups go quiet rather than fail startup.
 func TestLoadSCIMUnconfiguredWithoutOrg(t *testing.T) {
 	setRequiredNonAuthEnv(t)
 	t.Setenv("AUTH_TOKEN_VALIDATOR_ENABLED", "false")
@@ -418,14 +405,11 @@ func TestLoadSCIMUnconfiguredWithoutOrg(t *testing.T) {
 	}
 }
 
-// TestLoadNormalisesSCIMBaseURL is the regression test for a trailing slash on
-// SCIM_BASE_URL. It has to be normalised on the value itself, not inside
-// SCIMTokenURL, because internal/scim.Client concatenates cfg.SCIM.BaseURL raw
-// (client.go: baseURL + "/t/" + org + "/scim2/Users/.search"). Trimming in the
-// helper alone would hand out a clean token URL while every SCIM2 request went
-// to a doubled "//t/..." path — the token exchange would succeed and only the
-// search would misbehave, which is far harder to diagnose than a config that
-// fails outright.
+// TestLoadNormalisesSCIMBaseURL guards a trailing slash on SCIM_BASE_URL. It
+// must be normalised on the value itself, not inside SCIMTokenURL, because
+// scim.Client concatenates cfg.SCIM.BaseURL raw — trimming in the helper alone
+// would leave the token URL clean while every search hit a doubled "//t/..."
+// path, a half-working config that is harder to diagnose than an outright one.
 func TestLoadNormalisesSCIMBaseURL(t *testing.T) {
 	setRequiredNonAuthEnv(t)
 	t.Setenv("AUTH_TOKEN_VALIDATOR_ENABLED", "false")
@@ -441,8 +425,7 @@ func TestLoadNormalisesSCIMBaseURL(t *testing.T) {
 	if want := "https://api.asgardeo.io"; cfg.SCIM.BaseURL != want {
 		t.Errorf("cfg.SCIM.BaseURL = %q, want %q", cfg.SCIM.BaseURL, want)
 	}
-	// The URL scim.Client will actually build, spelled out the way client.go
-	// builds it, so this test fails if the two ever drift apart again.
+	// Spelled out the way client.go builds it, so this fails if they drift.
 	if got, want := cfg.SCIM.BaseURL+"/t/"+cfg.SCIM.Org+"/scim2/Users/.search",
 		"https://api.asgardeo.io/t/wso2/scim2/Users/.search"; got != want {
 		t.Errorf("scim search URL = %q, want %q", got, want)
@@ -452,18 +435,11 @@ func TestLoadNormalisesSCIMBaseURL(t *testing.T) {
 	}
 }
 
-// TestLoadSCIMConfiguredWithoutTokenURLVar pins a deliberate behaviour change
-// from deriving the token URL: an environment holding a base URL, an org and
-// both credentials is now "configured" even though it sets no token URL
-// variable at all — because there no longer is one.
-//
-// Before deriving, that same environment reported "not configured" and ran
-// with no directory whatsoever: every user resolved to "unknown", risk
-// notifications had no deliverable recipients, and the owner/approver pickers
-// returned nothing — all from one forgotten URL, announced only by a startup
-// warning. Switching it on is the point of the change, but it does mean a
-// deployment in that state starts making live Asgardeo calls on its next
-// deploy, so it is pinned here rather than left to be discovered.
+// TestLoadSCIMConfiguredWithoutTokenURLVar pins a deliberate behaviour change:
+// base URL + org + credentials is now "configured" with no token-URL variable
+// set. Such an environment previously ran with no directory at all — every user
+// "unknown" — from one forgotten URL. It now starts making live Asgardeo calls
+// on its next deploy, so that is pinned here rather than discovered.
 func TestLoadSCIMConfiguredWithoutTokenURLVar(t *testing.T) {
 	setRequiredNonAuthEnv(t)
 	t.Setenv("AUTH_TOKEN_VALIDATOR_ENABLED", "false")
