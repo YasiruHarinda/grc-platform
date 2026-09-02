@@ -327,10 +327,16 @@ func (d *Deps) riskVisibleToCaller(ctx context.Context, riskID int) (bool, error
 //   - due_from/to:       implementation_date range (YYYY-MM-DD, inclusive)
 //   - due_overdue:       "true" to additionally restrict to implementation_date < today
 func (d *Deps) handleListRisks(w http.ResponseWriter, r *http.Request) {
-	// Unscoped on purpose: this gates only whether the caller may read risks at
-	// all. WHICH risks they may read is decided by riskVisibleToCaller / the
-	// list scoping, not by this privilege.
-	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewRisks) {
+	// No privilege gate: visibility here is decided entirely by the scoping
+	// below — seesEveryRisk / isTeamScopedOnly / holdsNoGrants — which together
+	// implement the §3 access rule (GLOBAL grant, OR any grant on a team the
+	// risk touches, OR named on it via the identity axis). A RequirePrivilege
+	// (ViewRisks) gate here would 403 an Action Owner who holds no role at all
+	// before the holdsNoGrants branch could scope them to the risks they are
+	// named on — the same mistake handleUpdateActionPlanStep documents. Each
+	// branch fails closed: an unresolvable or grant-less-and-unnamed caller
+	// gets an empty page, never an unscoped one.
+	if _, ok := requireCallerUUID(w, r); !ok {
 		return
 	}
 	q := r.URL.Query()
@@ -442,10 +448,13 @@ func (d *Deps) handleListRisks(w http.ResponseWriter, r *http.Request) {
 
 // handleGetRisk serves GET /api/v1/risks/{id}.
 func (d *Deps) handleGetRisk(w http.ResponseWriter, r *http.Request) {
-	// Unscoped on purpose: this gates only whether the caller may read risks at
-	// all. WHICH risks they may read is decided by riskVisibleToCaller / the
-	// list scoping, not by this privilege.
-	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewRisks) {
+	// No privilege gate: riskVisibleToCaller below is the whole check. It
+	// implements the §3 read rule (GLOBAL grant, OR any grant on the risk's
+	// source register or assignment team, OR named on it), and 404s anyone it
+	// doesn't admit. A RequirePrivilege(ViewRisks) gate here would 403 an
+	// Action Owner holding no role before that identity check could let them
+	// reach the one risk they were handed.
+	if _, ok := requireCallerUUID(w, r); !ok {
 		return
 	}
 	id, ok := parseRiskID(w, r)

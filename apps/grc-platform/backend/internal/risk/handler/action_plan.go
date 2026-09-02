@@ -26,7 +26,6 @@ import (
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
-	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
@@ -73,10 +72,11 @@ func (d *Deps) handleCreateActionPlan(w http.ResponseWriter, r *http.Request) {
 // an Action-Owner-only caller, who is further scoped to risks where they own
 // a plan (riskVisibleToCaller), matching handleListRisks' list scoping.
 func (d *Deps) handleListActionPlans(w http.ResponseWriter, r *http.Request) {
-	// Unscoped on purpose: this gates only whether the caller may read risks at
-	// all. WHICH risks they may read is decided by riskVisibleToCaller / the
-	// list scoping, not by this privilege.
-	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewRisks) {
+	// No privilege gate: riskVisibleToCaller below is the whole check — the §3
+	// read rule, 404ing anyone it doesn't admit. A RequirePrivilege(ViewRisks)
+	// gate here would 403 an Action Owner holding no role before that identity
+	// check could let them see the plans on the risk they were handed.
+	if _, ok := requireCallerUUID(w, r); !ok {
 		return
 	}
 	riskID, ok := parseRiskID(w, r)
@@ -106,10 +106,11 @@ func (d *Deps) handleListActionPlans(w http.ResponseWriter, r *http.Request) {
 // a risk could substitute a different plan id under the same risk to read
 // steps that aren't theirs.
 func (d *Deps) handleListActionPlanSteps(w http.ResponseWriter, r *http.Request) {
-	// Unscoped on purpose: this gates only whether the caller may read risks at
-	// all. WHICH risks they may read is decided by riskVisibleToCaller / the
-	// list scoping, not by this privilege.
-	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewRisks) {
+	// No privilege gate — same reasoning as handleListActionPlans. Visibility
+	// is riskVisibleToCaller (the §3 read rule), plus a tighter plan-ownership
+	// check for an Action-Owner-only caller so they can't swap in a plan id
+	// that isn't theirs under a risk they can otherwise see.
+	if _, ok := requireCallerUUID(w, r); !ok {
 		return
 	}
 	riskID, ok := parseRiskID(w, r)
@@ -119,6 +120,15 @@ func (d *Deps) handleListActionPlanSteps(w http.ResponseWriter, r *http.Request)
 	planID, err := strconv.Atoi(r.PathValue("planId"))
 	if err != nil || planID <= 0 {
 		response.WriteError(w, http.StatusBadRequest, "planId must be a positive integer")
+		return
+	}
+	visible, err := d.riskVisibleToCaller(r.Context(), riskID)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	if !visible {
+		response.WriteError(w, http.StatusNotFound, response.ErrMsgNotFound)
 		return
 	}
 	if holdsNoGrants(r.Context()) {
