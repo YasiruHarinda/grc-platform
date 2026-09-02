@@ -16,26 +16,33 @@
 
 import { ClipboardList, LayoutDashboard, ShieldCheck } from "@wso2/oxygen-ui-icons-react";
 import type { NavSection } from "@components/side-nav-bar/types";
+import { AuditPrivilege } from "./privileges";
 
 // Audit Hub sidebar section. Owned by the Audit module — add Audit nav items
 // here without touching the shared SideBar component.
+//
+// Gated like the Admin Console, not like Risk Hub: each item needs its route's
+// privilege, and the whole section is withheld from anyone holding none of
+// them — a hidden tab beats one that only 403s on click.
 export const auditNav: NavSection = {
   id: "audit",
   label: "Audit Hub",
   icon: ShieldCheck,
+  hideSectionWithoutPrivilege: [AuditPrivilege.ViewAudits],
   items: [
     {
       id: "audit-dashboard",
       label: "Dashboard",
       path: "/audit/dashboard",
       icon: LayoutDashboard,
+      requiredPrivilege: AuditPrivilege.ViewAudits,
     },
     {
       id: "audit-audits",
       label: "Audits",
       path: "/audit/audits",
       icon: ClipboardList,
+      requiredPrivilege: AuditPrivilege.ViewAudits,
     },
-    
   ],
 };

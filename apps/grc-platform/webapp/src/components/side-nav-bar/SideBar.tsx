@@ -21,6 +21,7 @@ import { useLocation, useNavigate } from "react-router";
 import { adminNav } from "@modules/admin/nav";
 import { useAdminPrivileges } from "@modules/admin/hooks/useAdminPrivileges";
 import { auditNav } from "@modules/audit/nav";
+import { useAuditPrivileges } from "@modules/audit/hooks/useAuditPrivileges";
 import { riskNav } from "@modules/risk/nav";
 import { useRiskPrivileges } from "@modules/risk/hooks/useRiskPrivileges";
 
@@ -49,6 +50,7 @@ export default function SideBar({
   const navigate = useNavigate();
   const { can: canRisk, loading: riskPrivsLoading } = useRiskPrivileges();
   const { can: canAdmin, loading: adminPrivsLoading } = useAdminPrivileges();
+  const { can: canAudit, loading: auditPrivsLoading } = useAuditPrivileges();
 
   // Map section id → privilege resolver. Add an entry here when a new module
   // introduces nav items with requiredPrivilege, or a section with
@@ -56,6 +58,7 @@ export default function SideBar({
   const sectionPrivs: Record<string, { can: (p: string) => boolean; loading: boolean }> = {
     risk: { can: canRisk, loading: riskPrivsLoading },
     admin: { can: canAdmin, loading: adminPrivsLoading },
+    audit: { can: canAudit, loading: auditPrivsLoading },
   };
 
   // When true, the sidebar is temporarily expanded from collapsed state on click.
