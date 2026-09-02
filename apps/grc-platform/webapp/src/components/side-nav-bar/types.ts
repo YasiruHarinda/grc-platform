@@ -36,19 +36,19 @@ export interface NavSection {
   // When set, the ENTIRE section is hidden until the caller holds AT LEAST
   // ONE of these privileges (and hidden, not shown, while that is still
   // loading — fail closed for a whole section, unlike a single item's
-  // requiredPrivilege). Any-of, not all-of: the Admin Console has three
-  // section-relevant privileges (Users/Manage Risk Hub/Manage Audit Hub) that
-  // happen to be held together by grc-platform-admin today but are declared
-  // separately so they CAN diverge later — someone holding only one should
-  // still see the section (with only their own item visible, via each
-  // NavItem's own requiredPrivilege), not have the whole section hidden.
+  // requiredPrivilege). Any-of, not all-of: a section's items are each gated
+  // by their own requiredPrivilege, so a caller holding just one of these
+  // still sees the section — with only the item(s) they're entitled to.
   //
-  // Risk Hub and Audit Hub deliberately don't set this: their sections are
-  // always visible, with each route gated individually via PrivilegeGuard,
-  // because an empty/403'd item within an otherwise-relevant section is a
-  // normal state for those hubs. The Admin Console is different — there is
-  // no safe "empty" version of an admin console for a random employee to
-  // land on, and its mere presence in the nav invites curiosity-clicking —
-  // so its whole section is withheld instead (see modules/admin/nav.ts).
+  // All three hubs set this now. The rule is the same everywhere: a hidden
+  // tab beats one that only 403s on click, and a section with zero reachable
+  // items is just noise in the nav. The list is the union of every route
+  // privilege the section's items gate on.
+  //
+  // Risk Hub's list includes RISK_VIEW_RISKS, which an Action Owner holding
+  // no risk role gets as a synthetic privilege from useRiskPrivileges (see
+  // its GET /api/v1/risks/me/involvement call) — so being named on a risk
+  // keeps the Risk Hub section and its Registers tab visible for them, and
+  // nothing else.
   hideSectionWithoutPrivilege?: string[];
 }

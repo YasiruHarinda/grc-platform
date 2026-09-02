@@ -21,11 +21,10 @@ import { AdminPrivilege } from "./privileges";
 // Admin Console sidebar section. Owned by the Admin module — add Admin nav
 // items here without touching the shared SideBar component.
 //
-// Unlike Risk Hub (always visible, gated per-item), the WHOLE section is
-// hidden from anyone lacking at least one of these three privileges — see
-// hideSectionWithoutPrivilege's doc comment in side-nav-bar/types.ts for why
-// this console's default is the opposite of Risk Hub's, and for why it's an
-// any-of list rather than a single privilege.
+// The WHOLE section is hidden from anyone lacking at least one of these three
+// privileges — see hideSectionWithoutPrivilege's doc comment in
+// side-nav-bar/types.ts for why it's an any-of list rather than a single
+// privilege.
 //
 // "Manage Audit Hub" covers Audit Teams only for now — frameworks/products
 // stay inline in the Create Audit flow, a later phase; see

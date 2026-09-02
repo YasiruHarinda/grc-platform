@@ -18,15 +18,9 @@ import { Divider } from "@mui/material";
 import { Box, Sidebar } from "@wso2/oxygen-ui";
 import { type JSX, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { adminNav } from "@modules/admin/nav";
-import { useAdminPrivileges } from "@modules/admin/hooks/useAdminPrivileges";
-import { auditNav } from "@modules/audit/nav";
-import { riskNav } from "@modules/risk/nav";
-import { useRiskPrivileges } from "@modules/risk/hooks/useRiskPrivileges";
-
-// Each module registers its own NavSection (modules/<module>/nav.ts). To add a
-// new module's section, import its nav here and append it — no other change.
-const SECTIONS = [auditNav, riskNav, adminNav];
+import { resolveVisibleNav } from "./resolveVisibleNav";
+import { useSectionPrivileges } from "./useSectionPrivileges";
+import { SECTIONS } from "./sections";
 
 const NAV_PATHS: Record<string, string> = Object.fromEntries(
   SECTIONS.flatMap((s) => s.items).map((i) => [i.id, i.path]),
@@ -47,16 +41,8 @@ export default function SideBar({
 }: SideBarProps): JSX.Element {
   const location = useLocation();
   const navigate = useNavigate();
-  const { can: canRisk, loading: riskPrivsLoading } = useRiskPrivileges();
-  const { can: canAdmin, loading: adminPrivsLoading } = useAdminPrivileges();
-
-  // Map section id → privilege resolver. Add an entry here when a new module
-  // introduces nav items with requiredPrivilege, or a section with
-  // hideSectionWithoutPrivilege.
-  const sectionPrivs: Record<string, { can: (p: string) => boolean; loading: boolean }> = {
-    risk: { can: canRisk, loading: riskPrivsLoading },
-    admin: { can: canAdmin, loading: adminPrivsLoading },
-  };
+  const sectionPrivs = useSectionPrivileges();
+  const visibleSections = resolveVisibleNav(SECTIONS, sectionPrivs).sections;
 
   // When true, the sidebar is temporarily expanded from collapsed state on click.
   const [tempExpanded, setTempExpanded] = useState(false);
@@ -150,19 +136,7 @@ export default function SideBar({
       >
         <Sidebar.Nav>
           <Sidebar.Category>
-            {SECTIONS.filter((section) => {
-              if (!section.hideSectionWithoutPrivilege) return true;
-              const privs = sectionPrivs[section.id];
-              // No privilege resolver registered, or still loading: fail
-              // closed and hide the section rather than flash it briefly.
-              if (!privs || privs.loading) return false;
-              return section.hideSectionWithoutPrivilege.some((p) => privs.can(p));
-            }).map((section, idx) => {
-              const privs = sectionPrivs[section.id];
-              const visibleItems = section.items.filter((item) => {
-                if (!item.requiredPrivilege || !privs) return true;
-                return !privs.loading && privs.can(item.requiredPrivilege);
-              });
+            {visibleSections.map(({ section, items: visibleItems }, idx) => {
               return (
                 <Box key={section.id}>
                   {idx > 0 && <Divider sx={{ my: 1, mx: 1.5 }} />}
