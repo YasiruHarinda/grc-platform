@@ -25,6 +25,11 @@ import (
 
 // Config holds all application configuration loaded from environment variables.
 type Config struct {
+	// Port is the address passed to net.Listen — always colon-prefixed
+	// (":8081"), because net.Listen rejects a bare port with "missing port in
+	// address". The PORT variable itself is written bare ("8081") to agree
+	// with .choreo/component.yaml's `port: 8081` and the Compliance Entity's
+	// SERVER_PORT; listenAddr bridges the two. See listenAddr.
 	Port                    string
 	Auth                    AuthConfig
 	ComplianceEntityBaseURL string
@@ -198,10 +203,15 @@ type HREntityConfig struct {
 // organizations (see internal/scim.NewClient vs NewExternalClient), each
 // with its own OAuth2 app registration — hence the separate
 // SCIM_INTERNAL_*/SCIM_EXTERNAL_* env vars per org below (Org/ClientID/
-// ClientSecret/TokenURL/Scopes fields, unprefixed here since they're already
+// ClientSecret/Scopes fields, unprefixed here since they're already
 // disambiguated by sitting next to their External* siblings). BaseURL is the
 // one thing shared: both orgs sit under the same Asgardeo API root
 // (https://api.asgardeo.io), just a different /t/{org}/... tenant path.
+//
+// TokenURL and ExternalTokenURL have no env var of their own: they are
+// derived from BaseURL and the org by SCIMTokenURL, so neither can drift out
+// of step with the org it authenticates against. The former
+// SCIM_INTERNAL_TOKEN_URL / SCIM_EXTERNAL_TOKEN_URL are ignored if still set.
 //
 // Optional, unlike HREntityConfig. An unset BaseURL disables directory
 // lookups rather than failing startup: local development frequently runs
@@ -367,8 +377,14 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	// SCIM's two token endpoints are derived from the base URL and each org
+	// rather than read from their own variables — see SCIMTokenURL.
+	scimBaseURL := os.Getenv("SCIM_BASE_URL")
+	scimInternalOrg := os.Getenv("SCIM_INTERNAL_ORG")
+	scimExternalOrg := os.Getenv("SCIM_EXTERNAL_ORG")
+
 	return Config{
-		Port:                    envOrDefault("PORT", ":8081"),
+		Port:                    listenAddr(envOrDefault("PORT", "8081")),
 		Auth:                    authCfg,
 		ComplianceEntityBaseURL: complianceEntityBaseURL,
 		HREntity: HREntityConfig{
@@ -378,19 +394,19 @@ func Load() (Config, error) {
 			ClientSecret: hrEntityClientSecret,
 		},
 		SCIM: SCIMConfig{
-			BaseURL:    os.Getenv("SCIM_BASE_URL"),
+			BaseURL:    scimBaseURL,
 			UserDomain: scimUserDomain,
 
-			Org:          os.Getenv("SCIM_INTERNAL_ORG"),
+			Org:          scimInternalOrg,
 			ClientID:     os.Getenv("SCIM_INTERNAL_CLIENT_ID"),
 			ClientSecret: os.Getenv("SCIM_INTERNAL_CLIENT_SECRET"),
-			TokenURL:     os.Getenv("SCIM_INTERNAL_TOKEN_URL"),
+			TokenURL:     SCIMTokenURL(scimBaseURL, scimInternalOrg),
 			Scopes:       envOrDefault("SCIM_INTERNAL_SCOPES", "internal_user_mgt_view internal_user_mgt_list"),
 
-			ExternalOrg:          os.Getenv("SCIM_EXTERNAL_ORG"),
+			ExternalOrg:          scimExternalOrg,
 			ExternalClientID:     os.Getenv("SCIM_EXTERNAL_CLIENT_ID"),
 			ExternalClientSecret: os.Getenv("SCIM_EXTERNAL_CLIENT_SECRET"),
-			ExternalTokenURL:     os.Getenv("SCIM_EXTERNAL_TOKEN_URL"),
+			ExternalTokenURL:     SCIMTokenURL(scimBaseURL, scimExternalOrg),
 			ExternalScopes:       envOrDefault("SCIM_EXTERNAL_SCOPES", "internal_user_mgt_view internal_user_mgt_list"),
 		},
 		// Derived from FRONTEND_BASE_URL rather than its own env var: both are
@@ -457,6 +473,50 @@ func loadInternalEmailDomains(scimUserDomain string) ([]string, error) {
 		domains = append(domains, d)
 	}
 	return domains, nil
+}
+
+// listenAddr turns a PORT value into an address net.Listen accepts.
+//
+// PORT is written bare ("8081") so it matches .choreo/component.yaml's
+// `port: 8081` and the Compliance Entity's SERVER_PORT, rather than the
+// ":8081" this package used to require. net.Listen needs the colon —
+// net.Listen("tcp", "8081") fails with "missing port in address" — so it is
+// added here instead of in every environment's config.
+//
+// A value that already carries the colon is passed through unchanged: a
+// deployed environment still holding the old ":8081" keeps working, so this
+// change cannot break a deploy that ships before the Choreo config is
+// updated. A host:port value ("0.0.0.0:8081") passes through for the same
+// reason.
+func listenAddr(port string) string {
+	if strings.Contains(port, ":") {
+		return port
+	}
+	return ":" + port
+}
+
+// SCIMTokenURL builds the OAuth2 token endpoint for one Asgardeo
+// organization: {baseURL}/t/{org}/oauth2/token. That is the same
+// {baseURL}/t/{org}/... shape internal/scim.Client already composes for the
+// SCIM2 endpoints themselves (client.go's /t/{org}/scim2/Users/.search).
+//
+// It replaces the SCIM_INTERNAL_TOKEN_URL and SCIM_EXTERNAL_TOKEN_URL
+// variables. Those were hand-written per environment and had to be kept in
+// step with their org by hand — a mismatch authenticated against the wrong
+// tenant, and was only caught by a checklist. Derived, the two cannot
+// disagree.
+//
+// Exported because the cmd/backfill-* tools build their own scim.Client
+// without going through Load, and must derive the URL the same way.
+//
+// Returns "" when either input is empty, so SCIMConfig.Configured and
+// ExternalConfigured still report "not configured" — the unset case degrades
+// to "no directory lookups" rather than handing the client a malformed URL.
+func SCIMTokenURL(baseURL, org string) string {
+	if baseURL == "" || org == "" {
+		return ""
+	}
+	return strings.TrimSuffix(baseURL, "/") + "/t/" + org + "/oauth2/token"
 }
 
 func mustEnv(key string) (string, error) {
