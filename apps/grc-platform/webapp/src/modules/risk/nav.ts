@@ -36,6 +36,12 @@ export const riskNav: NavSection = {
   icon: ShieldAlert,
   hideSectionWithoutPrivilege: [
     RiskPrivilege.ViewRisks,
+    // Listed for forward-compat. No tab requires ViewAllRisks on its own, and
+    // seesEveryRisk (backend) still keys off GLOBAL ViewRisks — but every
+    // seeded role that grants ViewAllRisks (compliance-admin, compliance-team)
+    // also grants ViewRisks, so a lone holder never reaches here. A crafted
+    // grant of ViewAllRisks alone gets an empty list from the backend anyway,
+    // and resolveVisibleNav's empty-items guard drops the section for them.
     RiskPrivilege.ViewAllRisks,
     RiskPrivilege.ViewRiskDashboard,
     RiskPrivilege.CreateRisk,
