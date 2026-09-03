@@ -15,8 +15,9 @@
 // under the License.
 
 import { type JSX } from "react";
-import { Route, Routes, Navigate } from "react-router";
+import { Route, Routes } from "react-router";
 import AuthGuard from "@layouts/AuthGuard";
+import LandingRedirect from "@components/side-nav-bar/LandingRedirect";
 import { adminRoutes } from "@modules/admin/routes";
 import { auditRoutes } from "@modules/audit/routes";
 import { riskRoutes } from "@modules/risk/routes";
@@ -66,8 +67,9 @@ export default function App(): JSX.Element {
                   modules/<module>/routes.tsx, so the Audit and Risk owners never
                   edit this file together (avoids merge conflicts). */}
               <Route element={<AuthGuard />}>
-                {/* Root redirects to Audit Hub */}
-                <Route path="/" element={<Navigate to="/audit/dashboard" replace />} />
+                {/* Root lands on the first module the user can actually see
+                    (LandingRedirect), or a no-access page when there is none. */}
+                <Route path="/" element={<LandingRedirect />} />
 
                 {auditRoutes}
                 {riskRoutes}

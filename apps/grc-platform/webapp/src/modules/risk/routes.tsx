@@ -28,7 +28,17 @@ export const riskRoutes = (
   <Route path="risk">
     <Route index element={<Navigate to="dashboard" replace />} />
     <Route path="dashboard" element={<PrivilegeGuard privilege={RiskPrivilege.ViewRiskDashboard}><RiskDashboard /></PrivilegeGuard>} />
-    <Route path="registers" element={<PrivilegeGuard privilege={RiskPrivilege.ViewRisks}><RiskRegisters /></PrivilegeGuard>} />
+    {/*
+      No PrivilegeGuard on registers: the Registers list is reachable by a
+      named Action Owner too, who holds no RISK_VIEW_RISKS privilege. Guarding
+      the route on that privilege would 403 an Action Owner out of the one tab that
+      shows the risk they were handed, and would tie a direct /risk/registers
+      link to the involvement fetch succeeding. The nav already hides this tab
+      from anyone with no risk privilege and no Action Owner involvement
+      (modules/risk/nav.ts); the backend GET /api/v1/risks scopes the response
+      per caller, and RiskRegisters renders an empty list cleanly.
+    */}
+    <Route path="registers" element={<RiskRegisters />} />
     <Route path="add" element={<PrivilegeGuard privilege={RiskPrivilege.CreateRisk}><AddRisk /></PrivilegeGuard>} />
     <Route path="analytics" element={<PrivilegeGuard privilege={RiskPrivilege.ViewAnalytics}><RiskAnalytics /></PrivilegeGuard>} />
   </Route>

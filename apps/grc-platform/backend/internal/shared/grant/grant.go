@@ -180,19 +180,26 @@ func (s *Set) HasGlobal(priv string) bool {
 	return s.global[priv]
 }
 
-// AllScopeIDs returns the team ids of every non-GLOBAL grant the caller holds,
-// regardless of scope_basis — reading is team-membership based: belonging to a
-// team at all is what lets someone see a risk raised there OR routed there, on
-// the Risk Registers list. Matched against risk.source_register_id and
-// risk.assignment_team_id alike.
+// RiskScopeIDs returns the team ids of every non-GLOBAL RISK_TEAM grant the
+// caller holds, regardless of scope_basis — reading is team-membership based:
+// belonging to a risk team at all is what lets someone see a risk raised there
+// OR routed there, on the Risk Registers list. Matched against
+// risk.source_register_id and risk.assignment_team_id alike.
+//
+// Restricted to ScopeRiskTeam on purpose: scope_id has no foreign key and means
+// risk_team.id or audit_team.id depending on scope_type, and the two id spaces
+// overlap. Without the filter an AUDIT_TEAM grant on id 5 would match any risk
+// whose source register or assignment team is risk_team 5. The removed
+// RequirePrivilege(RISK_VIEW_RISKS) route gate used to make that collision
+// unreachable; this filter is what keeps it unreachable now.
 //
 // Deliberately not what HasIn enforces. Membership answers "may they see it";
 // HasIn(priv, teamID) — checked per-column, source register only for authority
 // — still answers "may they act on it", so a Risk Owner scoped by
 // ASSIGNMENT_TEAM sees a risk their team merely raised, but still cannot
 // approve it: that needs a privilege in the risk's SOURCE register specifically.
-func (s *Set) AllScopeIDs() []int {
-	return s.scopeIDsWithBasis("", false)
+func (s *Set) RiskScopeIDs() []int {
+	return s.scopeIDsWithBasis(ScopeRiskTeam, "", false)
 }
 
 // RegisterScopeIDs returns the team ids the caller may see REGISTER-BASED pages
@@ -204,7 +211,7 @@ func (s *Set) AllScopeIDs() []int {
 // team) contribute a dashboard while "Risk Owner @ HR" (ASSIGNMENT-only) does
 // not: HR is not a register, so it has no register page to appear on.
 func (s *Set) RegisterScopeIDs() []int {
-	return s.scopeIDsWithBasis("", true)
+	return s.scopeIDsWithBasis(ScopeRiskTeam, "", true)
 }
 
 // RegisterScopeIDsFor returns the register-capable team ids where the caller
@@ -230,7 +237,7 @@ func (s *Set) RegisterScopeIDsFor(priv string) []int {
 	seen := map[int]bool{}
 	out := []int{}
 	for _, g := range s.grants {
-		if g.ScopeType == ScopeGlobal {
+		if g.ScopeType != ScopeRiskTeam {
 			continue
 		}
 		if g.ScopeTeamType != TeamSourceRegister && g.ScopeTeamType != TeamBoth {
@@ -248,9 +255,12 @@ func (s *Set) RegisterScopeIDsFor(priv string) []int {
 	return out
 }
 
-// scopeIDsWithBasis collects distinct, sorted scope ids. basis "" means any.
-// registerCapableOnly additionally requires the team to be usable as a register.
-func (s *Set) scopeIDsWithBasis(basis string, registerCapableOnly bool) []int {
+// scopeIDsWithBasis collects distinct, sorted scope ids. scopeType "" means any
+// non-GLOBAL type; pass ScopeRiskTeam to exclude AUDIT_TEAM grants, whose
+// scope ids live in a separate id space and would otherwise collide with
+// risk_team ids. basis "" means any. registerCapableOnly additionally requires
+// the team to be usable as a register.
+func (s *Set) scopeIDsWithBasis(scopeType, basis string, registerCapableOnly bool) []int {
 	if s == nil {
 		return nil
 	}
@@ -258,6 +268,9 @@ func (s *Set) scopeIDsWithBasis(basis string, registerCapableOnly bool) []int {
 	out := []int{}
 	for _, g := range s.grants {
 		if g.ScopeType == ScopeGlobal {
+			continue
+		}
+		if scopeType != "" && g.ScopeType != scopeType {
 			continue
 		}
 		if basis != "" && g.ScopeBasis != basis {
