@@ -76,6 +76,14 @@ describe("resolveVisibleNav", () => {
     expect(out.loading).toBe(false);
   });
 
+  it("drops a section that passes the gate but has no visible item", () => {
+    // VIEW_ANALYTICS is in the section gate but no item requires it, so the
+    // section would otherwise render as a bare header with no children.
+    const out = resolveVisibleNav([riskSection], { risk: resolver(["VIEW_ANALYTICS"]) });
+    expect(out.sections).toHaveLength(0);
+    expect(out.loading).toBe(false);
+  });
+
   it("shows a section with no gate and no resolver, with all its items", () => {
     const out = resolveVisibleNav([openSection], {});
     expect(out.sections).toHaveLength(1);
