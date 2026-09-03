@@ -285,7 +285,7 @@ func (d *Deps) riskVisibleToCaller(ctx context.Context, riskID int) (bool, error
 		return false, err
 	}
 
-	for _, id := range callerGrants(ctx).AllScopeIDs() {
+	for _, id := range callerGrants(ctx).RiskScopeIDs() {
 		if id == risk.SourceRegisterID || id == risk.AssignmentTeamID {
 			return true, nil
 		}
@@ -418,13 +418,14 @@ func (d *Deps) handleListRisks(w http.ResponseWriter, r *http.Request) {
 	// decides visibility here; authority over those risks still follows the
 	// source register alone, enforced separately by RequirePrivilegeIn.
 	if isTeamScopedOnly(r.Context()) {
-		teamIDs := callerGrants(r.Context()).AllScopeIDs()
+		teamIDs := callerGrants(r.Context()).RiskScopeIDs()
 		if len(teamIDs) == 0 {
-			// Reachable: a caller may hold only GLOBAL grants for a privilege
-			// other than ViewRisks (see seesEveryRisk's caution), so they carry
-			// no RISK_TEAM-scoped grant at all. An empty list means
-			// "unrestricted" downstream, so this must fail closed rather than
-			// hand them every risk.
+			// Reachable two ways, both of which must fail closed rather than
+			// fall through to an unscoped list: a caller holding only GLOBAL
+			// grants for a privilege other than ViewRisks (see seesEveryRisk's
+			// caution), and an audit-only caller whose grants are all
+			// AUDIT_TEAM-scoped — RiskScopeIDs drops those, so they carry no
+			// RISK_TEAM id here even though isTeamScopedOnly is true.
 			response.WriteJSONValue(w, http.StatusOK, model.RiskListPage{
 				Items:  []*model.RiskListItem{},
 				Total:  0,

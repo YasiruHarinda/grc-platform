@@ -44,12 +44,13 @@ func (r stubResolver) Resolve(roles []string) map[string]bool {
 
 // contextForRealGrants builds a request context from real grant.Grant rows via
 // grant.Resolve — unlike contextForGrants (grant.NewForTest), the resulting Set
-// answers AllScopeIDs / scope enumeration, which riskVisibleToCaller and the
+// answers RiskScopeIDs / scope enumeration, which riskVisibleToCaller and the
 // list's team scoping depend on.
 func contextForRealGrants(t *testing.T, grants ...grant.Grant) context.Context {
 	t.Helper()
 	resolver := stubResolver{
-		"risk-owner": {privilege.ViewRisks, privilege.OwnerApproveRisk},
+		"risk-owner":    {privilege.ViewRisks, privilege.OwnerApproveRisk},
+		"audit-auditor": {privilege.ViewAudits},
 	}
 	set := grant.Resolve(grants, resolver)
 	ctx := middleware.WithUserInfo(context.Background(), &middleware.UserInfo{Subject: "test-caller-uuid"})
@@ -60,10 +61,21 @@ func contextForRealGrants(t *testing.T, grants ...grant.Grant) context.Context {
 func ownerGrantOn(registerID int) grant.Grant {
 	return grant.Grant{
 		RoleName:      "risk-owner",
-		ScopeType:     "TEAM",
+		ScopeType:     grant.ScopeRiskTeam,
 		ScopeID:       registerID,
 		ScopeBasis:    "SOURCE_REGISTER",
 		ScopeTeamType: grant.TeamSourceRegister,
+	}
+}
+
+// auditGrantOn is an AUDIT_TEAM-scoped grant carrying no risk privilege. Its
+// ScopeID lives in the audit_team id space, which overlaps risk_team ids — the
+// collision RiskScopeIDs exists to keep out of risk visibility.
+func auditGrantOn(auditTeamID int) grant.Grant {
+	return grant.Grant{
+		RoleName:  "audit-auditor",
+		ScopeType: grant.ScopeAuditTeam,
+		ScopeID:   auditTeamID,
 	}
 }
 
@@ -287,6 +299,55 @@ func TestHandleGetRisk_GrantOnRegister(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+}
+
+// TestHandleListRisks_AuditGrantSeesNoRisks: a caller holding only an
+// AUDIT_TEAM grant (no risk grant, no GLOBAL ViewRisks) is isTeamScopedOnly —
+// they have grants — but RiskScopeIDs drops their audit scope id, so the list
+// fails closed to an empty page instead of matching risks whose team id
+// collides with the audit team id. The removed route gate used to 403 them
+// before this branch ran.
+func TestHandleListRisks_AuditGrantSeesNoRisks(t *testing.T) {
+	risk := &fakeRiskSvc{page: &model.RiskListPage{
+		Items: []*model.RiskListItem{{ID: 1, RiskCode: "R-1"}},
+		Total: 1,
+	}}
+	d := &Deps{Risk: risk, Users: fakeUserRepo{uuid: "test-caller-uuid", id: 7}}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/risks", nil).
+		WithContext(contextForRealGrants(t, auditGrantOn(asgardeo))) // audit team id == a risk register id
+	rec := httptest.NewRecorder()
+
+	d.handleListRisks(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if risk.lastFilter.ScopeSourceRegisterIDs != nil || risk.lastFilter.ScopeAssignmentTeamIDs != nil {
+		t.Errorf("list was scoped to audit team ids: source=%v assignment=%v",
+			risk.lastFilter.ScopeSourceRegisterIDs, risk.lastFilter.ScopeAssignmentTeamIDs)
+	}
+}
+
+// TestHandleGetRisk_AuditGrantDenied: the by-id path is 404, not 200, for an
+// audit-only caller against a risk whose SourceRegisterID equals their audit
+// team id — riskVisibleToCaller must not treat the collision as membership.
+func TestHandleGetRisk_AuditGrantDenied(t *testing.T) {
+	risk := &fakeRiskSvc{byID: map[int]*model.RiskDetail{
+		1: {ID: 1, SourceRegisterID: asgardeo, AssignmentTeamID: choreo, OwnerID: 99, AssignerID: 98, ManagementApproverID: 97},
+	}}
+	d := &Deps{Risk: risk, ActionPlan: &fakeActionPlanSvc{}, Users: fakeUserRepo{uuid: "test-caller-uuid", id: 7}}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/risks/1", nil).
+		WithContext(contextForRealGrants(t, auditGrantOn(asgardeo)))
+	req.SetPathValue("id", "1")
+	rec := httptest.NewRecorder()
+
+	d.handleGetRisk(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (audit grant is not risk-team membership)", rec.Code)
 	}
 }
 
