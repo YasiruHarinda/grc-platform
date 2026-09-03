@@ -315,6 +315,66 @@ func TestHandleListActionPlanSteps_RequiresVisibility(t *testing.T) {
 	}
 }
 
+// TestHandleListActionPlans_ActionOwnerScopedToOwnPlans: a grant-less Action
+// Owner who owns one plan on a risk sees only that plan, not its siblings'
+// metadata — while a granted caller on the same risk still sees every plan.
+func TestHandleListActionPlans_ActionOwnerScopedToOwnPlans(t *testing.T) {
+	const callerID = 7
+	risk := &fakeRiskSvc{byID: map[int]*model.RiskDetail{
+		8: {ID: 8, SourceRegisterID: asgardeo, AssignmentTeamID: choreo, OwnerID: 99, AssignerID: 98, ManagementApproverID: 97},
+	}}
+	plans := &fakeActionPlanSvc{plans: []*model.ActionPlan{
+		{ID: 80, RiskID: 8, ActionOwnerID: intPtr(callerID)},
+		{ID: 81, RiskID: 8, ActionOwnerID: intPtr(42)}, // someone else's plan
+	}}
+	d := &Deps{Risk: risk, ActionPlan: plans, Users: fakeUserRepo{uuid: "test-caller-uuid", id: callerID}}
+
+	decodeIDs := func(t *testing.T, body []byte) []int {
+		t.Helper()
+		var got []model.ActionPlan
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		ids := make([]int, len(got))
+		for i, p := range got {
+			ids[i] = p.ID
+		}
+		return ids
+	}
+
+	t.Run("grant-less Action Owner -> only their own plan", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/risks/8/action-plans", nil).
+			WithContext(contextForGrants(t, nil, nil))
+		req.SetPathValue("id", "8")
+		rec := httptest.NewRecorder()
+
+		d.handleListActionPlans(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		if ids := decodeIDs(t, rec.Body.Bytes()); len(ids) != 1 || ids[0] != 80 {
+			t.Errorf("plan ids = %v, want [80] — sibling plan metadata leaked", ids)
+		}
+	})
+
+	t.Run("team-scoped caller -> every plan", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/risks/8/action-plans", nil).
+			WithContext(contextForRealGrants(t, ownerGrantOn(asgardeo)))
+		req.SetPathValue("id", "8")
+		rec := httptest.NewRecorder()
+
+		d.handleListActionPlans(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		if ids := decodeIDs(t, rec.Body.Bytes()); len(ids) != 2 {
+			t.Errorf("plan ids = %v, want both plans for a granted caller", ids)
+		}
+	})
+}
+
 // TestHandleMyRiskInvolvement covers the signal the frontend nav uses to keep
 // the Risk Hub tab visible for a grant-less Action Owner.
 func TestHandleMyRiskInvolvement(t *testing.T) {

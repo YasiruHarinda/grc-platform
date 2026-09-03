@@ -70,7 +70,10 @@ func (d *Deps) handleCreateActionPlan(w http.ResponseWriter, r *http.Request) {
 // anyone who can view the risk (see the design decision that walked back an
 // earlier team-only view restriction) — except
 // an Action-Owner-only caller, who is further scoped to risks where they own
-// a plan (riskVisibleToCaller), matching handleListRisks' list scoping.
+// a plan (riskVisibleToCaller), matching handleListRisks' list scoping, and
+// then to their own plans within that risk — the same plan-ownership isolation
+// handleListActionPlanSteps applies, so owning one plan under a risk doesn't
+// expose sibling plans' metadata.
 func (d *Deps) handleListActionPlans(w http.ResponseWriter, r *http.Request) {
 	// No privilege gate: riskVisibleToCaller below is the whole check — the §3
 	// read rule, 404ing anyone it doesn't admit. A RequirePrivilege(ViewRisks)
@@ -96,6 +99,20 @@ func (d *Deps) handleListActionPlans(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
+	}
+	if holdsNoGrants(r.Context()) {
+		callerID, err := d.callerUserID(r.Context())
+		if err != nil {
+			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+			return
+		}
+		owned := make([]*model.ActionPlan, 0, len(plans))
+		for _, p := range plans {
+			if callerID != nil && p.ActionOwnerID != nil && *p.ActionOwnerID == *callerID {
+				owned = append(owned, p)
+			}
+		}
+		plans = owned
 	}
 	response.WriteJSONValue(w, http.StatusOK, plans)
 }
