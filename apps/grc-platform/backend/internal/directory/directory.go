@@ -42,9 +42,17 @@ import (
 // per-uuid fallback path — see StartBulkRefresh for the primary one.
 const DefaultTTL = time.Hour
 
-// DefaultBulkRefreshInterval is how often StartBulkRefresh re-fetches the
-// whole directory snapshot.
-const DefaultBulkRefreshInterval = 12 * time.Hour
+// DefaultBulkRefreshHourUTC is the wall-clock hour (UTC, 0–23) StartBulkRefresh
+// re-fetches the whole snapshot at each day. A fixed off-hours time keeps the
+// burst of paging calls predictable regardless of when a deploy restarts.
+const DefaultBulkRefreshHourUTC = 1
+
+// bulkRefreshRetryInterval is how soon StartBulkRefresh retries after a failed
+// fetch instead of waiting for the next daily slot. A failure at startup is the
+// likely one — the directory is remote and can cold-start slowly — and until it
+// succeeds SearchDomain has an empty snapshot and no per-uuid path to fall back
+// on, so a whole day of waiting would silently break the Add User typeahead.
+const bulkRefreshRetryInterval = 15 * time.Minute
 
 // DefaultExternalTTL is how long a resolved external-org person is reused
 // before being refreshed (see lookupExternal). Longer than DefaultTTL: the
@@ -297,10 +305,9 @@ func (s *Service) bulkLookup(uuid string) (Person, bool) {
 // SearchDomain returns every bulk-snapshot person whose name or email
 // contains query, case-insensitively. Powers the Admin Console's "Add User"
 // typeahead — a substring match over the snapshot StartBulkRefresh already
-// keeps warm, so this costs no directory call and cannot lag by more than
-// one refresh interval. Deliberately not a
-// live SCIM search: this is an admin-only, low-frequency lookup, not worth a
-// new dependency on the request path.
+// keeps warm, so this costs no directory call and cannot lag by more than one
+// daily refresh. Deliberately not a live SCIM search: this is an admin-only,
+// low-frequency lookup, not worth a new dependency on the request path.
 //
 // An empty query returns nothing rather than the whole snapshot — the caller
 // is expected to enforce a minimum length before calling this, but refusing
@@ -348,45 +355,61 @@ func (s *Service) SearchExternal(ctx context.Context, query string) ([]Person, e
 }
 
 // StartBulkRefresh fetches every directory user whose email is in domain (see
-// scim.Client.ListUsersByDomain) and keeps that snapshot current in the
-// background, replacing it every interval. Lookup and LookupAll check this
-// snapshot before falling back to their per-uuid path, so the great majority
-// of resolutions — anyone in the domain — cost no directory call at all
-// rather than one per uuid.
-//
-// interval <= 0 uses DefaultBulkRefreshInterval.
-//
-// The first fetch happens synchronously so the snapshot is warm as soon as
-// this returns, but its failure is not fatal: it is logged and the service
-// falls back to the per-uuid path (as it would with no bulk cache at all)
-// until the next scheduled attempt succeeds. Resolving a name is a display
-// nicety, not something worth failing startup over.
-//
-// The background refresh loop runs until ctx is done.
-func (s *Service) StartBulkRefresh(ctx context.Context, domain string, interval time.Duration) {
-	if interval <= 0 {
-		interval = DefaultBulkRefreshInterval
+// scim.Client.ListUsersByDomain) and keeps that snapshot warm for Lookup /
+// LookupAll: once immediately, then daily at hourUTC:00 UTC (out-of-range
+// hourUTC uses DefaultBulkRefreshHourUTC), retrying sooner after a failure.
+// A failed fetch is logged, not fatal — Lookup falls back to the per-uuid
+// path. Loop runs until ctx is done.
+func (s *Service) StartBulkRefresh(ctx context.Context, domain string, hourUTC int) {
+	if hourUTC < 0 || hourUTC > 23 {
+		hourUTC = DefaultBulkRefreshHourUTC
 	}
 
-	s.refreshBulk(ctx, domain)
+	ok := s.refreshBulk(ctx, domain)
 
 	go func() {
-		t := time.NewTicker(interval)
-		defer t.Stop()
 		for {
+			timer := time.NewTimer(bulkRefreshDelay(time.Now(), hourUTC, ok))
 			select {
-			case <-t.C:
-				s.refreshBulk(ctx, domain)
+			case <-timer.C:
+				ok = s.refreshBulk(ctx, domain)
 			case <-ctx.Done():
+				timer.Stop()
 				return
 			}
 		}
 	}()
 }
 
-func (s *Service) refreshBulk(ctx context.Context, domain string) {
+// bulkRefreshDelay is how long to wait before the next fetch: until the next
+// hourUTC:00, or bulkRefreshRetryInterval if the last one failed — whichever
+// comes first, so a retry never pushes the fetch past its daily slot.
+func bulkRefreshDelay(now time.Time, hourUTC int, lastOK bool) time.Duration {
+	daily := nextDailyUTC(now, hourUTC).Sub(now)
+	if lastOK || daily <= bulkRefreshRetryInterval {
+		return daily
+	}
+	return bulkRefreshRetryInterval
+}
+
+// nextDailyUTC returns the first instant strictly after now at hourUTC:00 UTC.
+// Recomputed each loop iteration so the schedule stays pinned to the wall
+// clock and cannot drift by the fetch's own duration.
+func nextDailyUTC(now time.Time, hourUTC int) time.Time {
+	now = now.UTC()
+	next := time.Date(now.Year(), now.Month(), now.Day(), hourUTC, 0, 0, 0, time.UTC)
+	if !next.After(now) {
+		next = next.AddDate(0, 0, 1)
+	}
+	return next
+}
+
+// refreshBulk replaces the snapshot, reporting whether the fetch succeeded so
+// the caller can retry sooner. A nil scim client counts as success: there is
+// nothing to retry.
+func (s *Service) refreshBulk(ctx context.Context, domain string) bool {
 	if s.scim == nil {
-		return
+		return true
 	}
 	users, err := s.scim.ListUsersByDomain(ctx, domain)
 	if err != nil {
@@ -395,7 +418,7 @@ func (s *Service) refreshBulk(ctx context.Context, domain string) {
 		// snapshot doesn't (yet, or ever) know about.
 		slog.WarnContext(ctx, "directory: bulk refresh failed, keeping the last known snapshot",
 			"domain", domain, "err", err)
-		return
+		return false
 	}
 
 	next := make(map[string]Person, len(users))
@@ -407,4 +430,5 @@ func (s *Service) refreshBulk(ctx context.Context, domain string) {
 	s.bulk = next
 	s.bulkMu.Unlock()
 	slog.InfoContext(ctx, "directory: bulk snapshot refreshed", "domain", domain, "count", len(next))
+	return true
 }

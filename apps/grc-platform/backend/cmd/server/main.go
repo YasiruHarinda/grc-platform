@@ -139,16 +139,11 @@ func main() {
 	// request rather than rebuilt per call site.
 	dirSvc := directory.NewWithExternal(scimClient, scimExternalClient, directory.DefaultTTL, directory.DefaultExternalTTL)
 	if scimClient != nil && cfg.SCIM.UserDomain != "" {
-		// Warms a bulk snapshot of everyone in the domain so Lookup/LookupAll
-		// serve them without a per-uuid SCIM call, refreshing it every 12h.
-		// Anyone outside the domain (or if this hasn't refreshed yet) still
-		// resolves through the per-uuid TTL cache below.
-		//
-		// Off the startup path: StartBulkRefresh's first fetch is synchronous,
-		// and this directory is remote and can cold-start slowly. Blocking
-		// here would delay binding the listener (and /health) on an external
-		// dependency the caller already tolerates being unready for.
-		go dirSvc.StartBulkRefresh(ctx, cfg.SCIM.UserDomain, directory.DefaultBulkRefreshInterval)
+		// Warms a bulk snapshot so Lookup/LookupAll skip the per-uuid SCIM
+		// call: once now, then daily at DefaultBulkRefreshHourUTC. Off the
+		// startup path — the first fetch is synchronous against a remote that
+		// can cold-start slowly, and blocking here would delay /health.
+		go dirSvc.StartBulkRefresh(ctx, cfg.SCIM.UserDomain, directory.DefaultBulkRefreshHourUTC)
 	}
 
 	userDeps := userhandler.Deps{
