@@ -519,3 +519,64 @@ func TestNormalizeBaseURL(t *testing.T) {
 		})
 	}
 }
+
+// setValidAuthEnv sets the four AUTH_* vars a full-validator boot needs.
+func setValidAuthEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("AUTH_TOKEN_VALIDATOR_ENABLED", "")
+	t.Setenv("APP_ENV", "")
+	t.Setenv("AUTH_JWKS_ENDPOINT", "https://example.asgardeo.io/jwks")
+	t.Setenv("AUTH_ISSUER", "https://example.asgardeo.io")
+	t.Setenv("AUTH_AUDIENCE", "webapp-aud")
+}
+
+func TestLoadPortalConfigValidPair(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	setValidAuthEnv(t)
+	t.Setenv("PORTAL_AUTH_AUDIENCE", "portal-aud")
+	t.Setenv("PORTAL_CLIENTS", "portal-aud:SRE Team, other-client:Platform")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want success", err)
+	}
+	if !cfg.PortalEnabled() {
+		t.Fatal("PortalEnabled() = false, want true")
+	}
+	if cfg.Portal.Clients["portal-aud"] != "SRE Team" || cfg.Portal.Clients["other-client"] != "Platform" {
+		t.Fatalf("clients not parsed: %+v", cfg.Portal.Clients)
+	}
+}
+
+func TestLoadPortalConfigAudienceCollisionRefusesBoot(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	setValidAuthEnv(t)
+	t.Setenv("PORTAL_AUTH_AUDIENCE", "webapp-aud") // == AUTH_AUDIENCE
+	t.Setenv("PORTAL_CLIENTS", "webapp-aud:SRE")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() = nil, want error on PORTAL_AUTH_AUDIENCE == AUTH_AUDIENCE")
+	}
+}
+
+func TestLoadPortalConfigHalfConfiguredRefusesBoot(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	setValidAuthEnv(t)
+	t.Setenv("PORTAL_AUTH_AUDIENCE", "portal-aud")
+	t.Setenv("PORTAL_CLIENTS", "")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() = nil, want error when only PORTAL_AUTH_AUDIENCE is set")
+	}
+}
+
+func TestLoadPortalConfigMalformedClientsRefusesBoot(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	setValidAuthEnv(t)
+	t.Setenv("PORTAL_AUTH_AUDIENCE", "portal-aud")
+	t.Setenv("PORTAL_CLIENTS", "no-colon-here")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() = nil, want error on a PORTAL_CLIENTS entry with no ':'")
+	}
+}

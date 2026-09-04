@@ -58,6 +58,12 @@ var blockedUploadContentTypePrefixes = []string{
 // header the download endpoints set. Blocking these types at upload time is
 // the actual control — closing the gap at the download layer alone would still
 // leave the file rendered inline in the browser's blob-URL viewer.
+// ValidateUploadFileType is the exported form of validateUploadFileType, for
+// other ingress paths (the Evidence Portal) that must apply the same check.
+func ValidateUploadFileType(fileName, contentType string) error {
+	return validateUploadFileType(fileName, contentType)
+}
+
 func validateUploadFileType(fileName, contentType string) error {
 	ext := strings.ToLower(filepath.Ext(fileName))
 	if blockedUploadExtensions[ext] {

@@ -26,6 +26,7 @@ package directory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -34,6 +35,11 @@ import (
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scim"
 )
+
+// ErrEmailUnresolved means an email did not resolve to exactly one person
+// (zero matches, or more than one). Callers that must not attribute an action
+// to a guessed identity treat this as a hard failure.
+var ErrEmailUnresolved = errors.New("email did not resolve to exactly one user")
 
 // DefaultTTL is how long a resolved person is reused before being refreshed.
 //
@@ -366,6 +372,41 @@ func (s *Service) SearchDomain(query string) []Person {
 		}
 	}
 	return out
+}
+
+// ResolveEmail resolves an email to exactly one person by exact,
+// case-insensitive, trimmed match on Email — bulk snapshot first, then a live
+// SCIM lookup. Returns ErrEmailUnresolved on zero or more than one match.
+func (s *Service) ResolveEmail(ctx context.Context, email string) (Person, error) {
+	want := strings.ToLower(strings.TrimSpace(email))
+	if want == "" {
+		return Person{}, ErrEmailUnresolved
+	}
+
+	var matches []Person
+	s.bulkMu.RLock()
+	for _, p := range s.bulk {
+		if strings.ToLower(strings.TrimSpace(p.Email)) == want {
+			matches = append(matches, p)
+		}
+	}
+	s.bulkMu.RUnlock()
+	switch len(matches) {
+	case 1:
+		return matches[0], nil
+	case 0:
+		// Snapshot miss — try live before giving up.
+		u, err := s.scim.LookupByEmail(ctx, want)
+		if err != nil {
+			return Person{}, fmt.Errorf("resolve email: %w", err)
+		}
+		if u == nil || strings.ToLower(strings.TrimSpace(u.Email)) != want {
+			return Person{}, ErrEmailUnresolved
+		}
+		return Person{UUID: u.UUID, Email: u.Email, DisplayName: u.DisplayName}, nil
+	default:
+		return Person{}, ErrEmailUnresolved
+	}
 }
 
 // SearchExternal is SearchDomain's counterpart for the external Asgardeo org —

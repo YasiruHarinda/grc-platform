@@ -22,5 +22,8 @@ import "testing"
 // Seed rows in a transaction → call handler or repository → assert → rollback.
 
 func TestAuditCRUD(t *testing.T) {
+	if testDB == nil {
+		t.Skip("set DB_DSN to run")
+	}
 	t.Skip("TODO: implement")
 }

@@ -99,7 +99,7 @@ func RegisterRoutes(mux routeguard.Router, deps Deps) {
 	uh := &userHandler{svc: deps.User, directory: deps.Directory, grants: deps.Grants}
 	th := &teamHandler{svc: deps.Team, activityLog: deps.ActivityLog}
 	dh := &dashboardHandler{svc: deps.Dashboard}
-	eh := &evidenceHandler{svc: deps.Evidence, controlSvc: deps.Control, popSvc: deps.Population, trailSvc: deps.Trail, aiClient: deps.AIAgent, notify: &deps, directory: deps.Directory}
+	eh := newEvidenceHandler(&deps)
 	cmh := &commentHandler{svc: deps.Comment, controlSvc: deps.Control, notify: &deps, directory: deps.Directory}
 	avh := &aiValidationHandler{svc: deps.AIValidation, evidenceSvc: deps.Evidence}
 	rjh := &reminderJobHandler{trigger: deps.TriggerReminderJob}

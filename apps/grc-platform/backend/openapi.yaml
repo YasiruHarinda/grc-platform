@@ -26,6 +26,7 @@ tags:
 - name: Audit Sample
 - name: Audit Comments
 - name: AI Validations
+- name: Evidence Portal
 - name: Risk Teams
 - name: Risk Scores
 - name: Risk Compliance References
@@ -1832,6 +1833,119 @@ paths:
         '500':
           $ref: '#/components/responses/InternalServerError'
   # ---------------------------------------------------------------------------
+  # Evidence Portal (machine-to-machine)
+  # ---------------------------------------------------------------------------
+  /api/v1/evidence-portal/controls:
+    get:
+      tags:
+      - Evidence Portal
+      summary: Team control worklist for the Evidence Portal
+      description: >
+        Machine-to-machine. Returns the caller's team's outstanding controls in
+        an ACTIVE audit (evidence-phase and sample-phase statuses). The team is
+        derived from the verified client_credentials token, never from the
+        request. `email`, when given, is a soft filter narrowing to that owner;
+        an unresolvable value is ignored, not an error.
+      operationId: portalListControls
+      security:
+      - evidencePortalClientCredentials: []
+      parameters:
+      - name: email
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Worklist (may be empty)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    audit:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        name: { type: string }
+                        product: { type: string }
+                        framework: { type: string }
+                    control:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        ref: { type: string }
+                        title: { type: string }
+                        status: { type: string }
+                        dueDate: { type: string, nullable: true }
+                        ownerId: { type: integer, nullable: true }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          description: Rate limit exceeded
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/evidence-portal/controls/{controlId}/evidences:
+    post:
+      tags:
+      - Evidence Portal
+      summary: Submit captured evidence files through the Evidence Portal
+      description: >
+        Machine-to-machine. `multipart/form-data` with one or more `file` parts
+        and `email`. All files land in a single evidence round. Authorization is
+        team-scoped from the token; `email` is the submitting user's identity,
+        recorded for attribution and checked against the control owner.
+        Unresolvable, ambiguous, or non-owner `email` all return one identical
+        400. Runs the same upload/submit/notify/AI pipeline as the web app and
+        advances the control to EVIDENCE_INTERNAL_REVIEW.
+      operationId: portalSubmitEvidence
+      security:
+      - evidencePortalClientCredentials: []
+      parameters:
+      - $ref: '#/components/parameters/ControlId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, email]
+              properties:
+                file:
+                  description: >
+                    One or more `file` parts (repeat the field). All land in a
+                    single evidence round — one AI validation run, one trail
+                    entry. Max 20 files, 25 MiB each.
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+                email:
+                  type: string
+      responses:
+        '201':
+          description: Evidence recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditEvidence'
+        '400':
+          description: File invalid, or email unresolvable/ambiguous/not the control owner (one identical body)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Control not found or in another team
+        '409':
+          description: Control is not in an evidence-phase status
+        '413':
+          description: File over 25 MiB
+        '429':
+          description: Rate limit exceeded
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  # ---------------------------------------------------------------------------
   # Risk Hub
   # ---------------------------------------------------------------------------
   /api/v1/risks/teams:
@@ -3615,6 +3729,17 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Asgardeo-issued JWT, validated by signature (RS256 via JWKS), issuer, and audience. Sent as `Authorization Bearer <token>`. Not required for GET /health.
+    evidencePortalClientCredentials:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        Client-credentials JWT for the Evidence Portal machine ingress
+        (`/api/v1/evidence-portal/*`). Same Asgardeo org, issuer and JWKS as
+        bearerAuth, but its `aud` is PORTAL_AUTH_AUDIENCE (the portal backend's
+        consumer key) and its `sub` must be listed in PORTAL_CLIENTS. No grant
+        load, no external-auditor guard — authorization is the token-derived
+        team scope.
   parameters:
     AuditId:
       name: id

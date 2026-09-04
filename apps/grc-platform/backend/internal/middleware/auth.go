@@ -75,6 +75,10 @@ type Config struct {
 	// TestKeyFuncs maps issuer → jwt.Keyfunc, bypassing JWKS cache construction.
 	// Never set in production; used by unit tests to inject pre-built key functions.
 	TestKeyFuncs map[string]jwt.Keyfunc
+	// Verifier, when set, supplies the IdP key functions instead of Auth
+	// building its own JWKS caches — so user auth and the portal ingress share
+	// one cache. Nil falls back to the built-in per-issuer construction.
+	Verifier *IdPVerifier
 	// Router resolves a request to its route pattern before the mux serves it.
 	// Nil skips the external-caller guard, as a nil PrivilegeStore skips
 	// privilege resolution; always set in production.
@@ -239,6 +243,68 @@ func rsaPublicKeyFromJWK(nB64, eB64 string) (*rsa.PublicKey, error) {
 	return &rsa.PublicKey{N: new(big.Int).SetBytes(nBytes), E: e}, nil
 }
 
+// buildIdPRuntimes builds one JWKS-backed key function per trusted issuer,
+// indexed by issuer so the token's iss claim selects the right IdP. An issuer
+// present in testKeyFuncs skips JWKS/HTTPS entirely (unit tests only).
+func buildIdPRuntimes(idpCfgs []config.IdPConfig, testKeyFuncs map[string]jwt.Keyfunc) (map[string]idpRuntime, error) {
+	idps := make(map[string]idpRuntime, len(idpCfgs))
+	for _, idp := range idpCfgs {
+		if kf, ok := testKeyFuncs[idp.Issuer]; ok {
+			idps[idp.Issuer] = idpRuntime{cfg: idp, keyFunc: kf}
+			continue
+		}
+		u, parseErr := url.Parse(idp.JWKSEndpoint)
+		if parseErr != nil || u.Scheme != "https" {
+			return nil, fmt.Errorf("JWKS endpoint must use https, got: %s", idp.JWKSEndpoint)
+		}
+		cache, err := newJWKSCache(context.Background(), idp.JWKSEndpoint)
+		if err != nil {
+			return nil, fmt.Errorf("initialise JWKS from %s: %w", idp.JWKSEndpoint, err)
+		}
+		c := cache
+		idps[idp.Issuer] = idpRuntime{
+			cfg: idp,
+			keyFunc: func(token *jwt.Token) (any, error) {
+				kid, _ := token.Header["kid"].(string)
+				key, ok := c.lookup(kid)
+				if !ok {
+					return nil, fmt.Errorf("key %q not found in JWKS", kid)
+				}
+				return key, nil
+			},
+		}
+	}
+	return idps, nil
+}
+
+// IdPVerifier holds the trusted IdPs with their JWKS-backed key functions,
+// built once and shared between Auth and the portal ingress so both use the
+// same JWKS cache instead of each running its own refresh loop.
+type IdPVerifier struct {
+	idps map[string]idpRuntime
+}
+
+// NewIdPVerifier builds an IdPVerifier from the configured IdPs. Call once at
+// startup; the returned value is safe for concurrent use.
+func NewIdPVerifier(idpCfgs []config.IdPConfig) (*IdPVerifier, error) {
+	idps, err := buildIdPRuntimes(idpCfgs, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &IdPVerifier{idps: idps}, nil
+}
+
+// NewIdPVerifierWithKeyFuncs is NewIdPVerifier with per-issuer key functions
+// injected, bypassing JWKS construction. Test-only, mirroring
+// Config.TestKeyFuncs.
+func NewIdPVerifierWithKeyFuncs(idpCfgs []config.IdPConfig, keyFuncs map[string]jwt.Keyfunc) (*IdPVerifier, error) {
+	idps, err := buildIdPRuntimes(idpCfgs, keyFuncs)
+	if err != nil {
+		return nil, err
+	}
+	return &IdPVerifier{idps: idps}, nil
+}
+
 // Auth validates the caller's JWT on every request and stores the resulting
 // UserInfo in the context. The token is read from Choreo's gateway-forwarded
 // X-Jwt-Assertion header when present, falling back to a raw Authorization:
@@ -249,39 +315,18 @@ func rsaPublicKeyFromJWK(nB64, eB64 string) (*rsa.PublicKey, error) {
 // When TokenValidatorEnabled is false the token is only decoded without signature
 // verification — for local development only.
 func Auth(cfg Config) func(http.Handler) http.Handler {
-	// Build one JWKS-backed key function per trusted issuer (reusing the shared
-	// jwksCache). Indexed by issuer so extractUserInfo can select the right IdP
-	// from the token's iss claim.
-	idps := make(map[string]idpRuntime, len(cfg.IdPs))
-	if cfg.TokenValidatorEnabled {
-		for _, idp := range cfg.IdPs {
-			if kf, ok := cfg.TestKeyFuncs[idp.Issuer]; ok {
-				// Test override: skip JWKS cache and HTTPS requirement.
-				idps[idp.Issuer] = idpRuntime{cfg: idp, keyFunc: kf}
-				continue
-			}
-			u, parseErr := url.Parse(idp.JWKSEndpoint)
-			if parseErr != nil || u.Scheme != "https" {
-				panic("auth: JWKS endpoint must use https, got: " + idp.JWKSEndpoint)
-			}
-			cache, err := newJWKSCache(context.Background(), idp.JWKSEndpoint)
-			if err != nil {
-				panic("auth: failed to initialise JWKS from " + idp.JWKSEndpoint + ": " + err.Error())
-			}
-			// Capture cache per iteration for the closure.
-			c := cache
-			idps[idp.Issuer] = idpRuntime{
-				cfg: idp,
-				keyFunc: func(token *jwt.Token) (interface{}, error) {
-					kid, _ := token.Header["kid"].(string)
-					key, ok := c.lookup(kid)
-					if !ok {
-						return nil, fmt.Errorf("key %q not found in JWKS", kid)
-					}
-					return key, nil
-				},
-			}
+	var idps map[string]idpRuntime
+	switch {
+	case cfg.Verifier != nil:
+		idps = cfg.Verifier.idps
+	case cfg.TokenValidatorEnabled:
+		built, err := buildIdPRuntimes(cfg.IdPs, cfg.TestKeyFuncs)
+		if err != nil {
+			panic("auth: " + err.Error())
 		}
+		idps = built
+	default:
+		idps = make(map[string]idpRuntime)
 	}
 
 	// An unverified token's email claim proves nothing, so the guard is skipped

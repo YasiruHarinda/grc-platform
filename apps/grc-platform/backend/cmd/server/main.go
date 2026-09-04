@@ -31,10 +31,12 @@ import (
 	adminhandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/admin/handler"
 	audithandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/handler"
 	auditjob "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/job"
+	auditentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/repository/entity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/config"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/middleware"
+	portalhandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/portal/handler"
 	riskhandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/handler"
 	riskjob "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/job"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/scheduler"
@@ -249,27 +251,61 @@ func main() {
 			"overdue-risk escalation, audit due-date reminders and the directory status sync " +
 			"will not run automatically")
 	}
-	handler := middleware.SecurityHeaders(
+	// One IdP verifier (JWKS caches) shared by user auth and the portal ingress.
+	var verifier *middleware.IdPVerifier
+	if cfg.Auth.TokenValidatorEnabled {
+		verifier, err = middleware.NewIdPVerifier(cfg.Auth.IdPs)
+		if err != nil {
+			slog.Error("failed to build IdP verifier", "err", err)
+			os.Exit(1)
+		}
+	}
+
+	var handler http.Handler = middleware.Auth(middleware.Config{
+		IdPs:                  cfg.Auth.IdPs,
+		ClockSkew:             cfg.Auth.ClockSkew,
+		TokenValidatorEnabled: cfg.Auth.TokenValidatorEnabled,
+		PrivilegeStore:        privStore,
+		Grants:                grantRepo,
+		// MUST be the same object Auth wraps below, or the guard authorises one
+		// route table while another serves.
+		Router:               mux,
+		InternalEmailDomains: cfg.Auth.InternalEmailDomains,
+		Verifier:             verifier,
+	})(mux)
+
+	// Evidence Portal M2M ingress (config.Config.PortalEnabled). Team names are
+	// resolved to ids against the live team list; an unresolved name refuses
+	// the boot.
+	if cfg.PortalEnabled() {
+		resolvedClients, rErr := resolvePortalClients(ctx, auditentity.NewTeamRepository(entityCli), cfg.Portal.Clients)
+		if rErr != nil {
+			slog.Error("Evidence Portal client → team resolution failed", "err", rErr)
+			os.Exit(1)
+		}
+		portalMux := http.NewServeMux()
+		portalhandler.RegisterRoutes(portalMux, portalhandler.Deps{
+			Submit:    &auditDeps,
+			Audits:    auditDeps.Audit,
+			Directory: dirSvc,
+			Grants:    grantRepo,
+			Controls:  auditentity.NewPortalControlReader(entityCli),
+		})
+		portalChain := middleware.PortalPerRemoteAddrRateLimit(
+			middleware.ClientCredentials(middleware.ClientCredConfig{
+				Verifier:  verifier,
+				Audience:  cfg.Portal.Audience,
+				Clients:   resolvedClients,
+				ClockSkew: cfg.Auth.ClockSkew,
+			})(middleware.PortalPerClientRateLimit(portalMux)),
+		)
+		handler = portalPrefixDispatch(portalChain, handler)
+		slog.Info("Evidence Portal ingress mounted", "clients", len(resolvedClients))
+	}
+
+	handler = middleware.SecurityHeaders(
 		middleware.CORS(cfg.CORSAllowedOrigin)(
-			middleware.CorrelationID(
-				middleware.Logger(
-					middleware.Auth(middleware.Config{
-						IdPs:                  cfg.Auth.IdPs,
-						ClockSkew:             cfg.Auth.ClockSkew,
-						TokenValidatorEnabled: cfg.Auth.TokenValidatorEnabled,
-						PrivilegeStore:        privStore,
-						Grants:                grantRepo,
-						// MUST be the same object Auth wraps below, or the
-						// guard authorises one route table while another serves.
-						Router:               mux,
-						InternalEmailDomains: cfg.Auth.InternalEmailDomains,
-					})(
-						mux, // same mux as Router above — see the note there
-					),
-				),
-			),
-		),
-	)
+			middleware.CorrelationID(middleware.Logger(handler))))
 
 	ln, err := net.Listen("tcp", cfg.Port)
 	if err != nil {
