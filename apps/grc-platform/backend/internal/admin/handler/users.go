@@ -376,17 +376,16 @@ func (d *Deps) handleRevokeGrant(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// A caller may not revoke their own Admin Console access — the SHARED role
-	// held GLOBAL, which is what carries MANAGE_USERS. That is the one self-revoke
-	// with no way back inside the product: regranting it also needs MANAGE_USERS,
-	// so the last holder who drops it locks everyone out. Every other self-revoke
-	// is allowed; "ask another admin" mirrors the status self-lockout guard.
+	// A caller can't revoke their own Admin Console access: regranting it needs
+	// MANAGE_USERS, so the last holder who drops it locks everyone out.
 	if caller := auth.FromContext(r.Context()); caller != nil && caller.UserID == userID {
 		if searchErr != nil {
 			response.WriteError(w, http.StatusServiceUnavailable,
 				"Couldn't verify that grant right now. Try again in a moment.")
 			return
 		}
+		// SHARED privileges (incl. MANAGE_USERS) are GLOBAL-only, so a SHARED grant
+		// held GLOBAL is exactly the platform-admin grant — no privilege lookup needed.
 		if grantFound && grantModule == "SHARED" && grantScopeType == "GLOBAL" {
 			response.WriteError(w, http.StatusUnprocessableEntity, fmt.Sprintf(
 				"You can't revoke your own %s @ %s grant. Ask another platform administrator to remove it for you.",
