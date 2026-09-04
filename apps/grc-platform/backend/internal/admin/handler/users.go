@@ -18,6 +18,7 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -204,8 +205,9 @@ type updateUserStatusRequest struct {
 // handleUpdateUserStatus serves PATCH /api/v1/admin/users/{id}/status.
 //
 // Self-lockout guard: a caller may not change their own status, since that
-// would zero all of their privileges outright. Same reasoning as the
-// self-demotion guard on role changes.
+// would zero all of their privileges outright — always, for any status.
+// handleRevokeGrant has a narrower cousin: it blocks only a self-revoke of the
+// SHARED/GLOBAL grant that carries MANAGE_USERS.
 func (d *Deps) handleUpdateUserStatus(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageUsers) {
 		return
@@ -353,13 +355,19 @@ func (d *Deps) handleRevokeGrant(w http.ResponseWriter, r *http.Request) {
 
 	// Resolved before revoking — SearchUsers won't return an INACTIVE grant.
 	details := map[string]any{"grantId": grantID}
-	if users, searchErr := d.Admin.SearchUsers(r.Context()); searchErr == nil {
+	var grantRole, grantModule, grantScopeType, grantScopeName string
+	grantFound := false
+	users, searchErr := d.Admin.SearchUsers(r.Context())
+	if searchErr == nil {
 		for _, u := range users {
 			if u.ID != userID {
 				continue
 			}
 			for _, g := range u.Grants {
 				if g.ID == grantID {
+					grantFound = true
+					grantRole, grantModule = g.RoleName, g.Module
+					grantScopeType, grantScopeName = g.ScopeType, g.ScopeName
 					details["role"] = g.RoleName
 					details["scope"] = grantScopeLabel(g.ScopeType, g.ScopeName)
 				}
@@ -367,6 +375,26 @@ func (d *Deps) handleRevokeGrant(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+
+	// A caller may not revoke their own Admin Console access — the SHARED role
+	// held GLOBAL, which is what carries MANAGE_USERS. That is the one self-revoke
+	// with no way back inside the product: regranting it also needs MANAGE_USERS,
+	// so the last holder who drops it locks everyone out. Every other self-revoke
+	// is allowed; "ask another admin" mirrors the status self-lockout guard.
+	if caller := auth.FromContext(r.Context()); caller != nil && caller.UserID == userID {
+		if searchErr != nil {
+			response.WriteError(w, http.StatusServiceUnavailable,
+				"Couldn't verify that grant right now. Try again in a moment.")
+			return
+		}
+		if grantFound && grantModule == "SHARED" && grantScopeType == "GLOBAL" {
+			response.WriteError(w, http.StatusUnprocessableEntity, fmt.Sprintf(
+				"You can't revoke your own %s @ %s grant. Ask another platform administrator to remove it for you.",
+				grantRole, grantScopeLabel(grantScopeType, grantScopeName)))
+			return
+		}
+	}
+
 	if label := resolveUserLabel(r.Context(), d, userID); label != "" {
 		details["user"] = label
 	}
