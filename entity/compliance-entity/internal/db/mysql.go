@@ -40,8 +40,10 @@ const (
 // connections outright (Error 3159). The go-sql-driver connects without TLS
 // unless the DSN sets tls=. Forcing TLSConfig="preferred" in code makes every
 // deployment use TLS when the server offers it, while a local MySQL without
-// secure transport still connects over plaintext. An explicit tls= already in
-// DB_DSN is left untouched.
+// secure transport still connects over plaintext. An explicit tls=false,
+// tls=true, tls=skip-verify or tls=<registered name> in DB_DSN is left
+// untouched; only an absent tls value (which ParseDSN also reports for a bare
+// tls=) is defaulted to preferred.
 //
 // The DATETIME columns (created_at etc.) default to CURRENT_TIMESTAMP, which is
 // evaluated in the session time zone. The go-sql-driver reads DATETIME back in
