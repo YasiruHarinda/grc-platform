@@ -181,17 +181,22 @@ export function formatBackendTimestampForDisplay(
 }
 
 /**
- * Parses a "YYYY-MM-DD" backend date string as a local-time Date.
+ * Parses a backend date into a local-time Date at midnight.
+ * Accepts a plain "YYYY-MM-DD" or the date portion of an ISO/RFC3339
+ * datetime (e.g. "2026-06-30T00:00:00Z") — the backend renders DATE
+ * columns such as implementation_date/reassessment_date in the latter form.
  * Using new Date("YYYY-MM-DD") would give UTC midnight, which shifts the day
- * in any UTC− timezone when local date parts are later read back.
+ * in any UTC− timezone when local date parts are later read back; the literal
+ * calendar date is used here, so no timezone shift occurs.
  *
- * @param s - Date-only string from the API.
+ * @param s - Date-only or datetime string from the API.
  * @returns {Date | null} Local-midnight Date, or null when s is falsy/invalid.
  */
 export function parseDateOnly(s: string | null | undefined): Date | null {
   if (!s) return null;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
-  const [y, m, d] = s.split("-").map(Number);
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:[T ].*)?$/.exec(s);
+  if (!match) return null;
+  const [, y, m, d] = match.map(Number);
   const date = new Date(y, m - 1, d);
   if (date.getFullYear() !== y || date.getMonth() + 1 !== m || date.getDate() !== d) return null;
   return date;
