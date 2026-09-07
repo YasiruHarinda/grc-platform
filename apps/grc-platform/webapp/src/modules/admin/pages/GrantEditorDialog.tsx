@@ -28,11 +28,13 @@ import {
   IconButton,
   Paper,
   Stack,
+  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
 import { X } from "@wso2/oxygen-ui-icons-react";
 import { type JSX, useEffect, useState } from "react";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
+import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
 import { createGrant, revokeGrant, type AdminUser, type Grant, type Role } from "../api/adminApi";
 import { dialogPaperSx } from "../cardStyles";
 import GrantPicker, { type PendingGrant } from "../components/GrantPicker";
@@ -50,6 +52,13 @@ interface GrantEditorDialogProps {
 
 export default function GrantEditorDialog({ open, user, roles, onClose, onChanged }: GrantEditorDialogProps): JSX.Element {
   const authFetch = useAuthApiClient();
+  const claims = useIdTokenClaims();
+  const callerSub = typeof claims?.sub === "string" ? claims.sub : null;
+  // The caller's own MANAGE_USERS grant — the SHARED role held GLOBAL — can't be
+  // self-revoked: the backend refuses it, since regranting it also needs
+  // MANAGE_USERS. Drop the delete affordance and say who to ask instead.
+  const isOwnConsoleGrant = (g: Grant): boolean =>
+    !!callerSub && user?.uuid === callerSub && g.module === "SHARED" && g.scopeType === "GLOBAL";
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [pendingRevoke, setPendingRevoke] = useState<Grant | null>(null);
@@ -163,17 +172,26 @@ export default function GrantEditorDialog({ open, user, roles, onClose, onChange
           </Box>
         ) : (
           <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
-            {user.grants.map((g) => (
-              <Chip
-                key={g.id}
-                size="small"
-                variant="outlined"
-                color={g.module === "SHARED" ? "default" : "primary"}
-                label={`${g.roleName} @ ${g.scopeType === "GLOBAL" ? "Global (ALL)" : g.scopeName || g.scopeType}`}
-                disabled={busy}
-                onDelete={() => { setRevokeError(null); setPendingRevoke(g); }}
-              />
-            ))}
+            {user.grants.map((g) => {
+              const locked = isOwnConsoleGrant(g);
+              const chip = (
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  color={g.module === "SHARED" ? "default" : "primary"}
+                  label={`${g.roleName} @ ${g.scopeType === "GLOBAL" ? "Global (ALL)" : g.scopeName || g.scopeType}`}
+                  disabled={busy}
+                  onDelete={locked ? undefined : () => { setRevokeError(null); setPendingRevoke(g); }}
+                />
+              );
+              return locked ? (
+                <Tooltip key={g.id} title="Ask another platform administrator to remove this role for you.">
+                  <span>{chip}</span>
+                </Tooltip>
+              ) : (
+                <span key={g.id}>{chip}</span>
+              );
+            })}
           </Stack>
         )}
 
