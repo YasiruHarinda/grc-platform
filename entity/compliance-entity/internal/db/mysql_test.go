@@ -57,8 +57,8 @@ func TestNormalizeDSNTLSHandling(t *testing.T) {
 		dsn  string
 		want string // expected resolved cfg.TLSConfig
 	}{
-		{"omitted tls is defaulted", baseDSN, "preferred"},
-		{"bare tls= is defaulted", baseDSN + "?tls=", "preferred"},
+		{"omitted tls defaults to verified TLS", baseDSN, "true"},
+		{"bare tls= defaults to verified TLS", baseDSN + "?tls=", "true"},
 		{"tls=false is preserved", baseDSN + "?tls=false", "false"},
 		{"tls=true is preserved", baseDSN + "?tls=true", "true"},
 		{"tls=skip-verify is preserved", baseDSN + "?tls=skip-verify", "skip-verify"},

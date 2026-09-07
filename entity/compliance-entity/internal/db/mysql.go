@@ -36,14 +36,12 @@ const (
 // normalizeDSN pins the connection to UTC so timestamps are consistent end to end
 // and negotiates TLS so hosted databases accept the connection.
 //
-// The hosted MySQL runs with require_secure_transport=ON and rejects plaintext
-// connections outright (Error 3159). The go-sql-driver connects without TLS
-// unless the DSN sets tls=. Forcing TLSConfig="preferred" in code makes every
-// deployment use TLS when the server offers it, while a local MySQL without
-// secure transport still connects over plaintext. An explicit tls=false,
-// tls=true, tls=skip-verify or tls=<registered name> in DB_DSN is left
-// untouched; only an absent tls value (which ParseDSN also reports for a bare
-// tls=) is defaulted to preferred.
+// A DSN with no tls= parameter is defaulted to tls=true: the go-sql-driver
+// verifies the server certificate against the system trust store and does not
+// fall back to plaintext. A local MySQL without TLS must set tls=false (or
+// tls=skip-verify) explicitly in DB_DSN — see .env.example. Any explicit tls=
+// value is left untouched; only an absent one (which ParseDSN also reports for
+// a bare tls=) is defaulted.
 //
 // The DATETIME columns (created_at etc.) default to CURRENT_TIMESTAMP, which is
 // evaluated in the session time zone. The go-sql-driver reads DATETIME back in
@@ -68,7 +66,7 @@ func normalizeDSN(dsn string) string {
 	}
 	cfg.Params["time_zone"] = "'+00:00'"
 	if cfg.TLSConfig == "" {
-		cfg.TLSConfig = "preferred"
+		cfg.TLSConfig = "true"
 	}
 	return cfg.FormatDSN()
 }
