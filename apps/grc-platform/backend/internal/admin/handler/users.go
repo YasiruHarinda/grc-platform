@@ -386,7 +386,7 @@ func (d *Deps) handleRevokeGrant(w http.ResponseWriter, r *http.Request) {
 		}
 		// SHARED privileges (incl. MANAGE_USERS) are GLOBAL-only, so a SHARED grant
 		// held GLOBAL is exactly the platform-admin grant — no privilege lookup needed.
-		if grantFound && grantModule == "SHARED" && grantScopeType == "GLOBAL" {
+		if grantFound && grantModule == "SHARED" && grantScopeType == grant.ScopeGlobal {
 			response.WriteError(w, http.StatusUnprocessableEntity, fmt.Sprintf(
 				"You can't revoke your own %s @ %s grant. Ask another platform administrator to remove it for you.",
 				grantRole, grantScopeLabel(grantScopeType, grantScopeName)))
