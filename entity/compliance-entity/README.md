@@ -64,7 +64,7 @@ Copy `.env.example` to `.env` and fill in the values:
 
 | Variable | Description |
 |---|---|
-| `DB_DSN` | MySQL DSN — `user:password@tcp(host:port)/grc_platform?parseTime=true` (required) |
+| `DB_DSN` | MySQL DSN — `user:password@tcp(host:port)/grc_platform?parseTime=true` (required). With no `tls=` parameter the service defaults to `tls=true` (verified TLS, no plaintext fallback); a local MySQL without TLS must append `&tls=false`. |
 
 ### Azure Blob Storage
 

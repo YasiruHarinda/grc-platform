@@ -33,7 +33,15 @@ const (
 	connMaxIdleTime = 5 * time.Minute
 )
 
-// normalizeDSN pins the connection to UTC so timestamps are consistent end to end.
+// normalizeDSN pins the connection to UTC so timestamps are consistent end to end
+// and negotiates TLS so hosted databases accept the connection.
+//
+// A DSN with no tls= parameter is defaulted to tls=true: the go-sql-driver
+// verifies the server certificate against the system trust store and does not
+// fall back to plaintext. A local MySQL without TLS must set tls=false (or
+// tls=skip-verify) explicitly in DB_DSN — see .env.example. Any explicit tls=
+// value is left untouched; only an absent one (which ParseDSN also reports for
+// a bare tls=) is defaulted.
 //
 // The DATETIME columns (created_at etc.) default to CURRENT_TIMESTAMP, which is
 // evaluated in the session time zone. The go-sql-driver reads DATETIME back in
@@ -57,6 +65,9 @@ func normalizeDSN(dsn string) string {
 		cfg.Params = map[string]string{}
 	}
 	cfg.Params["time_zone"] = "'+00:00'"
+	if cfg.TLSConfig == "" {
+		cfg.TLSConfig = "true"
+	}
 	return cfg.FormatDSN()
 }
 
