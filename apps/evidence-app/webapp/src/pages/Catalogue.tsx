@@ -15,12 +15,13 @@ import Button from "@mui/material/Button";
 import Alert from "@mui/material/Alert";
 import CircularProgress from "@mui/material/CircularProgress";
 import Chip from "@mui/material/Chip";
-import { PlusIcon, PenToSquareIcon, TrashIcon } from "@oxygen-ui/react-icons";
+import { PlusIcon, PenToSquareIcon, TrashIcon, ArrowUpIcon } from "@oxygen-ui/react-icons";
 import { productsApi, frameworksApi, controlsApi, evidenceApi, submissionsApi, agentApi } from "../api/client";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog";
 import ProductFormDialog, { type Product } from "../components/ProductFormDialog";
 import FrameworkFormDialog, { type Framework } from "../components/FrameworkFormDialog";
 import ControlFormDialog, { type Control } from "../components/ControlFormDialog";
+import ImportControlsDialog from "../components/ImportControlsDialog";
 import { computeDeleteImpact } from "../utils/computeDeleteImpact";
 
 // Same minimal shapes ProductPicker reads — kept structural so this page's
@@ -39,35 +40,58 @@ type AgentTask = {
   user_email: string;
 };
 
-/** Heading + Add button shared by all three columns. */
+/** Heading + Add button shared by all three columns. Import is optional —
+ * only the Controls column passes onImport, so the other two columns
+ * render exactly as before. */
 function ColumnHeader({
   title,
   onAdd,
   addDisabled,
   addDisabledReason,
+  onImport,
+  importDisabled,
+  importDisabledReason,
 }: {
   title: string;
   onAdd?: () => void;
   addDisabled?: boolean;
   addDisabledReason?: string;
+  onImport?: () => void;
+  importDisabled?: boolean;
+  importDisabledReason?: string;
 }) {
-  const button = (
+  const addButton = (
     <Button size="small" startIcon={<PlusIcon size={16} />} onClick={onAdd} disabled={addDisabled}>
       Add
     </Button>
   );
+  const importButton = onImport ? (
+    <Button size="small" startIcon={<ArrowUpIcon size={16} />} onClick={onImport} disabled={importDisabled}>
+      Import
+    </Button>
+  ) : null;
   return (
     <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
       <Typography variant="h6" fontWeight={700}>
         {title}
       </Typography>
-      {addDisabled && addDisabledReason ? (
-        <Tooltip title={addDisabledReason}>
-          <span>{button}</span>
-        </Tooltip>
-      ) : (
-        button
-      )}
+      <Stack direction="row" spacing={1}>
+        {importButton &&
+          (importDisabled && importDisabledReason ? (
+            <Tooltip title={importDisabledReason}>
+              <span>{importButton}</span>
+            </Tooltip>
+          ) : (
+            importButton
+          ))}
+        {addDisabled && addDisabledReason ? (
+          <Tooltip title={addDisabledReason}>
+            <span>{addButton}</span>
+          </Tooltip>
+        ) : (
+          addButton
+        )}
+      </Stack>
     </Stack>
   );
 }
@@ -102,6 +126,7 @@ export default function Catalogue() {
   const [editControlTarget, setEditControlTarget] = useState<Control | null>(null);
   const [deleteControlTarget, setDeleteControlTarget] = useState<Control | null>(null);
   const [deleteControlError, setDeleteControlError] = useState<string | null>(null);
+  const [importControlsOpen, setImportControlsOpen] = useState(false);
 
   const {
     data: products = [],
@@ -512,6 +537,9 @@ export default function Catalogue() {
             onAdd={() => setCreateControlOpen(true)}
             addDisabled={!selectedFrameworkId}
             addDisabledReason="Pick a framework first"
+            onImport={() => setImportControlsOpen(true)}
+            importDisabled={!selectedFrameworkId}
+            importDisabledReason="Pick a framework first"
           />
           <Divider sx={{ mb: 2 }} />
 
@@ -726,6 +754,16 @@ export default function Catalogue() {
         impact={deleteControlImpact.impact}
         warnings={deleteControlImpact.warnings}
         error={deleteControlError}
+      />
+
+      <ImportControlsDialog
+        open={importControlsOpen}
+        frameworkId={selectedFrameworkId ?? 0}
+        frameworkName={frameworks.find((f) => f.id === selectedFrameworkId)?.name ?? ""}
+        productName={products.find((p) => p.id === selectedProductId)?.name ?? ""}
+        existingControls={frameworkControls}
+        onClose={() => setImportControlsOpen(false)}
+        onImported={() => refetchFrameworkControls()}
       />
     </Box>
   );
