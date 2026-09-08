@@ -19,6 +19,7 @@
     "@oxygen-ui/react-icons": "^2.4.6",
     "@tanstack/react-query": "^5.100.10",
     "axios": "^1.16.0",
+    "papaparse": "5.7.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-router-dom": "^7.15.0"
@@ -26,6 +27,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.12.3",
+    "@types/papaparse": "5.5.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.3.4",
