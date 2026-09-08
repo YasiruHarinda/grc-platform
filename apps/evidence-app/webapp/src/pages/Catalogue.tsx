@@ -83,7 +83,7 @@ function PickParentFirst({ text }: { text: string }) {
   );
 }
 
-export default function Admin() {
+export default function Catalogue() {
   const queryClient = useQueryClient();
   const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -298,11 +298,18 @@ export default function Admin() {
   return (
     <Box>
       <Typography variant="h4" gutterBottom>
-        Admin
+        Catalogue
       </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Add, rename and remove the Products, Frameworks and Controls used across the app.
       </Typography>
+      {/* Standing caution, not a per-delete one. The confirm dialog already
+          counts what a delete destroys, but it only appears once the Admin
+          has decided to delete something. This says it before they start. */}
+      <Alert severity="warning" variant="outlined" sx={{ mb: 3 }}>
+        Deleting a Product, Framework or Control also deletes every Evidence record under it,
+        approved Submissions included, so check first that no Runner is still working on it.
+      </Alert>
 
       <Stack direction={{ xs: "column", md: "row" }} spacing={3}>
         {/* Products */}

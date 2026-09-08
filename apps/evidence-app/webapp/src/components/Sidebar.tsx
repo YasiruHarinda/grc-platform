@@ -21,12 +21,12 @@ export const SIDEBAR_WIDTH = 220;
 export const SIDEBAR_COLLAPSED_WIDTH = 60;
 
 const allNavItems = [
-  { label: "Dashboard", to: "/",        icon: HomeIcon,       adminOnly: false },
-  { label: "Evidence",  to: "/evidence", icon: DocumentIcon,   adminOnly: false },
-  { label: "Submit",    to: "/submit",   icon: ArrowUpIcon,    adminOnly: false },
-  { label: "Agent",     to: "/agent",    icon: BoltIcon,       adminOnly: false },
-  { label: "Cost",      to: "/cost",     icon: ReceiptIcon,    adminOnly: true  },
-  { label: "Admin",     to: "/admin",    icon: ShieldUserIcon, adminOnly: true  },
+  { label: "Dashboard", to: "/",          icon: HomeIcon,       adminOnly: false },
+  { label: "Evidence",  to: "/evidence",  icon: DocumentIcon,   adminOnly: false },
+  { label: "Submit",    to: "/submit",    icon: ArrowUpIcon,    adminOnly: false },
+  { label: "Agent",     to: "/agent",     icon: BoltIcon,       adminOnly: false },
+  { label: "Cost",      to: "/cost",      icon: ReceiptIcon,    adminOnly: true  },
+  { label: "Catalogue", to: "/catalogue", icon: ShieldUserIcon, adminOnly: true  },
 ];
 
 interface SidebarContentProps {
