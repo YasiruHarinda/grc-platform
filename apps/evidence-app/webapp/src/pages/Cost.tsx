@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { isAxiosError } from "axios";
 import { useColorMode } from "../main";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
@@ -20,6 +21,7 @@ import TableCell from "@mui/material/TableCell";
 import TableContainer from "@mui/material/TableContainer";
 import { CircleStarIcon, ClockAsteriskIcon } from "@oxygen-ui/react-icons";
 import { usageApi } from "../api/client";
+import ConfirmResetDialog from "../components/ConfirmResetDialog";
 
 type Summary = {
   total_runs: number;
@@ -36,6 +38,7 @@ type Summary = {
   last_30_days_runs: number;
   today_cost_usd: number;
   today_runs: number;
+  counting_since: string | null;
 };
 
 type DayPoint = {
@@ -234,6 +237,9 @@ function ModelBreakdown({ rows }: { rows: ByModel[] }) {
 export default function Cost() {
   const [chartMode, setChartMode] = useState<"cost" | "tokens">("cost");
   const [days, setDays] = useState<number>(30);
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   const {
     data: summary,
@@ -286,6 +292,24 @@ export default function Cost() {
     refetchRecent();
   };
 
+  const resetMutation = useMutation({
+    mutationFn: usageApi.reset,
+    onSuccess: () => {
+      // The server has already recorded the new cutoff, so every report is
+      // refetched from it rather than guessed at locally.
+      queryClient.invalidateQueries({ queryKey: ["usage-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["usage-timeseries"] });
+      queryClient.invalidateQueries({ queryKey: ["usage-by-model"] });
+      queryClient.invalidateQueries({ queryKey: ["usage-recent"] });
+      setResetDialogOpen(false);
+      setResetError(null);
+    },
+    onError: (err: unknown) => {
+      const detail = isAxiosError(err) ? (err.response?.data as { detail?: string } | undefined)?.detail : undefined;
+      setResetError(detail || "The reset didn't go through. Try again.");
+    },
+  });
+
   const inOutRatio = useMemo(() => {
     if (!summary || summary.total_tokens === 0) return null;
     const i = summary.total_input_tokens;
@@ -295,13 +319,37 @@ export default function Cost() {
 
   return (
     <Box>
-      <Typography variant="h4" gutterBottom>
-        Cost & Usage
-      </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Real-time LLM spend across every agent run. Captured at the API call level:
-        no Azure billing delay, no separate dashboard to log into.
-      </Typography>
+      <Box sx={{ mb: 3 }}>
+        <Stack direction="row" alignItems="flex-start" justifyContent="space-between" spacing={2}>
+          <Typography variant="h4" gutterBottom>
+            Cost & Usage
+          </Typography>
+          <Button variant="outlined" size="small" onClick={() => setResetDialogOpen(true)} sx={{ mt: 0.5 }}>
+            Reset
+          </Button>
+        </Stack>
+        <Typography variant="body2" color="text.secondary">
+          Real-time LLM spend across every agent run. Captured at the API call level:
+          no Azure billing delay, no separate dashboard to log into.
+        </Typography>
+        {summary?.counting_since && (
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>
+            Counting since {new Date(summary.counting_since).toLocaleString()}
+          </Typography>
+        )}
+      </Box>
+
+      <ConfirmResetDialog
+        open={resetDialogOpen}
+        onClose={() => {
+          if (resetMutation.isPending) return;
+          setResetDialogOpen(false);
+          setResetError(null);
+        }}
+        onConfirm={() => resetMutation.mutate()}
+        isPending={resetMutation.isPending}
+        error={resetError}
+      />
 
       {isError ? (
         <Alert
