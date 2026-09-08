@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { isAxiosError } from "axios";
 import Box from "@mui/material/Box";
@@ -127,6 +127,19 @@ export default function Catalogue() {
   const [deleteControlTarget, setDeleteControlTarget] = useState<Control | null>(null);
   const [deleteControlError, setDeleteControlError] = useState<string | null>(null);
   const [importControlsOpen, setImportControlsOpen] = useState(false);
+  // Set when the import dialog was opened by a drop rather than the browse
+  // button, so ImportControlsDialog can feed the dropped file straight into
+  // the same handleFile the browse button uses. Cleared whenever the dialog
+  // closes, so reopening later with the browse button doesn't re-import it.
+  const [droppedImportFile, setDroppedImportFile] = useState<File | null>(null);
+  // Dragenter/dragleave fire on every child a pointer crosses while moving
+  // around inside the Controls column, not just at its outer edge, so a
+  // plain boolean flickers off each time the pointer passes over a row.
+  // Counting enters against leaves and only calling the highlight off at
+  // zero is the standard fix — held in a ref because it changes many times
+  // per drag and only the crossing of zero needs to trigger a render.
+  const controlsDragDepthRef = useRef(0);
+  const [controlsDragActive, setControlsDragActive] = useState(false);
 
   const {
     data: products = [],
@@ -319,6 +332,63 @@ export default function Catalogue() {
         tasks: allTasks,
       })
     : { impact: [], warnings: [] };
+
+  // A browser's default reaction to a dropped file is to navigate to it,
+  // discarding whatever the Admin was doing. Nothing on this page but the
+  // Controls column wants a dropped file, so everything else swallows one
+  // and does nothing. This is bound to the window rather than to the page's
+  // own element because a miss is exactly what needs catching: the margins
+  // around the columns, the navbar and the sidebar, and the import dialog
+  // itself, which renders in a portal outside this component's tree. Both
+  // dragover and drop need preventDefault — dragover to say a drop is
+  // allowed at all, drop to stop the navigation once one lands.
+  useEffect(() => {
+    const swallow = (e: DragEvent) => e.preventDefault();
+    window.addEventListener("dragover", swallow);
+    window.addEventListener("drop", swallow);
+    return () => {
+      window.removeEventListener("dragover", swallow);
+      window.removeEventListener("drop", swallow);
+    };
+  }, []);
+
+  function resetControlsDragState() {
+    controlsDragDepthRef.current = 0;
+    setControlsDragActive(false);
+  }
+
+  // The drop target is only live once a Framework is selected, matching
+  // the Import button being disabled with a reason until then — so these
+  // three still call preventDefault (the page-level guard above needs
+  // that to hold everywhere) but stop short of turning on the highlight
+  // or doing anything with the file.
+  function handleControlsDragEnter(e: React.DragEvent) {
+    e.preventDefault();
+    if (!selectedFrameworkId) return;
+    controlsDragDepthRef.current += 1;
+    setControlsDragActive(true);
+  }
+  function handleControlsDragLeave(e: React.DragEvent) {
+    e.preventDefault();
+    if (!selectedFrameworkId) return;
+    controlsDragDepthRef.current -= 1;
+    if (controlsDragDepthRef.current <= 0) resetControlsDragState();
+  }
+  function handleControlsDragOver(e: React.DragEvent) {
+    e.preventDefault();
+    if (!selectedFrameworkId) return;
+    e.dataTransfer.dropEffect = "copy";
+  }
+  function handleControlsDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    resetControlsDragState();
+    if (!selectedFrameworkId) return;
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    setDroppedImportFile(file);
+    setImportControlsOpen(true);
+  }
 
   return (
     <Box>
@@ -530,8 +600,30 @@ export default function Catalogue() {
           )}
         </Paper>
 
-        {/* Controls — filled once a Framework is selected. */}
-        <Paper variant="outlined" sx={{ p: 3, flex: 1, minWidth: 0 }}>
+        {/* Controls — filled once a Framework is selected. Also a drop
+            target for a CSV once a Framework is selected: same dashed-plus-
+            faint-orange treatment as the file buttons elsewhere in the app,
+            shown only while a drag is over it and only once there's a
+            Framework for the file to land in. */}
+        <Paper
+          variant="outlined"
+          onDragEnter={handleControlsDragEnter}
+          onDragLeave={handleControlsDragLeave}
+          onDragOver={handleControlsDragOver}
+          onDrop={handleControlsDrop}
+          sx={{
+            p: 3,
+            flex: 1,
+            minWidth: 0,
+            ...(controlsDragActive
+              ? {
+                  borderStyle: "dashed",
+                  borderColor: "primary.main",
+                  backgroundColor: "rgba(255,115,0,0.04)",
+                }
+              : {}),
+          }}
+        >
           <ColumnHeader
             title="Controls"
             onAdd={() => setCreateControlOpen(true)}
@@ -762,7 +854,11 @@ export default function Catalogue() {
         frameworkName={frameworks.find((f) => f.id === selectedFrameworkId)?.name ?? ""}
         productName={products.find((p) => p.id === selectedProductId)?.name ?? ""}
         existingControls={frameworkControls}
-        onClose={() => setImportControlsOpen(false)}
+        initialFile={droppedImportFile}
+        onClose={() => {
+          setImportControlsOpen(false);
+          setDroppedImportFile(null);
+        }}
         onImported={() => refetchFrameworkControls()}
       />
     </Box>

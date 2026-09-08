@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { isAxiosError } from "axios";
 import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
@@ -37,7 +37,10 @@ type ImportPhase =
  * and then creates the usable rows one request at a time, since the
  * backend has no bulk endpoint.
  *
- * Browse only. Dragging a file onto the column is ticket #123's job.
+ * Opened either by the browse button below or by a drop on the Controls
+ * column — a dropped file arrives as `initialFile` and is fed straight
+ * into `handleFile`, the same path the browse button uses, so the two
+ * ways in behave identically from here on.
  */
 export default function ImportControlsDialog({
   open,
@@ -45,6 +48,7 @@ export default function ImportControlsDialog({
   frameworkName,
   productName,
   existingControls,
+  initialFile,
   onClose,
   onImported,
 }: {
@@ -53,6 +57,10 @@ export default function ImportControlsDialog({
   frameworkName: string;
   productName: string;
   existingControls: Control[];
+  /** Set when this dialog was opened by dropping a file on the Controls
+   * column rather than by the browse button. Handled once per file, the
+   * same way the browse button's chosen file is handled. */
+  initialFile?: File | null;
   onClose: () => void;
   onImported: () => void;
 }) {
@@ -69,48 +77,69 @@ export default function ImportControlsDialog({
     if (open) setPhase({ step: "pick" });
   }
 
-  function handleFile(file: File) {
-    // A CSV in name only still deserves a plain answer, so this is checked
-    // before the file is even read — reading and parsing a spreadsheet or a
-    // PDF would just surface as a missing-column error, which is honest but
-    // not as clear as saying up front what was chosen.
-    if (!file.name.toLowerCase().endsWith(".csv")) {
-      setPhase({ step: "error", message: "Please choose a CSV file." });
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = typeof reader.result === "string" ? reader.result : "";
-      const { rows, unusableRowCount, error } = parseControlsCsv(text);
-
-      // A missing column or an empty file already has a clear message from
-      // parseControlsCsv — reused as-is rather than rewritten here.
-      if (error) {
-        setPhase({ step: "error", message: error });
+  // Wrapped in useCallback so a drop's effect (below) can depend on it
+  // without re-running on every render — only when the Controls this page
+  // has loaded for the framework actually change.
+  const handleFile = useCallback(
+    (file: File) => {
+      // A CSV in name only still deserves a plain answer, so this is checked
+      // before the file is even read — reading and parsing a spreadsheet or a
+      // PDF would just surface as a missing-column error, which is honest but
+      // not as clear as saying up front what was chosen.
+      if (!file.name.toLowerCase().endsWith(".csv")) {
+        setPhase({ step: "error", message: "Please choose a CSV file." });
         return;
       }
 
-      // A reference already under this framework is skipped, not
-      // duplicated and not overwritten. The check is against the Controls
-      // this page already loaded for the selected framework, trimmed and
-      // lowercased on both sides so stray spacing or casing in the file
-      // doesn't create a duplicate that a human eye would have caught.
-      const existingRefs = new Set(
-        existingControls.map((c) => c.control_ref.trim().toLowerCase())
-      );
-      const toCreate = rows.filter((row) => !existingRefs.has(row.reference.trim().toLowerCase()));
+      const reader = new FileReader();
+      reader.onload = () => {
+        const text = typeof reader.result === "string" ? reader.result : "";
+        const { rows, unusableRowCount, error } = parseControlsCsv(text);
 
-      setPhase({
-        step: "summary",
-        toCreate,
-        alreadyThereCount: rows.length - toCreate.length,
-        unusableRowCount,
-      });
-    };
-    reader.onerror = () => setPhase({ step: "error", message: "Couldn't read the file." });
-    reader.readAsText(file, "utf-8");
-  }
+        // A missing column or an empty file already has a clear message from
+        // parseControlsCsv — reused as-is rather than rewritten here.
+        if (error) {
+          setPhase({ step: "error", message: error });
+          return;
+        }
+
+        // A reference already under this framework is skipped, not
+        // duplicated and not overwritten. The check is against the Controls
+        // this page already loaded for the selected framework, trimmed and
+        // lowercased on both sides so stray spacing or casing in the file
+        // doesn't create a duplicate that a human eye would have caught.
+        const existingRefs = new Set(
+          existingControls.map((c) => c.control_ref.trim().toLowerCase())
+        );
+        const toCreate = rows.filter((row) => !existingRefs.has(row.reference.trim().toLowerCase()));
+
+        setPhase({
+          step: "summary",
+          toCreate,
+          alreadyThereCount: rows.length - toCreate.length,
+          unusableRowCount,
+        });
+      };
+      reader.onerror = () => setPhase({ step: "error", message: "Couldn't read the file." });
+      reader.readAsText(file, "utf-8");
+    },
+    [existingControls]
+  );
+
+  // A dropped file is handled once, the moment it arrives, rather than
+  // during render — reading a file is a side effect and belongs in an
+  // effect, not the render pass that the open/close reset above runs in.
+  // The ref stops the same File being handled twice: once for the initial
+  // effect run and again if this component re-renders while the dialog is
+  // still open with the same dropped file.
+  const handledDropRef = useRef<File | null>(null);
+  useEffect(() => {
+    if (open && initialFile && handledDropRef.current !== initialFile) {
+      handledDropRef.current = initialFile;
+      handleFile(initialFile);
+    }
+    if (!open) handledDropRef.current = null;
+  }, [open, initialFile, handleFile]);
 
   async function handleConfirm() {
     if (phase.step !== "summary") return;
