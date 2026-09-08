@@ -121,9 +121,12 @@ def usage_timeseries(
     user: User = Depends(require_admin),
 ):
     """One bucket per calendar day for the last ``days`` days.
-    Days with no runs are returned with zeros so the chart line stays continuous."""
+    Days with no runs are returned with zeros so the chart line stays continuous
+    -- and, after a reset, so do days that fall before the cutoff: the axis is
+    built from ``since`` regardless of the reset, only the query is tightened."""
     now = _now_utc()
     since = datetime(now.year, now.month, now.day, tzinfo=timezone.utc) - timedelta(days=days - 1)
+    cutoff = _latest_reset(db)
 
     rows = (
         db.query(
@@ -133,7 +136,7 @@ def usage_timeseries(
             func.coalesce(func.sum(UsageLog.cost_usd), 0.0),
             func.count(UsageLog.id),
         )
-        .filter(UsageLog.created_at >= since)
+        .filter(UsageLog.created_at >= _effective_since(cutoff, since))
         .group_by(func.date(UsageLog.created_at))
         .order_by(func.date(UsageLog.created_at))
         .all()
@@ -166,19 +169,18 @@ def usage_timeseries(
 
 @router.get("/by-model", response_model=list[UsageByModel])
 def usage_by_model(db: Session = Depends(get_db), user: User = Depends(require_admin)):
-    rows = (
-        db.query(
-            UsageLog.model,
-            func.count(UsageLog.id),
-            func.coalesce(func.sum(UsageLog.input_tokens), 0),
-            func.coalesce(func.sum(UsageLog.output_tokens), 0),
-            func.coalesce(func.sum(UsageLog.total_tokens), 0),
-            func.coalesce(func.sum(UsageLog.cost_usd), 0.0),
-        )
-        .group_by(UsageLog.model)
-        .order_by(func.sum(UsageLog.cost_usd).desc())
-        .all()
+    since = _effective_since(_latest_reset(db), None)
+    q = db.query(
+        UsageLog.model,
+        func.count(UsageLog.id),
+        func.coalesce(func.sum(UsageLog.input_tokens), 0),
+        func.coalesce(func.sum(UsageLog.output_tokens), 0),
+        func.coalesce(func.sum(UsageLog.total_tokens), 0),
+        func.coalesce(func.sum(UsageLog.cost_usd), 0.0),
     )
+    if since is not None:
+        q = q.filter(UsageLog.created_at >= since)
+    rows = q.group_by(UsageLog.model).order_by(func.sum(UsageLog.cost_usd).desc()).all()
     return [
         UsageByModel(
             model=r[0],
@@ -198,9 +200,8 @@ def recent_usage(
     db: Session = Depends(get_db),
     user: User = Depends(require_admin),
 ):
-    return (
-        db.query(UsageLog)
-        .order_by(UsageLog.created_at.desc())
-        .limit(limit)
-        .all()
-    )
+    since = _effective_since(_latest_reset(db), None)
+    q = db.query(UsageLog)
+    if since is not None:
+        q = q.filter(UsageLog.created_at >= since)
+    return q.order_by(UsageLog.created_at.desc()).limit(limit).all()

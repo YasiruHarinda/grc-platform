@@ -188,3 +188,157 @@ def test_reset_does_not_delete_any_usage_log_row(db_session, admin_client):
 
     count_after = db_session.query(UsageLog).count()
     assert count_after == count_before
+
+
+# --- Ticket #127: the daily chart, the by-model breakdown and the recent
+# runs list honour the same cutoff as the summary above. ---
+
+
+def test_timeseries_with_no_reset_ever_recorded_is_unaffected(db_session, admin_client):
+    now = datetime.now(timezone.utc)
+    db_session.add(_log("only-run", now, cost_usd=3.0))
+    db_session.commit()
+
+    response = admin_client.get("/api/usage/timeseries", params={"days": 5})
+    assert response.status_code == 200
+    points = response.json()
+
+    assert len(points) == 5
+    assert sum(p["runs"] for p in points) == 1
+
+
+def test_timeseries_after_reset_is_zero_but_keeps_its_length(db_session, admin_client):
+    now = datetime.now(timezone.utc)
+    db_session.add(_log("before-reset", now, cost_usd=5.0))
+    db_session.commit()
+
+    admin_client.post("/api/usage/reset")
+
+    response = admin_client.get("/api/usage/timeseries", params={"days": 5})
+    assert response.status_code == 200
+    points = response.json()
+
+    # The axis does not shrink: still exactly the number of days asked for,
+    # every one of them zero, including the days before the cutoff.
+    assert len(points) == 5
+    assert all(p["runs"] == 0 for p in points)
+    assert all(p["cost_usd"] == 0 for p in points)
+
+
+def test_run_after_reset_appears_in_timeseries(db_session, admin_client):
+    now = datetime.now(timezone.utc)
+    db_session.add(_log("before-reset", now, cost_usd=5.0))
+    db_session.commit()
+
+    admin_client.post("/api/usage/reset")
+
+    db_session.add(_log("after-reset", datetime.now(timezone.utc) + timedelta(seconds=1), cost_usd=2.0))
+    db_session.commit()
+
+    response = admin_client.get("/api/usage/timeseries", params={"days": 5})
+    points = response.json()
+
+    assert len(points) == 5
+    assert sum(p["runs"] for p in points) == 1
+    assert sum(p["cost_usd"] for p in points) == 2.0
+
+
+def test_by_model_with_no_reset_ever_recorded_is_unaffected(db_session, admin_client):
+    now = datetime.now(timezone.utc)
+    db_session.add(_log("only-run", now, cost_usd=3.0))
+    db_session.commit()
+
+    response = admin_client.get("/api/usage/by-model")
+    assert response.status_code == 200
+    body = response.json()
+
+    assert len(body) == 1
+    assert body[0]["model"] == "test-model"
+    assert body[0]["cost_usd"] == 3.0
+
+
+def test_by_model_reports_no_models_immediately_after_reset(db_session, admin_client):
+    now = datetime.now(timezone.utc)
+    db_session.add(_log("before-reset", now, cost_usd=5.0))
+    db_session.commit()
+
+    admin_client.post("/api/usage/reset")
+
+    response = admin_client.get("/api/usage/by-model")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_run_after_reset_appears_in_by_model(db_session, admin_client):
+    now = datetime.now(timezone.utc)
+    db_session.add(_log("before-reset", now, cost_usd=5.0))
+    db_session.commit()
+
+    admin_client.post("/api/usage/reset")
+
+    db_session.add(_log("after-reset", datetime.now(timezone.utc) + timedelta(seconds=1), cost_usd=2.0))
+    db_session.commit()
+
+    body = admin_client.get("/api/usage/by-model").json()
+
+    assert len(body) == 1
+    assert body[0]["cost_usd"] == 2.0
+
+
+def test_recent_with_no_reset_ever_recorded_is_unaffected(db_session, admin_client):
+    now = datetime.now(timezone.utc)
+    db_session.add(_log("only-run", now, cost_usd=3.0))
+    db_session.commit()
+
+    response = admin_client.get("/api/usage/recent")
+    assert response.status_code == 200
+    body = response.json()
+
+    assert len(body) == 1
+    assert body[0]["run_id"] == "only-run"
+
+
+def test_recent_is_empty_immediately_after_reset(db_session, admin_client):
+    now = datetime.now(timezone.utc)
+    db_session.add(_log("before-reset", now, cost_usd=5.0))
+    db_session.commit()
+
+    admin_client.post("/api/usage/reset")
+
+    response = admin_client.get("/api/usage/recent")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_run_after_reset_appears_in_recent(db_session, admin_client):
+    now = datetime.now(timezone.utc)
+    db_session.add(_log("before-reset", now, cost_usd=5.0))
+    db_session.commit()
+
+    admin_client.post("/api/usage/reset")
+
+    db_session.add(_log("after-reset", datetime.now(timezone.utc) + timedelta(seconds=1), cost_usd=2.0))
+    db_session.commit()
+
+    body = admin_client.get("/api/usage/recent").json()
+
+    assert len(body) == 1
+    assert body[0]["run_id"] == "after-reset"
+
+
+def test_reset_does_not_change_usage_log_row_count_across_all_reports(db_session, admin_client):
+    # The same promise as test_reset_does_not_delete_any_usage_log_row above,
+    # checked again here because this ticket adds a filter to three more
+    # queries -- none of them should ever touch the row count.
+    now = datetime.now(timezone.utc)
+    for i in range(5):
+        db_session.add(_log(f"run-{i}", now - timedelta(days=i)))
+    db_session.commit()
+    count_before = db_session.query(UsageLog).count()
+
+    admin_client.post("/api/usage/reset")
+    admin_client.get("/api/usage/timeseries", params={"days": 5})
+    admin_client.get("/api/usage/by-model")
+    admin_client.get("/api/usage/recent")
+
+    assert db_session.query(UsageLog).count() == count_before

@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import text
 
 from app.models.usage_log import UsageLog
+from app.models.usage_reset import UsageReset
 
 
 def _log(run_id: str, created_at: datetime, cost_usd: float = 1.0) -> UsageLog:
@@ -89,3 +90,30 @@ def test_usage_timeseries_since_cutoff_excludes_row_before_window(db_session, ad
     assert len(points) == days
     total_runs = sum(p["runs"] for p in points)
     assert total_runs == 1
+
+
+def test_reset_cutoff_is_utc_not_session_timezone_in_by_model_and_recent(db_session, admin_client):
+    # Same failure mode as the summary test above, applied to ticket #127's
+    # two undated reports: a naive cutoff would be interpreted in the
+    # session's timezone and could let a pre-reset row slip back in (or
+    # drop a post-reset one), depending on which side of midnight the
+    # offset lands on.
+    db_session.execute(text("SET TIME ZONE 'America/New_York'"))
+
+    now = datetime.now(timezone.utc)
+    db_session.add(_log("before-reset", now, cost_usd=5.0))
+    db_session.commit()
+
+    db_session.add(UsageReset(effective_at=now + timedelta(seconds=1), reset_by="admin@example.com"))
+    db_session.commit()
+
+    db_session.add(_log("after-reset", now + timedelta(seconds=2), cost_usd=2.0))
+    db_session.commit()
+
+    by_model = admin_client.get("/api/usage/by-model").json()
+    assert len(by_model) == 1
+    assert by_model[0]["cost_usd"] == 2.0
+
+    recent = admin_client.get("/api/usage/recent").json()
+    assert len(recent) == 1
+    assert recent[0]["run_id"] == "after-reset"
