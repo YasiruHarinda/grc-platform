@@ -23,6 +23,7 @@ import FrameworkFormDialog, { type Framework } from "../components/FrameworkForm
 import ControlFormDialog, { type Control } from "../components/ControlFormDialog";
 import ImportControlsDialog from "../components/ImportControlsDialog";
 import { computeDeleteImpact } from "../utils/computeDeleteImpact";
+import { resolveHoverText } from "../utils/resolveHoverText";
 
 // Same minimal shapes ProductPicker reads — kept structural so this page's
 // queries satisfy computeDeleteImpact without a cast. Framework and Control
@@ -153,6 +154,19 @@ export default function Catalogue() {
   // per drag and only the crossing of zero needs to trigger a render.
   const controlsDragDepthRef = useRef(0);
   const [controlsDragActive, setControlsDragActive] = useState(false);
+
+  // The hover box content for a Control row in the Controls column, same
+  // shape as the one ControlPicker builds for its own rows: the reference
+  // and the resolved hover text on their own lines, so nothing is invented
+  // around the record's own values.
+  const controlHoverContent = (control: Control) => (
+    <Stack spacing={0.25} sx={{ py: 0.25 }}>
+      <Typography variant="caption" fontWeight={600}>
+        {control.control_ref}
+      </Typography>
+      <Typography variant="caption">{resolveHoverText(control)}</Typography>
+    </Stack>
+  );
 
   const {
     data: products = [],
@@ -466,13 +480,20 @@ export default function Catalogue() {
                       "&.Mui-selected:hover": { bgcolor: "rgba(250,123,63,0.12)" },
                     }}
                   >
-                    <ListItemText
-                      primary={p.name}
-                      secondary={p.description || undefined}
-                      primaryTypographyProps={{ fontWeight: selected ? 600 : 400, noWrap: true }}
-                      secondaryTypographyProps={{ noWrap: true }}
-                      sx={{ mr: 1, minWidth: 0 }}
-                    />
+                    {/* Tooltip wraps this text block only, never the
+                        ListItemButton itself — matching the Control, Product
+                        and Framework pickers, whose own rows carry a
+                        recorded mouse event fragility that wrapping the row
+                        can reintroduce. */}
+                    <Tooltip title={resolveHoverText(p)} placement="bottom-start">
+                      <ListItemText
+                        primary={p.name}
+                        secondary={p.description || undefined}
+                        primaryTypographyProps={{ fontWeight: selected ? 600 : 400, noWrap: true }}
+                        secondaryTypographyProps={{ noWrap: true }}
+                        sx={{ mr: 1, minWidth: 0 }}
+                      />
+                    </Tooltip>
                     <Stack
                       direction="row"
                       spacing={0.5}
@@ -566,13 +587,18 @@ export default function Catalogue() {
                       "&.Mui-selected:hover": { bgcolor: "rgba(250,123,63,0.12)" },
                     }}
                   >
-                    <ListItemText
-                      primary={f.name}
-                      secondary={f.description || undefined}
-                      primaryTypographyProps={{ fontWeight: selected ? 600 : 400, noWrap: true }}
-                      secondaryTypographyProps={{ noWrap: true }}
-                      sx={{ mr: 1, minWidth: 0 }}
-                    />
+                    {/* Tooltip wraps this text block only, never the
+                        ListItemButton itself — see the same note on the
+                        Products column above. */}
+                    <Tooltip title={resolveHoverText(f)} placement="bottom-start">
+                      <ListItemText
+                        primary={f.name}
+                        secondary={f.description || undefined}
+                        primaryTypographyProps={{ fontWeight: selected ? 600 : 400, noWrap: true }}
+                        secondaryTypographyProps={{ noWrap: true }}
+                        sx={{ mr: 1, minWidth: 0 }}
+                      />
+                    </Tooltip>
                     <Stack
                       direction="row"
                       spacing={0.5}
@@ -685,29 +711,34 @@ export default function Catalogue() {
                       "&.Mui-selected:hover": { bgcolor: "rgba(250,123,63,0.12)" },
                     }}
                   >
-                    <ListItemText
-                      primary={
-                        <Stack direction="row" alignItems="center" spacing={1}>
-                          <Chip
-                            label={c.control_ref}
-                            size="small"
-                            variant="outlined"
-                            sx={{ fontWeight: 600, fontFamily: "monospace", height: 22 }}
-                          />
-                          <Typography
-                            variant="body2"
-                            fontWeight={selected ? 600 : 400}
-                            noWrap
-                            sx={{ overflow: "hidden", textOverflow: "ellipsis" }}
-                          >
-                            {c.title}
-                          </Typography>
-                        </Stack>
-                      }
-                      secondary={c.description || undefined}
-                      secondaryTypographyProps={{ noWrap: true }}
-                      sx={{ mr: 1, minWidth: 0 }}
-                    />
+                    {/* Tooltip wraps this text block only, never the
+                        ListItemButton itself — see the same note on the
+                        Products column above. */}
+                    <Tooltip title={controlHoverContent(c)} placement="bottom-start">
+                      <ListItemText
+                        primary={
+                          <Stack direction="row" alignItems="center" spacing={1}>
+                            <Chip
+                              label={c.control_ref}
+                              size="small"
+                              variant="outlined"
+                              sx={{ fontWeight: 600, fontFamily: "monospace", height: 22 }}
+                            />
+                            <Typography
+                              variant="body2"
+                              fontWeight={selected ? 600 : 400}
+                              noWrap
+                              sx={{ overflow: "hidden", textOverflow: "ellipsis" }}
+                            >
+                              {c.title}
+                            </Typography>
+                          </Stack>
+                        }
+                        secondary={c.description || undefined}
+                        secondaryTypographyProps={{ noWrap: true }}
+                        sx={{ mr: 1, minWidth: 0 }}
+                      />
+                    </Tooltip>
                     <Stack
                       direction="row"
                       spacing={0.5}
