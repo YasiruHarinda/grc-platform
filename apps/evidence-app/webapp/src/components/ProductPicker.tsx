@@ -15,6 +15,7 @@ import { productsApi, frameworksApi, controlsApi, evidenceApi, submissionsApi, a
 import ConfirmDeleteDialog from "./ConfirmDeleteDialog";
 import ProductFormDialog, { type Product } from "./ProductFormDialog";
 import { computeDeleteImpact } from "../utils/computeDeleteImpact";
+import { resolveHoverText } from "../utils/resolveHoverText";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 
 type Framework = { id: number; product_id: number };
@@ -158,9 +159,14 @@ export default function ProductPicker({
                 spacing={1}
                 sx={{ width: "100%" }}
               >
-                <Box sx={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {p.name}
-                </Box>
+                {/* Tooltip wraps this text block only, never the MenuItem
+                    itself — Select reads the properties of its own menu
+                    children directly, so wrapping a row can break selection. */}
+                <Tooltip title={resolveHoverText(p)} placement="bottom-start">
+                  <Box sx={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {p.name}
+                  </Box>
+                </Tooltip>
                 {isAdmin && (
                   <Tooltip title="Edit">
                     <IconButton

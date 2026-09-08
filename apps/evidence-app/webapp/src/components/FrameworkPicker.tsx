@@ -15,6 +15,7 @@ import { frameworksApi, controlsApi, evidenceApi, submissionsApi, agentApi } fro
 import ConfirmDeleteDialog from "./ConfirmDeleteDialog";
 import FrameworkFormDialog, { type Framework } from "./FrameworkFormDialog";
 import { computeDeleteImpact } from "../utils/computeDeleteImpact";
+import { resolveHoverText } from "../utils/resolveHoverText";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 
 type Control = { id: number; framework_id: number };
@@ -144,9 +145,14 @@ export default function FrameworkPicker({
           {frameworks.map((f) => (
             <MenuItem key={f.id} value={f.id} sx={{ pr: 1 }}>
               <Stack direction="row" alignItems="center" spacing={1} sx={{ width: "100%" }}>
-                <Box sx={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {f.name}
-                </Box>
+                {/* Tooltip wraps this text block only, never the MenuItem
+                    itself — Select reads the properties of its own menu
+                    children directly, so wrapping a row can break selection. */}
+                <Tooltip title={resolveHoverText(f)} placement="bottom-start">
+                  <Box sx={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {f.name}
+                  </Box>
+                </Tooltip>
                 {isAdmin && (
                   <Tooltip title="Edit">
                     <IconButton
