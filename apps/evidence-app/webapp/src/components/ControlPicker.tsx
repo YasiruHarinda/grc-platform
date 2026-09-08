@@ -17,7 +17,7 @@ import Tooltip from "@mui/material/Tooltip";
 import { PlusIcon, PenToSquareIcon, TrashIcon } from "@oxygen-ui/react-icons";
 import { controlsApi, evidenceApi, submissionsApi, agentApi } from "../api/client";
 import ConfirmDeleteDialog from "./ConfirmDeleteDialog";
-import { timeAgo } from "../utils/timeAgo";
+import { computeDeleteImpact } from "../utils/computeDeleteImpact";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 
 type Control = {
@@ -101,30 +101,6 @@ export default function ControlPicker({
     enabled: !!deleteTarget,
   });
 
-  const cascadeImpact = (ctrlId: number) => {
-    const evIds = allEvidence.filter((e) => e.control_id === ctrlId).map((e) => e.id);
-    const subs = allSubmissions.filter((s) => evIds.includes(s.evidence_id));
-    const approvedCount = subs.filter((s) => s.status === "approved").length;
-    return [
-      { label: "evidence records", count: evIds.length },
-      { label: "submission records", count: subs.length },
-      { label: "approved submissions", count: approvedCount },
-    ];
-  };
-
-  // status = "running" isn't trustworthy on its own — a crashed Runner leaves
-  // that row forever, and there's no heartbeat column. Showing how long ago
-  // it started lets the Admin judge that instead of the system claiming it.
-  const activeRunWarnings = (ctrlId: number): string[] => {
-    const activeRuns = allTasks.filter((t) => t.status === "running" && t.control_id === ctrlId);
-    if (activeRuns.length === 0) return [];
-    return [
-      `${activeRuns.length} agent run${activeRuns.length === 1 ? "" : "s"} marked as in progress against this control.`,
-      ...activeRuns.map((t) => `Started ${timeAgo(t.started_at)} by ${t.user_email}.`),
-      "If it is still running, deleting now will leave its evidence unlinked.",
-    ];
-  };
-
   const deleteMutation = useMutation({
     mutationFn: (id: number) => controlsApi.delete(id),
     onSuccess: () => {
@@ -142,6 +118,20 @@ export default function ControlPicker({
 
   const selected: Control | null = controls.find((c) => c.id === controlId) || null;
   const effectivelyDisabled = disabled || !frameworkId;
+
+  // Computed once per render and reused for both the impact list and the
+  // warnings passed to the confirm dialog below.
+  const deleteImpact = deleteTarget
+    ? computeDeleteImpact({
+        level: "control",
+        targetId: deleteTarget.id,
+        frameworks: [],
+        controls: [],
+        evidence: allEvidence,
+        submissions: allSubmissions,
+        tasks: allTasks,
+      })
+    : { impact: [], warnings: [] };
 
   return (
     <>
@@ -342,8 +332,8 @@ export default function ControlPicker({
         entityName={
           deleteTarget ? `${deleteTarget.control_ref} — ${deleteTarget.title}` : ""
         }
-        impact={deleteTarget ? cascadeImpact(deleteTarget.id) : []}
-        warnings={deleteTarget ? activeRunWarnings(deleteTarget.id) : []}
+        impact={deleteImpact.impact}
+        warnings={deleteImpact.warnings}
         error={deleteError}
       />
     </>

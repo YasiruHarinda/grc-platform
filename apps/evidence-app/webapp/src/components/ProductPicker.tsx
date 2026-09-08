@@ -20,7 +20,7 @@ import Tooltip from "@mui/material/Tooltip";
 import { PlusIcon, PenToSquareIcon, TrashIcon } from "@oxygen-ui/react-icons";
 import { productsApi, frameworksApi, controlsApi, evidenceApi, submissionsApi, agentApi } from "../api/client";
 import ConfirmDeleteDialog from "./ConfirmDeleteDialog";
-import { timeAgo } from "../utils/timeAgo";
+import { computeDeleteImpact } from "../utils/computeDeleteImpact";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 
 type Product = { id: number; name: string; description?: string | null };
@@ -105,38 +105,6 @@ export default function ProductPicker({
     enabled: !!deleteTarget,
   });
 
-  // ctrlIds covers every control under every framework of this product (all
-  // descendants, not just direct children) — reused below for both the
-  // cascade counts and the running-task warning, so the tree is only walked
-  // once.
-  const cascadeImpact = (fwIds: number[], ctrlIds: number[]) => {
-    const evIds = allEvidence.filter((e) => ctrlIds.includes(e.control_id)).map((e) => e.id);
-    const subs = allSubmissions.filter((s) => evIds.includes(s.evidence_id));
-    const approvedCount = subs.filter((s) => s.status === "approved").length;
-    return [
-      { label: "frameworks", count: fwIds.length },
-      { label: "controls", count: ctrlIds.length },
-      { label: "evidence records", count: evIds.length },
-      { label: "submission records", count: subs.length },
-      { label: "approved submissions", count: approvedCount },
-    ];
-  };
-
-  // status = "running" isn't trustworthy on its own — a crashed Runner leaves
-  // that row forever, and there's no heartbeat column. Showing how long ago
-  // it started lets the Admin judge that instead of the system claiming it.
-  const activeRunWarnings = (ctrlIds: number[]): string[] => {
-    const activeRuns = allTasks.filter(
-      (t) => t.status === "running" && t.control_id !== null && ctrlIds.includes(t.control_id)
-    );
-    if (activeRuns.length === 0) return [];
-    return [
-      `${activeRuns.length} agent run${activeRuns.length === 1 ? "" : "s"} marked as in progress against controls in this product.`,
-      ...activeRuns.map((t) => `Started ${timeAgo(t.started_at)} by ${t.user_email}.`),
-      "If it is still running, deleting now will leave its evidence unlinked.",
-    ];
-  };
-
   const deleteMutation = useMutation({
     mutationFn: (id: number) => productsApi.delete(id),
     onSuccess: () => {
@@ -154,12 +122,19 @@ export default function ProductPicker({
     },
   });
 
-  // Computed once per render and reused for both the cascade counts and the
-  // running-task warning below.
-  const deleteFwIds = deleteTarget
-    ? allFrameworks.filter((f) => f.product_id === deleteTarget.id).map((f) => f.id)
-    : [];
-  const deleteCtrlIds = allControls.filter((c) => deleteFwIds.includes(c.framework_id)).map((c) => c.id);
+  // Computed once per render and reused for both the impact list and the
+  // warnings passed to the confirm dialog below.
+  const deleteImpact = deleteTarget
+    ? computeDeleteImpact({
+        level: "product",
+        targetId: deleteTarget.id,
+        frameworks: allFrameworks,
+        controls: allControls,
+        evidence: allEvidence,
+        submissions: allSubmissions,
+        tasks: allTasks,
+      })
+    : { impact: [], warnings: [] };
 
   return (
     <>
@@ -282,8 +257,8 @@ export default function ProductPicker({
         }
         entityType="product"
         entityName={deleteTarget?.name ?? ""}
-        impact={deleteTarget ? cascadeImpact(deleteFwIds, deleteCtrlIds) : []}
-        warnings={deleteTarget ? activeRunWarnings(deleteCtrlIds) : []}
+        impact={deleteImpact.impact}
+        warnings={deleteImpact.warnings}
         error={deleteError}
       />
     </>

@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
+    "test": "vitest run",
     "start": "node index.js"
   },
   "dependencies": {
@@ -34,6 +35,7 @@
     "globals": "^17.6.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
-    "vite": "^5.4.10"
+    "vite": "^5.4.10",
+    "vitest": "3.2.4"
   }
 }
