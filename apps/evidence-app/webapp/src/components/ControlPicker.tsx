@@ -13,6 +13,7 @@ import { controlsApi, evidenceApi, submissionsApi, agentApi } from "../api/clien
 import ConfirmDeleteDialog from "./ConfirmDeleteDialog";
 import ControlFormDialog, { type Control } from "./ControlFormDialog";
 import { computeDeleteImpact } from "../utils/computeDeleteImpact";
+import { resolveHoverText } from "../utils/resolveHoverText";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 
 type Evidence = { id: number; control_id: number };
@@ -106,6 +107,19 @@ export default function ControlPicker({
   const selected: Control | null = controls.find((c) => c.id === controlId) || null;
   const effectivelyDisabled = disabled || !frameworkId;
 
+  // The hover box content for a Control, shared by the option rows below and
+  // by the field itself once a Control is selected. Two lines, not one
+  // joined with a separator: the spec (#129) is explicit that no wording is
+  // invented around the record's own values.
+  const hoverContent = (control: Control) => (
+    <Stack spacing={0.25} sx={{ py: 0.25 }}>
+      <Typography variant="caption" fontWeight={600}>
+        {control.control_ref}
+      </Typography>
+      <Typography variant="caption">{resolveHoverText(control)}</Typography>
+    </Stack>
+  );
+
   // Computed once per render and reused for both the impact list and the
   // warnings passed to the confirm dialog below.
   const deleteImpact = deleteTarget
@@ -186,35 +200,40 @@ export default function ControlPicker({
           return (
             <li {...props} key={option.id}>
               <Stack direction="row" alignItems="center" spacing={1} sx={{ width: "100%", py: 0.4 }}>
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Stack direction="row" alignItems="center" spacing={1}>
-                    <Chip
-                      label={option.control_ref}
-                      size="small"
-                      variant="outlined"
-                      sx={{ fontWeight: 600, fontFamily: "monospace", height: 22 }}
-                    />
-                    <Typography variant="body2" fontWeight={500} sx={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {option.title}
-                    </Typography>
-                  </Stack>
-                  {option.description && (
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{
-                        display: "block",
-                        mt: 0.25,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        maxWidth: 460,
-                      }}
-                    >
-                      {option.description}
-                    </Typography>
-                  )}
-                </Box>
+                {/* Tooltip wraps this text block only, never the <li> row
+                    itself — see the comment on the Edit and Delete buttons
+                    below for why the row can't take a handler like this. */}
+                <Tooltip title={hoverContent(option as Control)} placement="bottom-start">
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Stack direction="row" alignItems="center" spacing={1}>
+                      <Chip
+                        label={option.control_ref}
+                        size="small"
+                        variant="outlined"
+                        sx={{ fontWeight: 600, fontFamily: "monospace", height: 22 }}
+                      />
+                      <Typography variant="body2" fontWeight={500} sx={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {option.title}
+                      </Typography>
+                    </Stack>
+                    {option.description && (
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{
+                          display: "block",
+                          mt: 0.25,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          maxWidth: 460,
+                        }}
+                      >
+                        {option.description}
+                      </Typography>
+                    )}
+                  </Box>
+                </Tooltip>
                 {/* No onMouseDown handler on these two buttons, on purpose.
                     Autocomplete's own listbox needs that event so it can call
                     preventDefault and stop the search box losing focus. Swallow
@@ -261,27 +280,33 @@ export default function ControlPicker({
             </li>
           );
         }}
-        renderInput={(params) => (
-          <TextField
-            {...params}
-            label={label}
-            required={required}
-            placeholder={
-              effectivelyDisabled
-                ? "Pick a framework first"
-                : isAdmin
-                  ? "Type to search or create new..."
-                  : "Search controls..."
-            }
-            helperText={
-              helperText ??
-              (!effectivelyDisabled &&
-                (isAdmin
-                  ? "Don't see your control? Just type it. You can create it on the fly."
-                  : "Search by control reference or title."))
-            }
-          />
-        )}
+        renderInput={(params) => {
+          const field = (
+            <TextField
+              {...params}
+              label={label}
+              required={required}
+              placeholder={
+                effectivelyDisabled
+                  ? "Pick a framework first"
+                  : isAdmin
+                    ? "Type to search or create new..."
+                    : "Search controls..."
+              }
+              helperText={
+                helperText ??
+                (!effectivelyDisabled &&
+                  (isAdmin
+                    ? "Don't see your control? Just type it. You can create it on the fly."
+                    : "Search by control reference or title."))
+              }
+            />
+          );
+          // Only wrapped once a Control is picked, so the closed field can
+          // still be read on hover. This isn't a listbox row, so wrapping it
+          // doesn't risk the mouse down problem noted above.
+          return selected ? <Tooltip title={hoverContent(selected)}>{field}</Tooltip> : field;
+        }}
         fullWidth
       />
 
