@@ -8,7 +8,7 @@ from sqlalchemy import text
 from alembic import context
 
 from app.database import Base
-from app.models import product, framework, control, evidence, evidence_file, submission, usage_log, agent_task  # noqa: F401
+from app.models import product, framework, control, evidence, evidence_file, submission, usage_log, agent_task, usage_reset  # noqa: F401
 from app.config import settings
 
 config = context.config

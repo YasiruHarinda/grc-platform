@@ -106,6 +106,7 @@ from app.models import (  # noqa: F401
     product,
     submission,
     usage_log,
+    usage_reset,
 )
 
 
