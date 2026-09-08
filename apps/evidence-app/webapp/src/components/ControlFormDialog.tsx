@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { isAxiosError } from "axios";
 import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
@@ -79,8 +80,9 @@ export default function ControlFormDialog({
       queryClient.invalidateQueries({ queryKey: ["controls"] });
       onSaved(newControl);
     },
-    onError: (err: any) => {
-      setError(err?.response?.data?.detail || `Failed to ${mode} control. Try again.`);
+    onError: (err: unknown) => {
+      const detail = isAxiosError(err) ? (err.response?.data as { detail?: string } | undefined)?.detail : undefined;
+      setError(detail || `Failed to ${mode} control. Try again.`);
     },
   });
 
