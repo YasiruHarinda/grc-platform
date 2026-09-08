@@ -107,6 +107,19 @@ function PickParentFirst({ text }: { text: string }) {
   );
 }
 
+/** Each column's rows scroll inside the column rather than taking the page
+ * with them. An imported Framework can hold a hundred Controls, and scrolling
+ * the page carries the column heading and its Add and Import buttons off the
+ * top, which is the one place an admin needs to reach while looking at a long
+ * list. Capped rather than fixed, so a column holding two rows still hugs its
+ * content instead of leaving a tall empty box, and floored so a short laptop
+ * screen still shows a usable amount. Off below the medium breakpoint, where
+ * the columns stack and three small scrollers read worse than one page. */
+const columnListSx = {
+  maxHeight: { xs: "none", md: "max(240px, calc(100vh - 420px))" },
+  overflowY: { xs: "visible", md: "auto" },
+} as const;
+
 export default function Catalogue() {
   const queryClient = useQueryClient();
   const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
@@ -432,7 +445,7 @@ export default function Catalogue() {
               No products yet. Add one to get started.
             </Typography>
           ) : (
-            <List disablePadding>
+            <List disablePadding sx={columnListSx}>
               {products.map((p) => {
                 const selected = selectedProductId === p.id;
                 return (
@@ -532,7 +545,7 @@ export default function Catalogue() {
               No frameworks under this product yet. Add one to get started.
             </Typography>
           ) : (
-            <List disablePadding>
+            <List disablePadding sx={columnListSx}>
               {frameworks.map((f) => {
                 const selected = selectedFrameworkId === f.id;
                 return (
@@ -657,7 +670,7 @@ export default function Catalogue() {
               No controls under this framework yet. Add one to get started.
             </Typography>
           ) : (
-            <List disablePadding>
+            <List disablePadding sx={columnListSx}>
               {frameworkControls.map((c) => {
                 const selected = selectedControlId === c.id;
                 return (
