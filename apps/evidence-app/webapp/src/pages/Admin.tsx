@@ -14,19 +14,22 @@ import Tooltip from "@mui/material/Tooltip";
 import Button from "@mui/material/Button";
 import Alert from "@mui/material/Alert";
 import CircularProgress from "@mui/material/CircularProgress";
+import Chip from "@mui/material/Chip";
 import { PlusIcon, PenToSquareIcon, TrashIcon } from "@oxygen-ui/react-icons";
 import { productsApi, frameworksApi, controlsApi, evidenceApi, submissionsApi, agentApi } from "../api/client";
 import ConfirmDeleteDialog from "../components/ConfirmDeleteDialog";
 import ProductFormDialog, { type Product } from "../components/ProductFormDialog";
 import FrameworkFormDialog, { type Framework } from "../components/FrameworkFormDialog";
+import ControlFormDialog, { type Control } from "../components/ControlFormDialog";
 import { computeDeleteImpact } from "../utils/computeDeleteImpact";
 
 // Same minimal shapes ProductPicker reads — kept structural so this page's
-// queries satisfy computeDeleteImpact without a cast. Framework itself comes
-// from FrameworkFormDialog now (it carries name and description too, which
-// this page's Frameworks column needs to render rows); its extra fields
-// don't stop it satisfying the narrower shape computeDeleteImpact expects.
-type Control = { id: number; framework_id: number };
+// queries satisfy computeDeleteImpact without a cast. Framework and Control
+// themselves come from FrameworkFormDialog and ControlFormDialog now (they
+// carry name/description, or control_ref/title/description, which the
+// Frameworks and Controls columns need to render rows); the extra fields
+// don't stop either one satisfying the narrower shapes computeDeleteImpact
+// expects.
 type Evidence = { id: number; control_id: number };
 type Submission = { id: number; evidence_id: number; status: string };
 type AgentTask = {
@@ -70,9 +73,8 @@ function ColumnHeader({
 }
 
 /** The "pick a parent first" line a column shows when its own parent isn't
- * selected yet. The Frameworks column uses it only until a Product is
- * picked (see #118); the Controls column still shows it unconditionally,
- * since selecting a Framework doesn't fill it in until a later ticket. */
+ * selected yet: the Frameworks column until a Product is picked, the
+ * Controls column until a Framework is. */
 function PickParentFirst({ text }: { text: string }) {
   return (
     <Typography variant="body2" color="text.secondary" sx={{ textAlign: "center", py: 4 }}>
@@ -94,6 +96,12 @@ export default function Admin() {
   const [editFrameworkTarget, setEditFrameworkTarget] = useState<Framework | null>(null);
   const [deleteFrameworkTarget, setDeleteFrameworkTarget] = useState<Framework | null>(null);
   const [deleteFrameworkError, setDeleteFrameworkError] = useState<string | null>(null);
+
+  const [selectedControlId, setSelectedControlId] = useState<number | null>(null);
+  const [createControlOpen, setCreateControlOpen] = useState(false);
+  const [editControlTarget, setEditControlTarget] = useState<Control | null>(null);
+  const [deleteControlTarget, setDeleteControlTarget] = useState<Control | null>(null);
+  const [deleteControlError, setDeleteControlError] = useState<string | null>(null);
 
   const {
     data: products = [],
@@ -117,6 +125,21 @@ export default function Admin() {
     enabled: selectedProductId !== null,
   });
 
+  // The Controls column itself: only the selected framework's rows, kept
+  // stale the moment a different framework is picked because the framework
+  // id is part of the key — same convention ControlPicker uses for its own
+  // filtered query.
+  const {
+    data: frameworkControls = [],
+    isLoading: isFrameworkControlsLoading,
+    isError: isFrameworkControlsError,
+    refetch: refetchFrameworkControls,
+  } = useQuery<Control[]>({
+    queryKey: ["controls", selectedFrameworkId ?? undefined],
+    queryFn: () => controlsApi.list(selectedFrameworkId ?? undefined),
+    enabled: selectedFrameworkId !== null,
+  });
+
   // Loaded only while a delete is being considered, same as ProductPicker
   // and FrameworkPicker — so the cascade counts don't cost every page load,
   // only the moment an Admin actually considers deleting something. These
@@ -130,11 +153,18 @@ export default function Admin() {
     queryFn: () => frameworksApi.list(),
     enabled: !!deleteTarget,
   });
-  const anyDeleteTarget = !!deleteTarget || !!deleteFrameworkTarget;
+  const anyDeleteTarget = !!deleteTarget || !!deleteFrameworkTarget || !!deleteControlTarget;
+  // A Control-level delete's impact never rolls up through the Frameworks
+  // or Controls lists — computeDeleteImpact({level: "control", ...}) reads
+  // only evidence, submissions and tasks — so this unfiltered controls
+  // fetch stays gated by product and framework deletes only, same as
+  // allFrameworks above and matching what ControlPicker's own delete flow
+  // fetches for itself.
+  const productOrFrameworkDeleteTarget = !!deleteTarget || !!deleteFrameworkTarget;
   const { data: allControls = [], isLoading: isControlsLoading } = useQuery<Control[]>({
     queryKey: ["controls"],
     queryFn: () => controlsApi.list(),
-    enabled: anyDeleteTarget,
+    enabled: productOrFrameworkDeleteTarget,
   });
   const { data: allEvidence = [], isLoading: isEvidenceLoading } = useQuery<Evidence[]>({
     queryKey: ["evidence"],
@@ -165,12 +195,13 @@ export default function Admin() {
       queryClient.invalidateQueries({ queryKey: ["submissions"] });
       // Clear the selection if the deleted product was the selected one, so
       // the columns to the right stop implying they belong to something
-      // that no longer exists. The Framework selection goes with it, since
-      // a Framework's Controls column would otherwise still point at a
-      // Framework whose Product just disappeared.
+      // that no longer exists. The Framework and Control selections go
+      // with it, since both would otherwise still point at rows under a
+      // Product that just disappeared.
       if (deleteTarget && selectedProductId === deleteTarget.id) {
         setSelectedProductId(null);
         setSelectedFrameworkId(null);
+        setSelectedControlId(null);
       }
       setDeleteTarget(null);
       setDeleteError(null);
@@ -188,16 +219,34 @@ export default function Admin() {
       queryClient.invalidateQueries({ queryKey: ["controls"] });
       queryClient.invalidateQueries({ queryKey: ["evidence"] });
       queryClient.invalidateQueries({ queryKey: ["submissions"] });
-      // Clears the Controls column's selection state too, once that column
-      // has one — see #118. Today it's static, so there's nothing further
-      // to reset.
-      if (deleteFrameworkTarget && selectedFrameworkId === deleteFrameworkTarget.id) setSelectedFrameworkId(null);
+      // Clears the Controls column's selection too — a Control under a
+      // deleted Framework can't stay marked as selected.
+      if (deleteFrameworkTarget && selectedFrameworkId === deleteFrameworkTarget.id) {
+        setSelectedFrameworkId(null);
+        setSelectedControlId(null);
+      }
       setDeleteFrameworkTarget(null);
       setDeleteFrameworkError(null);
     },
     onError: (err: unknown) => {
       const detail = isAxiosError(err) ? (err.response?.data as { detail?: string } | undefined)?.detail : undefined;
       setDeleteFrameworkError(detail || "Failed to delete framework.");
+    },
+  });
+
+  const deleteControlMutation = useMutation({
+    mutationFn: (id: number) => controlsApi.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["controls"] });
+      queryClient.invalidateQueries({ queryKey: ["evidence"] });
+      queryClient.invalidateQueries({ queryKey: ["submissions"] });
+      if (deleteControlTarget && selectedControlId === deleteControlTarget.id) setSelectedControlId(null);
+      setDeleteControlTarget(null);
+      setDeleteControlError(null);
+    },
+    onError: (err: unknown) => {
+      const detail = isAxiosError(err) ? (err.response?.data as { detail?: string } | undefined)?.detail : undefined;
+      setDeleteControlError(detail || "Failed to delete control.");
     },
   });
 
@@ -224,6 +273,22 @@ export default function Admin() {
         targetId: deleteFrameworkTarget.id,
         frameworks: [],
         controls: allControls,
+        evidence: allEvidence,
+        submissions: allSubmissions,
+        tasks: allTasks,
+      })
+    : { impact: [], warnings: [] };
+
+  // Control-level impact needs neither the frameworks nor the controls
+  // list — computeDeleteImpact treats the target itself as the whole
+  // deletion path at this level — so both pass empty, same as
+  // ControlPicker's own delete flow.
+  const deleteControlImpact = deleteControlTarget
+    ? computeDeleteImpact({
+        level: "control",
+        targetId: deleteControlTarget.id,
+        frameworks: [],
+        controls: [],
         evidence: allEvidence,
         submissions: allSubmissions,
         tasks: allTasks,
@@ -333,7 +398,7 @@ export default function Admin() {
           )}
         </Paper>
 
-        {/* Frameworks — filled once a Product is selected; see #118. */}
+        {/* Frameworks — filled once a Product is selected. */}
         <Paper variant="outlined" sx={{ p: 3, flex: 1, minWidth: 0 }}>
           <ColumnHeader
             title="Frameworks"
@@ -372,7 +437,13 @@ export default function Admin() {
                   <ListItemButton
                     key={f.id}
                     selected={selected}
-                    onClick={() => setSelectedFrameworkId(f.id)}
+                    onClick={() => {
+                      // Switching frameworks clears the Control selection —
+                      // otherwise a Control from the previous framework
+                      // would stay marked as selected under the new one.
+                      setSelectedFrameworkId(f.id);
+                      setSelectedControlId(null);
+                    }}
                     sx={{
                       borderRadius: 1,
                       mb: 0.5,
@@ -427,12 +498,114 @@ export default function Admin() {
           )}
         </Paper>
 
-        {/* Controls — static in this ticket; a later ticket fills this in
-            once a Framework is selected. */}
+        {/* Controls — filled once a Framework is selected. */}
         <Paper variant="outlined" sx={{ p: 3, flex: 1, minWidth: 0 }}>
-          <ColumnHeader title="Controls" addDisabled addDisabledReason="Pick a framework first" />
+          <ColumnHeader
+            title="Controls"
+            onAdd={() => setCreateControlOpen(true)}
+            addDisabled={!selectedFrameworkId}
+            addDisabledReason="Pick a framework first"
+          />
           <Divider sx={{ mb: 2 }} />
-          <PickParentFirst text="Pick a framework first." />
+
+          {selectedFrameworkId === null ? (
+            <PickParentFirst text="Pick a framework first." />
+          ) : isFrameworkControlsError ? (
+            <Alert
+              severity="error"
+              action={
+                <Button color="inherit" size="small" onClick={() => refetchFrameworkControls()}>
+                  Retry
+                </Button>
+              }
+            >
+              Couldn't load controls.
+            </Alert>
+          ) : isFrameworkControlsLoading ? (
+            <Box display="flex" justifyContent="center" py={4}>
+              <CircularProgress size={28} />
+            </Box>
+          ) : frameworkControls.length === 0 ? (
+            <Typography variant="body2" color="text.secondary" sx={{ textAlign: "center", py: 4 }}>
+              No controls under this framework yet. Add one to get started.
+            </Typography>
+          ) : (
+            <List disablePadding>
+              {frameworkControls.map((c) => {
+                const selected = selectedControlId === c.id;
+                return (
+                  <ListItemButton
+                    key={c.id}
+                    selected={selected}
+                    onClick={() => setSelectedControlId(c.id)}
+                    sx={{
+                      borderRadius: 1,
+                      mb: 0.5,
+                      "&.Mui-selected": { bgcolor: "rgba(250,123,63,0.08)" },
+                      "&.Mui-selected:hover": { bgcolor: "rgba(250,123,63,0.12)" },
+                    }}
+                  >
+                    <ListItemText
+                      primary={
+                        <Stack direction="row" alignItems="center" spacing={1}>
+                          <Chip
+                            label={c.control_ref}
+                            size="small"
+                            variant="outlined"
+                            sx={{ fontWeight: 600, fontFamily: "monospace", height: 22 }}
+                          />
+                          <Typography
+                            variant="body2"
+                            fontWeight={selected ? 600 : 400}
+                            noWrap
+                            sx={{ overflow: "hidden", textOverflow: "ellipsis" }}
+                          >
+                            {c.title}
+                          </Typography>
+                        </Stack>
+                      }
+                      secondary={c.description || undefined}
+                      secondaryTypographyProps={{ noWrap: true }}
+                      sx={{ mr: 1, minWidth: 0 }}
+                    />
+                    <Stack
+                      direction="row"
+                      spacing={0.5}
+                      sx={{ flexShrink: 0 }}
+                      onMouseDown={(e) => e.stopPropagation()}
+                    >
+                      <Tooltip title="Edit">
+                        <IconButton
+                          size="small"
+                          aria-label="Edit control"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditControlTarget(c);
+                          }}
+                        >
+                          <PenToSquareIcon size={14} />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Delete">
+                        <IconButton
+                          size="small"
+                          color="error"
+                          aria-label="Delete control"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeleteControlError(null);
+                            setDeleteControlTarget(c);
+                          }}
+                        >
+                          <TrashIcon size={14} />
+                        </IconButton>
+                      </Tooltip>
+                    </Stack>
+                  </ListItemButton>
+                );
+              })}
+            </List>
+          )}
         </Paper>
       </Stack>
 
@@ -510,6 +683,42 @@ export default function Admin() {
         impact={deleteFrameworkImpact.impact}
         warnings={deleteFrameworkImpact.warnings}
         error={deleteFrameworkError}
+      />
+
+      <ControlFormDialog
+        open={createControlOpen}
+        mode="create"
+        frameworkId={selectedFrameworkId ?? 0}
+        onClose={() => setCreateControlOpen(false)}
+        onSaved={(c) => {
+          setCreateControlOpen(false);
+          setSelectedControlId(c.id);
+        }}
+      />
+
+      <ControlFormDialog
+        open={!!editControlTarget}
+        mode="edit"
+        frameworkId={editControlTarget?.framework_id ?? 0}
+        control={editControlTarget ?? undefined}
+        onClose={() => setEditControlTarget(null)}
+        onSaved={() => setEditControlTarget(null)}
+      />
+
+      <ConfirmDeleteDialog
+        open={!!deleteControlTarget}
+        onClose={() => {
+          setDeleteControlTarget(null);
+          setDeleteControlError(null);
+        }}
+        onConfirm={() => deleteControlTarget && deleteControlMutation.mutate(deleteControlTarget.id)}
+        isPending={deleteControlMutation.isPending}
+        impactLoading={isEvidenceLoading || isSubmissionsLoading || isTasksLoading}
+        entityType="control"
+        entityName={deleteControlTarget ? `${deleteControlTarget.control_ref} — ${deleteControlTarget.title}` : ""}
+        impact={deleteControlImpact.impact}
+        warnings={deleteControlImpact.warnings}
+        error={deleteControlError}
       />
     </Box>
   );
