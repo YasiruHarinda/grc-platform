@@ -293,7 +293,7 @@ export default function Cost() {
   };
 
   const resetMutation = useMutation({
-    mutationFn: usageApi.reset,
+    mutationFn: usageApi.resetCounting,
     onSuccess: () => {
       // The server has already recorded the new cutoff, so every report is
       // refetched from it rather than guessed at locally.

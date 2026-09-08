@@ -166,7 +166,7 @@ export const usageApi = {
   byModel: () => api.get("/usage/by-model").then((r) => r.data),
   recent: (limit = 20) =>
     api.get("/usage/recent", { params: { limit } }).then((r) => r.data),
-  reset: () => api.post("/usage/reset").then((r) => r.data as { counting_since: string }),
+  resetCounting: () => api.post("/usage/reset").then((r) => r.data as { counting_since: string }),
 };
 
 export const agentApi = {

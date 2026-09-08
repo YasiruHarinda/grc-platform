@@ -51,6 +51,15 @@ def _effective_since(cutoff: datetime | None, window_start: datetime | None) -> 
     return max(cutoff, window_start)
 
 
+def _since_reset_only(q, db: Session):
+    """Applies the reset cutoff to a report that has no window of its own.
+    The dated reports pair the cutoff with their own boundary through
+    `_effective_since`; these two have nothing to pair it with, so the
+    cutoff is the whole filter or there is no filter at all."""
+    cutoff = _latest_reset(db)
+    return q.filter(UsageLog.created_at >= cutoff) if cutoff is not None else q
+
+
 def _aggregate(db: Session, since: datetime | None = None) -> dict:
     q = db.query(
         func.count(UsageLog.id),
@@ -169,7 +178,6 @@ def usage_timeseries(
 
 @router.get("/by-model", response_model=list[UsageByModel])
 def usage_by_model(db: Session = Depends(get_db), user: User = Depends(require_admin)):
-    since = _effective_since(_latest_reset(db), None)
     q = db.query(
         UsageLog.model,
         func.count(UsageLog.id),
@@ -178,9 +186,12 @@ def usage_by_model(db: Session = Depends(get_db), user: User = Depends(require_a
         func.coalesce(func.sum(UsageLog.total_tokens), 0),
         func.coalesce(func.sum(UsageLog.cost_usd), 0.0),
     )
-    if since is not None:
-        q = q.filter(UsageLog.created_at >= since)
-    rows = q.group_by(UsageLog.model).order_by(func.sum(UsageLog.cost_usd).desc()).all()
+    rows = (
+        _since_reset_only(q, db)
+        .group_by(UsageLog.model)
+        .order_by(func.sum(UsageLog.cost_usd).desc())
+        .all()
+    )
     return [
         UsageByModel(
             model=r[0],
@@ -200,8 +211,10 @@ def recent_usage(
     db: Session = Depends(get_db),
     user: User = Depends(require_admin),
 ):
-    since = _effective_since(_latest_reset(db), None)
     q = db.query(UsageLog)
-    if since is not None:
-        q = q.filter(UsageLog.created_at >= since)
-    return q.order_by(UsageLog.created_at.desc()).limit(limit).all()
+    return (
+        _since_reset_only(q, db)
+        .order_by(UsageLog.created_at.desc())
+        .limit(limit)
+        .all()
+    )
