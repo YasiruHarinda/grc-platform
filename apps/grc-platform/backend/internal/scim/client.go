@@ -259,33 +259,53 @@ const (
 	attrAccountDisabled = wso2SchemaURN + ":accountDisabled"
 )
 
-// flexBool also accepts the string form: Asgardeo returns this attribute as
-// "true" in some responses and as a real boolean in others.
-type flexBool bool
-
-func (b *flexBool) UnmarshalJSON(data []byte) error {
+// parseAccountDisabled reads the accountDisabled attribute, which Asgardeo
+// returns as a real boolean in some responses and the string "true"/"false" in
+// others. ok is false for an absent, null, or malformed value: this advisory
+// attribute is not worth failing a whole page of results over, and a nil
+// AccountDisabled reads as Unknown, which the sync leaves alone.
+func parseAccountDisabled(raw json.RawMessage) (val bool, ok bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return false, false
+	}
 	var asBool bool
-	if err := json.Unmarshal(data, &asBool); err == nil {
-		*b = flexBool(asBool)
-		return nil
+	if err := json.Unmarshal(raw, &asBool); err == nil {
+		return asBool, true
 	}
 	var asString string
-	if err := json.Unmarshal(data, &asString); err != nil {
-		return fmt.Errorf("scim: accountDisabled is neither bool nor string: %s", string(data))
+	if err := json.Unmarshal(raw, &asString); err != nil {
+		return false, false
 	}
 	parsed, err := strconv.ParseBool(strings.TrimSpace(asString))
 	if err != nil {
-		return fmt.Errorf("scim: accountDisabled %q is not a boolean", asString)
+		return false, false
 	}
-	*b = flexBool(parsed)
-	return nil
+	return parsed, true
 }
 
 // Pointers so an absent attribute stays distinguishable from a present-and-false
 // one.
 type wso2Schema struct {
-	AccountState    *string   `json:"accountState"`
-	AccountDisabled *flexBool `json:"accountDisabled"`
+	AccountState    *string `json:"accountState"`
+	AccountDisabled *bool   `json:"accountDisabled"`
+}
+
+// UnmarshalJSON keeps a malformed accountDisabled from aborting the decode of
+// an entire search page: the pointer is set only for a value that parsed, and
+// left nil otherwise.
+func (w *wso2Schema) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		AccountState    *string         `json:"accountState"`
+		AccountDisabled json.RawMessage `json:"accountDisabled"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	w.AccountState = raw.AccountState
+	if val, ok := parseAccountDisabled(raw.AccountDisabled); ok {
+		w.AccountDisabled = &val
+	}
+	return nil
 }
 
 // The one accountState value meaning disabled; LOCKED and PENDING_* are not.
@@ -294,7 +314,7 @@ const accountStateDisabled = "DISABLED"
 // Either attribute saying disabled is enough; only a record carrying neither
 // is Unknown.
 func (w wso2Schema) state() AccountState {
-	disabled := w.AccountDisabled != nil && bool(*w.AccountDisabled)
+	disabled := w.AccountDisabled != nil && *w.AccountDisabled
 	stateDisabled := w.AccountState != nil && strings.EqualFold(strings.TrimSpace(*w.AccountState), accountStateDisabled)
 	switch {
 	case disabled || stateDisabled:
