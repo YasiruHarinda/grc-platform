@@ -194,7 +194,10 @@ export function formatBackendTimestampForDisplay(
  */
 export function parseDateOnly(s: string | null | undefined): Date | null {
   if (!s) return null;
-  const match = /^(\d{4})-(\d{2})-(\d{2})(?:[T ].*)?$/.exec(s);
+  // Optional time portion: "T"/space + HH:MM, then optional :SS(.fraction) and
+  // optional "Z"/"±HH:MM" offset. Arbitrary trailing text is rejected.
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/.exec(s);
   if (!match) return null;
   const [, y, m, d] = match.map(Number);
   const date = new Date(y, m - 1, d);
