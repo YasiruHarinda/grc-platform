@@ -194,16 +194,29 @@ func main() {
 	audithandler.RegisterRoutes(mux, auditDeps)
 	// Constructed regardless of SCHEDULER_ENABLED, like the two sweeps above: the
 	// manual trigger is how a deployment verifies the sync against real Asgardeo.
+	// The sync can only disable users it sees through SCIM — the bulk snapshot
+	// for internal users, a per-uuid lookup for external ones. With neither org
+	// configured it is inert, so leave it unwired: the manual endpoint answers
+	// 503 and no sweep is scheduled.
 	adminRepo := adminentity.NewRepository(entityCli)
-	directorySyncJob := buildDirectorySyncJob(adminRepo, userDeps.Users, dirSvc,
-		&auditDeps, &riskDeps, activityLog, cfg.Email.Enabled)
+	var triggerDirectorySync func() bool
+	var runDirectorySync func(context.Context) error
+	if scimClient != nil || scimExternalClient != nil {
+		directorySyncJob := buildDirectorySyncJob(adminRepo, userDeps.Users, dirSvc,
+			&auditDeps, &riskDeps, activityLog, cfg.Email.Enabled)
+		triggerDirectorySync = directorySyncJob.Trigger
+		runDirectorySync = directorySyncJob.RunOnce
+	} else {
+		slog.Warn("directory status sync not wired: no SCIM org configured; " +
+			"POST /api/v1/admin/directory-sync/run returns 503 and no sweep is scheduled")
+	}
 	adminhandler.RegisterRoutes(mux, adminhandler.Deps{
 		Admin:                adminRepo,
 		Users:                userDeps.Users,
 		Grants:               grantRepo,
 		Directory:            dirSvc,
 		ActivityLog:          activityLog,
-		TriggerDirectorySync: directorySyncJob.Trigger,
+		TriggerDirectorySync: triggerDirectorySync,
 	})
 
 	// Background sweeps, both fired daily at a fixed 08:00 UTC by one shared
@@ -221,13 +234,16 @@ func main() {
 	jobCtx, jobCancel := context.WithCancel(ctx)
 	defer jobCancel()
 	if cfg.SchedulerEnabled {
-		go scheduler.New(scheduler.SweepHourUTC,
-			scheduler.Sweep{Name: "overdue-risk-escalation", Run: escalationJob.RunOnce},
-			scheduler.Sweep{Name: "audit-due-date-reminders", Run: reminderJob.RunOnce},
+		sweeps := []scheduler.Sweep{
+			{Name: "overdue-risk-escalation", Run: escalationJob.RunOnce},
+			{Name: "audit-due-date-reminders", Run: reminderJob.RunOnce},
+		}
+		if runDirectorySync != nil {
 			// Several hours after the directory's own bulk refresh, so it reads
 			// today's snapshot rather than yesterday's.
-			scheduler.Sweep{Name: "directory-status-sync", Run: directorySyncJob.RunOnce},
-		).Run(jobCtx)
+			sweeps = append(sweeps, scheduler.Sweep{Name: "directory-status-sync", Run: runDirectorySync})
+		}
+		go scheduler.New(scheduler.SweepHourUTC, sweeps...).Run(jobCtx)
 	} else {
 		slog.Warn("background scheduler disabled (SCHEDULER_ENABLED=false); " +
 			"overdue-risk escalation, audit due-date reminders and the directory status sync " +
