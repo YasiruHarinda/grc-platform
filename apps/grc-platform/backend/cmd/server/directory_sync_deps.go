@@ -27,6 +27,8 @@ import (
 	riskhandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/handler"
 	riskjob "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/job"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/adminactivity"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
 
@@ -81,6 +83,11 @@ func buildDirectorySyncJob(
 		ResolveName: dirSvc.DescribeTyped,
 		Disable: func(ctx context.Context, u directorysync.User, name string) (bool, error) {
 			return directorysync.Disable(ctx, users, activityLog, u, name)
+		},
+		// GLOBAL MANAGE_USERS holders: one run must never disable all of them
+		// and leave the platform with nobody able to reactivate anyone.
+		ProtectedAdminIDs: func(ctx context.Context) ([]int, error) {
+			return grant.CandidateIDs(ctx, auditDeps.Grants, privilege.ManageUsers)
 		},
 		Hubs: []directorysync.Hub{
 			{

@@ -139,6 +139,10 @@ type Deps struct {
 	// EmailEnabled mirrors the platform-wide notification switch. Off means
 	// statuses are still written and no send is attempted.
 	EmailEnabled bool
+	// ProtectedAdminIDs returns the user ids that currently hold MANAGE_USERS.
+	// One run is never allowed to disable every one of them at once — see
+	// spareAdmins. nil disables that guard.
+	ProtectedAdminIDs func(ctx context.Context) ([]int, error)
 }
 
 // Job is the Directory Status Sync, shared by the scheduler and the manual
@@ -244,6 +248,12 @@ func (j *Job) runOnce(parent context.Context, overrideLimit bool) (runErr error)
 			"departed", len(departed), "limit", maxDeparturesPerRun)
 	}
 
+	departed = j.spareAdmins(ctx, departed, users, &c)
+	if len(departed) == 0 {
+		logSummary(ctx, c)
+		return nil
+	}
+
 	names := make(map[int]string, len(departed))
 	ids := make([]int, 0, len(departed))
 	for _, u := range departed {
@@ -305,6 +315,60 @@ func (j *Job) runOnce(parent context.Context, overrideLimit bool) (runErr error)
 
 	logSummary(ctx, c)
 	return nil
+}
+
+// spareAdmins refuses to let one run disable every remaining MANAGE_USERS
+// holder. The directory reporting all of them disabled at once is bad data, not
+// a fact: acting on it would leave nobody able to move any user back to Active
+// (Disabled is system-owned and cannot be cleared by hand without the
+// privilege). Those departures are dropped from the run and logged loudly; a
+// human moves them out of Active if the batch was genuine.
+func (j *Job) spareAdmins(ctx context.Context, departed, allUsers []User, c *counts) []User {
+	if j.deps.ProtectedAdminIDs == nil {
+		return departed
+	}
+	holderIDs, err := j.deps.ProtectedAdminIDs(ctx)
+	if err != nil {
+		c.errs++
+		slog.ErrorContext(ctx, "directory status sync: could not resolve MANAGE_USERS holders; last-admin guard inactive this run", "err", err)
+		return departed
+	}
+	status := make(map[int]string, len(allUsers))
+	for _, u := range allUsers {
+		status[u.ID] = u.Status
+	}
+	holders := make(map[int]bool, len(holderIDs))
+	for _, id := range holderIDs {
+		if s := status[id]; s == statusActive || s == statusInactive {
+			holders[id] = true
+		}
+	}
+	if len(holders) == 0 {
+		return departed
+	}
+	inRun := 0
+	for _, u := range departed {
+		if holders[u.ID] {
+			inRun++
+		}
+	}
+	if inRun < len(holders) {
+		// At least one holder is outside this run — the platform keeps an admin.
+		return departed
+	}
+	kept := make([]User, 0, len(departed))
+	skipped := 0
+	for _, u := range departed {
+		if holders[u.ID] {
+			skipped++
+			continue
+		}
+		kept = append(kept, u)
+	}
+	slog.ErrorContext(ctx, "directory status sync: every active MANAGE_USERS holder was reported disabled in one run — leaving them Active, nothing written or emailed for them",
+		"skippedAdmins", skipped)
+	c.internalSkipped += skipped
+	return kept
 }
 
 // resolveDeparted returns the users the directory now reports as disabled,
