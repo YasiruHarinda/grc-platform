@@ -52,6 +52,13 @@ const (
 	// How old the snapshot may be and still be trusted. The refresh runs daily
 	// and retries every 15 minutes, so older means many retries have failed.
 	snapshotMaxAge = 26 * time.Hour
+
+	// maxDeparturesPerRun caps how many users one run will disable. Real
+	// departures trickle in a few at a time; a run that finds more than this
+	// is almost certainly an upstream fault — a bad directory snapshot
+	// reporting everyone disabled — and is aborted whole, writing no status
+	// and sending no digest, for a human to check.
+	maxDeparturesPerRun = 10
 )
 
 // User is one platform user the sync checks.
@@ -216,6 +223,15 @@ func (j *Job) runOnce(parent context.Context) (runErr error) {
 		// is never ambiguous.
 		logSummary(ctx, c)
 		return nil
+	}
+	if len(departed) > maxDeparturesPerRun {
+		// Treat an implausible count as an upstream fault, not a fact: no
+		// status is written and no digest is sent this run.
+		slog.ErrorContext(ctx, "directory status sync: too many users reported disabled, aborting run",
+			"departed", len(departed), "limit", maxDeparturesPerRun)
+		logSummary(ctx, c)
+		return fmt.Errorf("directory status sync: %d users reported disabled exceeds the %d-per-run safety limit",
+			len(departed), maxDeparturesPerRun)
 	}
 
 	names := make(map[int]string, len(departed))
