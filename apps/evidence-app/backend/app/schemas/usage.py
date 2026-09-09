@@ -21,6 +21,15 @@ class UsageSummary(BaseModel):
     today_cost_usd: float
     today_runs: int
 
+    # The effective cutoff's `effective_at`, or absent if a reset has never
+    # been recorded. The web app's "Counting since" line reads straight off
+    # this rather than inferring a reset from the figures being zero.
+    counting_since: datetime | None = None
+
+
+class UsageResetResponse(BaseModel):
+    counting_since: datetime
+
 
 class UsageDayPoint(BaseModel):
     date: str

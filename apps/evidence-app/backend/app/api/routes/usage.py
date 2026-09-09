@@ -7,11 +7,13 @@ from sqlalchemy.orm import Session
 from app.auth import User
 from app.database import get_db
 from app.models.usage_log import UsageLog
+from app.models.usage_reset import UsageReset
 from app.rbac import require_admin
 from app.schemas.usage import (
     UsageByModel,
     UsageDayPoint,
     UsageLogRow,
+    UsageResetResponse,
     UsageSummary,
 )
 
@@ -20,6 +22,42 @@ router = APIRouter(prefix="/usage", tags=["Usage"])
 
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _latest_reset(db: Session) -> datetime | None:
+    """The effective cutoff: the most recent Usage Reset's `effective_at`,
+    or None if a reset has never been recorded. Resets are events, not a
+    mutable setting -- the most recent one wins, and the ones before it are
+    kept only for the attributable history."""
+    row = (
+        db.query(UsageReset.effective_at)
+        .order_by(UsageReset.effective_at.desc())
+        .limit(1)
+        .first()
+    )
+    return row[0] if row else None
+
+
+def _effective_since(cutoff: datetime | None, window_start: datetime | None) -> datetime | None:
+    """The later of a report window's own start and the reset cutoff, so a
+    window can never count anything the total above it has already
+    excluded. Either side may be absent: no cutoff falls back to the
+    window's own start, and a window with no start of its own (the "total"
+    figure) falls back to the cutoff."""
+    if cutoff is None:
+        return window_start
+    if window_start is None:
+        return cutoff
+    return max(cutoff, window_start)
+
+
+def _since_reset_only(q, db: Session):
+    """Applies the reset cutoff to a report that has no window of its own.
+    The dated reports pair the cutoff with their own boundary through
+    `_effective_since`; these two have nothing to pair it with, so the
+    cutoff is the whole filter or there is no filter at all."""
+    cutoff = _latest_reset(db)
+    return q.filter(UsageLog.created_at >= cutoff) if cutoff is not None else q
 
 
 def _aggregate(db: Session, since: datetime | None = None) -> dict:
@@ -48,11 +86,12 @@ def _aggregate(db: Session, since: datetime | None = None) -> dict:
 def usage_summary(db: Session = Depends(get_db), user: User = Depends(require_admin)):
     now = _now_utc()
     today_start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+    cutoff = _latest_reset(db)
 
-    total = _aggregate(db)
-    last_7 = _aggregate(db, since=now - timedelta(days=7))
-    last_30 = _aggregate(db, since=now - timedelta(days=30))
-    today = _aggregate(db, since=today_start)
+    total = _aggregate(db, since=_effective_since(cutoff, None))
+    last_7 = _aggregate(db, since=_effective_since(cutoff, now - timedelta(days=7)))
+    last_30 = _aggregate(db, since=_effective_since(cutoff, now - timedelta(days=30)))
+    today = _aggregate(db, since=_effective_since(cutoff, today_start))
 
     return UsageSummary(
         total_runs=total["runs"],
@@ -69,7 +108,19 @@ def usage_summary(db: Session = Depends(get_db), user: User = Depends(require_ad
         last_30_days_runs=last_30["runs"],
         today_cost_usd=round(today["cost_usd"], 6),
         today_runs=today["runs"],
+        counting_since=cutoff,
     )
+
+
+@router.post("/reset", response_model=UsageResetResponse)
+def reset_usage_counting(db: Session = Depends(get_db), user: User = Depends(require_admin)):
+    """Records a new Usage Reset at the current moment. Takes no body --
+    backdating or picking an arbitrary cutoff is deliberately not offered.
+    Nothing is deleted: this only adds a row that later reports filter by."""
+    effective_at = _now_utc()
+    db.add(UsageReset(effective_at=effective_at, reset_by=user.email))
+    db.commit()
+    return UsageResetResponse(counting_since=effective_at)
 
 
 @router.get("/timeseries", response_model=list[UsageDayPoint])
@@ -79,9 +130,12 @@ def usage_timeseries(
     user: User = Depends(require_admin),
 ):
     """One bucket per calendar day for the last ``days`` days.
-    Days with no runs are returned with zeros so the chart line stays continuous."""
+    Days with no runs are returned with zeros so the chart line stays continuous
+    -- and, after a reset, so do days that fall before the cutoff: the axis is
+    built from ``since`` regardless of the reset, only the query is tightened."""
     now = _now_utc()
     since = datetime(now.year, now.month, now.day, tzinfo=timezone.utc) - timedelta(days=days - 1)
+    cutoff = _latest_reset(db)
 
     rows = (
         db.query(
@@ -91,7 +145,7 @@ def usage_timeseries(
             func.coalesce(func.sum(UsageLog.cost_usd), 0.0),
             func.count(UsageLog.id),
         )
-        .filter(UsageLog.created_at >= since)
+        .filter(UsageLog.created_at >= _effective_since(cutoff, since))
         .group_by(func.date(UsageLog.created_at))
         .order_by(func.date(UsageLog.created_at))
         .all()
@@ -124,15 +178,16 @@ def usage_timeseries(
 
 @router.get("/by-model", response_model=list[UsageByModel])
 def usage_by_model(db: Session = Depends(get_db), user: User = Depends(require_admin)):
+    q = db.query(
+        UsageLog.model,
+        func.count(UsageLog.id),
+        func.coalesce(func.sum(UsageLog.input_tokens), 0),
+        func.coalesce(func.sum(UsageLog.output_tokens), 0),
+        func.coalesce(func.sum(UsageLog.total_tokens), 0),
+        func.coalesce(func.sum(UsageLog.cost_usd), 0.0),
+    )
     rows = (
-        db.query(
-            UsageLog.model,
-            func.count(UsageLog.id),
-            func.coalesce(func.sum(UsageLog.input_tokens), 0),
-            func.coalesce(func.sum(UsageLog.output_tokens), 0),
-            func.coalesce(func.sum(UsageLog.total_tokens), 0),
-            func.coalesce(func.sum(UsageLog.cost_usd), 0.0),
-        )
+        _since_reset_only(q, db)
         .group_by(UsageLog.model)
         .order_by(func.sum(UsageLog.cost_usd).desc())
         .all()
@@ -156,8 +211,9 @@ def recent_usage(
     db: Session = Depends(get_db),
     user: User = Depends(require_admin),
 ):
+    q = db.query(UsageLog)
     return (
-        db.query(UsageLog)
+        _since_reset_only(q, db)
         .order_by(UsageLog.created_at.desc())
         .limit(limit)
         .all()

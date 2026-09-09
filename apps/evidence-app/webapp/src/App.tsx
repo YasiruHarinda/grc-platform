@@ -16,6 +16,7 @@ import EvidenceList from "./pages/EvidenceList";
 import SubmitEvidence from "./pages/SubmitEvidence";
 import AgentRunner from "./pages/AgentRunner";
 import Cost from "./pages/Cost";
+import Catalogue from "./pages/Catalogue";
 import { registerAuth } from "./api/client";
 import { useCurrentUser } from "./hooks/useCurrentUser";
 
@@ -26,6 +27,15 @@ function CostRoute() {
   // extra render this costs everyone else.
   if (!isLoaded) return null;
   return isAdmin ? <Cost /> : <Navigate to="/" replace />;
+}
+
+function CatalogueRoute() {
+  const { isAdmin, isLoaded } = useCurrentUser();
+  // Same guard as CostRoute: wait for the first /me roundtrip before
+  // deciding, so an admin is never bounced off their own page while their
+  // role is still loading.
+  if (!isLoaded) return null;
+  return isAdmin ? <Catalogue /> : <Navigate to="/" replace />;
 }
 
 function AppRoutes() {
@@ -65,6 +75,7 @@ function AppRoutes() {
                 <Route path="/history" element={<Navigate to="/evidence" replace />} />
                 <Route path="/agent" element={<AgentRunner />} />
                 <Route path="/cost" element={<CostRoute />} />
+                <Route path="/catalogue" element={<CatalogueRoute />} />
               </Routes>
             </Box>
             <Footer />

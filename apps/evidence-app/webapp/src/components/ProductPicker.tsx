@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import FormControl from "@mui/material/FormControl";
 import InputLabel from "@mui/material/InputLabel";
@@ -7,23 +7,17 @@ import MenuItem from "@mui/material/MenuItem";
 import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
-import Dialog from "@mui/material/Dialog";
-import DialogTitle from "@mui/material/DialogTitle";
-import DialogContent from "@mui/material/DialogContent";
-import DialogActions from "@mui/material/DialogActions";
-import Button from "@mui/material/Button";
-import TextField from "@mui/material/TextField";
-import Alert from "@mui/material/Alert";
 import Divider from "@mui/material/Divider";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import { PlusIcon, PenToSquareIcon, TrashIcon } from "@oxygen-ui/react-icons";
 import { productsApi, frameworksApi, controlsApi, evidenceApi, submissionsApi, agentApi } from "../api/client";
 import ConfirmDeleteDialog from "./ConfirmDeleteDialog";
-import { timeAgo } from "../utils/timeAgo";
+import ProductFormDialog, { type Product } from "./ProductFormDialog";
+import { computeDeleteImpact } from "../utils/computeDeleteImpact";
+import { resolveHoverText } from "../utils/resolveHoverText";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 
-type Product = { id: number; name: string; description?: string | null };
 type Framework = { id: number; product_id: number };
 type Control = { id: number; framework_id: number };
 type Evidence = { id: number; control_id: number };
@@ -105,38 +99,6 @@ export default function ProductPicker({
     enabled: !!deleteTarget,
   });
 
-  // ctrlIds covers every control under every framework of this product (all
-  // descendants, not just direct children) — reused below for both the
-  // cascade counts and the running-task warning, so the tree is only walked
-  // once.
-  const cascadeImpact = (fwIds: number[], ctrlIds: number[]) => {
-    const evIds = allEvidence.filter((e) => ctrlIds.includes(e.control_id)).map((e) => e.id);
-    const subs = allSubmissions.filter((s) => evIds.includes(s.evidence_id));
-    const approvedCount = subs.filter((s) => s.status === "approved").length;
-    return [
-      { label: "frameworks", count: fwIds.length },
-      { label: "controls", count: ctrlIds.length },
-      { label: "evidence records", count: evIds.length },
-      { label: "submission records", count: subs.length },
-      { label: "approved submissions", count: approvedCount },
-    ];
-  };
-
-  // status = "running" isn't trustworthy on its own — a crashed Runner leaves
-  // that row forever, and there's no heartbeat column. Showing how long ago
-  // it started lets the Admin judge that instead of the system claiming it.
-  const activeRunWarnings = (ctrlIds: number[]): string[] => {
-    const activeRuns = allTasks.filter(
-      (t) => t.status === "running" && t.control_id !== null && ctrlIds.includes(t.control_id)
-    );
-    if (activeRuns.length === 0) return [];
-    return [
-      `${activeRuns.length} agent run${activeRuns.length === 1 ? "" : "s"} marked as in progress against controls in this product.`,
-      ...activeRuns.map((t) => `Started ${timeAgo(t.started_at)} by ${t.user_email}.`),
-      "If it is still running, deleting now will leave its evidence unlinked.",
-    ];
-  };
-
   const deleteMutation = useMutation({
     mutationFn: (id: number) => productsApi.delete(id),
     onSuccess: () => {
@@ -154,12 +116,19 @@ export default function ProductPicker({
     },
   });
 
-  // Computed once per render and reused for both the cascade counts and the
-  // running-task warning below.
-  const deleteFwIds = deleteTarget
-    ? allFrameworks.filter((f) => f.product_id === deleteTarget.id).map((f) => f.id)
-    : [];
-  const deleteCtrlIds = allControls.filter((c) => deleteFwIds.includes(c.framework_id)).map((c) => c.id);
+  // Computed once per render and reused for both the impact list and the
+  // warnings passed to the confirm dialog below.
+  const deleteImpact = deleteTarget
+    ? computeDeleteImpact({
+        level: "product",
+        targetId: deleteTarget.id,
+        frameworks: allFrameworks,
+        controls: allControls,
+        evidence: allEvidence,
+        submissions: allSubmissions,
+        tasks: allTasks,
+      })
+    : { impact: [], warnings: [] };
 
   return (
     <>
@@ -190,9 +159,14 @@ export default function ProductPicker({
                 spacing={1}
                 sx={{ width: "100%" }}
               >
-                <Box sx={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {p.name}
-                </Box>
+                {/* Tooltip wraps this text block only, never the MenuItem
+                    itself — Select reads the properties of its own menu
+                    children directly, so wrapping a row can break selection. */}
+                <Tooltip title={resolveHoverText(p)} placement="bottom-start">
+                  <Box sx={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {p.name}
+                  </Box>
+                </Tooltip>
                 {isAdmin && (
                   <Tooltip title="Edit">
                     <IconButton
@@ -282,115 +256,10 @@ export default function ProductPicker({
         }
         entityType="product"
         entityName={deleteTarget?.name ?? ""}
-        impact={deleteTarget ? cascadeImpact(deleteFwIds, deleteCtrlIds) : []}
-        warnings={deleteTarget ? activeRunWarnings(deleteCtrlIds) : []}
+        impact={deleteImpact.impact}
+        warnings={deleteImpact.warnings}
         error={deleteError}
       />
     </>
-  );
-}
-
-function ProductFormDialog({
-  open,
-  mode,
-  product,
-  onClose,
-  onSaved,
-}: {
-  open: boolean;
-  mode: "create" | "edit";
-  product?: Product;
-  onClose: () => void;
-  onSaved: (p: Product) => void;
-}) {
-  const queryClient = useQueryClient();
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    setName(product?.name ?? "");
-    setDescription(product?.description ?? "");
-    setError(null);
-  }, [open, product]);
-
-  const mutation = useMutation({
-    mutationFn: (data: { name: string; description?: string }) =>
-      mode === "edit" && product
-        ? productsApi.update(product.id, data)
-        : productsApi.create(data),
-    onSuccess: (p: Product) => {
-      queryClient.invalidateQueries({ queryKey: ["products"] });
-      onSaved(p);
-    },
-    onError: (err: any) => {
-      setError(err?.response?.data?.detail || `Failed to ${mode} product.`);
-    },
-  });
-
-  const handleSubmit = () => {
-    setError(null);
-    if (!name.trim()) {
-      setError("Product name is required.");
-      return;
-    }
-    mutation.mutate({
-      name: name.trim(),
-      description: description.trim() || undefined,
-    });
-  };
-
-  const isEdit = mode === "edit";
-
-  return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle sx={{ pb: 1 }}>
-        <Stack direction="row" alignItems="center" spacing={1.5}>
-          <Box sx={{ color: "primary.main", display: "flex" }}>
-            {isEdit ? <PenToSquareIcon size={22} /> : <PlusIcon size={22} />}
-          </Box>
-          <Box>
-            <Typography variant="h6" fontWeight={700} sx={{ lineHeight: 1.2 }}>
-              {isEdit ? "Edit Product" : "Add a New Product"}
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              A product groups its own set of compliance frameworks.
-            </Typography>
-          </Box>
-        </Stack>
-      </DialogTitle>
-      <DialogContent dividers>
-        <Stack spacing={2.25} sx={{ pt: 1 }}>
-          <TextField
-            label="Product Name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder='e.g. "WSO2 Identity Server", "Asgardeo", "Choreo"'
-            required
-            fullWidth
-            autoFocus
-          />
-          <TextField
-            label="Description (optional)"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Short description of what this product is."
-            multiline
-            rows={2}
-            fullWidth
-          />
-          {error && <Alert severity="error">{error}</Alert>}
-        </Stack>
-      </DialogContent>
-      <DialogActions sx={{ px: 3, py: 1.75 }}>
-        <Button onClick={onClose} disabled={mutation.isPending}>
-          Cancel
-        </Button>
-        <Button onClick={handleSubmit} variant="contained" disabled={mutation.isPending}>
-          {mutation.isPending ? (isEdit ? "Saving..." : "Creating...") : isEdit ? "Save Changes" : "Create Product"}
-        </Button>
-      </DialogActions>
-    </Dialog>
   );
 }
