@@ -139,6 +139,7 @@ type entPopulationFile struct {
 	CreatedByUserType *string   `json:"createdByUserType"`
 	CreatedOn         time.Time `json:"createdOn"`
 	TeamID            *int      `json:"teamId"`
+	AuditorID         *int      `json:"auditorId"`
 }
 
 func (f entPopulationFile) toModel() *model.PopulationFile {
@@ -150,6 +151,7 @@ func (f entPopulationFile) toModel() *model.PopulationFile {
 		FileSize:  f.FileSize,
 		CreatedAt: f.CreatedOn,
 		TeamID:    f.TeamID,
+		AuditorID: f.AuditorID,
 	}
 	if f.CreatedBy != nil {
 		m.CreatedBy = *f.CreatedBy

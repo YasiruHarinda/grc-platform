@@ -194,11 +194,18 @@ func (h *DepartureHub) riskDetailURL(riskID int) string {
 	return fmt.Sprintf("%s/risk/registers?riskId=%d", h.frontendBaseURL, riskID)
 }
 
-// Recipients is GLOBAL holders of the compliance-approval privilege plus
-// platform admins. Register-scoped admins are excluded: the unfiltered list
-// would leak across registers.
+// Recipients holds RISK_COMPLIANCE_APPROVE and MANAGE_USERS together, GLOBAL only,
+// falling back to platform admins alone when nobody holds both.
 func (h *DepartureHub) Recipients(ctx context.Context) ([]int, error) {
-	return grant.CandidateIDs(ctx, h.grants, privilege.ComplianceApproveRisk, privilege.ManageUsers)
+	ids, err := grant.CandidateIDsAll(ctx, h.grants, privilege.ComplianceApproveRisk, privilege.ManageUsers)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) > 0 {
+		return ids, nil
+	}
+	slog.WarnContext(ctx, "risk departure digest: no GLOBAL holder of both RISK_COMPLIANCE_APPROVE and MANAGE_USERS, falling back to platform admins")
+	return grant.CandidateIDs(ctx, h.grants, privilege.ManageUsers)
 }
 
 // Notify emails one admin the risk half of a run, grouped by person. An

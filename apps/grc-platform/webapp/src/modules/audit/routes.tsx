@@ -31,7 +31,9 @@ export const auditRoutes = (
     <Route path="audits" element={<AuditPrivilegeGuard privilege={AuditPrivilege.ViewAudits}><AuditsListPage /></AuditPrivilegeGuard>} />
     <Route path="audits/create" element={<AuditPrivilegeGuard privilege={AuditPrivilege.CreateAudit}><CreateAuditPage /></AuditPrivilegeGuard>} />
     <Route path="audits/:auditId" element={<AuditDetailPage />} />
-    <Route path="audits/:auditId/activity" element={<AuditActivityLogPage />} />
+    {/* ViewInternalComments, not ViewAudits: the trail is internal-only, so an
+        external auditor must not reach this page by typing the URL. */}
+    <Route path="audits/:auditId/activity" element={<AuditPrivilegeGuard privilege={AuditPrivilege.ViewInternalComments}><AuditActivityLogPage /></AuditPrivilegeGuard>} />
     <Route path="dashboard" element={<AuditPrivilegeGuard privilege={AuditPrivilege.ViewAudits}><AuditDashboard /></AuditPrivilegeGuard>} />
   </Route>
 );

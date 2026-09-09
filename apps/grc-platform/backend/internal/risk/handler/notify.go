@@ -129,6 +129,15 @@ func (d *Deps) sendRiskEvent(ctx context.Context, ev emailer.RiskEvent, riskID i
 				"event", ev, "riskId", riskID, "userId", id)
 			continue
 		}
+		// Cross-cutting active-users-only rule, matching the audit hub's
+		// sendAuditEvent: a risk role id (owner, assigner, approver, action
+		// owner) can outlive the person's account being set INACTIVE or
+		// Directory-Sync-disabled, and a departed user must stop being emailed.
+		if u.Status != "" && u.Status != "ACTIVE" {
+			slog.Info("risk notification: recipient not active, skipping",
+				"event", ev, "riskId", riskID, "userId", id, "status", u.Status)
+			continue
+		}
 		// A deliverable address, from the directory — the only source now that
 		// the platform is removing stored emails. This is the reason the
 		// directory cache serves stale values on failure: a recipient with no

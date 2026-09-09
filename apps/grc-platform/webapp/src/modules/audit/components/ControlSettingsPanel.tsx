@@ -52,7 +52,7 @@ import { useGetAuditorCandidates } from "@modules/audit/api/useGetAuditorCandida
 import { useGetTeams } from "@modules/audit/api/useGetTeams";
 import { useAddControl } from "@modules/audit/api/useAddControl";
 import { useUpdateControl } from "@modules/audit/api/useUpdateControl";
-import { useDeleteControl } from "@modules/audit/api/useDeleteControl";
+import { DeleteControlError, useDeleteControl } from "@modules/audit/api/useDeleteControl";
 import { useAuditPrivileges } from "@modules/audit/hooks/useAuditPrivileges";
 import { AuditPrivilege } from "@modules/audit/privileges";
 import type {
@@ -439,7 +439,9 @@ interface DeleteDialogProps {
   control: AuditControl | null;
   isDeleting: boolean;
   error: string | null;
-  onConfirm: () => void;
+  /** Set when the server refused because submitted work exists — offers the force retry. */
+  blockedReason: string | null;
+  onConfirm: (force: boolean) => void;
   onClose: () => void;
 }
 
@@ -448,6 +450,7 @@ function DeleteDialog({
   control,
   isDeleting,
   error,
+  blockedReason,
   onConfirm,
   onClose,
 }: DeleteDialogProps): JSX.Element {
@@ -456,6 +459,12 @@ function DeleteDialog({
       <DialogTitle sx={{ fontWeight: 700 }}>Remove control?</DialogTitle>
       <DialogContent>
         {error && <Alert severity="error" sx={{ mb: 1 }}>{error}</Alert>}
+        {blockedReason && (
+          <Alert severity="warning" sx={{ mb: 1 }}>
+            {blockedReason}. Removing it anyway permanently deletes that work —
+            evidence, uploaded files and submission history — with the control.
+          </Alert>
+        )}
         <Typography variant="body2">
           Remove <strong>{control?.controlNumber}</strong> - {control?.description}?
           This cannot be undone.
@@ -466,13 +475,13 @@ function DeleteDialog({
           Cancel
         </Button>
         <Button
-          onClick={onConfirm}
+          onClick={() => onConfirm(blockedReason !== null)}
           variant="contained"
           color="error"
           disabled={isDeleting}
           startIcon={isDeleting ? <CircularProgress size={14} /> : undefined}
         >
-          {isDeleting ? "Removing…" : "Remove"}
+          {isDeleting ? "Removing…" : blockedReason ? "Remove anyway" : "Remove"}
         </Button>
       </DialogActions>
     </Dialog>
@@ -507,6 +516,7 @@ export default function ControlSettingsPanel({
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [editingControl, setEditingControl] = useState<AuditControl | null>(null);
   const [deletingControl, setDeletingControl] = useState<AuditControl | null>(null);
+  const [deleteBlockedReason, setDeleteBlockedReason] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
 
   const controls = controlsData?.items ?? [];
@@ -582,16 +592,29 @@ export default function ControlSettingsPanel({
     );
   }
 
-  function handleDelete() {
+  function handleDelete(force: boolean) {
     if (!deletingControl) return;
     setMutationError(null);
     deleteMutation.mutate(
-      { auditId, controlId: deletingControl.id },
+      { auditId, controlId: deletingControl.id, force },
       {
-        onSuccess: () => setDeletingControl(null),
-        onError: (e) => setMutationError(e instanceof Error ? e.message : "Failed to remove control"),
+        onSuccess: () => closeDeleteDialog(),
+        onError: (e) => {
+          // 409 means evidence/population work exists — not a dead end for a
+          // ManageControls holder, who is offered the force retry instead.
+          if (e instanceof DeleteControlError && e.status === 409) {
+            setDeleteBlockedReason(e.message);
+            return;
+          }
+          setMutationError(e instanceof Error ? e.message : "Failed to remove control");
+        },
       },
     );
+  }
+
+  function closeDeleteDialog() {
+    setDeletingControl(null);
+    setDeleteBlockedReason(null);
   }
 
   return (
@@ -706,6 +729,7 @@ export default function ControlSettingsPanel({
                                   color="error"
                                   onClick={() => {
                                     setMutationError(null);
+                                    setDeleteBlockedReason(null);
                                     setDeletingControl(c);
                                   }}
                                 >
@@ -768,8 +792,9 @@ export default function ControlSettingsPanel({
         control={deletingControl}
         isDeleting={deleteMutation.isPending}
         error={mutationError}
+        blockedReason={deleteBlockedReason}
         onConfirm={handleDelete}
-        onClose={() => setDeletingControl(null)}
+        onClose={closeDeleteDialog}
       />
     </>
   );

@@ -121,6 +121,8 @@ export default function AuditDetailPage(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const { can } = useAuditPrivileges();
   const canManageControls = can(AuditPrivilege.ManageControls);
+  // Same internal-audience gate as the control History tab — see ControlDrawer.
+  const canViewHistory = can(AuditPrivilege.ViewInternalComments);
 
   const controls = useMemo(() => controlsData?.items ?? [], [controlsData]);
 
@@ -310,14 +312,16 @@ export default function AuditDetailPage(): JSX.Element {
                 </Stack>
               </Box>
               <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
-                <Button
-                  variant="outlined"
-                  startIcon={<History size={16} />}
-                  onClick={() => void navigate(`/audit/audits/${auditId}/activity`)}
-                  sx={{ textTransform: "none" }}
-                >
-                  Activity Log
-                </Button>
+                {canViewHistory && (
+                  <Button
+                    variant="outlined"
+                    startIcon={<History size={16} />}
+                    onClick={() => void navigate(`/audit/audits/${auditId}/activity`)}
+                    sx={{ textTransform: "none" }}
+                  >
+                    Activity Log
+                  </Button>
+                )}
                 {canManageControls && (
                   <Button
                     variant="outlined"

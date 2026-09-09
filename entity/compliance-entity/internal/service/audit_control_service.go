@@ -21,6 +21,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/wso2-open-operations/grc-tools/entity/compliance-entity/internal/apierror"
@@ -317,7 +318,7 @@ func (s *controlService) pushControlToFramework(ctx context.Context, frameworkID
 	return err
 }
 
-func (s *controlService) DeleteControl(ctx context.Context, auditID, controlID int) error {
+func (s *controlService) DeleteControl(ctx context.Context, auditID, controlID int, force bool) error {
 	if auditID <= 0 {
 		return &apierror.ValidationError{Msg: "auditId must be a positive integer"}
 	}
@@ -326,22 +327,33 @@ func (s *controlService) DeleteControl(ctx context.Context, auditID, controlID i
 	}
 	// audit_evidence and audit_population both cascade-delete with the control at
 	// the DB level (see audit_schema.sql), so once work has started on a control
-	// deleting it silently destroys that work. Block it here instead.
+	// deleting it silently destroys that work. Block it here instead — unless the
+	// caller passed force, which is the deliberate "delete it anyway" confirmation
+	// an admin gives after being shown what the cascade will take with it.
 	evidenceCount, activePopulationCount, err := s.repo.CountDeletionBlockers(ctx, controlID)
 	if err != nil {
 		return err
 	}
 	if evidenceCount > 0 || activePopulationCount > 0 {
-		var reasons []string
-		if evidenceCount > 0 {
-			reasons = append(reasons, fmt.Sprintf("%d evidence submission(s)", evidenceCount))
+		if !force {
+			var reasons []string
+			if evidenceCount > 0 {
+				reasons = append(reasons, fmt.Sprintf("%d evidence submission(s)", evidenceCount))
+			}
+			if activePopulationCount > 0 {
+				reasons = append(reasons, fmt.Sprintf("%d population(s) in progress", activePopulationCount))
+			}
+			// Phrased as a statement of what exists, not a flat refusal: force=true
+			// gets past it, and the webapp shows this same text as the warning on
+			// the "Remove anyway" confirmation.
+			return &apierror.ConflictError{
+				Msg: fmt.Sprintf("this control has %s", strings.Join(reasons, " and ")),
+			}
 		}
-		if activePopulationCount > 0 {
-			reasons = append(reasons, fmt.Sprintf("%d population(s) in progress", activePopulationCount))
-		}
-		return &apierror.ConflictError{
-			Msg: fmt.Sprintf("cannot delete control: %s exist for this control", strings.Join(reasons, " and ")),
-		}
+		// force is deleting through real work; the DELETED trail row only records
+		// forced=true, so log the magnitude the cascade takes with it.
+		log.Printf("forced delete: control %d (audit %d) cascades away %d evidence submission(s) and %d population(s)",
+			controlID, auditID, evidenceCount, activePopulationCount)
 	}
 	return s.repo.DeleteControl(ctx, auditID, controlID)
 }

@@ -333,8 +333,9 @@ INSERT INTO privilege (privilege_name, module, status) VALUES
   ('AUDIT_VALIDATE_EVIDENCE',      'AUDIT', 'ACTIVE'),
   ('AUDIT_SELECT_SAMPLE',          'AUDIT', 'ACTIVE'),
   ('AUDIT_ADD_COMMENT',            'AUDIT', 'ACTIVE'),
-  -- Gates internal-only control comments (hidden from external auditors) —
-  -- replaces the former hardcoded group-name check.
+  -- The internal-audience gate: internal-only control comments AND the
+  -- audit_trail history (status transitions, rejections, overrides) behind the
+  -- History tab and the Activity Log. All hidden from external auditors.
   ('AUDIT_VIEW_INTERNAL_COMMENTS', 'AUDIT', 'ACTIVE'),
   -- Shared platform (3 privileges) — Admin Console's gates, all held only
   -- by grc-platform-admin (see role_privilege below): one consistent
@@ -562,7 +563,8 @@ WHERE  r.role_name = 'grc-platform-audit-internal-team'
 ON DUPLICATE KEY UPDATE is_active = TRUE;
 
 -- grc-platform-audit-external-auditor — validate + select sample (assigned) + comment (4).
--- No VIEW_INTERNAL_COMMENTS: internal comments are hidden from auditors.
+-- No VIEW_INTERNAL_COMMENTS: internal comments and control history are
+-- hidden from auditors.
 INSERT INTO role_privilege (role_id, privilege_id, is_active)
 SELECT r.id, p.id, TRUE
 FROM   `role` r

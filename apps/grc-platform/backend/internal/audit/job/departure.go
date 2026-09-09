@@ -144,10 +144,18 @@ func (h *DepartureHub) controlDetailURL(auditID, controlID int) string {
 	return fmt.Sprintf("%s/audit/audits/%d?control=%d", h.frontendBaseURL, auditID, controlID)
 }
 
-// Recipients is holders of the control-management privilege — the one that
-// actually permits reassigning a control — plus platform admins, GLOBAL only.
+// Recipients holds AUDIT_MANAGE_CONTROLS and MANAGE_USERS together, GLOBAL only,
+// falling back to platform admins alone when nobody holds both.
 func (h *DepartureHub) Recipients(ctx context.Context) ([]int, error) {
-	return grant.CandidateIDs(ctx, h.grants, privilege.ManageControls, privilege.ManageUsers)
+	ids, err := grant.CandidateIDsAll(ctx, h.grants, privilege.ManageControls, privilege.ManageUsers)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) > 0 {
+		return ids, nil
+	}
+	slog.WarnContext(ctx, "audit departure digest: no GLOBAL holder of both AUDIT_MANAGE_CONTROLS and MANAGE_USERS, falling back to platform admins")
+	return grant.CandidateIDs(ctx, h.grants, privilege.ManageUsers)
 }
 
 // Notify emails one admin the audit half of a run, grouped by person. An

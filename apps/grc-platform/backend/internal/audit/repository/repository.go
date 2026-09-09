@@ -103,7 +103,9 @@ type ControlRepository interface {
 	// rank-based status-override endpoint (see ControlService.OverrideStatus) —
 	// distinct from UpdateStatus, which drives the ordinary forward workflow.
 	OverrideStatus(ctx context.Context, auditID, controlID int, status string, updatedBy string) error
-	Delete(ctx context.Context, auditID, controlID int) error
+	// Delete removes a control; force tells the entity to skip its
+	// evidence/population deletion guard.
+	Delete(ctx context.Context, auditID, controlID int, force bool) error
 	// AssignedAuditID reports whether userID is the owner of controlID for
 	// an actionable status, and returns the control's audit id (for server-side
 	// folder-path derivation). found=false means not assigned (403).

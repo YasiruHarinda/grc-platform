@@ -83,13 +83,18 @@ func (h *trailHandler) resolveTrailActors(ctx context.Context, entries []*model.
 // listControlTrail handles GET /api/v1/audits/{id}/controls/{controlId}/trail.
 //
 // Returns the control's immutable history (append-only audit_trail), newest
-// first, for the History tab. Read access is gated on ViewAudits plus the
-// same controlInScope check getControl uses — ViewAudits alone is a coarse
-// boolean with no row scope, so without it a caller scoped to one control
-// (e.g. an assigned external auditor) could read another audit's trail by
-// guessing its id.
+// first, for the History tab.
+//
+// Read access needs ViewAudits AND ViewInternalComments, plus the same
+// controlInScope check getControl uses. ViewInternalComments is the
+// internal-audience gate: a control's status transitions, rejections and
+// overrides are internal deliberation, not auditor-facing evidence, so an
+// external auditor must not see them — routeguard denies both trail routes as
+// the second fence. ViewAudits alone is a coarse boolean with no row scope, so
+// without controlInScope a caller scoped to one control could still read
+// another audit's trail by guessing its id.
 func (h *trailHandler) listControlTrail(w http.ResponseWriter, r *http.Request) {
-	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAudits) {
+	if !auth.RequireAllPrivileges(r.Context(), w, privilege.ViewAudits, privilege.ViewInternalComments) {
 		return
 	}
 	auditID, ok := parseIntParam(w, r, "id")
@@ -104,8 +109,8 @@ func (h *trailHandler) listControlTrail(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	includeInternal := auth.HasPrivilege(r.Context(), privilege.ViewInternalComments)
-	entries, total, err := h.svc.ListByControl(r.Context(), auditID, controlID, includeInternal)
+	// Unconditionally true — ViewInternalComments is the gate above.
+	entries, total, err := h.svc.ListByControl(r.Context(), auditID, controlID, true)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
@@ -124,10 +129,10 @@ func (h *trailHandler) listControlTrail(w http.ResponseWriter, r *http.Request) 
 //
 // Returns the whole audit's activity — audit-level events (created/updated/
 // deleted) and every control's events together, newest first — for the
-// audit-wide Activity Log page. Same ViewAudits gate as the per-control
-// history, plus the same auditInScope check getAudit uses.
+// audit-wide Activity Log page. Same gate as the per-control history (see
+// listControlTrail), plus the same auditInScope check getAudit uses.
 func (h *trailHandler) listAuditTrail(w http.ResponseWriter, r *http.Request) {
-	if !auth.RequirePrivilege(r.Context(), w, privilege.ViewAudits) {
+	if !auth.RequireAllPrivileges(r.Context(), w, privilege.ViewAudits, privilege.ViewInternalComments) {
 		return
 	}
 	auditID, ok := parseIntParam(w, r, "id")
@@ -193,7 +198,8 @@ func (h *trailHandler) listAuditTrail(w http.ResponseWriter, r *http.Request) {
 		filter.UserID = user.UserID
 	}
 	filter.ScopeTeamIDs = managedTeamIDs(auth.Grants(r.Context()))
-	filter.IncludeInternal = auth.HasPrivilege(r.Context(), privilege.ViewInternalComments)
+	// Unconditionally true — ViewInternalComments is the gate above.
+	filter.IncludeInternal = true
 
 	entries, total, err := h.svc.ListByAudit(r.Context(), auditID, filter, limit, offset)
 	if err != nil {

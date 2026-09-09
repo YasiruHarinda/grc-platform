@@ -211,3 +211,50 @@ func CandidateIDs(ctx context.Context, r Repository, privs ...string) ([]int, er
 	}
 	return ids, nil
 }
+
+// CandidateIDsAll returns the user ids that hold EVERY one of privs at GLOBAL
+// scope, de-duplicated and kept in the order they appear under the first
+// privilege. No privs, or a nil Repository, returns nothing. Use this where a
+// recipient must clear more than one bar at once — reassigning the work and
+// administering accounts — rather than either alone.
+func CandidateIDsAll(ctx context.Context, r Repository, privs ...string) ([]int, error) {
+	if r == nil || len(privs) == 0 {
+		return nil, nil
+	}
+	// The first privilege sets the pool and its order; each later one can only
+	// narrow it.
+	first, err := r.Candidates(ctx, privs[0], nil)
+	if err != nil {
+		return nil, fmt.Errorf("resolve %s holders: %w", privs[0], err)
+	}
+	pool := make([]int, 0, len(first))
+	seen := map[int]bool{}
+	for _, c := range first {
+		if seen[c.ID] {
+			continue
+		}
+		seen[c.ID] = true
+		pool = append(pool, c.ID)
+	}
+	for _, p := range privs[1:] {
+		if len(pool) == 0 {
+			return nil, nil
+		}
+		candidates, err := r.Candidates(ctx, p, nil)
+		if err != nil {
+			return nil, fmt.Errorf("resolve %s holders: %w", p, err)
+		}
+		has := make(map[int]bool, len(candidates))
+		for _, c := range candidates {
+			has[c.ID] = true
+		}
+		kept := make([]int, 0, len(pool))
+		for _, id := range pool {
+			if has[id] {
+				kept = append(kept, id)
+			}
+		}
+		pool = kept
+	}
+	return pool, nil
+}

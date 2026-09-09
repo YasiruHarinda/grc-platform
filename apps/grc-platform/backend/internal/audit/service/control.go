@@ -70,7 +70,9 @@ type ControlService interface {
 	// UpdateStatusWithSample is UpdateStatus plus setting the sample note
 	// atomically — used when the auditor submits the sample.
 	UpdateStatusWithSample(ctx context.Context, auditID, controlID int, status, sampleReference, updatedBy string) error
-	Delete(ctx context.Context, auditID, controlID int, deletedBy string) error
+	// Delete removes a control; force deletes it even when evidence or
+	// population work exists, cascading that work away with it.
+	Delete(ctx context.Context, auditID, controlID int, deletedBy string, force bool) error
 	// AssignedAuditID returns the audit id for controlID when userID is the
 	// control's owner and the control is actionable; found=false means not assigned.
 	AssignedAuditID(ctx context.Context, userID int, controlID int) (auditID int, found bool, err error)
@@ -450,7 +452,7 @@ func (s *controlService) UpdateStatusWithSample(ctx context.Context, auditID, co
 	return nil
 }
 
-func (s *controlService) Delete(ctx context.Context, auditID, controlID int, deletedBy string) error {
+func (s *controlService) Delete(ctx context.Context, auditID, controlID int, deletedBy string, force bool) error {
 	c, err := s.repo.GetByID(ctx, auditID, controlID)
 	if err != nil {
 		return err
@@ -464,8 +466,9 @@ func (s *controlService) Delete(ctx context.Context, auditID, controlID int, del
 	// never appear — recordTrail swallows its own errors by design.
 	s.recordTrail(ctx, auditID, controlID, "DELETED", deletedBy, map[string]any{
 		"controlNumber": c.ControlNumber,
+		"forced":        force,
 	})
-	return s.repo.Delete(ctx, auditID, controlID)
+	return s.repo.Delete(ctx, auditID, controlID, force)
 }
 
 func (s *controlService) AssignedAuditID(ctx context.Context, userID int, controlID int) (int, bool, error) {

@@ -56,8 +56,11 @@ const queryClient: QueryClient = new QueryClient({
     queries: {
       retry: shouldRetry,
       retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
-      refetchOnWindowFocus: false,
-      refetchOnReconnect: false,
+      // Nothing pushes status changes to other users' browsers, so a tab left
+      // open goes stale as soon as someone else acts. Refetching on focus and
+      // reconnect makes returning to the tab the refresh signal.
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
       refetchOnMount: true,
     },
     mutations: {

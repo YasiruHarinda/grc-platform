@@ -170,6 +170,7 @@ func (h *ControlHandler) BulkCreateControls(w http.ResponseWriter, r *http.Reque
 }
 
 // DeleteControl handles DELETE /audits/{auditId}/controls/{controlId}.
+// ?force=true deletes even when evidence or population work exists.
 func (h *ControlHandler) DeleteControl(w http.ResponseWriter, r *http.Request) {
 	auditID, err := strconv.Atoi(r.PathValue("auditId"))
 	if err != nil {
@@ -181,7 +182,8 @@ func (h *ControlHandler) DeleteControl(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, r, &apierror.ValidationError{Msg: "controlId must be a positive integer"})
 		return
 	}
-	if err := h.svc.DeleteControl(r.Context(), auditID, controlID); err != nil {
+	force := r.URL.Query().Get("force") == "true"
+	if err := h.svc.DeleteControl(r.Context(), auditID, controlID, force); err != nil {
 		writeServiceError(w, r, err)
 		return
 	}

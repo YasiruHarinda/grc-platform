@@ -959,15 +959,14 @@ type AuditEvidenceFile struct {
 	CreatedByUserType *string   `json:"createdByUserType"`
 	CreatedOn         time.Time `json:"createdOn"`
 	// AuditorID is the user.id of the auditor assigned to the file's owning
-	// control (nil if the control has no auditor or the file has no evidence_id,
-	// e.g. a population file). Only populated by GetEvidenceFileByID, for the
-	// GRC Backend's assigned-auditor download gate — never persisted here.
+	// control (nil if the control has no auditor). Populated by
+	// GetEvidenceFileByID and GetPopulationFileByID, for the GRC Backend's
+	// assigned-auditor download gate — never persisted here.
 	AuditorID *int `json:"auditorId"`
 	// TeamID is the file's owning control's team_id (nil if the control has no
-	// team or the file has no evidence_id). Only populated by
-	// GetEvidenceFileByID, so the GRC Backend can authorize downloads against a
-	// team-scoped grant instead of an unscoped privilege union — never persisted
-	// here.
+	// team). Populated by GetEvidenceFileByID and GetPopulationFileByID, so the
+	// GRC Backend can authorize downloads against a team-scoped grant instead of
+	// an unscoped privilege union — never persisted here.
 	TeamID *int `json:"teamId"`
 }
 

@@ -207,13 +207,13 @@ func (r *populationRepo) GetPopulationFileByID(ctx context.Context, fileID int) 
 
 func (r *populationRepo) getPopulationFileByID(ctx context.Context, fileID int) (*domain.AuditEvidenceFile, error) {
 	var f domain.AuditEvidenceFile
-	var evidenceID, populationID, controlTeamID sql.NullInt64
+	var evidenceID, populationID, controlTeamID, controlAuditorID sql.NullInt64
 	var fileKind, fileType, createdBy, createdByUserType sql.NullString
 	var fileSize sql.NullInt64
-	// LEFT JOINed through to the owning control's team so the GRC Backend can
-	// gate downloads to a team-scoped grant instead of an unscoped privilege
-	// union, mirroring audit_evidence_repo.go's getEvidenceFileByID. Misses
-	// cleanly for a control with no team — control_team_id just comes back NULL.
+	// LEFT JOINed through to the owning control's team and auditor so the GRC
+	// Backend can gate downloads to a team-scoped grant or the assigned auditor,
+	// mirroring audit_evidence_repo.go's getEvidenceFileByID. Misses cleanly for
+	// a control with no team/auditor — those columns just come back NULL.
 	//
 	// The `user` join resolves created_by's user_type so the GRC Backend can
 	// route the uploader's uuid to the right identity org (a SAMPLE file's
@@ -224,13 +224,13 @@ func (r *populationRepo) getPopulationFileByID(ctx context.Context, fileID int) 
 		SELECT f.id, f.evidence_id, f.population_id, f.file_kind,
 		       f.file_name, f.file_path, f.file_type, f.file_size,
 		       f.created_by, u_creator.user_type AS creator_user_type, f.created_at,
-		       c.team_id AS control_team_id
+		       c.team_id AS control_team_id, c.auditor_id AS control_auditor_id
 		FROM audit_evidence_file f
 		LEFT JOIN audit_population p ON p.id = f.population_id
 		LEFT JOIN audit_control    c ON c.id = p.control_id
 		LEFT JOIN `+"`user`"+` u_creator ON u_creator.uuid = f.created_by
 		WHERE f.id = ?`,
-		fileID).Scan(&f.ID, &evidenceID, &populationID, &fileKind, &f.FileName, &f.FilePath, &fileType, &fileSize, &createdBy, &createdByUserType, &f.CreatedOn, &controlTeamID)
+		fileID).Scan(&f.ID, &evidenceID, &populationID, &fileKind, &f.FileName, &f.FilePath, &fileType, &fileSize, &createdBy, &createdByUserType, &f.CreatedOn, &controlTeamID, &controlAuditorID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, &apierror.NotFoundError{Msg: fmt.Sprintf("population file %d not found", fileID)}
 	}
@@ -263,6 +263,10 @@ func (r *populationRepo) getPopulationFileByID(ctx context.Context, fileID int) 
 	if controlTeamID.Valid {
 		v := int(controlTeamID.Int64)
 		f.TeamID = &v
+	}
+	if controlAuditorID.Valid {
+		v := int(controlAuditorID.Int64)
+		f.AuditorID = &v
 	}
 	return &f, nil
 }

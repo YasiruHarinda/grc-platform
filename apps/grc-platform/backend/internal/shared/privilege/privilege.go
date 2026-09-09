@@ -172,8 +172,11 @@ const (
 	ValidateEvidence = "AUDIT_VALIDATE_EVIDENCE"
 	SelectSample     = "AUDIT_SELECT_SAMPLE"
 	AddComment       = "AUDIT_ADD_COMMENT"
-	// ViewInternalComments gates internal-only control comments (hidden from
-	// external auditors) — replaces the former hardcoded group-name check.
+	// ViewInternalComments is the internal-audience gate for everything an
+	// external auditor must not see: internal-only control comments, and the
+	// audit_trail history (status transitions, rejections, overrides) behind
+	// the History tab and the Activity Log. Replaces the former hardcoded
+	// group-name check.
 	ViewInternalComments = "AUDIT_VIEW_INTERNAL_COMMENTS"
 )
 

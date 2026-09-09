@@ -189,8 +189,12 @@ func (r *controlRepo) OverrideStatus(ctx context.Context, auditID, controlID int
 	return r.c.Post(ctx, fmt.Sprintf("/audits/%d/controls/%d/status-override", auditID, controlID), body, nil)
 }
 
-func (r *controlRepo) Delete(ctx context.Context, auditID, controlID int) error {
-	return r.c.Delete(ctx, fmt.Sprintf("/audits/%d/controls/%d", auditID, controlID))
+func (r *controlRepo) Delete(ctx context.Context, auditID, controlID int, force bool) error {
+	path := fmt.Sprintf("/audits/%d/controls/%d", auditID, controlID)
+	if force {
+		path += "?force=true"
+	}
+	return r.c.Delete(ctx, path)
 }
 
 func (r *controlRepo) AssignedAuditID(ctx context.Context, userID int, controlID int) (int, bool, error) {

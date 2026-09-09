@@ -436,6 +436,9 @@ func (h *controlHandler) overrideControlStatus(w http.ResponseWriter, r *http.Re
 }
 
 // deleteControl handles DELETE /api/v1/audits/{id}/controls/{controlId}.
+// ?force=true drops the entity's guard against deleting a control that already
+// has evidence or population work, so ManageControls holders are never left
+// with an undeletable control.
 func (h *controlHandler) deleteControl(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.ManageControls) {
 		return
@@ -449,7 +452,8 @@ func (h *controlHandler) deleteControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	deletedBy := auth.FromContext(r.Context()).Subject
-	if err := h.svc.Delete(r.Context(), auditID, controlID, deletedBy); err != nil {
+	force := r.URL.Query().Get("force") == "true"
+	if err := h.svc.Delete(r.Context(), auditID, controlID, deletedBy, force); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}

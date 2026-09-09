@@ -314,6 +314,9 @@ func (h *evidenceHandler) listPopulation(w http.ResponseWriter, r *http.Request)
 // (HasPrivilegeIn) since all four can be granted scoped to a single team
 // (module=AUDIT) — the unscoped RequireAnyPrivilege this replaced would let a
 // team-scoped grant download every other team's population files too.
+// Anyone else falls back to the id-matched auditor of the file's owning
+// control (same rule as requireEvidenceFileAccess) — an external auditor holds
+// none of the four privileges.
 func (h *evidenceHandler) downloadPopulationFile(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	fileID, ok := parseIntParam(w, r, "fileId")
@@ -333,8 +336,11 @@ func (h *evidenceHandler) downloadPopulationFile(w http.ResponseWriter, r *http.
 		!auth.HasPrivilegeIn(ctx, privilege.ReviewEvidence, teamID) &&
 		!auth.HasPrivilegeIn(ctx, privilege.ManageControls, teamID) &&
 		!auth.HasPrivilegeIn(ctx, privilege.ViewAllAudits, teamID) {
-		response.WriteError(w, http.StatusForbidden, response.ErrMsgForbidden)
-		return
+		actor := auth.FromContext(ctx)
+		if f.AuditorID == nil || *f.AuditorID != actor.UserID {
+			response.WriteError(w, http.StatusForbidden, response.ErrMsgForbidden)
+			return
+		}
 	}
 	data, fileName, contentType, err := h.popSvc.DownloadFile(r.Context(), fileID)
 	if err != nil {

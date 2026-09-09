@@ -50,8 +50,9 @@ type PopulationService interface {
 	// ListFiles returns every file on a population round, newest first.
 	ListFiles(ctx context.Context, populationID int) ([]*model.PopulationFile, error)
 
-	// GetFileByID returns file metadata (kind, population id) so the caller can
-	// apply the correct authorization gate before acting on it.
+	// GetFileByID returns file metadata (kind, population id, and the owning
+	// control's team_id / auditor_id) so the caller can apply the correct
+	// authorization gate before acting on it.
 	GetFileByID(ctx context.Context, fileID int) (*model.PopulationFile, error)
 
 	// DownloadFile returns one population/sample file's bytes (proxied via the

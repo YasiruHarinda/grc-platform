@@ -24,6 +24,22 @@ import { extractErrorMessage } from "@modules/audit/api/apiError";
 interface DeleteControlPayload {
   auditId: number;
   controlId: number;
+  /** Deletes even when evidence or population work exists, cascading it away. */
+  force?: boolean;
+}
+
+/**
+ * Carries the HTTP status so callers can tell the 409 "control has work on it"
+ * refusal — the one a force retry can get past — from every other failure.
+ */
+export class DeleteControlError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "DeleteControlError";
+    this.status = status;
+  }
 }
 
 /** Permanently removes a control from an audit. */
@@ -32,13 +48,16 @@ export function useDeleteControl() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ auditId, controlId }: DeleteControlPayload) => {
+    mutationFn: async ({ auditId, controlId, force }: DeleteControlPayload) => {
       const res = await authFetch(
-        `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}`,
+        `${BACKEND_BASE_URL}/api/v1/audits/${auditId}/controls/${controlId}${force ? "?force=true" : ""}`,
         { method: "DELETE" },
       );
       if (!res.ok) {
-        throw new Error(await extractErrorMessage(res, `Failed to delete control (${res.status})`));
+        throw new DeleteControlError(
+          await extractErrorMessage(res, `Failed to delete control (${res.status})`),
+          res.status,
+        );
       }
     },
 

@@ -1479,6 +1479,11 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
   const canReviewEvidence = can(AuditPrivilege.ReviewEvidence);
   const canComment = can(AuditPrivilege.AddComment);
   const canManageControls = can(AuditPrivilege.ManageControls);
+  // The control's history — status transitions, rejections, overrides — is
+  // internal deliberation, not auditor-facing evidence. ViewInternalComments is
+  // the internal-audience privilege every internal audit role holds and the
+  // external auditor does not; the trail endpoints enforce the same gate.
+  const canViewHistory = can(AuditPrivilege.ViewInternalComments);
   const currentUserId = useCurrentUserId();
   // The assigned auditor POC (or an admin, who bypasses every gate the same way
   // on the backend) — drives population validation, sample selection, and
@@ -1615,12 +1620,14 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
               label="Evidence"
               sx={{ textTransform: "none", minHeight: 44, fontWeight: 600 }}
             />
+            {canViewHistory && (
             <Tab
               icon={<History size={15} />}
               iconPosition="start"
               label="History"
               sx={{ textTransform: "none", minHeight: 44, fontWeight: 600 }}
             />
+            )}
           </Tabs>
 
           {/* ══ TAB 0 – OVERVIEW ══════════════════════════════════════════════ */}
@@ -1912,6 +1919,7 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
           </TabPanel>
 
           {/* ══ TAB 2 – HISTORY ═══════════════════════════════════════════════ */}
+          {canViewHistory && (
           <TabPanel value={tab} index={2}>
             <ControlHistoryTimeline
               auditId={control.auditId}
@@ -1919,6 +1927,7 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
               currentStatus={displayStatus ?? control.status}
             />
           </TabPanel>
+          )}
 
         </Box>
       )}

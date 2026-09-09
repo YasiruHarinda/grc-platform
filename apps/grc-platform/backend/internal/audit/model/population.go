@@ -74,6 +74,10 @@ type PopulationFile struct {
 	// the team-scoped download gate — omitted from JSON since it's not
 	// population metadata callers need.
 	TeamID *int `json:"-"`
+	// AuditorID is this file's owning control's auditor_id (nil if none),
+	// populated alongside TeamID by GetFileByID for the assigned-auditor
+	// download fallback.
+	AuditorID *int `json:"-"`
 }
 
 // PopulationView is the response for GET .../population: the control's current
