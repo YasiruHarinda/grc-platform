@@ -38,7 +38,8 @@ export type ParseControlsCsvResult = {
  * which would corrupt those rows silently.
  *
  * A row missing either column's value can't become a Control, so it is
- * counted in `unusableRowCount` rather than returned. Every row that clears
+ * counted in `unusableRowCount` rather than returned, and so is a second row
+ * repeating a reference the file has already described. Every row that clears
  * that bar gets a title: the first sentence of its description, cut at a
  * word boundary and given a trailing ellipsis once it runs past
  * `TITLE_LIMIT` characters. That guarantee, that no row ever needs a human
@@ -71,6 +72,7 @@ export function parseControlsCsv(csvText: string): ParseControlsCsvResult {
   }
 
   const rows: ParsedControlRow[] = [];
+  const seenRefs = new Set<string>();
   let unusableRowCount = 0;
 
   for (const record of parsed.data) {
@@ -84,6 +86,19 @@ export function parseControlsCsv(csvText: string): ParseControlsCsvResult {
       unusableRowCount += 1;
       continue;
     }
+
+    // The same reference twice in one file describes one Control, not two.
+    // A real export repeats a control across criteria rows, and nothing
+    // downstream would catch it — the import dialog compares against what is
+    // already stored, which the second copy isn't yet, so both would be
+    // created and a re-import would then skip the pair as already there.
+    // Matched on the lowercased reference, the same way that check is.
+    const seenKey = reference.toLowerCase();
+    if (seenRefs.has(seenKey)) {
+      unusableRowCount += 1;
+      continue;
+    }
+    seenRefs.add(seenKey);
 
     rows.push({ reference, title: buildTitle(description), description });
   }

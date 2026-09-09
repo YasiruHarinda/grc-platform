@@ -195,6 +195,36 @@ describe("parseControlsCsv", () => {
     expect(error).toBe("The file is empty.");
   });
 
+  test("a reference repeated in the same file is kept once and the repeat counted as unusable", () => {
+    const csv = [
+      "Control Number,Control Description from PY Report",
+      "CC1.1,Access is reviewed quarterly.",
+      "CC1.2,Backups are tested monthly.",
+      "CC1.1,Access is reviewed quarterly.",
+    ].join("\n");
+
+    const { rows, unusableRowCount, error } = parseControlsCsv(csv);
+
+    expect(error).toBeNull();
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.reference)).toEqual(["CC1.1", "CC1.2"]);
+    expect(unusableRowCount).toBe(1);
+  });
+
+  test("a repeat differing only in spacing or casing is still treated as the same reference", () => {
+    const csv = [
+      "Control Number,Control Description from PY Report",
+      "CC1.1,Access is reviewed quarterly.",
+      " cc1.1 ,Access is reviewed quarterly.",
+    ].join("\n");
+
+    const { rows, unusableRowCount } = parseControlsCsv(csv);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].reference).toBe("CC1.1");
+    expect(unusableRowCount).toBe(1);
+  });
+
   test("accented characters, curly quotes and bullet characters survive parsing unchanged", () => {
     const description = "Café passwords use “strong” policies • naïve users are re trained.";
     const csv = ["Control Number,Control Description from PY Report", `CC1.1,"${description}"`].join(
