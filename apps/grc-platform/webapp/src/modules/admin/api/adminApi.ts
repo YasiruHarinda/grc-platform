@@ -128,12 +128,12 @@ export async function createAdminUser(
   return handleResponse(res);
 }
 
-// updateUserStatus sets a platform user's status. The server rejects a
-// caller trying to change their own status (self-lockout guard) with a 422.
+// updateUserStatus sets a platform user's status. REMOVED ("Disabled") is not
+// settable — only the sync writes it — and a self-status change is refused too.
 export async function updateUserStatus(
   authFetch: AuthFetch,
   userId: number,
-  status: "ACTIVE" | "INACTIVE" | "REMOVED",
+  status: "ACTIVE" | "INACTIVE",
 ): Promise<void> {
   const res = await authFetch(`${BACKEND_BASE_URL}/api/v1/admin/users/${userId}/status`, {
     method: "PATCH",

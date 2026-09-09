@@ -543,7 +543,14 @@ func (c *Client) SendRiskEvent(ctx context.Context, ev RiskEvent, to []string, i
 		Subject:  subject,
 		Template: base64.StdEncoding.EncodeToString(body.Bytes()),
 	}
-	b, err := json.Marshal(reqBody)
+	return c.deliver(ctx, "risk event", reqBody)
+}
+
+// deliver marshals one send request and posts it, retrying a transport failure
+// up to sendAttempts. kind names the email in the retry log, and is the only
+// thing that differed between the three copies of this loop.
+func (c *Client) deliver(ctx context.Context, kind string, req sendEmailRequest) error {
+	b, err := json.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("emailer: marshal request: %w", err)
 	}
@@ -558,7 +565,7 @@ func (c *Client) SendRiskEvent(ctx context.Context, ev RiskEvent, to []string, i
 		if !retryable || attempt == sendAttempts {
 			break
 		}
-		slog.Warn("emailer: send failed, retrying",
+		slog.Warn("emailer: "+kind+" send failed, retrying",
 			"attempt", attempt, "of", sendAttempts, "err", err)
 	}
 	return lastErr

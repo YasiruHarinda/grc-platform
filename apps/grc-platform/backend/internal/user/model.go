@@ -19,6 +19,17 @@
 // both modules.
 package user
 
+// The user.status enum, in one place. Disabled is spelled REMOVED in the column
+// and no migration renames it, so every layer that names the state says so here
+// rather than restating the literal.
+const (
+	StatusActive   = "ACTIVE"
+	StatusInactive = "INACTIVE"
+	// StatusDisabled is written only by the Directory Status Sync — an admin can
+	// move a user out of it, never into it.
+	StatusDisabled = "REMOVED"
+)
+
 // User maps to the shared `user` table, which is owned by the Compliance
 // Entity — this struct mirrors the subset of its /users payload the GRC
 // backend needs. RiskTeamIDs is a user's risk-team memberships (zero or more)

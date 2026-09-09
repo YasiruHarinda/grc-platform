@@ -26,6 +26,7 @@ package directory
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -67,6 +68,9 @@ type Person struct {
 	UUID        string
 	Email       string
 	DisplayName string
+	// State is read only by the Add User searches, which look up people who may
+	// have no user row at all; everywhere else reads user.status instead.
+	State scim.AccountState
 }
 
 type entry struct {
@@ -99,6 +103,9 @@ type Service struct {
 
 	bulkMu sync.RWMutex
 	bulk   map[string]Person
+	// Zero until the first successful fetch. A failed refresh keeps the previous
+	// snapshot (see refreshBulk), so age is the only thing that says it is stale.
+	bulkRefreshedAt time.Time
 }
 
 // New returns a Service backed by client. A nil client is allowed and makes
@@ -183,7 +190,7 @@ func (s *Service) Lookup(ctx context.Context, uuid string) (Person, bool) {
 
 	e := entry{refreshAt: time.Now().Add(s.ttl)}
 	if dirUser != nil {
-		e.person = Person{UUID: dirUser.UUID, Email: dirUser.Email, DisplayName: dirUser.DisplayName}
+		e.person = Person{UUID: dirUser.UUID, Email: dirUser.Email, DisplayName: dirUser.DisplayName, State: dirUser.State}
 		e.found = true
 	}
 	s.mu.Lock()
@@ -239,6 +246,30 @@ func (s *Service) LookupTyped(ctx context.Context, uuid, userType string) (Perso
 	return s.lookupExternal(ctx, uuid)
 }
 
+// DescribeTyped renders who a uuid is for a human-readable line — "Name (email)",
+// or whichever half resolves — degrading to the uuid itself. It never fails: a
+// label is cosmetic, and no caller should lose a notification or a log entry
+// over a directory miss.
+func (s *Service) DescribeTyped(ctx context.Context, uuid, userType string) string {
+	if s == nil {
+		return uuid
+	}
+	person, found := s.LookupTyped(ctx, uuid, userType)
+	name := strings.TrimSpace(person.DisplayName)
+	switch {
+	case !found:
+		return uuid
+	case name != "" && person.Email != "":
+		return fmt.Sprintf("%s (%s)", name, person.Email)
+	case name != "":
+		return name
+	case person.Email != "":
+		return person.Email
+	default:
+		return uuid
+	}
+}
+
 // LookupAllTyped is LookupAll for callers that need per-uuid EXTERNAL/INTERNAL
 // routing (see LookupTyped) — uuidTypes maps a uuid to its local
 // user.user_type. An empty-string uuid key is skipped, same as LookupAll.
@@ -286,7 +317,7 @@ func (s *Service) lookupExternal(ctx context.Context, uuid string) (Person, bool
 
 	e := entry{refreshAt: time.Now().Add(s.externalTTL)}
 	if dirUser != nil {
-		e.person = Person{UUID: dirUser.UUID, Email: dirUser.Email, DisplayName: dirUser.DisplayName}
+		e.person = Person{UUID: dirUser.UUID, Email: dirUser.Email, DisplayName: dirUser.DisplayName, State: dirUser.State}
 		e.found = true
 	}
 	s.mu.Lock()
@@ -325,6 +356,11 @@ func (s *Service) SearchDomain(query string) []Person {
 
 	out := make([]Person, 0, 8)
 	for _, p := range s.bulk {
+		// A disabled person must not be provisionable, but stays in the snapshot
+		// so every name they are already attached to still resolves.
+		if p.State == scim.AccountDisabled {
+			continue
+		}
 		if strings.Contains(strings.ToLower(p.DisplayName), query) || strings.Contains(strings.ToLower(p.Email), query) {
 			out = append(out, p)
 		}
@@ -349,9 +385,48 @@ func (s *Service) SearchExternal(ctx context.Context, query string) ([]Person, e
 	}
 	out := make([]Person, 0, len(users))
 	for _, u := range users {
-		out = append(out, Person{UUID: u.UUID, Email: u.Email, DisplayName: u.DisplayName})
+		// Auditor POC is the one role an external person can hold, so a departed
+		// auditor is exactly the case that must not stay provisionable.
+		if u.State == scim.AccountDisabled {
+			continue
+		}
+		out = append(out, Person{UUID: u.UUID, Email: u.Email, DisplayName: u.DisplayName, State: u.State})
 	}
 	return out, nil
+}
+
+// SnapshotState reports what the bulk snapshot knows about uuid: found=false
+// means absent from it, which the sync counts apart from AccountUnknown.
+func (s *Service) SnapshotState(uuid string) (state scim.AccountState, found bool) {
+	p, ok := s.bulkLookup(uuid)
+	if !ok {
+		return scim.AccountUnknown, false
+	}
+	return p.State, true
+}
+
+// SnapshotStatus reports the snapshot's size and last successful refresh (zero
+// time: never). The sync refuses to disable anyone off an empty or stale one.
+func (s *Service) SnapshotStatus() (size int, refreshedAt time.Time) {
+	s.bulkMu.RLock()
+	defer s.bulkMu.RUnlock()
+	return len(s.bulk), s.bulkRefreshedAt
+}
+
+// ExternalState resolves one external-org uuid live and uncached; an unknown uuid
+// and one carrying neither attribute both answer AccountUnknown.
+func (s *Service) ExternalState(ctx context.Context, uuid string) (scim.AccountState, error) {
+	if s.externalSCIM == nil || strings.TrimSpace(uuid) == "" {
+		return scim.AccountUnknown, nil
+	}
+	dirUser, err := s.externalSCIM.LookupByUUID(ctx, uuid)
+	if err != nil {
+		return scim.AccountUnknown, err
+	}
+	if dirUser == nil {
+		return scim.AccountUnknown, nil
+	}
+	return dirUser.State, nil
 }
 
 // StartBulkRefresh fetches every directory user whose email is in domain (see
@@ -423,11 +498,12 @@ func (s *Service) refreshBulk(ctx context.Context, domain string) bool {
 
 	next := make(map[string]Person, len(users))
 	for _, u := range users {
-		next[u.UUID] = Person{UUID: u.UUID, Email: u.Email, DisplayName: u.DisplayName}
+		next[u.UUID] = Person{UUID: u.UUID, Email: u.Email, DisplayName: u.DisplayName, State: u.State}
 	}
 
 	s.bulkMu.Lock()
 	s.bulk = next
+	s.bulkRefreshedAt = time.Now()
 	s.bulkMu.Unlock()
 	slog.InfoContext(ctx, "directory: bulk snapshot refreshed", "domain", domain, "count", len(next))
 	return true

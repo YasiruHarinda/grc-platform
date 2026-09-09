@@ -30,6 +30,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
+	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user"
 )
 
 // actor returns the caller's uuid for created_by/revoked_by attribution — the
@@ -195,8 +196,12 @@ func (d *Deps) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// validUserStatuses mirrors user.status's enum.
-var validUserStatuses = map[string]bool{"ACTIVE": true, "INACTIVE": true, "REMOVED": true}
+// settableUserStatuses is what an admin may set. Disabled is deliberately absent
+// — it is system-owned and answered with its own 422; see handleUpdateUserStatus.
+var settableUserStatuses = map[string]bool{
+	userentity.StatusActive:   true,
+	userentity.StatusInactive: true,
+}
 
 type updateUserStatusRequest struct {
 	Status string `json:"status"`
@@ -230,8 +235,17 @@ func (d *Deps) handleUpdateUserStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Status = strings.ToUpper(strings.TrimSpace(req.Status))
-	if !validUserStatuses[req.Status] {
-		response.WriteError(w, http.StatusBadRequest, "status must be ACTIVE, INACTIVE, or REMOVED")
+	// Disabled is system-owned: it only means the directory said so if nobody can
+	// set it by hand. Checked before the settable list so it keeps its own 422
+	// rather than falling through to a bare 400. An admin can still move a user
+	// out of it.
+	if req.Status == userentity.StatusDisabled {
+		response.WriteError(w, http.StatusUnprocessableEntity,
+			"Disabled is set by the Directory Status Sync, not by hand. Use Active or Inactive.")
+		return
+	}
+	if !settableUserStatuses[req.Status] {
+		response.WriteError(w, http.StatusBadRequest, "status must be ACTIVE or INACTIVE")
 		return
 	}
 

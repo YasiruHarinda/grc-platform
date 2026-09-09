@@ -241,7 +241,7 @@ func (j *ReminderJob) runOnce(parent context.Context) (runErr error) {
 	// alert can head each email with its audit without a lookup per email.
 	auditNames := make(map[int]string, len(audits))
 	for _, a := range audits {
-		if a.Status != "COMPLETED" && a.Status != "REMOVED" {
+		if a.IsOngoing() {
 			activeAuditIDs[a.ID] = true
 		}
 		auditNames[a.ID] = a.Name

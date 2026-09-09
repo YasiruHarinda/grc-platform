@@ -43,6 +43,10 @@ const (
 	ActionRevoked       = "REVOKED"
 )
 
+// ActorDirectoryStatusSync attributes an entry to the sync, not a person. Asgardeo
+// cannot issue the all-zero uuid, so readers special-case it instead of resolving it.
+const ActorDirectoryStatusSync = "00000000-0000-0000-0000-000000000000"
+
 // Entity type names — mirror admin_activity_log.entity_type's ENUM exactly.
 const (
 	EntityUser                = "USER"

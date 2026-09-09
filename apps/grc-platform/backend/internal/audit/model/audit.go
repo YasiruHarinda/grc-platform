@@ -54,6 +54,13 @@ type Audit struct {
 	UpdatedAt        time.Time         `json:"updatedAt"`
 }
 
+// IsOngoing reports whether the audit still counts as live work. ARCHIVED is
+// ongoing; only COMPLETED and REMOVED are not. The reminder job and the
+// departure sweep must agree on this, so both ask here.
+func (a *Audit) IsOngoing() bool {
+	return a.Status != "COMPLETED" && a.Status != "REMOVED"
+}
+
 // AuditListResponse is returned by GET /api/v1/audits.
 type AuditListResponse struct {
 	Items []*Audit `json:"items"`

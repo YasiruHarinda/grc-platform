@@ -158,12 +158,15 @@ func (r *riskRepository) List(ctx context.Context, filter model.ListRisksFilter)
 			RiskTitle:          e.RiskTitle,
 			SourceRegisterName: e.SourceRegisterName,
 			// The list shows the effective level, not the gross one.
-			RiskLevel:      deref(e.EffectiveRiskLevel),
-			RiskLevelColor: deref(e.EffectiveColorCode),
-			OwnerUUID:      e.OwnerUUID,
-			AssignerUUID:   e.AssignerUUID,
-			WorkflowStatus: e.WorkflowStatus,
-			RiskType:       e.RiskType,
+			RiskLevel:            deref(e.EffectiveRiskLevel),
+			RiskLevelColor:       deref(e.EffectiveColorCode),
+			OwnerUUID:            e.OwnerUUID,
+			AssignerUUID:         e.AssignerUUID,
+			OwnerID:              e.OwnerID,
+			AssignerID:           e.AssignerID,
+			ManagementApproverID: e.ManagementApproverID,
+			WorkflowStatus:       e.WorkflowStatus,
+			RiskType:             e.RiskType,
 			// Dates render as RFC3339 to match what database/sql produced from
 			// the DATE column; see dateOnlyToRFC3339.
 			ImplementationDate: dateOnlyPtrToRFC3339(e.ImplementationDate),

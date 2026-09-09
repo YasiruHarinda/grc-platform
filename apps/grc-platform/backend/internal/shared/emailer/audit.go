@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -77,6 +76,10 @@ const (
 	// Unlike the six above, this one does set Comment — see
 	// handler/notify.go's notifyCommentAdded for the internal-visibility gate.
 	AuditEventCommentAdded AuditEvent = "AUDIT_COMMENT_ADDED"
+
+	// AuditEventDepartureDigest tells the admins who can reassign audit work which
+	// people were just reported disabled. Grouped by person, with a Role column.
+	AuditEventDepartureDigest AuditEvent = "AUDIT_DEPARTURE_DIGEST"
 )
 
 // AuditEventItem is one control or population round an AuditEventInfo email
@@ -101,6 +104,15 @@ type AuditEventItem struct {
 	// Audit names this row's audit, shown under the control number when
 	// Info.ShowAudit is set.
 	Audit string
+	// Role is what this row's person held on it, shown when Info.ShowRole is set.
+	Role string
+}
+
+// AuditEventGroup is one person's block of rows in a digest covering several
+// people. Person heads the block, e.g. "Jane Doe (jane@wso2.com)".
+type AuditEventGroup struct {
+	Person string
+	Items  []AuditEventItem
 }
 
 // AuditEventInfo carries everything any audit template might render. Unlike
@@ -138,9 +150,63 @@ type AuditEventInfo struct {
 	// digest spanning audits. Widens the control column at Description's
 	// expense rather than adding a sixth one.
 	ShowAudit bool
+	// ShowRole renders the Role column. Only the departure digest sets it; every
+	// other email is about one role the lead sentence already names.
+	ShowRole bool
 	// OwnerName is the owner's display name alone, for subjects that name
 	// them. Actor carries the fuller "Name (email)" form for the body.
 	OwnerName string
+	// Groups renders one headed table per person instead of the flat Items table.
+	// When it is set, Items is ignored.
+	Groups []AuditEventGroup
+}
+
+// tableGroups is what the template ranges over: Groups, or the flat Items under
+// one unnamed group, so the table markup exists once rather than twice.
+func (i AuditEventInfo) tableGroups() []AuditEventGroup {
+	if len(i.Groups) > 0 {
+		return i.Groups
+	}
+	if len(i.Items) == 0 {
+		return nil
+	}
+	return []AuditEventGroup{{Items: i.Items}}
+}
+
+// Column widths share a fixed 100% budget across a varying set of optional
+// columns, so they are computed here rather than in the template.
+const optionalColumnWidth = 19
+
+// OptionalColumnWidth exposes that budget to the template, so a Status, Owner or
+// Role column cannot drift from what DescriptionWidth subtracted for it.
+func (i AuditEventInfo) OptionalColumnWidth() int { return optionalColumnWidth }
+
+// RequirementWidth narrows when a Role column shares the row.
+func (i AuditEventInfo) RequirementWidth() int {
+	if i.ShowRole {
+		return 20
+	}
+	return 29
+}
+
+// ControlWidth is wider when the cell also carries the audit name beneath it.
+func (i AuditEventInfo) ControlWidth() int {
+	if i.ShowAudit {
+		return 24
+	}
+	return 14
+}
+
+// DescriptionWidth is whatever the fixed columns leave over.
+func (i AuditEventInfo) DescriptionWidth() int {
+	const dueDateWidth = 15
+	optional := 0
+	for _, on := range []bool{i.ShowStatus, i.ShowOwner, i.ShowRole} {
+		if on {
+			optional += optionalColumnWidth
+		}
+	}
+	return 100 - i.RequirementWidth() - i.ControlWidth() - dueDateWidth - optional
 }
 
 // auditEventTemplate is the per-event copy — the audit equivalent of
@@ -197,6 +263,18 @@ func overdueLeadSubject(i AuditEventInfo) string {
 		return "[GRC Platform] Overdue"
 	}
 	return fmt.Sprintf("[GRC Platform] Overdue — %s", name)
+}
+
+// Counts the people in the body, not the rows. A deliberate exception to the
+// stable-subject rule: this is sent once and has no previous send to thread with.
+func departureDigestSubject(i AuditEventInfo) string {
+	return DepartureDigestSubject(len(i.Groups))
+}
+
+// DepartureDigestSubject is the subject both hubs' departure digests carry, so
+// an admin receiving the audit and risk halves of one run sees one wording.
+func DepartureDigestSubject(people int) string {
+	return fmt.Sprintf("[GRC Platform] Reassignment needed — %d person(s) have left", people)
 }
 
 // auditEventTemplates is the single place to see everything the audit module
@@ -290,6 +368,12 @@ var auditEventTemplates = map[AuditEvent]auditEventTemplate{
 		lead:       "A new comment has been added to this control.",
 		actorLabel: "Commented by",
 	},
+	AuditEventDepartureDigest: {
+		subject: departureDigestSubject,
+		lead: "The following people are no longer available in the identity directory. " +
+			"The audit work listed under each of them needs reassigning.",
+		actorLabel: "",
+	},
 }
 
 // auditBodyTemplate renders the shared body for every audit event. Same
@@ -308,23 +392,27 @@ var auditBodyTemplate = template.Must(template.New("auditEvent").Parse(`<html>
 
 {{if .Info.Actor}}<tr><td style="padding:0 24px 8px 24px; font-size:13px;"><span style="color:#57606a;">{{.ActorLabel}}</span> {{.Info.Actor}}</td></tr>{{end}}
 
-{{if .Info.Items}}<tr><td style="padding:8px 24px 4px 24px;">
+{{range .Groups}}
+{{if .Person}}<tr><td style="padding:16px 24px 0 24px; font-size:14px; font-weight:bold;">{{.Person}}</td></tr>{{end}}
+<tr><td style="padding:8px 24px 4px 24px;">
 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed; font-size:13px; border-collapse:collapse;">
 <tr style="color:#57606a; text-align:left;">
-<td width="29%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Requirement Type</td>
-<td width="{{if .Info.ShowAudit}}24{{else}}14{{end}}%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Control No</td>
-<td width="{{if .Info.ShowAudit}}32{{else if or .Info.ShowStatus .Info.ShowOwner}}23{{else}}42{{end}}%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Description</td>
+<td width="{{$.Info.RequirementWidth}}%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Requirement Type</td>
+<td width="{{$.Info.ControlWidth}}%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Control No</td>
+<td width="{{$.Info.DescriptionWidth}}%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8;">Description</td>
 <td width="15%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Due Date</td>
-{{if .Info.ShowStatus}}<td width="19%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Status</td>{{end}}
-{{if .Info.ShowOwner}}<td width="19%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Owner</td>{{end}}
+{{if $.Info.ShowStatus}}<td width="{{$.Info.OptionalColumnWidth}}%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Status</td>{{end}}
+{{if $.Info.ShowOwner}}<td width="{{$.Info.OptionalColumnWidth}}%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Owner</td>{{end}}
+{{if $.Info.ShowRole}}<td width="{{$.Info.OptionalColumnWidth}}%" style="padding:6px 8px; border-bottom:1px solid #e1e4e8; white-space:nowrap;">Role</td>{{end}}
 </tr>
-{{range .Info.Items}}<tr>
+{{range .Items}}<tr>
 <td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; word-break:break-word;">{{.RequirementType}}</td>
 <td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; font-weight:bold; word-break:break-word;">{{if .DetailURL}}<a href="{{.DetailURL}}" style="color:#ff7300; text-decoration:none;">{{.ControlNumber}}</a>{{else}}{{.ControlNumber}}{{end}}{{if $.Info.ShowAudit}}<br><span style="font-weight:normal; color:#57606a; font-size:12px;">{{.Audit}}</span>{{end}}</td>
 <td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; word-break:break-word; overflow-wrap:break-word;">{{.Description}}</td>
 <td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; white-space:nowrap;">{{.DueDate}}</td>
 {{if $.Info.ShowStatus}}<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; white-space:nowrap;">{{.Tier}}</td>{{end}}
 {{if $.Info.ShowOwner}}<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; word-break:break-word;">{{.Owner}}</td>{{end}}
+{{if $.Info.ShowRole}}<td style="padding:6px 8px; border-bottom:1px solid #f0f0f0; word-break:break-word;">{{.Role}}</td>{{end}}
 </tr>{{end}}
 </table>
 </td></tr>{{end}}
@@ -375,7 +463,8 @@ func (c *Client) SendAuditEvent(ctx context.Context, ev AuditEvent, to string, i
 		Lead       string
 		ActorLabel string
 		Info       AuditEventInfo
-	}{tpl.lead, tpl.actorLabel, info}); err != nil {
+		Groups     []AuditEventGroup
+	}{tpl.lead, tpl.actorLabel, info, info.tableGroups()}); err != nil {
 		return fmt.Errorf("emailer: render template: %w", err)
 	}
 
@@ -385,23 +474,5 @@ func (c *Client) SendAuditEvent(ctx context.Context, ev AuditEvent, to string, i
 		Subject:  sanitizeSubject(tpl.subject(info)),
 		Template: base64.StdEncoding.EncodeToString(body.Bytes()),
 	}
-	b, err := json.Marshal(reqBody)
-	if err != nil {
-		return fmt.Errorf("emailer: marshal request: %w", err)
-	}
-
-	var lastErr error
-	for attempt := 1; attempt <= sendAttempts; attempt++ {
-		retryable, err := c.sendOnce(ctx, b)
-		if err == nil {
-			return nil
-		}
-		lastErr = err
-		if !retryable || attempt == sendAttempts {
-			break
-		}
-		slog.Warn("emailer: audit send failed, retrying",
-			"attempt", attempt, "of", sendAttempts, "err", err)
-	}
-	return lastErr
+	return c.deliver(ctx, "audit", reqBody)
 }

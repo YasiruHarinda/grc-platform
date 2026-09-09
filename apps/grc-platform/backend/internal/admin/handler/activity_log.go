@@ -95,7 +95,9 @@ func resolveActivityLogActors(ctx context.Context, dir *directory.Service, entri
 	}
 	uuidTypes := make(map[string]string, len(entries))
 	for _, e := range entries {
-		if e.ActorID != "" {
+		// The sync's reserved actor is not a person; asking would cost a failing
+		// lookup on every page load. The Console names it instead.
+		if e.ActorID != "" && e.ActorID != adminactivity.ActorDirectoryStatusSync {
 			uuidTypes[e.ActorID] = e.ActorUserType
 		}
 	}

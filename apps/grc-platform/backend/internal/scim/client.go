@@ -32,6 +32,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -233,6 +234,76 @@ type DirectoryUser struct {
 	UUID        string
 	Email       string
 	DisplayName string
+	// State is what this record says about the account being disabled.
+	// AccountUnknown means neither attribute was present: no information.
+	State AccountState
+}
+
+// AccountState answers "is this account disabled". Three values, not a bool:
+// a record may carry neither attribute, and silence must not read as enabled.
+type AccountState int
+
+const (
+	// AccountUnknown means the record carried neither disabled attribute.
+	AccountUnknown AccountState = iota
+	AccountEnabled
+	AccountDisabled
+)
+
+// The Asgardeo user-schema extension carrying account state, and its two
+// attributes fully qualified as an attribute-restricted search must ask for them.
+const wso2SchemaURN = "urn:scim:wso2:schema"
+
+const (
+	attrAccountState    = wso2SchemaURN + ":accountState"
+	attrAccountDisabled = wso2SchemaURN + ":accountDisabled"
+)
+
+// flexBool also accepts the string form: Asgardeo returns this attribute as
+// "true" in some responses and as a real boolean in others.
+type flexBool bool
+
+func (b *flexBool) UnmarshalJSON(data []byte) error {
+	var asBool bool
+	if err := json.Unmarshal(data, &asBool); err == nil {
+		*b = flexBool(asBool)
+		return nil
+	}
+	var asString string
+	if err := json.Unmarshal(data, &asString); err != nil {
+		return fmt.Errorf("scim: accountDisabled is neither bool nor string: %s", string(data))
+	}
+	parsed, err := strconv.ParseBool(strings.TrimSpace(asString))
+	if err != nil {
+		return fmt.Errorf("scim: accountDisabled %q is not a boolean", asString)
+	}
+	*b = flexBool(parsed)
+	return nil
+}
+
+// Pointers so an absent attribute stays distinguishable from a present-and-false
+// one.
+type wso2Schema struct {
+	AccountState    *string   `json:"accountState"`
+	AccountDisabled *flexBool `json:"accountDisabled"`
+}
+
+// The one accountState value meaning disabled; LOCKED and PENDING_* are not.
+const accountStateDisabled = "DISABLED"
+
+// Either attribute saying disabled is enough; only a record carrying neither
+// is Unknown.
+func (w wso2Schema) state() AccountState {
+	disabled := w.AccountDisabled != nil && bool(*w.AccountDisabled)
+	stateDisabled := w.AccountState != nil && strings.EqualFold(strings.TrimSpace(*w.AccountState), accountStateDisabled)
+	switch {
+	case disabled || stateDisabled:
+		return AccountDisabled
+	case w.AccountDisabled != nil || (w.AccountState != nil && strings.TrimSpace(*w.AccountState) != ""):
+		return AccountEnabled
+	default:
+		return AccountUnknown
+	}
 }
 
 type userSearchInput struct {
@@ -265,6 +336,7 @@ type scimUser struct {
 		GivenName  string `json:"givenName"`
 		FamilyName string `json:"familyName"`
 	} `json:"name"`
+	WSO2 wso2Schema `json:"urn:scim:wso2:schema"`
 }
 
 type userSearchResult struct {
@@ -460,9 +532,9 @@ func (c *Client) searchUsersPage(ctx context.Context, filter string, startIndex,
 		Schemas: []string{scimSearchRequestSchema},
 		Filter:  filter,
 		Domain:  "DEFAULT",
-		// Asking for only what is used keeps the response small and avoids
-		// pulling attributes this platform has no business reading.
-		Attributes:   []string{"id", "userName", "name"},
+		// Asking for only what is used keeps the response small. Account state
+		// rides along on every call rather than a second attribute set to keep in step.
+		Attributes:   []string{"id", "userName", "name", attrAccountState, attrAccountDisabled},
 		StartIndex:   startIndex,
 		ItemsPerPage: itemsPerPage,
 	})
@@ -506,6 +578,7 @@ func (c *Client) searchUsersPage(ctx context.Context, filter string, startIndex,
 			UUID:        u.ID,
 			Email:       stripGroupDomain(u.UserName),
 			DisplayName: fullName(u.Name.GivenName, u.Name.FamilyName),
+			State:       u.WSO2.state(),
 		})
 	}
 	return out, result.TotalResults, nil

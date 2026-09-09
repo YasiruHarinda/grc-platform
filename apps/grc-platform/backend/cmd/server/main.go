@@ -192,12 +192,18 @@ func main() {
 	}
 	auditDeps.TriggerReminderJob = reminderJob.RunOnce
 	audithandler.RegisterRoutes(mux, auditDeps)
+	// Constructed regardless of SCHEDULER_ENABLED, like the two sweeps above: the
+	// manual trigger is how a deployment verifies the sync against real Asgardeo.
+	adminRepo := adminentity.NewRepository(entityCli)
+	directorySyncJob := buildDirectorySyncJob(adminRepo, userDeps.Users, dirSvc,
+		&auditDeps, &riskDeps, activityLog, cfg.Email.Enabled)
 	adminhandler.RegisterRoutes(mux, adminhandler.Deps{
-		Admin:       adminentity.NewRepository(entityCli),
-		Users:       userDeps.Users,
-		Grants:      grantRepo,
-		Directory:   dirSvc,
-		ActivityLog: activityLog,
+		Admin:                adminRepo,
+		Users:                userDeps.Users,
+		Grants:               grantRepo,
+		Directory:            dirSvc,
+		ActivityLog:          activityLog,
+		TriggerDirectorySync: directorySyncJob.Trigger,
 	})
 
 	// Background sweeps, both fired daily at a fixed 08:00 UTC by one shared
@@ -218,10 +224,14 @@ func main() {
 		go scheduler.New(scheduler.SweepHourUTC,
 			scheduler.Sweep{Name: "overdue-risk-escalation", Run: escalationJob.RunOnce},
 			scheduler.Sweep{Name: "audit-due-date-reminders", Run: reminderJob.RunOnce},
+			// Several hours after the directory's own bulk refresh, so it reads
+			// today's snapshot rather than yesterday's.
+			scheduler.Sweep{Name: "directory-status-sync", Run: directorySyncJob.RunOnce},
 		).Run(jobCtx)
 	} else {
 		slog.Warn("background scheduler disabled (SCHEDULER_ENABLED=false); " +
-			"overdue-risk escalation and audit due-date reminders will not run automatically")
+			"overdue-risk escalation, audit due-date reminders and the directory status sync " +
+			"will not run automatically")
 	}
 	handler := middleware.SecurityHeaders(
 		middleware.CORS(cfg.CORSAllowedOrigin)(

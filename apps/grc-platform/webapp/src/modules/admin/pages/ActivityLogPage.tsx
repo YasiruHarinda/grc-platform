@@ -44,6 +44,16 @@ import {
   type AdminActivityLogEntry,
 } from "../api/adminApi";
 
+// The sync's reserved actor id, which Asgardeo cannot issue and the backend does
+// not resolve. Naming it keeps a sync-driven change from reading as an admin's.
+const SYNC_ACTOR_ID = "00000000-0000-0000-0000-000000000000";
+const SYNC_ACTOR_NAME = "Directory Status Sync";
+
+function actorLabel(e: AdminActivityLogEntry): string {
+  if (e.actorId === SYNC_ACTOR_ID) return SYNC_ACTOR_NAME;
+  return e.actorName || e.actorEmail || e.actorId;
+}
+
 const ACTION_LABELS: Record<AdminActivityAction, string> = {
   CREATED: "Created",
   UPDATED: "Updated",
@@ -81,6 +91,7 @@ const PAGE_SIZE = 25;
 function describeDetails(d: AdminActivityLogEntry["details"]): string {
   if (!d) return "";
   const parts: string[] = [];
+  if (typeof d.job === "string") parts.push(d.job);
   if (typeof d.user === "string") parts.push(`user: ${d.user}`);
   if (typeof d.name === "string") parts.push(`"${d.name}"`);
   if (typeof d.role === "string") parts.push(d.role);
@@ -244,7 +255,7 @@ export default function ActivityLogPage(): JSX.Element {
               entries.map((e) => (
                 <TableRow key={e.id}>
                   <TableCell sx={{ whiteSpace: "nowrap" }}>{new Date(e.createdOn).toLocaleString()}</TableCell>
-                  <TableCell>{e.actorName || e.actorEmail || e.actorId}</TableCell>
+                  <TableCell>{actorLabel(e)}</TableCell>
                   <TableCell>
                     <Chip size="small" variant="outlined" label={ACTION_LABELS[e.action] ?? e.action} />
                   </TableCell>

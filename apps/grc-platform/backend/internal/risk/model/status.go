@@ -16,6 +16,8 @@
 
 package model
 
+import "slices"
+
 // Workflow status constants for the risk lifecycle state machine.
 // Defining them here gives the compiler visibility over every transition and
 // prevents silent drift from bare string literals scattered across packages.
@@ -37,6 +39,49 @@ const (
 	StatusClosed                   = "CLOSED"
 	StatusCancelled                = "CANCELLED"
 )
+
+// AllWorkflowStatuses is every value the workflow_status column can hold, in
+// lifecycle order. It must name every constant above; status_test.go fails if
+// the two drift.
+var AllWorkflowStatuses = []string{
+	StatusPendingOwnerApproval,
+	StatusPendingManagementApproval,
+	StatusPendingComplianceReview,
+	StatusInRemediation,
+	StatusPendingOwnerCompletion,
+	StatusPendingManagementClosure,
+	StatusPendingComplianceClosure,
+	StatusPendingAmendment,
+	StatusPendingRevision,
+	StatusEscalated,
+	StatusClosed,
+	StatusCancelled,
+}
+
+// TerminalWorkflowStatuses are the statuses that end a risk's life: no further
+// work is possible and nobody needs reassigning onto it.
+var TerminalWorkflowStatuses = []string{StatusClosed, StatusCancelled}
+
+// IsOngoingWorkflowStatus reports whether a risk in this status still counts as
+// live work — the risk counterpart of audit's Audit.IsOngoing(). Defined by
+// exclusion, so a new non-terminal status is ongoing with no change here.
+func IsOngoingWorkflowStatus(status string) bool {
+	return !slices.Contains(TerminalWorkflowStatuses, status)
+}
+
+// OngoingWorkflowStatuses is every non-terminal status, for callers that must
+// pass an inclusive status filter (the risk list query has no "exclude" form).
+// Derived from AllWorkflowStatuses so it cannot silently omit one the way a
+// hand-maintained list could.
+func OngoingWorkflowStatuses() []string {
+	out := make([]string, 0, len(AllWorkflowStatuses))
+	for _, s := range AllWorkflowStatuses {
+		if IsOngoingWorkflowStatus(s) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
 
 // RiskTypeNew and RiskTypeUpdated are the two values for the risk_type column.
 const (
