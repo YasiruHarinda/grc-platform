@@ -1,0 +1,42 @@
+# Choreo component descriptor — risk-register-import
+#
+# This component is a Manual Task (build type: Go), not a service: it has no
+# endpoints. The task type, trigger, and the config keys below are set in the
+# Choreo console (same as digiops-sales operations/registry-subscription-sync,
+# which carries no component.yaml at all). This file is kept for discoverability
+# and to pin the schema version.
+schemaVersion: "1.2"
+
+# Configuration surface (set under the component's "Configs & Secrets").
+# Every key below maps 1:1 to a field on Config in main.go.
+#
+#   Configs
+#     DRY_RUN                     "true" (default) | "false"   — must be "false" to write
+#     MIGRATION_DATE              YYYY-MM-DD                    — closure-field date (plan §5);
+#                                                                defaults to the run date (UTC)
+#     SCIM_DOMAIN                 e.g. wso2.com                 — defaults to wso2.com
+#     INPUT_PATH                  mount path of the uploaded CSV file   (required)
+#     COMPLIANCE_ENTITY_BASE_URL  from the compliance-entity Connection (required)
+#     SCIM_BASE_URL               Asgardeo API root, e.g. https://api.asgardeo.io (required)
+#     SCIM_INTERNAL_ORG           Asgardeo tenant path segment, e.g. wso2           (required)
+#     SCIM_TOKEN_URL              optional — derived as {SCIM_BASE_URL}/t/{SCIM_INTERNAL_ORG}/oauth2/token
+#     HTTP_TIMEOUT                optional Go duration (default 90s); SCIM cold-starts, keep it generous
+#
+#   NEVER set in Choreo (local testing only):
+#     SCIM_SNAPSHOT_FILE         path to an email,uuid CSV read instead of calling Asgardeo.
+#                                Choreo runs must resolve identity from the live directory.
+#
+#   Secrets
+#     SCIM_INTERNAL_CLIENT_ID     (required)
+#     SCIM_INTERNAL_CLIENT_SECRET (required)
+#     SCIM_INTERNAL_SCOPES        space-separated; Asgardeo silently drops scopes the app
+#                                 isn't authorised for, so a wrong value surfaces as a 403
+#                                 from SCIM at call time, caught by preflight
+#
+#   File mount
+#     the prepared CSV export (plan §4), mounted at INPUT_PATH
+#
+# Connections
+#   - compliance-entity  (Project visibility REST component)
+#   - Asgardeo SCIM2 (token + /Users/.search) — reached directly, mirroring
+#     apps/grc-platform/backend/internal/scim and cmd/backfill-uuids
