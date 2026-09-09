@@ -79,7 +79,7 @@ func buildDirectorySyncJob(
 		},
 		Directory:   dirSvc,
 		ResolveName: dirSvc.DescribeTyped,
-		Disable: func(ctx context.Context, u directorysync.User, name string) error {
+		Disable: func(ctx context.Context, u directorysync.User, name string) (bool, error) {
 			return directorysync.Disable(ctx, users, activityLog, u, name)
 		},
 		Hubs: []directorysync.Hub{

@@ -36,10 +36,16 @@ type ActivityLogger interface {
 
 // Disable writes the Disabled status and logs it under the sync's reserved
 // actor. One step rather than two, because a status change the activity log
-// cannot account for reads as an unexplained admin action.
-func Disable(ctx context.Context, users StatusRepository, activityLog ActivityLogger, u User, name string) error {
-	if _, err := users.UpdateStatus(ctx, u.ID, StatusDisabled, adminactivity.ActorDirectoryStatusSync); err != nil {
-		return err
+// cannot account for reads as an unexplained admin action. Reports false when
+// the row is already gone — deleted between the run's listing and this write —
+// so the caller neither logs nor counts a change that did not happen.
+func Disable(ctx context.Context, users StatusRepository, activityLog ActivityLogger, u User, name string) (bool, error) {
+	updated, err := users.UpdateStatus(ctx, u.ID, StatusDisabled, adminactivity.ActorDirectoryStatusSync)
+	if err != nil {
+		return false, err
+	}
+	if updated == nil {
+		return false, nil
 	}
 	label := name
 	if label == "" {
@@ -47,5 +53,5 @@ func Disable(ctx context.Context, users StatusRepository, activityLog ActivityLo
 	}
 	activityLog.Log(ctx, adminactivity.ActorDirectoryStatusSync, adminactivity.ActionStatusChanged,
 		adminactivity.EntityUser, u.ID, map[string]any{"user": label, "status": StatusDisabled})
-	return nil
+	return true, nil
 }

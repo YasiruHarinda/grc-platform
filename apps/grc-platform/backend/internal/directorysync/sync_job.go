@@ -125,8 +125,9 @@ type Deps struct {
 	// ResolveName never fails: an unresolvable person degrades to their uuid.
 	ResolveName func(ctx context.Context, uuid, userType string) string
 	// Disable writes the status and records it in the admin activity log under
-	// the sync's reserved actor.
-	Disable func(ctx context.Context, u User, name string) error
+	// the sync's reserved actor. Returns false when the row was already gone,
+	// so nothing was written, logged or counted.
+	Disable func(ctx context.Context, u User, name string) (bool, error)
 	Hubs    []Hub
 	// EmailEnabled mirrors the platform-wide notification switch. Off means
 	// statuses are still written and no send is attempted.
@@ -261,9 +262,16 @@ func (j *Job) runOnce(parent context.Context) (runErr error) {
 				"userId", u.ID, "hub", hub)
 			continue
 		}
-		if err := j.deps.Disable(ctx, u, names[u.ID]); err != nil {
+		disabled, err := j.deps.Disable(ctx, u, names[u.ID])
+		if err != nil {
 			c.errs++
 			slog.ErrorContext(ctx, "directory status sync: write status", "userId", u.ID, "err", err)
+			continue
+		}
+		if !disabled {
+			// Row deleted between this run's listing and the write: nothing to
+			// disable, and nothing was logged.
+			slog.WarnContext(ctx, "directory status sync: user row gone before status write, skipping", "userId", u.ID)
 			continue
 		}
 		c.disabled++
