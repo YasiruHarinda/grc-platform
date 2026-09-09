@@ -30,8 +30,9 @@ import (
 type directorySyncHandler struct {
 	// A plain function so this package never imports the job's construction.
 	// It claims the job's run slot and reports false if a run is already in
-	// flight; nil (job wiring not configured) answers 503.
-	trigger     func() bool
+	// flight; nil (job wiring not configured) answers 503. The bool pushes a
+	// genuine batch past the job's per-run safety limit for this one run.
+	trigger     func(overrideLimit bool) bool
 	activityLog *adminactivity.Client
 }
 
@@ -45,10 +46,13 @@ func (h *directorySyncHandler) run(w http.ResponseWriter, r *http.Request) {
 		response.WriteError(w, http.StatusServiceUnavailable, "directory status sync is not configured")
 		return
 	}
+	// override=true pushes a genuine batch past the job's per-run safety limit
+	// for this one run; the scheduled sweep is never able to.
+	override := r.URL.Query().Get("override") == "true"
 	// Claimed before replying, and claimed on the job itself: the scheduled
 	// sweep shares it, so a second flag here would answer 202 to a trigger the
 	// job then refuses out of sight.
-	if !h.trigger() {
+	if !h.trigger(override) {
 		response.WriteError(w, http.StatusConflict, "directory status sync is already running")
 		return
 	}
@@ -59,8 +63,11 @@ func (h *directorySyncHandler) run(w http.ResponseWriter, r *http.Request) {
 	if caller := auth.FromContext(r.Context()); caller != nil {
 		callerID = caller.UserID
 	}
-	h.activityLog.Log(r.Context(), actor(r), adminactivity.ActionUpdated, adminactivity.EntityUser, callerID,
-		map[string]any{"job": "Directory Status Sync"})
+	details := map[string]any{"job": "Directory Status Sync"}
+	if override {
+		details["override"] = true
+	}
+	h.activityLog.Log(r.Context(), actor(r), adminactivity.ActionUpdated, adminactivity.EntityUser, callerID, details)
 
 	w.WriteHeader(http.StatusAccepted)
 }

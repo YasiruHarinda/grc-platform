@@ -58,7 +58,7 @@ const (
 	// is almost certainly an upstream fault — a bad directory snapshot
 	// reporting everyone disabled — and is aborted whole, writing no status
 	// and sending no digest, for a human to check.
-	maxDeparturesPerRun = 10
+	maxDeparturesPerRun = 20
 )
 
 // User is one platform user the sync checks.
@@ -159,7 +159,7 @@ func (j *Job) RunOnce(ctx context.Context) error {
 		return errors.New("directory status sync: a run is already in progress")
 	}
 	defer j.running.Store(false)
-	return j.runOnce(ctx)
+	return j.runOnce(ctx, false)
 }
 
 // Trigger claims the run slot and runs detached, reporting false if a run is
@@ -167,13 +167,17 @@ func (j *Job) RunOnce(ctx context.Context) error {
 // it must claim the slot to answer 409 rather than discovering the clash inside
 // a goroutine nobody is watching — and the slot is this one, since the
 // scheduled sweep and the manual trigger share a single Job.
-func (j *Job) Trigger() bool {
+//
+// overrideLimit lets an operator push a genuine batch (a contractor engagement
+// ending, a team offboarded together) past maxDeparturesPerRun for this one
+// run. Scheduled runs never set it, so the unattended path stays capped.
+func (j *Job) Trigger(overrideLimit bool) bool {
 	if !j.running.CompareAndSwap(false, true) {
 		return false
 	}
 	go func() { // #nosec G118 -- deliberately on a background context: the caller's would be cancelled the instant it answers 202, well before an up-to-30min run finishes
 		defer j.running.Store(false)
-		if err := j.runOnce(context.Background()); err != nil {
+		if err := j.runOnce(context.Background(), overrideLimit); err != nil {
 			slog.Error("directory status sync: manual trigger failed", "err", err)
 		}
 	}()
@@ -199,7 +203,7 @@ type counts struct {
 	internalSkipped    int
 }
 
-func (j *Job) runOnce(parent context.Context) (runErr error) {
+func (j *Job) runOnce(parent context.Context, overrideLimit bool) (runErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("directory status sync: recovered from panic", "panic", r, "stack", string(debug.Stack()))
@@ -224,14 +228,20 @@ func (j *Job) runOnce(parent context.Context) (runErr error) {
 		logSummary(ctx, c)
 		return nil
 	}
-	if len(departed) > maxDeparturesPerRun {
+	if !overrideLimit && len(departed) > maxDeparturesPerRun {
 		// Treat an implausible count as an upstream fault, not a fact: no
-		// status is written and no digest is sent this run.
+		// status is written and no digest is sent this run. A genuine batch
+		// goes through the manual trigger with its override set.
 		slog.ErrorContext(ctx, "directory status sync: too many users reported disabled, aborting run",
 			"departed", len(departed), "limit", maxDeparturesPerRun)
 		logSummary(ctx, c)
-		return fmt.Errorf("directory status sync: %d users reported disabled exceeds the %d-per-run safety limit",
+		return fmt.Errorf("directory status sync: %d users reported disabled exceeds the %d-per-run safety limit "+
+			"(retry the manual trigger with override=true if this batch is genuine)",
 			len(departed), maxDeparturesPerRun)
+	}
+	if overrideLimit && len(departed) > maxDeparturesPerRun {
+		slog.WarnContext(ctx, "directory status sync: per-run safety limit overridden by manual trigger",
+			"departed", len(departed), "limit", maxDeparturesPerRun)
 	}
 
 	names := make(map[int]string, len(departed))

@@ -56,8 +56,10 @@ type Deps struct {
 	ActivityLog *adminactivity.Client
 	// TriggerDirectorySync starts the sync on demand, wired to the job's Trigger:
 	// it claims the run slot and reports false if a run is already in flight.
-	// A plain function so this package never imports the job. Nil disables the route.
-	TriggerDirectorySync func() bool
+	// The bool pushes a genuine batch past the job's per-run safety limit for
+	// that run. A plain function so this package never imports the job. Nil
+	// disables the route.
+	TriggerDirectorySync func(overrideLimit bool) bool
 }
 
 // RegisterRoutes mounts every Admin Console route onto mux under

@@ -199,7 +199,7 @@ func main() {
 	// configured it is inert, so leave it unwired: the manual endpoint answers
 	// 503 and no sweep is scheduled.
 	adminRepo := adminentity.NewRepository(entityCli)
-	var triggerDirectorySync func() bool
+	var triggerDirectorySync func(overrideLimit bool) bool
 	var runDirectorySync func(context.Context) error
 	if scimClient != nil || scimExternalClient != nil {
 		directorySyncJob := buildDirectorySyncJob(adminRepo, userDeps.Users, dirSvc,
