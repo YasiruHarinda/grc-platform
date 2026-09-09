@@ -32,6 +32,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -233,6 +234,96 @@ type DirectoryUser struct {
 	UUID        string
 	Email       string
 	DisplayName string
+	// State is what this record says about the account being disabled.
+	// AccountUnknown means neither attribute was present: no information.
+	State AccountState
+}
+
+// AccountState answers "is this account disabled". Three values, not a bool:
+// a record may carry neither attribute, and silence must not read as enabled.
+type AccountState int
+
+const (
+	// AccountUnknown means the record carried neither disabled attribute.
+	AccountUnknown AccountState = iota
+	AccountEnabled
+	AccountDisabled
+)
+
+// The Asgardeo user-schema extension carrying account state, and its two
+// attributes fully qualified as an attribute-restricted search must ask for them.
+const wso2SchemaURN = "urn:scim:wso2:schema"
+
+const (
+	attrAccountState    = wso2SchemaURN + ":accountState"
+	attrAccountDisabled = wso2SchemaURN + ":accountDisabled"
+)
+
+// parseAccountDisabled reads the accountDisabled attribute, which Asgardeo
+// returns as a real boolean in some responses and the string "true"/"false" in
+// others. ok is false for an absent, null, or malformed value: this advisory
+// attribute is not worth failing a whole page of results over, and a nil
+// AccountDisabled reads as Unknown, which the sync leaves alone.
+func parseAccountDisabled(raw json.RawMessage) (val bool, ok bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return false, false
+	}
+	var asBool bool
+	if err := json.Unmarshal(raw, &asBool); err == nil {
+		return asBool, true
+	}
+	var asString string
+	if err := json.Unmarshal(raw, &asString); err != nil {
+		return false, false
+	}
+	parsed, err := strconv.ParseBool(strings.TrimSpace(asString))
+	if err != nil {
+		return false, false
+	}
+	return parsed, true
+}
+
+// Pointers so an absent attribute stays distinguishable from a present-and-false
+// one.
+type wso2Schema struct {
+	AccountState    *string `json:"accountState"`
+	AccountDisabled *bool   `json:"accountDisabled"`
+}
+
+// UnmarshalJSON keeps a malformed accountDisabled from aborting the decode of
+// an entire search page: the pointer is set only for a value that parsed, and
+// left nil otherwise.
+func (w *wso2Schema) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		AccountState    *string         `json:"accountState"`
+		AccountDisabled json.RawMessage `json:"accountDisabled"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	w.AccountState = raw.AccountState
+	if val, ok := parseAccountDisabled(raw.AccountDisabled); ok {
+		w.AccountDisabled = &val
+	}
+	return nil
+}
+
+// The one accountState value meaning disabled; LOCKED and PENDING_* are not.
+const accountStateDisabled = "DISABLED"
+
+// Either attribute saying disabled is enough; only a record carrying neither
+// is Unknown.
+func (w wso2Schema) state() AccountState {
+	disabled := w.AccountDisabled != nil && *w.AccountDisabled
+	stateDisabled := w.AccountState != nil && strings.EqualFold(strings.TrimSpace(*w.AccountState), accountStateDisabled)
+	switch {
+	case disabled || stateDisabled:
+		return AccountDisabled
+	case w.AccountDisabled != nil || (w.AccountState != nil && strings.TrimSpace(*w.AccountState) != ""):
+		return AccountEnabled
+	default:
+		return AccountUnknown
+	}
 }
 
 type userSearchInput struct {
@@ -265,6 +356,7 @@ type scimUser struct {
 		GivenName  string `json:"givenName"`
 		FamilyName string `json:"familyName"`
 	} `json:"name"`
+	WSO2 wso2Schema `json:"urn:scim:wso2:schema"`
 }
 
 type userSearchResult struct {
@@ -460,9 +552,9 @@ func (c *Client) searchUsersPage(ctx context.Context, filter string, startIndex,
 		Schemas: []string{scimSearchRequestSchema},
 		Filter:  filter,
 		Domain:  "DEFAULT",
-		// Asking for only what is used keeps the response small and avoids
-		// pulling attributes this platform has no business reading.
-		Attributes:   []string{"id", "userName", "name"},
+		// Asking for only what is used keeps the response small. Account state
+		// rides along on every call rather than a second attribute set to keep in step.
+		Attributes:   []string{"id", "userName", "name", attrAccountState, attrAccountDisabled},
 		StartIndex:   startIndex,
 		ItemsPerPage: itemsPerPage,
 	})
@@ -506,6 +598,7 @@ func (c *Client) searchUsersPage(ctx context.Context, filter string, startIndex,
 			UUID:        u.ID,
 			Email:       stripGroupDomain(u.UserName),
 			DisplayName: fullName(u.Name.GivenName, u.Name.FamilyName),
+			State:       u.WSO2.state(),
 		})
 	}
 	return out, result.TotalResults, nil

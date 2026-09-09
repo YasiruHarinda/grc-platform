@@ -51,10 +51,22 @@ type SubTab = "users" | "activity";
 
 type UserStatus = AdminUser["status"];
 
+// The two an admin may set. REMOVED — shown as "Disabled" — is system-owned:
+// the server rejects setting it by hand, so it is shown but never offered.
+type SettableStatus = Exclude<UserStatus, "REMOVED">;
+
 const statusColor: Record<UserStatus, "success" | "default" | "error"> = {
   ACTIVE: "success",
   INACTIVE: "default",
   REMOVED: "error",
+};
+
+// REMOVED reads as "Disabled" — the directory's own word for it. The stored
+// enum keeps its spelling, which no migration renames.
+const statusLabel: Record<UserStatus, string> = {
+  ACTIVE: "Active",
+  INACTIVE: "Inactive",
+  REMOVED: "Disabled",
 };
 
 export default function UsersPage(): JSX.Element {
@@ -125,13 +137,19 @@ export default function UsersPage(): JSX.Element {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [users]);
 
-  // REMOVED is the more final state (an ex-employee, gone for good) — confirm
-  // before applying it rather than letting the same control used for routine
-  // ACTIVE/INACTIVE toggling trigger it on a misclick. The server separately
-  // refuses a caller changing their own status (self-lockout guard); that
-  // failure surfaces through the ordinary error alert below.
-  const handleStatusChange = (user: AdminUser, next: UserStatus) => {
-    if (next === "REMOVED" && !window.confirm(`Mark ${user.displayName || user.email || user.uuid} as Removed?`)) {
+  // Restoring a disabled user to Active is the change worth confirming: only
+  // Active returns them to the assignee pickers, and tonight's run may disable
+  // them again. Disabled -> Inactive leaves them out of every picker either way.
+  const handleStatusChange = (user: AdminUser, next: SettableStatus) => {
+    const who = user.displayName || user.email || user.uuid;
+    if (
+      user.status === "REMOVED" &&
+      next === "ACTIVE" &&
+      !window.confirm(
+        `Restore ${who}?\n\nThey will appear in assignee pickers again, and the nightly Directory Status Sync ` +
+          `will set them back to Disabled if the identity directory still reports their account as disabled.`,
+      )
+    ) {
       return;
     }
     setError(null);
@@ -241,18 +259,24 @@ export default function UsersPage(): JSX.Element {
                       disableUnderline
                       value={u.status}
                       disabled={statusUpdatingIds.has(u.id)}
-                      onChange={(e: SelectChangeEvent) => handleStatusChange(u, e.target.value as UserStatus)}
+                      onChange={(e: SelectChangeEvent) => handleStatusChange(u, e.target.value as SettableStatus)}
                       renderValue={(value) => (
                         <Chip
                           size="small"
-                          label={value === "ACTIVE" ? "Active" : value === "INACTIVE" ? "Inactive" : "Removed"}
+                          label={statusLabel[value as UserStatus]}
                           color={statusColor[value as UserStatus]}
                         />
                       )}
                     >
                       <MenuItem value="ACTIVE">Active</MenuItem>
                       <MenuItem value="INACTIVE">Inactive</MenuItem>
-                      <MenuItem value="REMOVED">Removed</MenuItem>
+                      {/* Unselectable, so the current value stays in range while
+                          Disabled remains something only the sync sets. */}
+                      {u.status === "REMOVED" && (
+                        <MenuItem value="REMOVED" disabled>
+                          Disabled
+                        </MenuItem>
+                      )}
                     </Select>
                   </TableCell>
                   <TableCell>{u.createdOn ? new Date(u.createdOn).toLocaleDateString() : "—"}</TableCell>

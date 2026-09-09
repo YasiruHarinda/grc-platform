@@ -207,14 +207,19 @@ type RiskListItem struct {
 	// *UUID identify each person for name resolution against the identity
 	// directory. Not rendered by the client; they exist so the backend can
 	// enrich *Name after the data layer stops joining a display_name.
-	OwnerUUID          string  `json:"-"`
-	AssignerUUID       string  `json:"-"`
-	WorkflowStatus     string  `json:"workflow_status"`
-	RiskType           string  `json:"risk_type"`
-	ImplementationDate *string `json:"implementation_date"`
-	RejectionComment   *string `json:"rejection_comment"`
-	RejectionStage     *string `json:"rejection_stage"`
-	CreatedAt          string  `json:"created_at"`
+	OwnerUUID    string `json:"-"`
+	AssignerUUID string `json:"-"`
+	// For matching a risk's named people against a set of platform users. Kept out
+	// of the payload: the table shows names, not ids.
+	OwnerID              int     `json:"-"`
+	AssignerID           int     `json:"-"`
+	ManagementApproverID int     `json:"-"`
+	WorkflowStatus       string  `json:"workflow_status"`
+	RiskType             string  `json:"risk_type"`
+	ImplementationDate   *string `json:"implementation_date"`
+	RejectionComment     *string `json:"rejection_comment"`
+	RejectionStage       *string `json:"rejection_stage"`
+	CreatedAt            string  `json:"created_at"`
 }
 
 // RiskDetail is the enriched DTO returned by GET /api/v1/risks/{id}.

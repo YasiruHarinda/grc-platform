@@ -54,6 +54,12 @@ type Deps struct {
 	// ActivityLog records mutations to admin_activity_log and backs the read
 	// side (GET /api/v1/admin/activity-log).
 	ActivityLog *adminactivity.Client
+	// TriggerDirectorySync starts the sync on demand, wired to the job's Trigger:
+	// it claims the run slot and reports false if a run is already in flight.
+	// The bool pushes a genuine batch past the job's per-run safety limit for
+	// that run. A plain function so this package never imports the job. Nil
+	// disables the route.
+	TriggerDirectorySync func(overrideLimit bool) bool
 }
 
 // RegisterRoutes mounts every Admin Console route onto mux under
@@ -63,6 +69,7 @@ type Deps struct {
 // handlers).
 func RegisterRoutes(mux routeguard.Router, deps Deps) {
 	d := &deps
+	dsh := &directorySyncHandler{trigger: deps.TriggerDirectorySync, activityLog: deps.ActivityLog}
 
 	mux.HandleFunc("GET /api/v1/admin/directory/search", d.handleSearchDirectory)
 	mux.HandleFunc("GET /api/v1/admin/directory/search-external", d.handleSearchExternalDirectory)
@@ -73,4 +80,5 @@ func RegisterRoutes(mux routeguard.Router, deps Deps) {
 	mux.HandleFunc("DELETE /api/v1/admin/users/{id}/grants/{grantId}", d.handleRevokeGrant)
 	mux.HandleFunc("GET /api/v1/admin/roles", d.handleListRoles)
 	mux.HandleFunc("GET /api/v1/admin/activity-log", d.handleListActivityLog)
+	mux.HandleFunc("POST /api/v1/admin/directory-sync/run", dsh.run)
 }

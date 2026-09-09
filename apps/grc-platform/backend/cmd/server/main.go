@@ -139,16 +139,11 @@ func main() {
 	// request rather than rebuilt per call site.
 	dirSvc := directory.NewWithExternal(scimClient, scimExternalClient, directory.DefaultTTL, directory.DefaultExternalTTL)
 	if scimClient != nil && cfg.SCIM.UserDomain != "" {
-		// Warms a bulk snapshot of everyone in the domain so Lookup/LookupAll
-		// serve them without a per-uuid SCIM call, refreshing it every 12h.
-		// Anyone outside the domain (or if this hasn't refreshed yet) still
-		// resolves through the per-uuid TTL cache below.
-		//
-		// Off the startup path: StartBulkRefresh's first fetch is synchronous,
-		// and this directory is remote and can cold-start slowly. Blocking
-		// here would delay binding the listener (and /health) on an external
-		// dependency the caller already tolerates being unready for.
-		go dirSvc.StartBulkRefresh(ctx, cfg.SCIM.UserDomain, directory.DefaultBulkRefreshInterval)
+		// Warms a bulk snapshot so Lookup/LookupAll skip the per-uuid SCIM
+		// call: once now, then daily at DefaultBulkRefreshHourUTC. Off the
+		// startup path — the first fetch is synchronous against a remote that
+		// can cold-start slowly, and blocking here would delay /health.
+		go dirSvc.StartBulkRefresh(ctx, cfg.SCIM.UserDomain, directory.DefaultBulkRefreshHourUTC)
 	}
 
 	userDeps := userhandler.Deps{
@@ -197,12 +192,31 @@ func main() {
 	}
 	auditDeps.TriggerReminderJob = reminderJob.RunOnce
 	audithandler.RegisterRoutes(mux, auditDeps)
+	// Constructed regardless of SCHEDULER_ENABLED, like the two sweeps above: the
+	// manual trigger is how a deployment verifies the sync against real Asgardeo.
+	// The sync can only disable users it sees through SCIM — the bulk snapshot
+	// for internal users, a per-uuid lookup for external ones. With neither org
+	// configured it is inert, so leave it unwired: the manual endpoint answers
+	// 503 and no sweep is scheduled.
+	adminRepo := adminentity.NewRepository(entityCli)
+	var triggerDirectorySync func(overrideLimit bool) bool
+	var runDirectorySync func(context.Context) error
+	if scimClient != nil || scimExternalClient != nil {
+		directorySyncJob := buildDirectorySyncJob(adminRepo, userDeps.Users, dirSvc,
+			&auditDeps, &riskDeps, activityLog, cfg.Email.Enabled)
+		triggerDirectorySync = directorySyncJob.Trigger
+		runDirectorySync = directorySyncJob.RunOnce
+	} else {
+		slog.Warn("directory status sync not wired: no SCIM org configured; " +
+			"POST /api/v1/admin/directory-sync/run returns 503 and no sweep is scheduled")
+	}
 	adminhandler.RegisterRoutes(mux, adminhandler.Deps{
-		Admin:       adminentity.NewRepository(entityCli),
-		Users:       userDeps.Users,
-		Grants:      grantRepo,
-		Directory:   dirSvc,
-		ActivityLog: activityLog,
+		Admin:                adminRepo,
+		Users:                userDeps.Users,
+		Grants:               grantRepo,
+		Directory:            dirSvc,
+		ActivityLog:          activityLog,
+		TriggerDirectorySync: triggerDirectorySync,
 	})
 
 	// Background sweeps, both fired daily at a fixed 08:00 UTC by one shared
@@ -220,13 +234,20 @@ func main() {
 	jobCtx, jobCancel := context.WithCancel(ctx)
 	defer jobCancel()
 	if cfg.SchedulerEnabled {
-		go scheduler.New(scheduler.SweepHourUTC,
-			scheduler.Sweep{Name: "overdue-risk-escalation", Run: escalationJob.RunOnce},
-			scheduler.Sweep{Name: "audit-due-date-reminders", Run: reminderJob.RunOnce},
-		).Run(jobCtx)
+		sweeps := []scheduler.Sweep{
+			{Name: "overdue-risk-escalation", Run: escalationJob.RunOnce},
+			{Name: "audit-due-date-reminders", Run: reminderJob.RunOnce},
+		}
+		if runDirectorySync != nil {
+			// Several hours after the directory's own bulk refresh, so it reads
+			// today's snapshot rather than yesterday's.
+			sweeps = append(sweeps, scheduler.Sweep{Name: "directory-status-sync", Run: runDirectorySync})
+		}
+		go scheduler.New(scheduler.SweepHourUTC, sweeps...).Run(jobCtx)
 	} else {
 		slog.Warn("background scheduler disabled (SCHEDULER_ENABLED=false); " +
-			"overdue-risk escalation and audit due-date reminders will not run automatically")
+			"overdue-risk escalation, audit due-date reminders and the directory status sync " +
+			"will not run automatically")
 	}
 	handler := middleware.SecurityHeaders(
 		middleware.CORS(cfg.CORSAllowedOrigin)(

@@ -185,3 +185,29 @@ func isNotFound(err error) bool {
 	var apiErr *apierror.Error
 	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
 }
+
+// CandidateIDs returns the union of the user ids holding any of privs, GLOBAL
+// only, de-duplicated in first-seen order. A nil Repository returns nothing
+// rather than erroring: a hub wired without grants has no recipients, not a
+// broken one.
+func CandidateIDs(ctx context.Context, r Repository, privs ...string) ([]int, error) {
+	if r == nil {
+		return nil, nil
+	}
+	ids := make([]int, 0, 8)
+	seen := map[int]bool{}
+	for _, p := range privs {
+		candidates, err := r.Candidates(ctx, p, nil)
+		if err != nil {
+			return nil, fmt.Errorf("resolve %s holders: %w", p, err)
+		}
+		for _, c := range candidates {
+			if seen[c.ID] {
+				continue
+			}
+			seen[c.ID] = true
+			ids = append(ids, c.ID)
+		}
+	}
+	return ids, nil
+}
