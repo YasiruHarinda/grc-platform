@@ -330,6 +330,61 @@ func TestSearchByQuery_FilledCapDoesNotHideOtherAttributes(t *testing.T) {
 	}
 }
 
+// TestSearchUsersPage_RequestsWholeWSO2SchemaAndParsesState guards the
+// departure-sync regression: the request must ask for the wso2 extension by
+// its bare URN (Asgardeo returns the whole object or nothing — a
+// colon-qualified sub-attribute name comes back empty), and a nested
+// accountState/accountDisabled must parse to a concrete AccountState.
+func TestSearchUsersPage_RequestsWholeWSO2SchemaAndParsesState(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(tokenResponse{AccessToken: "test-token", ExpiresIn: 3600})
+	}))
+	defer tokenSrv.Close()
+
+	var gotAttrs []string
+	searchSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var in userSearchInput
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			t.Fatalf("decode search request: %v", err)
+		}
+		gotAttrs = in.Attributes
+		w.Write([]byte(`{"totalResults":2,"Resources":[
+			{"id":"u1","userName":"DEFAULT/live@wso2.com","urn:scim:wso2:schema":{"accountState":"UNLOCKED","accountDisabled":false}},
+			{"id":"u2","userName":"DEFAULT/gone@wso2.com","urn:scim:wso2:schema":{"accountState":"DISABLED","accountDisabled":"true"}}
+		]}`))
+	}))
+	defer searchSrv.Close()
+
+	c := NewClient(searchSrv.URL, tokenSrv.URL, "id", "secret", "internal_user_mgt_view internal_user_mgt_list", "wso2")
+	got, _, err := c.searchUsersPage(context.Background(), `userName ew "@wso2.com"`, 1, usersPageSize)
+	if err != nil {
+		t.Fatalf("searchUsersPage: %v", err)
+	}
+
+	wantWSO2 := false
+	for _, a := range gotAttrs {
+		if a == wso2SchemaURN {
+			wantWSO2 = true
+		}
+		if strings.HasPrefix(a, wso2SchemaURN+":") {
+			t.Errorf("requested colon-qualified sub-attribute %q — Asgardeo returns an empty extension for this", a)
+		}
+	}
+	if !wantWSO2 {
+		t.Errorf("attributes %v does not request the whole %q extension", gotAttrs, wso2SchemaURN)
+	}
+
+	if len(got) != 2 {
+		t.Fatalf("got %d users, want 2", len(got))
+	}
+	if got[0].State != AccountEnabled {
+		t.Errorf("u1 state = %v, want AccountEnabled", got[0].State)
+	}
+	if got[1].State != AccountDisabled {
+		t.Errorf("u2 state = %v, want AccountDisabled", got[1].State)
+	}
+}
+
 func fakeUsers(startIndex, n int) []scimUser {
 	users := make([]scimUser, n)
 	for i := range users {
