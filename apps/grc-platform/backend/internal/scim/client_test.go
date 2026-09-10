@@ -348,10 +348,13 @@ func TestSearchUsersPage_RequestsWholeWSO2SchemaAndParsesState(t *testing.T) {
 			t.Fatalf("decode search request: %v", err)
 		}
 		gotAttrs = in.Attributes
-		w.Write([]byte(`{"totalResults":2,"Resources":[
+		if _, err := w.Write([]byte(`{"totalResults":2,"Resources":[
 			{"id":"u1","userName":"DEFAULT/live@wso2.com","urn:scim:wso2:schema":{"accountState":"UNLOCKED","accountDisabled":false}},
 			{"id":"u2","userName":"DEFAULT/gone@wso2.com","urn:scim:wso2:schema":{"accountState":"DISABLED","accountDisabled":"true"}}
-		]}`))
+		]}`)); err != nil {
+			// t.Errorf, not t.Fatalf: this runs on the server's goroutine.
+			t.Errorf("write search response: %v", err)
+		}
 	}))
 	defer searchSrv.Close()
 
