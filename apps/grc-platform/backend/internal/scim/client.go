@@ -250,14 +250,15 @@ const (
 	AccountDisabled
 )
 
-// The Asgardeo user-schema extension carrying account state, and its two
-// attributes fully qualified as an attribute-restricted search must ask for them.
+// The Asgardeo user-schema extension carrying account state. An
+// attribute-restricted search must ask for this URN itself, not for its
+// sub-attributes by colon-qualified name: Asgardeo returns the whole
+// extension object (accountState, accountDisabled and the rest) or nothing,
+// and a request for "urn:scim:wso2:schema:accountState" yields an empty
+// object — which read back as AccountUnknown and quietly disabled the whole
+// departure sync. Matches scim-operations-service, which requests the bare
+// URN too.
 const wso2SchemaURN = "urn:scim:wso2:schema"
-
-const (
-	attrAccountState    = wso2SchemaURN + ":accountState"
-	attrAccountDisabled = wso2SchemaURN + ":accountDisabled"
-)
 
 // parseAccountDisabled reads the accountDisabled attribute, which Asgardeo
 // returns as a real boolean in some responses and the string "true"/"false" in
@@ -552,9 +553,10 @@ func (c *Client) searchUsersPage(ctx context.Context, filter string, startIndex,
 		Schemas: []string{scimSearchRequestSchema},
 		Filter:  filter,
 		Domain:  "DEFAULT",
-		// Asking for only what is used keeps the response small. Account state
-		// rides along on every call rather than a second attribute set to keep in step.
-		Attributes:   []string{"id", "userName", "name", attrAccountState, attrAccountDisabled},
+		// Asking for only what is used keeps the response small. The wso2
+		// extension URN must be requested whole (see wso2SchemaURN) — its
+		// sub-attributes do not come back when asked for by name.
+		Attributes:   []string{"id", "userName", "name", wso2SchemaURN},
 		StartIndex:   startIndex,
 		ItemsPerPage: itemsPerPage,
 	})

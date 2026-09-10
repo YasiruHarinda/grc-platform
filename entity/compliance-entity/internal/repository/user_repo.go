@@ -117,18 +117,14 @@ func (r *userRepo) GetUserByID(ctx context.Context, id int) (*domain.User, error
 	return u, nil
 }
 
-// GetUserByUUID resolves a user by their Asgardeo id — the identity a token
-// actually carries, and so the lookup the authenticated request path uses.
-//
-// An empty uuid is rejected rather than queried, even now that the column is
-// NOT NULL: `WHERE uuid = ”` would simply match nothing, but refusing it here
-// keeps a caller that forgot to resolve a uuid from silently getting a 404
-// instead of an obviously-wrong request, and being handed an arbitrary user.
+// GetUserByUUID resolves an ACTIVE user by their Asgardeo id. INACTIVE/REMOVED
+// rows read as "not found" so identity-based risk access dies with the account.
+// Empty uuid is rejected rather than queried.
 func (r *userRepo) GetUserByUUID(ctx context.Context, uuid string) (*domain.User, error) {
 	if strings.TrimSpace(uuid) == "" {
 		return nil, &apierror.NotFoundError{Msg: "user with empty uuid not found"}
 	}
-	row := r.db.QueryRowContext(ctx, "SELECT "+userColumns+" FROM `user` WHERE uuid = ?", uuid)
+	row := r.db.QueryRowContext(ctx, "SELECT "+userColumns+" FROM `user` WHERE uuid = ? AND status = 'ACTIVE'", uuid)
 	u, err := scanUser(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, &apierror.NotFoundError{Msg: fmt.Sprintf("user with uuid %q not found", uuid)}

@@ -365,6 +365,9 @@ func (r *controlRepo) CreateControl(ctx context.Context, auditID int, req domain
 			return nil, fmt.Errorf("control.Create population: %w", err)
 		}
 	}
+	if err := recomputeAuditStatus(ctx, tx, auditID); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("control.Create commit: %w", err)
 	}
@@ -421,6 +424,12 @@ func (r *controlRepo) BulkCreateControls(ctx context.Context, auditID int, reqs 
 				req.CreatedBy, req.CreatedBy); err != nil {
 				return nil, fmt.Errorf("control.BulkCreate population %q: %w", req.ControlNumber, err)
 			}
+		}
+	}
+
+	if len(ids) > 0 {
+		if err := recomputeAuditStatus(ctx, tx, auditID); err != nil {
+			return nil, err
 		}
 	}
 
@@ -517,6 +526,9 @@ func (r *controlRepo) DeleteControl(ctx context.Context, auditID, controlID int)
 	n, _ := result.RowsAffected()
 	if n == 0 {
 		return &apierror.NotFoundError{Msg: fmt.Sprintf("control %d not found in audit %d", controlID, auditID)}
+	}
+	if err := recomputeAuditStatus(ctx, tx, auditID); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("control.Delete(%d,%d) commit: %w", auditID, controlID, err)
@@ -804,8 +816,9 @@ func demoteEvidenceRound(ctx context.Context, tx *sql.Tx, controlID int, target 
 // recomputeAuditStatus derives audit.status from its controls' completion
 // state: ACTIVE while any control is not COMPLETE, COMPLETED once every
 // control is. ARCHIVED and REMOVED are admin-set and sticky — never
-// overwritten here. Called after any control status write (ordinary or
-// overridden) within the same transaction as that write.
+// overwritten here. Called within the same transaction as anything that
+// changes the set of controls or their statuses — a status write (ordinary
+// or overridden), a control add, or a control delete.
 func recomputeAuditStatus(ctx context.Context, tx *sql.Tx, auditID int) error {
 	var current string
 	if err := tx.QueryRowContext(ctx, "SELECT status FROM audit WHERE id = ? FOR UPDATE", auditID).Scan(&current); err != nil {
