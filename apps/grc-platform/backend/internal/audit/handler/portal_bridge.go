@@ -18,6 +18,7 @@ package handler
 
 import (
 	"context"
+	"io"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 )
@@ -26,11 +27,14 @@ import (
 // Evidence Portal M2M ingress.
 const channelEvidencePortal = "evidence-portal-api"
 
-// PortalEvidenceFile is one file in a portal evidence submission.
+// PortalEvidenceFile is one file in a portal evidence submission. Open yields
+// a fresh reader over the uploaded part rather than its bytes: a submission may
+// carry twenty files at the 25 MiB cap, and holding them all at once would put
+// half a gigabyte on the heap per in-flight request.
 type PortalEvidenceFile struct {
 	FileName    string
 	ContentType string
-	Data        []byte
+	Open        func() (io.ReadCloser, error)
 }
 
 // SubmitPortalEvidence uploads each portal file to the control's evidence
@@ -48,11 +52,28 @@ func (d *Deps) SubmitPortalEvidence(ctx context.Context, auditID, controlID int,
 	}
 	refs := make([]model.EvidenceFileRef, 0, len(files))
 	for _, f := range files {
-		blobName, err := eh.svc.UploadFile(ctx, link.FolderPath, f.FileName, f.ContentType, f.Data)
+		blobName, err := uploadPortalFile(ctx, eh, link.FolderPath, f)
 		if err != nil {
 			return nil, err
 		}
 		refs = append(refs, model.EvidenceFileRef{BlobName: blobName, FileName: f.FileName})
 	}
 	return eh.finalizeEvidenceSubmission(ctx, auditID, controlID, refs, "", false, actorUUID, channelEvidencePortal, clientID)
+}
+
+// uploadPortalFile reads one part and uploads it, then lets those bytes go —
+// so peak memory tracks the largest single file, not the whole submission.
+// The upload API takes a []byte, so the read cannot be streamed further than
+// this without changing it.
+func uploadPortalFile(ctx context.Context, eh *evidenceHandler, folderPath string, f PortalEvidenceFile) (string, error) {
+	rc, err := f.Open()
+	if err != nil {
+		return "", err
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return "", err
+	}
+	return eh.svc.UploadFile(ctx, folderPath, f.FileName, f.ContentType, data)
 }

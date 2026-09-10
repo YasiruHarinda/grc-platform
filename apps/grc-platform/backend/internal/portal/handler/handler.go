@@ -51,6 +51,10 @@ const (
 	// count at the per-file cap, plus slack for multipart framing. Derived so
 	// it cannot drift below a submission the per-file rules already allow.
 	maxPortalRequestBytes = maxPortalFilesPerSubmit*maxEvidenceFileBytes + 8<<20
+	// sniffSize is how many leading bytes http.DetectContentType inspects —
+	// all a type check needs to read, so a part is never pulled into memory
+	// whole just to classify it.
+	sniffSize = 512
 )
 
 // worklistStatuses are the control statuses the GET worklist returns (all
@@ -126,13 +130,27 @@ func (h *portalHandler) listControls(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// email is a soft filter here: present and resolvable narrows to that
-	// owner; absent or unresolvable widens to the whole team.
+	// email narrows the worklist to one owner. An address that does not resolve
+	// must never widen the answer back to the whole team: this endpoint is how
+	// the portal decides what to show one person, so a typo would otherwise
+	// hand them everyone's work. An unknown address gets an empty worklist —
+	// empty rather than an error, so a caller cannot tell a directory miss
+	// apart from a person with nothing to do (a distinguishable answer would be
+	// a directory-enumeration oracle). A lookup that could not be COMPLETED is
+	// a different thing and must not be reported as "nothing to do".
 	var ownerIDs []int
 	if email := strings.TrimSpace(r.URL.Query().Get("email")); email != "" {
-		if id, ok := h.resolveOwnerID(r.Context(), email); ok {
-			ownerIDs = []int{id}
+		id, rErr := h.resolveOwnerID(r.Context(), email)
+		switch {
+		case errors.Is(rErr, errOwnerUnknown):
+			response.WriteJSONValue(w, http.StatusOK, []portalControlRow{})
+			return
+		case rErr != nil:
+			slog.ErrorContext(r.Context(), "portal worklist email filter lookup failed", "err", rErr)
+			response.WriteError(w, http.StatusServiceUnavailable, "could not resolve the email filter")
+			return
 		}
+		ownerIDs = []int{id}
 	}
 
 	controls, err := h.deps.Controls.TeamControls(r.Context(), caller.TeamID, worklistStatuses, ownerIDs)
@@ -254,25 +272,43 @@ func (h *portalHandler) submitEvidence(w http.ResponseWriter, r *http.Request) {
 	}
 	files := make([]audithandler.PortalEvidenceFile, 0, len(headers))
 	for _, hdr := range headers {
-		data, err := readMultipartFile(hdr)
+		// hdr.Size is the part's real length, counted by the multipart reader —
+		// so the oversize check costs no read.
+		if hdr.Size > maxEvidenceFileBytes {
+			response.WriteError(w, http.StatusRequestEntityTooLarge, "a file exceeds the 25 MiB limit")
+			return
+		}
+		head, err := readFileHead(hdr)
 		if err != nil {
 			response.WriteError(w, http.StatusBadRequest, "could not read uploaded file")
 			return
 		}
-		if int64(len(data)) > maxEvidenceFileBytes {
-			response.WriteError(w, http.StatusRequestEntityTooLarge, "a file exceeds the 25 MiB limit")
-			return
-		}
+		fileName := filepath.Base(hdr.Filename)
+		sniffed := http.DetectContentType(head)
 		contentType := hdr.Header.Get("Content-Type")
 		if contentType == "" {
-			contentType = http.DetectContentType(data)
+			contentType = sniffed
 		}
-		fileName := filepath.Base(hdr.Filename)
+		// Both the declared and the sniffed type must pass. A machine client
+		// writes its own Content-Type header, so the declared value alone is
+		// evidence of nothing: HTML sent as "application/pdf" under a .pdf name
+		// would otherwise clear both the extension and the type check.
 		if err := audithandler.ValidateUploadFileType(fileName, contentType); err != nil {
 			response.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		files = append(files, audithandler.PortalEvidenceFile{FileName: fileName, ContentType: contentType, Data: data})
+		if err := audithandler.ValidateUploadFileType(fileName, sniffed); err != nil {
+			response.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		// The part is handed over as an opener, not as bytes: the bridge reads
+		// one file at a time, so a full 20-file submission costs one file of
+		// memory instead of twenty.
+		files = append(files, audithandler.PortalEvidenceFile{
+			FileName:    fileName,
+			ContentType: contentType,
+			Open:        func() (io.ReadCloser, error) { return hdr.Open() },
+		})
 	}
 
 	// 6. The web-app submission pipeline, with the resolved uuid as the actor.
@@ -285,31 +321,45 @@ func (h *portalHandler) submitEvidence(w http.ResponseWriter, r *http.Request) {
 	response.WriteJSONValue(w, http.StatusCreated, evidence)
 }
 
-// readMultipartFile reads one uploaded part fully into memory (the bytes are
-// proxied to the entity, not streamed).
-func readMultipartFile(hdr *multipart.FileHeader) ([]byte, error) {
+// readFileHead reads just the leading bytes a content-type sniff needs. A
+// short part is not an error — it is classified on what it has.
+func readFileHead(hdr *multipart.FileHeader) ([]byte, error) {
 	f, err := hdr.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	return io.ReadAll(f)
+	head := make([]byte, sniffSize)
+	n, err := io.ReadFull(f, head)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return nil, err
+	}
+	return head[:n], nil
 }
 
+// errOwnerUnknown means the email resolved to nobody this platform can scope a
+// worklist to — the directory does not know the address, or the person it names
+// has no user row. Kept distinct from a lookup that could not be completed at
+// all, because the two must not produce the same response.
+var errOwnerUnknown = errors.New("email does not resolve to a known owner")
+
 // resolveOwnerID resolves an email to the internal user.id used as
-// audit_control.owner_id. Any failure is a soft miss (the GET filter is
-// optional) — never an error to the caller.
-func (h *portalHandler) resolveOwnerID(ctx context.Context, email string) (int, bool) {
+// audit_control.owner_id. Returns errOwnerUnknown for "no such owner"; any
+// other error means the question went unanswered.
+func (h *portalHandler) resolveOwnerID(ctx context.Context, email string) (int, error) {
 	person, err := h.deps.Directory.ResolveEmail(ctx, email)
 	if err != nil {
-		if !errors.Is(err, directory.ErrEmailUnresolved) {
-			slog.WarnContext(ctx, "portal worklist email filter lookup failed", "err", err)
+		if errors.Is(err, directory.ErrEmailUnresolved) {
+			return 0, errOwnerUnknown
 		}
-		return 0, false
+		return 0, fmt.Errorf("resolve email: %w", err)
 	}
 	caller, err := h.deps.Grants.ForUUID(ctx, person.UUID)
-	if err != nil || caller.UserID == 0 {
-		return 0, false
+	if err != nil {
+		return 0, fmt.Errorf("resolve owner grant: %w", err)
 	}
-	return caller.UserID, true
+	if caller.UserID == 0 {
+		return 0, errOwnerUnknown
+	}
+	return caller.UserID, nil
 }

@@ -25,6 +25,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"strings"
 	"sync"
 	"testing"
@@ -331,6 +332,28 @@ func evidenceMultipart(t *testing.T, email string, fileNames ...string) (*bytes.
 	return &buf, mw.FormDataContentType()
 }
 
+// evidenceMultipartTyped builds a submission whose single part carries a
+// caller-chosen Content-Type and body — the shape a machine client uses to
+// declare one thing and send another.
+func evidenceMultipartTyped(t *testing.T, email, fileName, contentType string, body []byte) (*bytes.Buffer, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	_ = mw.WriteField("email", email)
+	hdr := make(textproto.MIMEHeader)
+	hdr.Set("Content-Disposition", `form-data; name="file"; filename="`+fileName+`"`)
+	hdr.Set("Content-Type", contentType)
+	fw, err := mw.CreatePart(hdr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	_ = mw.Close()
+	return &buf, mw.FormDataContentType()
+}
+
 // --- tests -----------------------------------------------------------------
 
 func TestPortalIntegration_WorklistHappyPath(t *testing.T) {
@@ -478,5 +501,76 @@ func TestPortalIntegration_SubmitWrongEmailIs400(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("want 400 for an email that does not resolve, got %d", resp.StatusCode)
+	}
+}
+
+func TestPortalIntegration_WorklistUnknownEmailReturnsEmptyNotTheTeam(t *testing.T) {
+	team := epTeamID
+	srv := buildPortalStack(t, newFakeEntity("EVIDENCE_PENDING", &team), true)
+
+	resp := doPortal(t, srv, http.MethodGet,
+		"/api/v1/evidence-portal/controls?email=ghost@wso2.com",
+		epToken(t, epPort3Aud, epClientID), nil, "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("want 200, got %d: %s", resp.StatusCode, b)
+	}
+	var rows []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil {
+		t.Fatal(err)
+	}
+	// The filter must fail closed. Widening an unresolved address back to the
+	// whole team would show one person everybody else's work.
+	if len(rows) != 0 {
+		t.Fatalf("unknown email must return an empty worklist, got %d rows: %+v", len(rows), rows)
+	}
+}
+
+func TestPortalIntegration_WorklistKnownEmailStillReturnsRows(t *testing.T) {
+	team := epTeamID
+	srv := buildPortalStack(t, newFakeEntity("EVIDENCE_PENDING", &team), true)
+
+	resp := doPortal(t, srv, http.MethodGet,
+		"/api/v1/evidence-portal/controls?email="+epOwnerEml,
+		epToken(t, epPort3Aud, epClientID), nil, "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("want 200, got %d: %s", resp.StatusCode, b)
+	}
+	var rows []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("a resolvable owner email must still return their worklist")
+	}
+}
+
+func TestPortalIntegration_SubmitHTMLDeclaredAsPDFIs400(t *testing.T) {
+	team := epTeamID
+	fe := newFakeEntity("EVIDENCE_PENDING", &team)
+	srv := buildPortalStack(t, fe, true)
+
+	body, ct := evidenceMultipartTyped(t, epOwnerEml, "report.pdf", "application/pdf",
+		[]byte("<html><body><script>alert(1)</script></body></html>"))
+	resp := doPortal(t, srv, http.MethodPost,
+		"/api/v1/evidence-portal/controls/811/evidences",
+		epToken(t, epPort3Aud, epClientID), body, ct)
+	defer resp.Body.Close()
+
+	// Neither the .pdf extension nor the declared type says what the bytes are.
+	if resp.StatusCode != http.StatusBadRequest {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("HTML bytes under a .pdf name must be 400, got %d: %s", resp.StatusCode, b)
+	}
+	fe.mu.Lock()
+	uploaded := fe.blobUploaded
+	fe.mu.Unlock()
+	if uploaded != 0 {
+		t.Fatalf("rejected file must not reach blob storage, %d uploads happened", uploaded)
 	}
 }

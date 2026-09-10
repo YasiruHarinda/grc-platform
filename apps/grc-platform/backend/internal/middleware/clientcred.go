@@ -188,8 +188,9 @@ func PortalPerRemoteAddrRateLimit(next http.Handler) http.Handler {
 }
 
 // bucketSet is a small keyed token-bucket limiter. The map is capped at
-// bucketSetMaxKeys and dropped when exceeded, so an unbounded set of remote
-// addresses cannot grow it without limit.
+// bucketSetMaxKeys, enforced by evicting refilled buckets and then refusing
+// unknown keys, so an unbounded set of remote addresses cannot grow it without
+// limit.
 type bucketSet struct {
 	rate, burst float64
 	mu          sync.Mutex
@@ -207,15 +208,35 @@ func newBucketSet(rate, burst float64) *bucketSet {
 	return &bucketSet{rate: rate, burst: burst, m: make(map[string]*bucket)}
 }
 
+// evictRefilled drops the buckets that have been idle long enough to be back at
+// full burst. Forgetting one of those changes no decision — a re-created bucket
+// starts full too — so this reclaims the map without giving anyone budget they
+// had not already earned. Caller holds s.mu.
+func (s *bucketSet) evictRefilled(now time.Time) {
+	idle := time.Duration(float64(time.Second) * s.burst / s.rate)
+	for k, b := range s.m {
+		if now.Sub(b.last) >= idle {
+			delete(s.m, k)
+		}
+	}
+}
+
 func (s *bucketSet) allow(key string) bool {
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.m) > bucketSetMaxKeys {
-		s.m = make(map[string]*bucket)
+	if len(s.m) >= bucketSetMaxKeys {
+		s.evictRefilled(now)
 	}
 	b, ok := s.m[key]
 	if !ok {
+		// Still full after eviction: every bucket left is one that is actively
+		// spending its budget. Refuse the unknown key rather than drop the map —
+		// wiping it would hand a fresh burst to exactly the keys being limited,
+		// so flooding with new keys would be a way to clear the limiter.
+		if len(s.m) >= bucketSetMaxKeys {
+			return false
+		}
 		b = &bucket{tokens: s.burst, last: now}
 		s.m[key] = b
 	}

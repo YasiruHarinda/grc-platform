@@ -1844,8 +1844,12 @@ paths:
         Machine-to-machine. Returns the caller's team's outstanding controls in
         an ACTIVE audit (evidence-phase and sample-phase statuses). The team is
         derived from the verified client_credentials token, never from the
-        request. `email`, when given, is a soft filter narrowing to that owner;
-        an unresolvable value is ignored, not an error.
+        request. `email`, when given, narrows to that owner. It fails closed: an
+        address the directory does not know returns an EMPTY worklist, never the
+        whole team's, so a typo cannot show one person everybody else's work.
+        Empty rather than an error, so the response does not reveal whether an
+        address exists. A directory lookup that cannot be completed is a 503,
+        which is distinct from "nothing to do".
       operationId: portalListControls
       security:
       - evidencePortalClientCredentials: []
@@ -1857,7 +1861,9 @@ paths:
           type: string
       responses:
         '200':
-          description: Worklist (may be empty)
+          description: >
+            Worklist. Empty when the team has no outstanding controls, and also
+            when `email` did not resolve to a known owner.
           content:
             application/json:
               schema:
@@ -1887,6 +1893,8 @@ paths:
           description: Rate limit exceeded
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          description: The `email` filter could not be resolved against the directory
   /api/v1/evidence-portal/controls/{controlId}/evidences:
     post:
       tags:
@@ -1917,7 +1925,10 @@ paths:
                   description: >
                     One or more `file` parts (repeat the field). All land in a
                     single evidence round — one AI validation run, one trail
-                    entry. Max 20 files, 25 MiB each.
+                    entry. Max 20 files, 25 MiB each. Active-content types
+                    (HTML, SVG, XML, JS) are rejected on BOTH the declared
+                    `Content-Type` and the type sniffed from the bytes, so a
+                    benign header over script content does not get through.
                   type: array
                   items:
                     type: string
