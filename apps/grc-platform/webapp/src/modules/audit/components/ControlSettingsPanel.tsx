@@ -461,8 +461,8 @@ function DeleteDialog({
         {error && <Alert severity="error" sx={{ mb: 1 }}>{error}</Alert>}
         {blockedReason && (
           <Alert severity="warning" sx={{ mb: 1 }}>
-            {blockedReason}. Removing it anyway permanently deletes that work —
-            evidence, uploaded files and submission history — with the control.
+            {blockedReason}. Removing it anyway permanently deletes that work
+            (evidence, uploaded files and submission history with the control).
           </Alert>
         )}
         <Typography variant="body2">
