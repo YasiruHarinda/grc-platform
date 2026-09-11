@@ -2280,6 +2280,24 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/me/involvement:
+    get:
+      tags:
+      - Risks
+      summary: Check whether the caller is named on any risk
+      description: No privilege gate — an Action Owner may hold no risk privilege at all. Used by the frontend to keep the Risk Hub nav (Registers tab only) visible for grant-less Action Owners.
+      operationId: getMyRiskInvolvement
+      responses:
+        '200':
+          description: Involvement flag
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskInvolvementResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /api/v1/risks/next-sequence-id:
     get:
       tags:
@@ -4913,6 +4931,11 @@ components:
       properties:
         next_sequence_id:
           type: integer
+    RiskInvolvementResponse:
+      type: object
+      properties:
+        namedOnRisk:
+          type: boolean
     # --- Risk Hub: risks ------------------------------------------------------
     CreateActionStepRequest:
       type: object
