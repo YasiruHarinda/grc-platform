@@ -273,8 +273,14 @@ func departureDigestSubject(i AuditEventInfo) string {
 
 // DepartureDigestSubject is the subject both hubs' departure digests carry, so
 // an admin receiving the audit and risk halves of one run sees one wording.
+// Says "inactive accounts", not "people have left": the trigger is a directory
+// account going inactive, which is not evidence that anyone resigned.
 func DepartureDigestSubject(people int) string {
-	return fmt.Sprintf("[GRC Platform] Reassignment needed — %d person(s) have left", people)
+	noun := "accounts"
+	if people == 1 {
+		noun = "account"
+	}
+	return fmt.Sprintf("[GRC Platform] Reassignment needed - %d inactive %s", people, noun)
 }
 
 // auditEventTemplates is the single place to see everything the audit module
