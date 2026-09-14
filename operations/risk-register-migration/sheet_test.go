@@ -110,6 +110,29 @@ func TestParseSheet_StripsUTF8BOM(t *testing.T) {
 	}
 }
 
+// TestParseSheet_StripsUTF8BOM_QuotedHeader guards the case buildCSV can't
+// exercise: some exporters quote every field regardless of whether quoting is
+// structurally necessary. Stripping the BOM has to happen on the raw byte
+// stream before encoding/csv tokenizes it — stripping it from the already-
+// parsed header string is too late, because a BOM sitting ahead of an opening
+// `"` pushes that quote off position zero of the field, and encoding/csv (not
+// in lazy-quotes mode) rejects the whole file with "bare \" in
+// non-quoted-field" before parsing ever reaches the header-matching step.
+func TestParseSheet_StripsUTF8BOM_QuotedHeader(t *testing.T) {
+	quoted := make([]string, len(expectedHeaders))
+	for i, h := range expectedHeaders {
+		quoted[i] = `"` + h + `"`
+	}
+	header := strings.Join(quoted, ",")
+	row := strings.Repeat(",", len(expectedHeaders)-1) // one blank data row is enough
+	withBOM := "\xEF\xBB\xBF" + header + "\n" + row + "\n"
+
+	_, _, err := parseSheet(strings.NewReader(withBOM), sheetTestRefData(t))
+	if err != nil {
+		t.Fatalf("parseSheet with a BOM-prefixed, fully-quoted header: %v", err)
+	}
+}
+
 func TestMapRow_CleanRow(t *testing.T) {
 	csvText := buildCSV(t, map[string]string{
 		"Year":                          "2025.0",
