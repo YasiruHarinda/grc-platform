@@ -162,6 +162,18 @@ func (fe *fakeEntity) handle(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case r.Method == http.MethodPost && p == "/risks/search":
+		// Mirrors the real entity's strict RiskQuarterKeys validation
+		// (internal/service/risk_service.go) — searchMarkerRisks must never
+		// let an unresolved/invalid quarter reach this filter (state.go).
+		var req SearchRisksRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		for _, qk := range req.RiskQuarterKeys {
+			if !validQuarters[strings.ToUpper(qk)] {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"code":400,"message":"invalid riskQuarterKey"}`))
+				return
+			}
+		}
 		all := make([]Risk, 0, len(fe.risks))
 		for _, rk := range fe.risks {
 			all = append(all, *rk)
@@ -315,6 +327,9 @@ func (fe *fakeEntity) handle(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}
 }
+
+// validQuarters mirrors the entity's own validRiskQuarters allow-list.
+var validQuarters = map[string]bool{"Q1": true, "Q2": true, "Q3": true, "Q4": true}
 
 // fakeIDRefs wraps ids the way the entity's /detail response shapes both its
 // complianceReferences and riskCategories lists — only .ID is read by

@@ -157,6 +157,20 @@ func searchMarkerRisks(ctx context.Context, ec *EntityClient, rows []Row) ([]Ris
 	ySet := map[int]struct{}{}
 	qSet := map[string]struct{}{}
 	for _, r := range rows {
+		// A row can reach here with an unresolved/unparseable natural-key
+		// component — e.g. verify.go passes every row, rejected ones
+		// included, and a rejected row's invalid Quarter is left "" by
+		// mapRow (reconstructState's caller, by contrast, always pre-filters
+		// to migratable rows, so this is a no-op there). Sending "" (or a
+		// zero id/year) straight through as a filter would 400 against the
+		// entity's strict Q1..Q4 validation on RiskQuarterKeys and abort the
+		// whole search — not just skip that one row. A row like that can't
+		// match any real risk by natural key anyway, so it contributes
+		// nothing to the filter; the per-row natural-key lookup afterwards
+		// still correctly reports it as having no match.
+		if !quarterRe.MatchString(r.RiskQuarter) || r.SourceRegisterID <= 0 || r.RiskYear <= 0 {
+			continue
+		}
 		srSet[r.SourceRegisterID] = struct{}{}
 		ySet[r.RiskYear] = struct{}{}
 		qSet[r.RiskQuarter] = struct{}{}
