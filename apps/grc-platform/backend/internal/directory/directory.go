@@ -377,6 +377,12 @@ func (s *Service) SearchDomain(query string) []Person {
 // ResolveEmail resolves an email to exactly one person by exact,
 // case-insensitive, trimmed match on Email — bulk snapshot first, then a live
 // SCIM lookup. Returns ErrEmailUnresolved on zero or more than one match.
+//
+// A disabled account never resolves, same as SearchDomain/SearchExternal: the
+// portal callers of this (submitEvidence, resolveOwnerID) use the result to
+// attribute a new action to a live person, not to render a name against an
+// existing record, so there is no "keep old attachments resolvable" case to
+// preserve here.
 func (s *Service) ResolveEmail(ctx context.Context, email string) (Person, error) {
 	want := strings.ToLower(strings.TrimSpace(email))
 	if want == "" {
@@ -386,6 +392,9 @@ func (s *Service) ResolveEmail(ctx context.Context, email string) (Person, error
 	var matches []Person
 	s.bulkMu.RLock()
 	for _, p := range s.bulk {
+		if p.State == scim.AccountDisabled {
+			continue
+		}
 		if strings.ToLower(strings.TrimSpace(p.Email)) == want {
 			matches = append(matches, p)
 		}
@@ -400,10 +409,10 @@ func (s *Service) ResolveEmail(ctx context.Context, email string) (Person, error
 		if err != nil {
 			return Person{}, fmt.Errorf("resolve email: %w", err)
 		}
-		if u == nil || strings.ToLower(strings.TrimSpace(u.Email)) != want {
+		if u == nil || strings.ToLower(strings.TrimSpace(u.Email)) != want || u.State == scim.AccountDisabled {
 			return Person{}, ErrEmailUnresolved
 		}
-		return Person{UUID: u.UUID, Email: u.Email, DisplayName: u.DisplayName}, nil
+		return Person{UUID: u.UUID, Email: u.Email, DisplayName: u.DisplayName, State: u.State}, nil
 	default:
 		return Person{}, ErrEmailUnresolved
 	}
