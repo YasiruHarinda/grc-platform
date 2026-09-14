@@ -56,6 +56,12 @@ const (
 	epOwnerID  = 5
 	epOwnerUID = "owner-uuid"
 	epOwnerEml = "owner@wso2.com"
+
+	// epOtherClientID/epOtherTeamID stand in for a second Evidence Portal
+	// client bound to a different team, so tests can assert the worklist is
+	// actually scoped by teamIds rather than just trusting the one client.
+	epOtherClientID = "other-evidence-portal-consumer-key"
+	epOtherTeamID   = 8
 )
 
 var epKey = func() *rsa.PrivateKey {
@@ -115,17 +121,30 @@ func (f *fakeEntity) handler() http.Handler {
 	mux.HandleFunc("POST /controls/search", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			ControlIDs []int `json:"controlIds"`
+			TeamIDs    []int `json:"teamIds"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		if len(body.ControlIDs) > 0 { // single-control lookup (POST path)
 			writeJSON(w, map[string]any{"controls": []any{f.control()}})
 			return
 		}
-		// worklist: one control in an ACTIVE audit, one in a CLOSED audit.
-		writeJSON(w, map[string]any{"controls": []any{
+		// worklist: one control in an ACTIVE audit, one in a CLOSED audit,
+		// both filtered by the requested teamIds like the real entity does —
+		// so a caller bound to a different team gets none of them back.
+		all := []map[string]any{
 			f.control(),
-			map[string]any{"id": 812, "auditId": 99, "status": "EVIDENCE_PENDING", "teamId": epTeamID, "controlNumber": "CC7.2", "description": "Change management"},
-		}})
+			{"id": 812, "auditId": 99, "status": "EVIDENCE_PENDING", "teamId": epTeamID, "controlNumber": "CC7.2", "description": "Change management"},
+		}
+		var matched []any
+		for _, c := range all {
+			for _, tid := range body.TeamIDs {
+				if c["teamId"] == tid {
+					matched = append(matched, c)
+					break
+				}
+			}
+		}
+		writeJSON(w, map[string]any{"controls": matched})
 	})
 
 	mux.HandleFunc("POST /audits/search", func(w http.ResponseWriter, _ *http.Request) {
@@ -271,7 +290,10 @@ func buildPortalStack(t *testing.T, fakeEnt *fakeEntity, withDirectory bool) *ht
 	portalChain := middleware.PortalPerRemoteAddrRateLimit(
 		middleware.ClientCredentials(middleware.ClientCredConfig{
 			Verifier: verifier, Audience: epPort3Aud,
-			Clients: map[string]int{epClientID: epTeamID}, ClockSkew: 5 * time.Second,
+			Clients: map[string]int{
+				epClientID:      epTeamID,
+				epOtherClientID: epOtherTeamID,
+			}, ClockSkew: 5 * time.Second,
 		})(middleware.PortalPerClientRateLimit(portalMux)),
 	)
 	base := handler
@@ -392,6 +414,29 @@ func TestPortalIntegration_WorklistHappyPath(t *testing.T) {
 	}
 	if rows[0].Control.ID != 811 || rows[0].Control.Ref != "CC6.1" {
 		t.Fatalf("control fields wrong: %+v", rows[0].Control)
+	}
+}
+
+func TestPortalIntegration_WorklistCrossTeamIsScoped(t *testing.T) {
+	team := epTeamID
+	srv := buildPortalStack(t, newFakeEntity("EVIDENCE_PENDING", &team), false)
+
+	// Both controls the fake entity knows about belong to epTeamID. A caller
+	// authenticated as a different team's client must see none of them.
+	resp := doPortal(t, srv, http.MethodGet, "/api/v1/evidence-portal/controls",
+		epToken(t, epPort3Aud, epOtherClientID), nil, "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("want 200, got %d: %s", resp.StatusCode, b)
+	}
+	var rows []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("a different team's worklist must be empty, got %d rows: %+v", len(rows), rows)
 	}
 }
 
