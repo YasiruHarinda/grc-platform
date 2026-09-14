@@ -83,6 +83,13 @@ func verifyMigration(ctx context.Context, log *slog.Logger, ec *EntityClient, rd
 	// below can tell "not expected by THIS row" from "not expected by any row"
 	// for a person who is owner/assigner/mgmt-approver on more than one row.
 	expectedGrantsByUser := map[int]map[string]struct{}{}
+	// grantCache is shared across every verifyRow call and verifyNoExtraGrants
+	// below, keyed by user id. Without it, an owner/assigner/mgmt-approver who
+	// appears on many IN_REMEDIATION rows gets ListGrants called once per row
+	// (verifyRow used to keep its own row-scoped map) plus once more in
+	// verifyNoExtraGrants — this fetches each user's grants at most once for
+	// the whole verification pass.
+	grantCache := map[int][]Grant{}
 
 	for _, row := range allRows {
 		key := naturalKey(row.RiskTitle, row.SourceRegisterID, row.RiskYear, row.RiskQuarter)
@@ -117,7 +124,7 @@ func verifyMigration(ctx context.Context, log *slog.Logger, ec *EntityClient, rd
 			mismatchCount++
 			rep.Add(mismatchFinding(row, "risk missing", "no matching risk found in the entity after a real run"))
 		case 1:
-			mismatches, err := verifyRow(ctx, ec, rd, migrationDate, row, matches[0].ID)
+			mismatches, err := verifyRow(ctx, ec, rd, migrationDate, row, matches[0].ID, grantCache)
 			if err != nil {
 				return fmt.Errorf("verification: risk %d (migration id %d): %w", matches[0].ID, row.MigrationID, err)
 			}
@@ -156,7 +163,7 @@ func verifyMigration(ctx context.Context, log *slog.Logger, ec *EntityClient, rd
 		}
 	}
 
-	extra, err := verifyNoExtraGrants(ctx, ec, expectedGrantsByUser)
+	extra, err := verifyNoExtraGrants(ctx, ec, expectedGrantsByUser, grantCache)
 	if err != nil {
 		return err
 	}
@@ -173,7 +180,7 @@ func verifyMigration(ctx context.Context, log *slog.Logger, ec *EntityClient, rd
 // used to grant management approval on a since-lowered score. Only ever
 // inspects createdBy==marker rows: a grant from unrelated platform activity
 // (an admin, another migration) is never this tool's business.
-func verifyNoExtraGrants(ctx context.Context, ec *EntityClient, expectedByUser map[int]map[string]struct{}) ([]Finding, error) {
+func verifyNoExtraGrants(ctx context.Context, ec *EntityClient, expectedByUser map[int]map[string]struct{}, grantCache map[int][]Grant) ([]Finding, error) {
 	userIDs := make([]int, 0, len(expectedByUser))
 	for id := range expectedByUser {
 		userIDs = append(userIDs, id)
@@ -182,9 +189,14 @@ func verifyNoExtraGrants(ctx context.Context, ec *EntityClient, expectedByUser m
 
 	var out []Finding
 	for _, userID := range userIDs {
-		grants, err := ec.ListGrants(ctx, userID)
-		if err != nil {
-			return nil, fmt.Errorf("verification: list grants for user %d: %w", userID, err)
+		grants, fetched := grantCache[userID]
+		if !fetched {
+			var err error
+			grants, err = ec.ListGrants(ctx, userID)
+			if err != nil {
+				return nil, fmt.Errorf("verification: list grants for user %d: %w", userID, err)
+			}
+			grantCache[userID] = grants
 		}
 		expected := expectedByUser[userID]
 		for _, g := range grants {
@@ -215,7 +227,7 @@ type fieldMismatch struct {
 // is responsible for against row. It never fetches missing-grant state for
 // non-IN_REMEDIATION rows (CLOSED gets none) and leaves the unexpected-extra
 // grant check to verifyNoExtraGrants, which needs the cross-row view.
-func verifyRow(ctx context.Context, ec *EntityClient, rd RefData, migrationDate string, row Row, riskID int) ([]fieldMismatch, error) {
+func verifyRow(ctx context.Context, ec *EntityClient, rd RefData, migrationDate string, row Row, riskID int, grantCache map[int][]Grant) ([]fieldMismatch, error) {
 	detail, err := ec.GetRiskDetail(ctx, riskID)
 	if err != nil {
 		return nil, err
@@ -315,16 +327,15 @@ func verifyRow(ctx context.Context, ec *EntityClient, rd RefData, migrationDate 
 	}
 
 	if row.WorkflowStatus == "IN_REMEDIATION" {
-		grantsByUser := map[int][]Grant{}
 		for _, want := range expectedGrants(row, rd) {
-			if _, fetched := grantsByUser[want.userID]; !fetched {
+			if _, fetched := grantCache[want.userID]; !fetched {
 				grants, err := ec.ListGrants(ctx, want.userID)
 				if err != nil {
 					return nil, err
 				}
-				grantsByUser[want.userID] = grants
+				grantCache[want.userID] = grants
 			}
-			if !hasGrant(grantsByUser[want.userID], want.roleID, want.scopeType, want.scopeID) {
+			if !hasGrant(grantCache[want.userID], want.roleID, want.scopeType, want.scopeID) {
 				out = append(out, fieldMismatch{
 					"Grant",
 					grantKey(want.roleID, want.scopeType, want.scopeID),

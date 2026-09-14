@@ -97,7 +97,7 @@ func TestVerifyRow_CleanBaselineHasNoMismatches(t *testing.T) {
 	row := verifyBaseRow()
 	_, ec, riskID := setupVerifyFixture(t, rd, row)
 
-	got, err := verifyRow(context.Background(), ec, rd, "2026-09-15", row, riskID)
+	got, err := verifyRow(context.Background(), ec, rd, "2026-09-15", row, riskID, map[int][]Grant{})
 	if err != nil {
 		t.Fatalf("verifyRow: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestVerifyRow_ClosedBaselineHasNoMismatches(t *testing.T) {
 	row := verifyBaseClosedRow()
 	_, ec, riskID := setupVerifyFixture(t, rd, row)
 
-	got, err := verifyRow(context.Background(), ec, rd, "2026-09-15", row, riskID)
+	got, err := verifyRow(context.Background(), ec, rd, "2026-09-15", row, riskID, map[int][]Grant{})
 	if err != nil {
 		t.Fatalf("verifyRow: %v", err)
 	}
@@ -267,7 +267,7 @@ func TestVerifyRow_DetectsFieldMismatches(t *testing.T) {
 			fe, ec, riskID := setupVerifyFixture(t, rd, tc.row)
 			tc.tamper(fe, riskID)
 
-			got, err := verifyRow(context.Background(), ec, rd, "2026-09-15", tc.row, riskID)
+			got, err := verifyRow(context.Background(), ec, rd, "2026-09-15", tc.row, riskID, map[int][]Grant{})
 			if err != nil {
 				t.Fatalf("verifyRow: %v", err)
 			}
@@ -403,7 +403,7 @@ func TestVerifyRow_ResumeWithDifferentMigrationDateIsNotAMismatch(t *testing.T) 
 		row := verifyBaseRow()
 		_, ec, riskID := setupVerifyFixture(t, rd, row) // written with migrationDate 2026-09-15
 
-		got, err := verifyRow(context.Background(), ec, rd, "2026-10-01", row, riskID) // a later resume's date
+		got, err := verifyRow(context.Background(), ec, rd, "2026-10-01", row, riskID, map[int][]Grant{}) // a later resume's date
 		if err != nil {
 			t.Fatalf("verifyRow: %v", err)
 		}
@@ -418,7 +418,7 @@ func TestVerifyRow_ResumeWithDifferentMigrationDateIsNotAMismatch(t *testing.T) 
 		row := verifyBaseClosedRow()
 		_, ec, riskID := setupVerifyFixture(t, rd, row)
 
-		got, err := verifyRow(context.Background(), ec, rd, "2026-10-01", row, riskID)
+		got, err := verifyRow(context.Background(), ec, rd, "2026-10-01", row, riskID, map[int][]Grant{})
 		if err != nil {
 			t.Fatalf("verifyRow: %v", err)
 		}
