@@ -18,15 +18,18 @@ import type { Control } from "./ControlFormDialog";
 // The stages this dialog moves through, in order. "pick" is where every
 // open starts; a bad file goes to "error" and can only go back to "pick";
 // a good one goes to "summary", where nothing has been written yet and
-// Cancel is still free; confirming moves to "importing" while the requests
-// go out one at a time, and "done" is the last stop, reachable even when
-// nothing needed creating (a full re-import still finishes and reports
-// what it skipped).
+// Cancel is still free; confirming moves to "importing" while the single
+// bulk request is in flight, and "done" is the last stop, reachable even
+// when nothing needed creating (a full re-import still finishes and
+// reports what it skipped). A whole-request failure (network error, or the
+// server refusing the request outright) lands back on "error" instead of
+// "done", since nothing was written and the Admin needs a message they can
+// act on rather than a blank dialog.
 type ImportPhase =
   | { step: "pick" }
   | { step: "error"; message: string }
   | { step: "summary"; toCreate: ParsedControlRow[]; alreadyThereCount: number; unusableRowCount: number }
-  | { step: "importing"; total: number; done: number }
+  | { step: "importing" }
   | { step: "done"; created: number; skipped: number; failed: { reference: string; message: string }[] };
 
 /**
@@ -34,8 +37,8 @@ type ImportPhase =
  * instead of an Admin opening ControlFormDialog a hundred times. Parsing
  * and the title rule live in parseControlsCsv — this component only reads
  * the file, shows what parseControlsCsv found before anything is written,
- * and then creates the usable rows one request at a time, since the
- * backend has no bulk endpoint.
+ * and then sends every usable row to the backend's bulk endpoint in one
+ * request.
  *
  * Opened either by the browse button below or by a drop on the Controls
  * column — a dropped file arrives as `initialFile` and is fed straight
@@ -143,37 +146,56 @@ export default function ImportControlsDialog({
 
   async function handleConfirm() {
     if (phase.step !== "summary") return;
-    const { toCreate, alreadyThereCount } = phase;
-    setPhase({ step: "importing", total: toCreate.length, done: 0 });
+    const { toCreate } = phase;
+    setPhase({ step: "importing" });
 
-    let created = 0;
-    const failed: { reference: string; message: string }[] = [];
-
-    // One request per Control, in order, because the backend has no bulk
-    // endpoint. A failed row is recorded and the loop moves on rather than
-    // stopping, so one bad row never costs the other ninety-nine.
-    for (const row of toCreate) {
-      try {
-        await controlsApi.create({
-          framework_id: frameworkId,
+    // One request for the whole file. The server checks every row before
+    // writing any of them and commits once, so there is nothing to count
+    // as it runs — either the request comes back with the outcome, or
+    // nothing was written at all.
+    try {
+      const result = await controlsApi.bulkCreate({
+        framework_id: frameworkId,
+        controls: toCreate.map((row) => ({
           control_ref: row.reference,
           title: row.title,
           description: row.description,
-        });
-        created += 1;
-      } catch (err) {
-        const detail = isAxiosError(err)
-          ? (err.response?.data as { detail?: string } | undefined)?.detail
-          : undefined;
-        failed.push({ reference: row.reference, message: detail || "The server rejected this row." });
-      }
-      setPhase((prev) => (prev.step === "importing" ? { ...prev, done: prev.done + 1 } : prev));
-    }
+        })),
+      });
 
-    // Refresh the Controls column with what's already loaded for this
-    // framework rather than starting a second query for the same data.
-    onImported();
-    setPhase({ step: "done", created, skipped: alreadyThereCount, failed });
+      // Refresh the Controls column with what's already loaded for this
+      // framework rather than starting a second query for the same data.
+      onImported();
+
+      // `skipped` used to be `alreadyThereCount`, counted in the browser
+      // against the Controls this page had already loaded. It now comes
+      // from the server instead, because the server's count is taken at
+      // the moment it actually writes, inside the same transaction as the
+      // insert — the browser's snapshot can be a moment stale if another
+      // Admin is importing at the same time.
+      setPhase({
+        step: "done",
+        created: result.created.length,
+        skipped: result.skipped,
+        failed: result.rejected.map((r) => ({ reference: r.control_ref, message: r.reason })),
+      });
+    } catch (err) {
+      // A whole-request failure, a network error or the server refusing
+      // the request outright (missing Framework, over the row limit, a
+      // conflict, a non-admin caller). Nothing was written, so this goes
+      // back to "error" with whatever plain reason the server gave, the
+      // same detail-extraction this file already uses for a rejected row.
+      // Read as unknown, then checked: FastAPI's own request-validation
+      // 422 puts a list of objects in `detail`, not a string, and handing
+      // that to the error screen below would render an object as a React
+      // child and blank the dialog. Our own refusals all carry a plain
+      // string, so anything else falls back to the generic message.
+      const detail = isAxiosError(err)
+        ? (err.response?.data as { detail?: unknown } | undefined)?.detail
+        : undefined;
+      const message = typeof detail === "string" && detail ? detail : "The import failed. Please try again.";
+      setPhase({ step: "error", message });
+    }
   }
 
   function handleClose() {
@@ -291,13 +313,8 @@ export default function ImportControlsDialog({
 
         {phase.step === "importing" && (
           <Stack spacing={2} sx={{ pt: 1 }}>
-            <Typography variant="body2">
-              Creating controls… {phase.done} of {phase.total}
-            </Typography>
-            <LinearProgress
-              variant="determinate"
-              value={phase.total === 0 ? 100 : (phase.done / phase.total) * 100}
-            />
+            <Typography variant="body2">Creating controls…</Typography>
+            <LinearProgress />
           </Stack>
         )}
 

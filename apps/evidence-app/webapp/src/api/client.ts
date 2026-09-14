@@ -127,6 +127,23 @@ export const controlsApi = {
       .then((r) => r.data),
   create: (data: { framework_id: number; control_ref: string; title: string; description?: string }) =>
     api.post("/controls", data).then((r) => r.data),
+  // One request for a whole CSV import, in place of one `create` call per
+  // row. The server checks every row before writing any of them and
+  // reports three outcomes rather than one: `created` rows, a `skipped`
+  // count (already stored, or repeated within this request), and `rejected`
+  // rows the server refused, each named with a plain reason.
+  bulkCreate: (data: {
+    framework_id: number;
+    controls: { control_ref: string; title: string; description?: string | null }[];
+  }) =>
+    api.post("/controls/bulk", data).then(
+      (r) =>
+        r.data as {
+          created: { id: number; framework_id: number; control_ref: string; title: string; description: string | null }[];
+          skipped: number;
+          rejected: { control_ref: string; reason: string }[];
+        }
+    ),
   update: (id: number, data: { control_ref?: string; title?: string; description?: string }) =>
     api.patch(`/controls/${id}`, data).then((r) => r.data),
   delete: (id: number) => api.delete(`/controls/${id}`),
