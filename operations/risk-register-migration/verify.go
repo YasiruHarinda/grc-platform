@@ -217,6 +217,12 @@ func verifyNoExtraGrants(ctx context.Context, ec *EntityClient, expectedByUser m
 				continue
 			}
 			out = append(out, Finding{
+				// This finding is about a person, not a CSV row — CSVRow: -1
+				// is a sentinel so it reads as "no row" in errors.csv rather
+				// than as csv_row 0 (report.go sorts MigrationID then CSVRow
+				// ascending, so a real zero value would also read as row one
+				// of the file). The user id is in Detail below.
+				CSVRow:   -1,
 				Severity: SevMismatch, Failure: "unexpected grant",
 				Detail: fmt.Sprintf("user %d holds a migration-created grant (role=%d scope=%s/%d) not expected by any migratable row",
 					userID, g.RoleID, g.ScopeType, g.ScopeID),
