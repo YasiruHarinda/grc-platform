@@ -159,6 +159,34 @@ func (r *auditRepo) GetByID(ctx context.Context, id int) (*model.Audit, error) {
 	return a.toModel(), nil
 }
 
+// GetByIDs fetches exactly ids via /audits/search's auditIds filter, the same
+// filter InScope uses for one id.
+func (r *auditRepo) GetByIDs(ctx context.Context, ids []int) ([]*model.Audit, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var all []*model.Audit
+	for offset := 0; ; offset += pageLimit {
+		var resp struct {
+			Audits []entAudit `json:"audits"`
+		}
+		body := map[string]any{
+			"auditIds":   ids,
+			"scope":      model.ScopeAll,
+			"pagination": map[string]int{"limit": pageLimit, "offset": offset},
+		}
+		if err := r.c.Post(ctx, "/audits/search", body, &resp); err != nil {
+			return nil, err
+		}
+		for _, a := range resp.Audits {
+			all = append(all, a.toModel())
+		}
+		if len(resp.Audits) < pageLimit {
+			return all, nil
+		}
+	}
+}
+
 func (r *auditRepo) Create(ctx context.Context, req model.CreateAuditRequest, createdBy string) (*model.Audit, error) {
 	var a entAudit
 	body := withField(req, map[string]any{"createdBy": createdBy})

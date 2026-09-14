@@ -35,6 +35,7 @@ type AuditService interface {
 	List(ctx context.Context) ([]*model.Audit, error)
 	ListScoped(ctx context.Context, scope model.Scope, userID int, scopeTeamIDs []int) ([]*model.Audit, error)
 	GetByID(ctx context.Context, id int) (*model.Audit, error)
+	GetByIDs(ctx context.Context, ids []int) ([]*model.Audit, error)
 	InScope(ctx context.Context, id int, scope model.Scope, userID int, scopeTeamIDs []int) (bool, error)
 	Create(ctx context.Context, req model.CreateAuditRequest, createdBy string) (*model.Audit, error)
 	Update(ctx context.Context, id int, req model.UpdateAuditRequest, updatedBy string) error
@@ -80,6 +81,10 @@ func (s *auditService) List(ctx context.Context) ([]*model.Audit, error) {
 
 func (s *auditService) ListScoped(ctx context.Context, scope model.Scope, userID int, scopeTeamIDs []int) ([]*model.Audit, error) {
 	return s.repo.ListScoped(ctx, scope, userID, scopeTeamIDs)
+}
+
+func (s *auditService) GetByIDs(ctx context.Context, ids []int) ([]*model.Audit, error) {
+	return s.repo.GetByIDs(ctx, ids)
 }
 
 func (s *auditService) InScope(ctx context.Context, id int, scope model.Scope, userID int, scopeTeamIDs []int) (bool, error) {

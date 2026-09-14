@@ -51,6 +51,9 @@ const (
 	// count at the per-file cap, plus slack for multipart framing. Derived so
 	// it cannot drift below a submission the per-file rules already allow.
 	maxPortalRequestBytes = maxPortalFilesPerSubmit*maxEvidenceFileBytes + 8<<20
+	// multipartMaxMemory is ParseMultipartForm's in-memory cutoff, not a size
+	// limit: parts over it spill to a temp file, read the same way via Open().
+	multipartMaxMemory = 4 << 20
 	// sniffSize is how many leading bytes http.DetectContentType inspects —
 	// all a type check needs to read, so a part is never pulled into memory
 	// whole just to classify it.
@@ -76,8 +79,8 @@ type Deps struct {
 	// Submit runs the web-app evidence-submission pipeline (upload + submit +
 	// advance + notify + trail + AI) for one portal file.
 	Submit *audithandler.Deps
-	// Audits lists audits for the ACTIVE filter and the audit/product/framework
-	// enrichment on the worklist.
+	// Audits resolves the worklist's own audit ids for the ACTIVE filter and
+	// the audit/product/framework enrichment on the worklist.
 	Audits auditservice.AuditService
 	// Directory resolves an email to exactly one person (attribution).
 	Directory *directory.Service
@@ -158,8 +161,21 @@ func (h *portalHandler) listControls(w http.ResponseWriter, r *http.Request) {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	if len(controls) == 0 {
+		response.WriteJSONValue(w, http.StatusOK, []portalControlRow{})
+		return
+	}
 
-	audits, err := h.deps.Audits.List(r.Context())
+	// Only the audits these controls reference, not every audit on the platform.
+	auditIDs := make([]int, 0, len(controls))
+	seenAuditID := make(map[int]bool, len(controls))
+	for _, c := range controls {
+		if !seenAuditID[c.AuditID] {
+			seenAuditID[c.AuditID] = true
+			auditIDs = append(auditIDs, c.AuditID)
+		}
+	}
+	audits, err := h.deps.Audits.GetByIDs(r.Context(), auditIDs)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
@@ -229,7 +245,7 @@ func (h *portalHandler) submitEvidence(w http.ResponseWriter, r *http.Request) {
 	// 3. Body — bounded, then parsed. Only past the team boundary is a
 	// caller-supplied byte read.
 	r.Body = http.MaxBytesReader(w, r.Body, maxPortalRequestBytes)
-	if err := r.ParseMultipartForm(maxEvidenceFileBytes); err != nil { // #nosec G120 -- bounded by MaxBytesReader
+	if err := r.ParseMultipartForm(multipartMaxMemory); err != nil { // #nosec G120 -- bounded by MaxBytesReader
 		response.WriteError(w, http.StatusRequestEntityTooLarge, "upload too large or malformed (25 MiB per file)")
 		return
 	}

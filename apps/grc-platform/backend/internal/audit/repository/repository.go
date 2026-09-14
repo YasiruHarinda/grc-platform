@@ -35,6 +35,9 @@ type AuditRepository interface {
 	// of its controls do. Used by the Audits tab (listAudits).
 	ListScoped(ctx context.Context, scope model.Scope, userID int, scopeTeamIDs []int) ([]*model.Audit, error)
 	GetByID(ctx context.Context, id int) (*model.Audit, error)
+	// GetByIDs returns the audits named by ids, unscoped, without paging every
+	// audit. Empty ids makes no request; a missing id is silently absent.
+	GetByIDs(ctx context.Context, ids []int) ([]*model.Audit, error)
 	// InScope reports whether id is within scope for userID — used by
 	// getAudit to reject out-of-scope direct links (a control-guessing IDOR)
 	// without fetching every audit just to check membership.

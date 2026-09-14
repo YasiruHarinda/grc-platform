@@ -377,12 +377,7 @@ func (s *Service) SearchDomain(query string) []Person {
 // ResolveEmail resolves an email to exactly one person by exact,
 // case-insensitive, trimmed match on Email — bulk snapshot first, then a live
 // SCIM lookup. Returns ErrEmailUnresolved on zero or more than one match.
-//
-// A disabled account never resolves, same as SearchDomain/SearchExternal: the
-// portal callers of this (submitEvidence, resolveOwnerID) use the result to
-// attribute a new action to a live person, not to render a name against an
-// existing record, so there is no "keep old attachments resolvable" case to
-// preserve here.
+// A disabled account never resolves, same as SearchDomain/SearchExternal.
 func (s *Service) ResolveEmail(ctx context.Context, email string) (Person, error) {
 	want := strings.ToLower(strings.TrimSpace(email))
 	if want == "" {
