@@ -175,6 +175,15 @@ func searchMarkerRisks(ctx context.Context, ec *EntityClient, rows []Row) ([]Ris
 		ySet[r.RiskYear] = struct{}{}
 		qSet[r.RiskQuarter] = struct{}{}
 	}
+	// If every row was skipped above, all three sets are empty — an empty
+	// SearchRisksRequest omits its filters entirely (json:",omitempty") and
+	// the entity treats an absent filter as unrestricted, so this would
+	// otherwise page through every risk in the register rather than none.
+	// None of those skipped rows can match anything by natural key anyway
+	// (see the comment above), so nothing is lost by stopping here.
+	if len(srSet) == 0 && len(ySet) == 0 && len(qSet) == 0 {
+		return nil, nil
+	}
 	req := SearchRisksRequest{
 		SourceRegisterIDs: intKeys(srSet),
 		RiskYears:         intKeys(ySet),
