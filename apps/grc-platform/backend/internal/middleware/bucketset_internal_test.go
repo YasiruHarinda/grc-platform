@@ -25,7 +25,7 @@ import (
 // attacker can clear on demand: flood it with fresh keys and the key actually
 // being throttled gets its burst back.
 func TestBucketSetFloodDoesNotRestoreALimitedKey(t *testing.T) {
-	s := newBucketSet(1, 2) // burst 2, refilling 1/s — nothing refills mid-test
+	s := newBucketSet(1e-9, 2) // burst 2, refill rate negligible — wall-clock time can't refill mid-test
 
 	for i := range 2 {
 		if !s.allow("victim") {
