@@ -69,9 +69,8 @@ func resolvePortalClients(ctx context.Context, teams teamLister, clients map[str
 			return nil, fmt.Errorf("portal client %q: no audit team with id %d", clientID, teamID)
 		}
 		resolved[clientID] = teamID
-		// Format fixed by the config handover doc — DigiOps greps for this
-		// exact line to confirm the mapping after a deploy.
-		slog.Info(fmt.Sprintf("portal client %s -> team %d (%q)", clientID, teamID, t.Name))
+		// checks these fields after a deploy to confirm the client->team mapping.
+		slog.Info("portal client resolved", "clientId", clientID, "teamId", teamID, "teamName", t.Name)
 	}
 	return resolved, nil
 }
