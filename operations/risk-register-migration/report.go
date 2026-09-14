@@ -17,6 +17,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/csv"
 	"fmt"
 	"io"
@@ -30,8 +31,9 @@ import (
 type Severity string
 
 const (
-	SevReject Severity = "REJECT" // the row is not migrated
-	SevWarn   Severity = "WARN"   // the row is migrated, with a caveat
+	SevReject   Severity = "REJECT"   // the row is not migrated
+	SevWarn     Severity = "WARN"     // the row is migrated, with a caveat
+	SevMismatch Severity = "MISMATCH" // verify.go: entity state disagrees with the CSV after a real run
 )
 
 // Finding is one row of the errors.csv block.
@@ -100,8 +102,17 @@ func (r *Report) RejectedMigrationIDs() map[int]struct{} {
 }
 
 // Emit writes the two blocks the operator reads out of the Choreo logs.
+//
+// Everything is built into an in-memory buffer first and handed to w in one
+// Write call. Choreo's log pipeline does not reliably preserve the order of a
+// burst of near-simultaneous small writes to the same stream — this report is
+// ~10 lines produced back-to-back with no I/O in between, and a multi-write
+// Emit was observed coming out of Choreo's log viewer fully reversed
+// (end-to-start). A single Write leaves nothing for that pipeline to reorder.
 func (r *Report) Emit(w io.Writer) {
-	fmt.Fprintf(w, "\n===== risk-register-import report — %s =====\n", time.Now().UTC().Format(time.RFC3339))
+	var buf bytes.Buffer
+
+	fmt.Fprintf(&buf, "\n===== risk-register-import report — %s =====\n", time.Now().UTC().Format(time.RFC3339))
 
 	rejects, warns := 0, 0
 	for _, f := range r.findings {
@@ -112,10 +123,10 @@ func (r *Report) Emit(w io.Writer) {
 			warns++
 		}
 	}
-	fmt.Fprintf(w, "migrated=%d  skipped(resume)=%d  rejected=%d  warnings=%d\n\n", r.migrated, r.skipped, rejects, warns)
+	fmt.Fprintf(&buf, "migrated=%d  skipped(resume)=%d  rejected=%d  warnings=%d\n\n", r.migrated, r.skipped, rejects, warns)
 
-	fmt.Fprintln(w, "----- errors.csv -----")
-	cw := csv.NewWriter(w)
+	fmt.Fprintln(&buf, "----- errors.csv -----")
+	cw := csv.NewWriter(&buf)
 	_ = cw.Write([]string{"migration_id", "csv_row", "risk_title", "severity", "failure", "detail"})
 	sorted := append([]Finding(nil), r.findings...)
 	sort.Slice(sorted, func(i, j int) bool {
@@ -131,8 +142,10 @@ func (r *Report) Emit(w io.Writer) {
 	}
 	cw.Flush()
 
-	r.emitNarrative(w)
-	fmt.Fprintln(w, "----- end report -----")
+	r.emitNarrative(&buf)
+	fmt.Fprintln(&buf, "----- end report -----")
+
+	_, _ = w.Write(buf.Bytes())
 }
 
 // emitNarrative is the report.txt block (plan §9): a failure-code breakdown,

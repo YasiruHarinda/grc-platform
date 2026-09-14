@@ -312,6 +312,10 @@ type Grant struct {
 	RoleID    int    `json:"roleId"`
 	ScopeType string `json:"scopeType"`
 	ScopeID   int    `json:"scopeId"`
+	// CreatedBy distinguishes a grant this migration wrote (marker) from one
+	// created by unrelated platform activity — verify.go's "unexpected extra
+	// grant" check only ever flags marker-created rows.
+	CreatedBy string `json:"createdBy"`
 }
 
 // ── Calls ──────────────────────────────────────────────────────────────────
@@ -395,11 +399,13 @@ func (e *EntityClient) ListRiskScores(ctx context.Context) ([]RiskScore, error) 
 }
 
 // ActionPlanView is the trimmed view of one row from
-// GET /risks/{riskId}/action-plans.
+// GET /risks/{riskId}/action-plans. CompletedDate is only populated once the
+// entity sets it on the CLOSED PATCH (verify.go's D9 check).
 type ActionPlanView struct {
-	ID       int    `json:"id"`
-	Status   string `json:"status"`   // PENDING | IN_PROGRESS | COMPLETED
-	PlanType string `json:"planType"` // STANDARD | MANAGEMENT
+	ID            int     `json:"id"`
+	Status        string  `json:"status"`   // PENDING | IN_PROGRESS | COMPLETED
+	PlanType      string  `json:"planType"` // STANDARD | MANAGEMENT
+	CompletedDate *string `json:"completedDate"`
 }
 
 // ListActionPlans unwraps GET /risks/{riskId}/action-plans ({"plans":[...]} —
@@ -525,6 +531,75 @@ func (e *EntityClient) PatchRisk(ctx context.Context, riskID int, req PatchRiskR
 
 func (e *EntityClient) PatchActionPlan(ctx context.Context, planID int, req PatchActionPlanRequest) error {
 	return e.do(ctx, http.MethodPatch, fmt.Sprintf("/action-plans/%d", planID), req, nil)
+}
+
+// RiskDetail mirrors GET /risks/{id}/detail (domain.RiskDetail) — the
+// fully-composed risk verify.go diffs against the CSV in one call, rather than
+// composing it from the several narrower reads state.go uses for resume.
+// Deliberately separate from the trimmed Risk type: /risks/search and
+// POST|PATCH /risks only ever need Risk's smaller field set.
+type RiskDetail struct {
+	ID                   int     `json:"id"`
+	RiskTitle            string  `json:"riskTitle"`
+	RiskDescription      *string `json:"riskDescription"`
+	RiskYear             int     `json:"riskYear"`
+	RiskQuarter          string  `json:"riskQuarter"`
+	SourceRegisterID     int     `json:"sourceRegisterId"`
+	AssignmentTeamID     int     `json:"assignmentTeamId"`
+	AssignerID           int     `json:"assignerId"`
+	OwnerID              int     `json:"ownerId"`
+	ManagementApproverID int     `json:"managementApproverId"`
+	WorkflowStatus       string  `json:"workflowStatus"`
+	TreatmentStrategy    *string `json:"treatmentStrategy"`
+	ImplementationDate   *string `json:"implementationDate"`
+	ReassessmentDate     *string `json:"reassessmentDate"`
+	RiskIdentifiedDate   *string `json:"riskIdentifiedDate"`
+	IdentifiedByType     *string `json:"identifiedByType"`
+	IdentifiedByName     *string `json:"identifiedByName"`
+	ImpactDescription    *string `json:"impactDescription"`
+	Progress             *string `json:"progress"`
+	// ComplianceApprovalBy is never set via this tool's API path (§ Closure
+	// audit fields) — always expected nil.
+	ComplianceApprovalBy   *int    `json:"complianceApprovalBy"`
+	ComplianceApprovalDate *string `json:"complianceApprovalDate"`
+	GitIssueURL            *string `json:"gitIssueUrl"`
+	EmailSubject           *string `json:"emailSubject"`
+	Remarks                *string `json:"remarks"`
+	CreatedBy              string  `json:"createdBy"`
+
+	GrossScore           *RiskScore            `json:"grossScore"`
+	ComplianceReferences []ComplianceRef       `json:"complianceReferences"`
+	RiskCategories       []RiskCategory        `json:"riskCategories"`
+	ActionPlan           *RiskActionPlanDetail `json:"actionPlan"`
+}
+
+// RiskActionPlanDetail is the risk's STANDARD action plan with its steps
+// embedded, as returned inside RiskDetail. It has no CompletedDate — that
+// only comes back from GET /risks/{id}/action-plans (ActionPlanView), which
+// verify.go calls separately for a CLOSED row's D9 completed-date check.
+type RiskActionPlanDetail struct {
+	ID            int                  `json:"id"`
+	ActionOwnerID *int                 `json:"actionOwnerId"`
+	Description   *string              `json:"description"`
+	Status        string               `json:"status"`
+	PlanType      string               `json:"planType"`
+	Steps         []RiskActionStepView `json:"steps"`
+}
+
+// RiskActionStepView is one step of RiskActionPlanDetail.Steps, ordered by
+// step_no server-side.
+type RiskActionStepView struct {
+	StepNo      int     `json:"stepNo"`
+	Description *string `json:"description"`
+}
+
+// GetRiskDetail wraps GET /risks/{id}/detail.
+func (e *EntityClient) GetRiskDetail(ctx context.Context, riskID int) (*RiskDetail, error) {
+	var d RiskDetail
+	if err := e.do(ctx, http.MethodGet, fmt.Sprintf("/risks/%d/detail", riskID), nil, &d); err != nil {
+		return nil, err
+	}
+	return &d, nil
 }
 
 // ListEscalations unwraps GET /risks/{riskId}/escalations
