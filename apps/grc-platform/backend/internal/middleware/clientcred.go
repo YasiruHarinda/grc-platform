@@ -222,9 +222,9 @@ func (s *bucketSet) evictRefilled(now time.Time) {
 }
 
 func (s *bucketSet) allow(key string) bool {
-	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := time.Now()
 	if len(s.m) >= bucketSetMaxKeys {
 		s.evictRefilled(now)
 	}
