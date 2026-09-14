@@ -591,3 +591,14 @@ func TestLoadPortalConfigNonNumericTeamIDRefusesBoot(t *testing.T) {
 		t.Fatal("Load() = nil, want error on a PORTAL_CLIENTS team id that is not numeric")
 	}
 }
+
+func TestLoadPortalConfigRepeatedClientIDRefusesBoot(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	setValidAuthEnv(t)
+	t.Setenv("PORTAL_AUTH_AUDIENCE", "portal-aud")
+	t.Setenv("PORTAL_CLIENTS", "acme:7,acme:3")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() = nil, want error on a PORTAL_CLIENTS entry repeating a client_id with a different team")
+	}
+}

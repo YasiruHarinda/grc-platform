@@ -99,6 +99,9 @@ func parsePortalClients(raw string) (map[string]int, error) {
 		if err != nil || n <= 0 {
 			return nil, fmt.Errorf("PORTAL_CLIENTS entry %q: team_id must be a positive integer", entry)
 		}
+		if _, dup := out[id]; dup {
+			return nil, fmt.Errorf("PORTAL_CLIENTS entry %q: client_id %q is already bound to a team", entry, id)
+		}
 		out[id] = n
 	}
 	return out, nil
