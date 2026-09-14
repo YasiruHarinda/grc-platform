@@ -132,6 +132,10 @@ type EvidenceService interface {
 	// a time). The caller must be the round's creator or hold ManageControls
 	// (isAdmin=true).
 	DeleteRound(ctx context.Context, auditID, controlID, evidenceID int, actor string, isAdmin bool) error
+
+	// DiscardRound deletes a round unconditionally, skipping DeleteRound's
+	// ownership/status checks — used to compensate a failed status transition.
+	DiscardRound(ctx context.Context, evidenceID int) error
 }
 
 type evidenceService struct {
@@ -514,5 +518,9 @@ func (s *evidenceService) DeleteRound(ctx context.Context, auditID, controlID, e
 	if !isAdmin && round.CreatedBy != actor {
 		return &apierror.Error{StatusCode: http.StatusForbidden, Body: "forbidden"}
 	}
+	return s.repo.DeleteEvidence(ctx, evidenceID)
+}
+
+func (s *evidenceService) DiscardRound(ctx context.Context, evidenceID int) error {
 	return s.repo.DeleteEvidence(ctx, evidenceID)
 }

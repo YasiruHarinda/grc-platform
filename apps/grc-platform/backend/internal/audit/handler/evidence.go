@@ -147,6 +147,9 @@ func newEvidenceHandler(deps *Deps) *evidenceHandler {
 // entry (via/issuer name the channel), and fires async AI validation. The
 // web-app submit route and the Evidence Portal ingress both go through here so
 // a submission advances identically whichever channel it arrived on.
+//
+// Submit and the status transition aren't one transaction, so a failed
+// transition discards the round instead of leaving it for a retry to duplicate.
 func (h *evidenceHandler) finalizeEvidenceSubmission(ctx context.Context, auditID, controlID int, files []model.EvidenceFileRef, attestation string, isAdmin bool, actor, via, issuer string) (*model.AuditEvidence, error) {
 	evidence, err := h.svc.Submit(ctx, auditID, controlID, files, attestation, isAdmin, actor)
 	if err != nil {
@@ -155,6 +158,10 @@ func (h *evidenceHandler) finalizeEvidenceSubmission(ctx context.Context, auditI
 
 	statusReq := model.UpdateStatusRequest{Status: "EVIDENCE_INTERNAL_REVIEW"}
 	if err := h.controlSvc.UpdateStatus(ctx, auditID, controlID, statusReq, actor); err != nil {
+		if discardErr := h.svc.DiscardRound(ctx, evidence.ID); discardErr != nil {
+			slog.ErrorContext(ctx, "failed to discard evidence round after status transition failure",
+				"evidenceId", evidence.ID, "controlId", controlID, "err", discardErr)
+		}
 		return nil, err
 	}
 	if control, err := h.controlSvc.GetByID(ctx, auditID, controlID); err == nil && control != nil {
