@@ -18,11 +18,17 @@ package entity
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/repository"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
 )
+
+// maxTeamControlsPages bounds the TeamControls page loop so an entity that
+// never returns a short page (bug, or an unexpectedly huge team) cannot grow
+// the response — and this process's memory — without limit.
+const maxTeamControlsPages = 500 // 500 * pageLimit(100) = 50,000 controls
 
 type portalControlReader struct{ c *entityclient.Client }
 
@@ -40,13 +46,16 @@ func NewPortalControlReader(c *entityclient.Client) repository.PortalControlRead
 // it reaches SQL, so a typo is a 4xx rather than a silently short list.
 func (r *portalControlReader) TeamControls(ctx context.Context, teamID int, statuses []string, ownerIDs []int) ([]*model.AuditControl, error) {
 	var all []*model.AuditControl
-	for offset := 0; ; offset += pageLimit {
+	for page := 0; ; page++ {
+		if page >= maxTeamControlsPages {
+			return nil, fmt.Errorf("team controls search exceeded %d pages", maxTeamControlsPages)
+		}
 		body := map[string]any{
 			"statusKeys": statuses,
 			"teamIds":    []int{teamID},
 			"ownerIds":   ownerIDs,
 			"scope":      model.ScopeAll,
-			"pagination": map[string]int{"limit": pageLimit, "offset": offset},
+			"pagination": map[string]int{"limit": pageLimit, "offset": page * pageLimit},
 		}
 		var resp struct {
 			Controls []*model.AuditControl `json:"controls"`
