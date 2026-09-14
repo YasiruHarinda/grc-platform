@@ -21,6 +21,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"time"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 )
@@ -28,6 +29,10 @@ import (
 // channelEvidencePortal tags audit-trail entries submitted through the
 // Evidence Portal M2M ingress.
 const channelEvidencePortal = "evidence-portal-api"
+
+// cleanupTimeout bounds a blob cleanup, on its own short deadline instead of
+// the (already-failed) request's — see cleanupPortalBlobs.
+const cleanupTimeout = 10 * time.Second
 
 // PortalEvidenceFile is one file in a portal evidence submission. Open yields
 // a fresh reader over the uploaded part rather than its bytes: a submission may
@@ -89,9 +94,11 @@ func (d *Deps) SubmitPortalEvidence(ctx context.Context, auditID, controlID int,
 }
 
 // cleanupPortalBlobs best-effort deletes blobs already uploaded before a later
-// upload or finalization failed, so a rejected portal submission leaves no
-// unreferenced files behind in the control's evidence folder.
+// upload or finalization failed. Detached from ctx's cancellation, since that
+// failure is often ctx itself being cancelled.
 func cleanupPortalBlobs(ctx context.Context, eh *evidenceHandler, blobNames []string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+	defer cancel()
 	for _, name := range blobNames {
 		if err := eh.svc.DeleteBlob(ctx, name); err != nil {
 			slog.WarnContext(ctx, "failed to clean up orphaned portal evidence blob", "blobName", name, "err", err)
