@@ -108,6 +108,7 @@ func parseSheet(r io.Reader, refs RefData) ([]Row, []Finding, error) {
 	if len(records) == 0 {
 		return nil, nil, fmt.Errorf("csv is empty")
 	}
+	stripBOM(records[0])
 
 	idx, err := mapHeader(records[0])
 	if err != nil {
@@ -165,6 +166,24 @@ func mapHeader(header []string) (map[string]int, error) {
 
 func normHeader(s string) string {
 	return strings.ToLower(strings.Join(strings.Fields(s), " "))
+}
+
+// utf8BOM is the byte-order mark some spreadsheet tools prepend when saving
+// "CSV UTF-8" (Excel does this on Windows; a plain "Download as CSV" from
+// Google Sheets does not). It lands as an invisible prefix on the very first
+// header cell. normHeader's strings.Fields does not treat it as whitespace, so
+// left alone it makes mapHeader silently fail to match that one column and
+// abort the *entire* file with "csv is missing column(s): Year" — for a file
+// that is otherwise perfectly valid. Operators exporting the register
+// shouldn't have to know this; strip it instead of documenting around it.
+const utf8BOM = "\xEF\xBB\xBF"
+
+// stripBOM removes a leading UTF-8 BOM from the first cell of the header row,
+// in place.
+func stripBOM(header []string) {
+	if len(header) > 0 {
+		header[0] = strings.TrimPrefix(header[0], utf8BOM)
+	}
 }
 
 // isSkippable drops the legend row and fully blank rows (plan §4).
