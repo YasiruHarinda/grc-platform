@@ -341,6 +341,38 @@ func TestVerifyMigration_RejectedRowConfirmedAbsentIsSilent(t *testing.T) {
 	}
 }
 
+// TestVerifyMigration_AmbiguousMatchIsFlagged drives two marker risks onto
+// the same natural key — e.g. a CSV re-export that split one risk into two
+// Migration IDs — and confirms the default branch of verifyMigration's match
+// switch reports it rather than silently picking one.
+func TestVerifyMigration_AmbiguousMatchIsFlagged(t *testing.T) {
+	rd := fixtureRefData(t)
+	row := verifyBaseRow()
+	dup := row
+	dup.MigrationID, dup.CSVLine = row.MigrationID+1, row.CSVLine+1
+
+	fe := newFakeEntity(t)
+	ec := fe.client(t)
+	setupRep := NewReport()
+	for _, r := range []Row{row, dup} {
+		if err := migrateRow(context.Background(), ec, Config{MigrationDate: "2026-09-15"}, rd, r, ResumeState{Progress: ProgressNone}, setupRep); err != nil {
+			t.Fatalf("migrateRow: %v", err)
+		}
+	}
+	if len(setupRep.findings) != 0 {
+		t.Fatalf("unexpected findings setting up duplicate fixture: %+v", setupRep.findings)
+	}
+
+	rep := NewReport()
+	if err := verifyMigration(context.Background(), discardLogger(), ec, rd, "2026-09-15", []Row{row}, rep); err != nil {
+		t.Fatalf("verifyMigration: %v", err)
+	}
+	got := findingsForRow(rep.findings, row.MigrationID, "ambiguous risk match")
+	if len(got) != 1 || got[0].Severity != SevMismatch {
+		t.Errorf("findings = %+v, want one MISMATCH 'ambiguous risk match'", rep.findings)
+	}
+}
+
 func TestVerifyMigration_UnexpectedGrantIsFlagged(t *testing.T) {
 	rd := fixtureRefData(t)
 	row := verifyBaseRow()
