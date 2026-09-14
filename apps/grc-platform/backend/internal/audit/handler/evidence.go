@@ -19,6 +19,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime"
@@ -141,6 +142,11 @@ func newEvidenceHandler(deps *Deps) *evidenceHandler {
 	}
 }
 
+// errRoundRollbackFailed marks a finalizeEvidenceSubmission failure where
+// DiscardRound also failed — the round may still exist, so its blobs must not
+// be deleted.
+var errRoundRollbackFailed = errors.New("evidence round rollback unconfirmed")
+
 // finalizeEvidenceSubmission records files as one submitted evidence round for
 // (auditID, controlID), advances the control to EVIDENCE_INTERNAL_REVIEW,
 // sends the status-reached notification, writes the best-effort audit-trail
@@ -161,6 +167,7 @@ func (h *evidenceHandler) finalizeEvidenceSubmission(ctx context.Context, auditI
 		if discardErr := h.svc.DiscardRound(ctx, evidence.ID); discardErr != nil {
 			slog.ErrorContext(ctx, "failed to discard evidence round after status transition failure",
 				"evidenceId", evidence.ID, "controlId", controlID, "err", discardErr)
+			return nil, fmt.Errorf("%w: %w", errRoundRollbackFailed, err)
 		}
 		return nil, err
 	}

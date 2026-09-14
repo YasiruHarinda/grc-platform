@@ -18,6 +18,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 
@@ -75,7 +76,13 @@ func (d *Deps) SubmitPortalEvidence(ctx context.Context, auditID, controlID int,
 	}
 	evidence, err := eh.finalizeEvidenceSubmission(ctx, auditID, controlID, refs, "", false, actorUUID, channelEvidencePortal, clientID)
 	if err != nil {
-		cleanupPortalBlobs(ctx, eh, uploaded)
+		// A round whose rollback could not be confirmed may still reference
+		// these blobs — deleting them would leave that round pointing at
+		// files that no longer exist, which is worse than the leak this
+		// cleanup exists to prevent. Only clean up once removal is confirmed.
+		if !errors.Is(err, errRoundRollbackFailed) {
+			cleanupPortalBlobs(ctx, eh, uploaded)
+		}
 		return nil, err
 	}
 	return evidence, nil
