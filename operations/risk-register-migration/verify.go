@@ -126,7 +126,16 @@ func verifyMigration(ctx context.Context, log *slog.Logger, ec *EntityClient, rd
 		case 1:
 			mismatches, err := verifyRow(ctx, ec, rd, migrationDate, row, matches[0].ID, grantCache)
 			if err != nil {
-				return fmt.Errorf("verification: risk %d (migration id %d): %w", matches[0].ID, row.MigrationID, err)
+				// verifyRow only ever reads (GetRiskDetail/ListEscalations/
+				// ListGrants/ListActionPlans); a transient failure here means
+				// this row couldn't be checked, not that the entity is wrong.
+				// Record it and keep verifying the rest — a 500 on row 50 of
+				// 500 shouldn't turn rows 51+ into a silent, unverified gap.
+				log.Warn("could not verify row", "riskId", matches[0].ID, "migrationId", row.MigrationID, "err", err)
+				mismatchCount++
+				rep.Add(mismatchFinding(row, "verification read failed",
+					fmt.Sprintf("risk %d: %v", matches[0].ID, err)))
+				continue
 			}
 			if len(mismatches) == 0 {
 				okCount++
