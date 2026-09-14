@@ -312,9 +312,32 @@ func (h *portalHandler) submitEvidence(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 6. The web-app submission pipeline, with the resolved uuid as the actor.
+	// Uploading can take long enough for another request to move the control
+	// out from under the checks above, so revalidate re-fetches and compares
+	// team/owner/status right before the round is created.
+	revalidate := func(ctx context.Context) error {
+		fresh, err := h.deps.Controls.ControlByID(ctx, controlID)
+		if err != nil {
+			return err
+		}
+		if fresh == nil || fresh.TeamID == nil || *fresh.TeamID != caller.TeamID {
+			return errPortalAuthChanged
+		}
+		if !evidenceUploadStatuses[fresh.Status] {
+			return errPortalAuthChanged
+		}
+		if fresh.OwnerID == nil || *fresh.OwnerID != submitter.UserID {
+			return errPortalAuthChanged
+		}
+		return nil
+	}
 	evidence, err := h.deps.Submit.SubmitPortalEvidence(r.Context(), control.AuditID, controlID,
-		files, person.UUID, caller.ClientID)
+		files, person.UUID, caller.ClientID, revalidate)
 	if err != nil {
+		if errors.Is(err, errPortalAuthChanged) {
+			response.WriteError(w, http.StatusConflict, "control changed during submission — please retry")
+			return
+		}
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
@@ -342,6 +365,11 @@ func readFileHead(hdr *multipart.FileHeader) ([]byte, error) {
 // has no user row. Kept distinct from a lookup that could not be completed at
 // all, because the two must not produce the same response.
 var errOwnerUnknown = errors.New("email does not resolve to a known owner")
+
+// errPortalAuthChanged means the control's team, owner, or status changed
+// between the initial authorization check and revalidation just before the
+// evidence round is created (see submitEvidence's revalidate closure).
+var errPortalAuthChanged = errors.New("control changed during submission")
 
 // resolveOwnerID resolves an email to the internal user.id used as
 // audit_control.owner_id. Returns errOwnerUnknown for "no such owner"; any

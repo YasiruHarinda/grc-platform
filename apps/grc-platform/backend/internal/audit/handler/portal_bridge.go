@@ -44,7 +44,12 @@ type PortalEvidenceFile struct {
 // advanced, and notify/trail/AI fired exactly once and identically to a
 // web-app submission. All files land in ONE evidence round. actorUUID is the
 // resolved submitter; clientID is recorded as the trail issuer.
-func (d *Deps) SubmitPortalEvidence(ctx context.Context, auditID, controlID int, files []PortalEvidenceFile, actorUUID, clientID string) (*model.AuditEvidence, error) {
+//
+// revalidate, if non-nil, re-checks the caller's authorization right after
+// uploads finish and before the round is created — uploads can take long
+// enough for the control's team/owner/status to change out from under the
+// check the portal handler made before the request body was even read.
+func (d *Deps) SubmitPortalEvidence(ctx context.Context, auditID, controlID int, files []PortalEvidenceFile, actorUUID, clientID string, revalidate func(context.Context) error) (*model.AuditEvidence, error) {
 	eh := newEvidenceHandler(d)
 
 	link, err := eh.svc.GetUploadLink(ctx, auditID, controlID)
@@ -61,6 +66,12 @@ func (d *Deps) SubmitPortalEvidence(ctx context.Context, auditID, controlID int,
 		}
 		uploaded = append(uploaded, blobName)
 		refs = append(refs, model.EvidenceFileRef{BlobName: blobName, FileName: f.FileName})
+	}
+	if revalidate != nil {
+		if err := revalidate(ctx); err != nil {
+			cleanupPortalBlobs(ctx, eh, uploaded)
+			return nil, err
+		}
 	}
 	evidence, err := eh.finalizeEvidenceSubmission(ctx, auditID, controlID, refs, "", false, actorUUID, channelEvidencePortal, clientID)
 	if err != nil {
