@@ -149,7 +149,7 @@ func TestPortalRateLimitPerClient(t *testing.T) {
 }
 
 func TestPortalIngressLimitPerRemoteAddr(t *testing.T) {
-	limited := middleware.PortalPerRemoteAddrRateLimit(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	limited := middleware.PortalGlobalIngressRateLimit(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	var got429 bool

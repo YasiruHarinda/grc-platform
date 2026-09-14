@@ -144,9 +144,9 @@ func verifyPortalToken(v *IdPVerifier, tokenStr, audience string, skew time.Dura
 const (
 	portalPerClientRate  = 10.0
 	portalPerClientBurst = 20.0
-	// portalIngressRate / portalIngressBurst is the coarse pre-auth bucket,
-	// sized well above normal traffic — it bounds the cost of unauthenticated
-	// requests (each rejected token still costs an RS256 verification).
+	// portalIngressRate / portalIngressBurst is the global pre-auth cap for
+	// ALL portal traffic combined — see PortalGlobalIngressRateLimit for why
+	// this cannot be a per-client bucket in the deployed environment.
 	portalIngressRate  = 50.0
 	portalIngressBurst = 100.0
 )
@@ -169,10 +169,10 @@ func PortalPerClientRateLimit(next http.Handler) http.Handler {
 	})
 }
 
-// PortalPerRemoteAddrRateLimit is the coarse per-remote-address bucket. It
-// runs OUTSIDE ClientCredentials and must not consult anything derived from
-// the token.
-func PortalPerRemoteAddrRateLimit(next http.Handler) http.Handler {
+// PortalGlobalIngressRateLimit is the pre-auth bucket bounding unauthenticated
+// request cost. Behind the Choreo gateway, RemoteAddr is the gateway's own
+// address, so this is one shared bucket for all portal traffic, not per-caller.
+func PortalGlobalIngressRateLimit(next http.Handler) http.Handler {
 	buckets := newBucketSet(portalIngressRate, portalIngressBurst)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, _, err := net.SplitHostPort(r.RemoteAddr)

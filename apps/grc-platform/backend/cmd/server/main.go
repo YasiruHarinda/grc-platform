@@ -290,7 +290,7 @@ func main() {
 			Grants:    grantRepo,
 			Controls:  auditentity.NewPortalControlReader(entityCli),
 		})
-		portalChain := middleware.PortalPerRemoteAddrRateLimit(
+		portalChain := middleware.PortalGlobalIngressRateLimit(
 			middleware.ClientCredentials(middleware.ClientCredConfig{
 				Verifier:  verifier,
 				Audience:  cfg.Portal.Audience,

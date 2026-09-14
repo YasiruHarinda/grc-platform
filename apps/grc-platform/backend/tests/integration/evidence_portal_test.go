@@ -287,7 +287,7 @@ func buildPortalStack(t *testing.T, fakeEnt *fakeEntity, withDirectory bool) *ht
 		Submit: &auditDeps, Audits: auditDeps.Audit,
 		Directory: dirSvc, Grants: auditDeps.Grants, Controls: auditentity.NewPortalControlReader(ec),
 	})
-	portalChain := middleware.PortalPerRemoteAddrRateLimit(
+	portalChain := middleware.PortalGlobalIngressRateLimit(
 		middleware.ClientCredentials(middleware.ClientCredConfig{
 			Verifier: verifier, Audience: epPort3Aud,
 			Clients: map[string]int{
