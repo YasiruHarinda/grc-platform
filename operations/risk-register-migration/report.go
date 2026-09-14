@@ -114,16 +114,19 @@ func (r *Report) Emit(w io.Writer) {
 
 	fmt.Fprintf(&buf, "\n===== risk-register-import report — %s =====\n", time.Now().UTC().Format(time.RFC3339))
 
-	rejects, warns := 0, 0
+	rejects, warns, mismatches := 0, 0, 0
 	for _, f := range r.findings {
 		switch f.Severity {
 		case SevReject:
 			rejects++
 		case SevWarn:
 			warns++
+		case SevMismatch:
+			mismatches++
 		}
 	}
-	fmt.Fprintf(&buf, "migrated=%d  skipped(resume)=%d  rejected=%d  warnings=%d\n\n", r.migrated, r.skipped, rejects, warns)
+	fmt.Fprintf(&buf, "migrated=%d  skipped(resume)=%d  rejected=%d  warnings=%d  mismatches=%d\n\n",
+		r.migrated, r.skipped, rejects, warns, mismatches)
 
 	fmt.Fprintln(&buf, "----- errors.csv -----")
 	cw := csv.NewWriter(&buf)
