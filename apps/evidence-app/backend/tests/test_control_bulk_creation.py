@@ -63,7 +63,8 @@ def test_bulk_create_sent_twice_skips_everything_the_second_time(db_session, adm
 
     second = admin_client.post("/api/controls/bulk", json=payload)
 
-    assert second.status_code == 201
+    # 200, not 201: the second request created no resource.
+    assert second.status_code == 200
     second_body = second.json()
     assert second_body["created"] == []
     assert second_body["skipped"] == 2
@@ -197,6 +198,11 @@ def test_bulk_create_rejects_a_blank_reference_or_title_rather_than_storing_it_e
     assert len(body["rejected"]) == 2
     rejected_refs = {r["control_ref"] for r in body["rejected"]}
     assert rejected_refs == {"", "C-70"}
+    # The blank-reference row has no reference to name it by, so its
+    # 1-based position in the request is the only handle the Admin has on
+    # which line of their file to go and fix. Every rejection carries one.
+    by_position = {r["row_number"]: r["control_ref"] for r in body["rejected"]}
+    assert by_position == {1: "", 2: "C-70"}
     assert db_session.query(Control).filter(Control.framework_id == framework_id, Control.control_ref == "C-70").count() == 0
     assert db_session.query(Control).filter(Control.framework_id == framework_id, Control.title == "").count() == 0
 
@@ -292,14 +298,19 @@ def test_bulk_create_when_everything_is_already_stored_succeeds_with_zero_create
         },
     )
 
-    assert response.status_code == 201
+    # 200, not 201: nothing was created, so Created would be the wrong word.
+    assert response.status_code == 200
     body = response.json()
     assert body["created"] == []
     assert body["skipped"] == 1
     assert body["rejected"] == []
 
 
-def test_bulk_create_trims_fields_the_same_way_the_single_endpoint_does(db_session, admin_client):
+def test_bulk_create_trims_surrounding_whitespace_off_every_field(db_session, admin_client):
+    """Trimmed the way update_control trims, which is NOT what create_control
+    does: that one stores its payload untouched. The two creation paths
+    genuinely normalise differently, and changing the single endpoint to
+    match is a behaviour change to an endpoint this work does not touch."""
     framework_id = make_control(db_session).framework_id
 
     response = admin_client.post(

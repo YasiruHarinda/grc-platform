@@ -30,7 +30,7 @@ type ImportPhase =
   | { step: "error"; message: string }
   | { step: "summary"; toCreate: ParsedControlRow[]; alreadyThereCount: number; unusableRowCount: number }
   | { step: "importing" }
-  | { step: "done"; created: number; skipped: number; failed: { reference: string; message: string }[] };
+  | { step: "done"; created: number; skipped: number; failed: { label: string; message: string }[] };
 
 /**
  * Fills a Framework's Controls from the SRE team's CSV export in one pass,
@@ -146,7 +146,7 @@ export default function ImportControlsDialog({
 
   async function handleConfirm() {
     if (phase.step !== "summary") return;
-    const { toCreate } = phase;
+    const { toCreate, alreadyThereCount } = phase;
     setPhase({ step: "importing" });
 
     // One request for the whole file. The server checks every row before
@@ -167,17 +167,26 @@ export default function ImportControlsDialog({
       // framework rather than starting a second query for the same data.
       onImported();
 
-      // `skipped` used to be `alreadyThereCount`, counted in the browser
-      // against the Controls this page had already loaded. It now comes
-      // from the server instead, because the server's count is taken at
-      // the moment it actually writes, inside the same transaction as the
-      // insert — the browser's snapshot can be a moment stale if another
-      // Admin is importing at the same time.
+      // Both counts, added, because the two sides skip different rows and
+      // neither number is the whole answer on its own. The rows this
+      // browser already knew were stored never went in the request at all
+      // (see `toCreate` above), so the server cannot count them; the
+      // server's own count catches what this page's snapshot missed,
+      // which is what another Admin importing at the same moment looks
+      // like. Reporting the server's count alone is what made a full
+      // re-import say "0 skipped" one screen after the summary said 103.
+      //
+      // A rejected row is labelled by its reference where it has one, and
+      // by its position in the file where it does not: a row rejected for
+      // a *blank* reference has nothing else to identify it by.
       setPhase({
         step: "done",
         created: result.created.length,
-        skipped: result.skipped,
-        failed: result.rejected.map((r) => ({ reference: r.control_ref, message: r.reason })),
+        skipped: alreadyThereCount + result.skipped,
+        failed: result.rejected.map((r) => ({
+          label: r.control_ref || `Row ${r.row_number}`,
+          message: r.reason,
+        })),
       });
     } catch (err) {
       // A whole-request failure, a network error or the server refusing
@@ -346,8 +355,8 @@ export default function ImportControlsDialog({
                 </Typography>
                 <Stack spacing={0.25}>
                   {phase.failed.map((f, i) => (
-                    <Typography key={`${f.reference}-${i}`} variant="body2">
-                      • <strong>{f.reference}</strong>: {f.message}
+                    <Typography key={`${f.label}-${i}`} variant="body2">
+                      • <strong>{f.label}</strong>: {f.message}
                     </Typography>
                   ))}
                 </Stack>

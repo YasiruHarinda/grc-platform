@@ -66,23 +66,33 @@ def create_control(payload: ControlCreate, db: Session = Depends(get_db), user: 
 
 @router.post("/bulk", response_model=ControlBulkResponse, status_code=201)
 def bulk_create_controls(
-    payload: ControlBulkCreate, db: Session = Depends(get_db), user: User = Depends(require_admin)
+    payload: ControlBulkCreate,
+    response: Response,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
 ):
+    # The row cap is checked first, before the Framework is even looked up,
+    # so an oversized request costs one len() and no database work at all.
+    # It cannot be free: FastAPI has already parsed and validated the whole
+    # body into ControlBulkRow objects before this function is entered, so
+    # the cost of *reading* a huge request is paid whatever this does. What
+    # it buys is refusing one in a readable sentence that names the limit,
+    # which is why the check lives here rather than as a max_length on the
+    # schema -- that form refuses during parsing, marginally earlier, but
+    # answers with FastAPI's own validation structure instead of a sentence
+    # an Admin can act on.
+    if len(payload.controls) > MAX_BULK_CONTROLS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"A bulk import accepts at most {MAX_BULK_CONTROLS} rows per request.",
+        )
+
     # The Framework is named once on the payload, not once per row (see
     # ControlBulkRow), and resolved once here, before any row is looked at.
     # Same not-found message as create_control above, word for word: naming
     # a Framework that doesn't exist is the caller's mistake either way.
     if db.query(Framework).filter(Framework.id == payload.framework_id).first() is None:
         raise HTTPException(status_code=404, detail="Framework not found")
-
-    # The row cap is checked before a single row is examined, so an
-    # oversized request costs nothing at all rather than failing partway
-    # through validation.
-    if len(payload.controls) > MAX_BULK_CONTROLS:
-        raise HTTPException(
-            status_code=422,
-            detail=f"A bulk import accepts at most {MAX_BULK_CONTROLS} rows per request.",
-        )
 
     # Existing references for this Framework, read inside the same
     # transaction the insert below happens in — not from a separate
@@ -101,14 +111,18 @@ def bulk_create_controls(
     # the endpoint, not a detail of it. Under one transaction a single
     # unusable row would otherwise take the whole import down with it,
     # which would be strictly worse than the row-by-row loop this replaces.
-    # A row that fails a check is named and appended to `rejected`; it never
-    # reaches `to_create`, so it can never reach the session at all.
+    # A row that fails a check is appended to `rejected`; it never reaches
+    # `to_create`, so it can never reach the session at all. Each rejection
+    # carries the row's 1-based position as well as its reference, because
+    # a row rejected for having a blank reference has no reference to name
+    # it by, and the position is then the only handle the Admin has on
+    # which line of their file to go and fix.
     seen_refs: set[str] = set()
     to_create: list[Control] = []
     rejected: list[ControlBulkRejection] = []
     skipped = 0
 
-    for row in payload.controls:
+    for position, row in enumerate(payload.controls, start=1):
         # Trimmed the same way update_control trims a field it's given:
         # blank becomes None for description, and reference/title are
         # compared and stored trimmed either way.
@@ -117,24 +131,24 @@ def bulk_create_controls(
         description = (row.description or "").strip() or None
 
         if not control_ref:
-            rejected.append(ControlBulkRejection(control_ref=control_ref, reason="Reference is blank."))
+            rejected.append(ControlBulkRejection(row_number=position, control_ref=control_ref, reason="Reference is blank."))
             continue
         if not title:
-            rejected.append(ControlBulkRejection(control_ref=control_ref, reason="Title is blank."))
+            rejected.append(ControlBulkRejection(row_number=position, control_ref=control_ref, reason="Title is blank."))
             continue
         if len(control_ref) > _MAX_CONTROL_REF:
             rejected.append(
-                ControlBulkRejection(control_ref=control_ref, reason=f"Reference is longer than {_MAX_CONTROL_REF} characters.")
+                ControlBulkRejection(row_number=position, control_ref=control_ref, reason=f"Reference is longer than {_MAX_CONTROL_REF} characters.")
             )
             continue
         if len(title) > _MAX_TITLE:
             rejected.append(
-                ControlBulkRejection(control_ref=control_ref, reason=f"Title is longer than {_MAX_TITLE} characters.")
+                ControlBulkRejection(row_number=position, control_ref=control_ref, reason=f"Title is longer than {_MAX_TITLE} characters.")
             )
             continue
         if description is not None and len(description) > _MAX_DESCRIPTION:
             rejected.append(
-                ControlBulkRejection(control_ref=control_ref, reason=f"Description is longer than {_MAX_DESCRIPTION} characters.")
+                ControlBulkRejection(row_number=position, control_ref=control_ref, reason=f"Description is longer than {_MAX_DESCRIPTION} characters.")
             )
             continue
 
@@ -179,6 +193,14 @@ def bulk_create_controls(
             detail="One or more controls could not be saved due to a conflict.",
         ) from exc
 
+    # 201 only when something was actually created. A request whose every
+    # row was already stored, or refused, created no resource, and saying
+    # Created would describe the wrong outcome -- a full re-import is an
+    # ordinary, successful thing to do and answers 200. The decorator's 201
+    # stays as the declared default so the documented response is the usual
+    # one; this narrows it for the case that made nothing.
+    if not created:
+        response.status_code = 200
     return ControlBulkResponse(created=created, skipped=skipped, rejected=rejected)
 
 

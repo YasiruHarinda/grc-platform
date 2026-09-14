@@ -1,5 +1,6 @@
 import axios from "axios";
 import { BACKEND_BASE_URL } from "../config/apiConfig";
+import type { Control } from "../components/ControlFormDialog";
 
 // Evidence file URLs come from the backend as short-lived Azure signed
 // links (absolute URLs pointing directly at blob storage) and are used
@@ -139,9 +140,9 @@ export const controlsApi = {
     api.post("/controls/bulk", data).then(
       (r) =>
         r.data as {
-          created: { id: number; framework_id: number; control_ref: string; title: string; description: string | null }[];
+          created: Control[];
           skipped: number;
-          rejected: { control_ref: string; reason: string }[];
+          rejected: { row_number: number; control_ref: string; reason: string }[];
         }
     ),
   update: (id: number, data: { control_ref?: string; title?: string; description?: string }) =>

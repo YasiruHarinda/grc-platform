@@ -42,10 +42,15 @@ class ControlBulkCreate(BaseModel):
 
 
 class ControlBulkRejection(BaseModel):
-    """Why one row of a bulk import wasn't written. `control_ref` here is
-    read back from the row itself (not looked up), so a row rejected for
-    being blank still names *something* the caller can find in their file."""
+    """Why one row of a bulk import wasn't written.
 
+    `row_number` is the row's 1-based position in the list that was sent,
+    and it is here because `control_ref` alone cannot always identify the
+    row: a row rejected *for having a blank reference* has an empty one,
+    which names nothing. The position always points at a line in the file
+    the Admin imported, so it is the handle that never goes missing."""
+
+    row_number: int
     control_ref: str
     reason: str
 
