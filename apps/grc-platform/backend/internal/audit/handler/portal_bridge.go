@@ -19,6 +19,7 @@ package handler
 import (
 	"context"
 	"io"
+	"log/slog"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 )
@@ -51,14 +52,33 @@ func (d *Deps) SubmitPortalEvidence(ctx context.Context, auditID, controlID int,
 		return nil, err
 	}
 	refs := make([]model.EvidenceFileRef, 0, len(files))
+	uploaded := make([]string, 0, len(files))
 	for _, f := range files {
 		blobName, err := uploadPortalFile(ctx, eh, link.FolderPath, f)
 		if err != nil {
+			cleanupPortalBlobs(ctx, eh, uploaded)
 			return nil, err
 		}
+		uploaded = append(uploaded, blobName)
 		refs = append(refs, model.EvidenceFileRef{BlobName: blobName, FileName: f.FileName})
 	}
-	return eh.finalizeEvidenceSubmission(ctx, auditID, controlID, refs, "", false, actorUUID, channelEvidencePortal, clientID)
+	evidence, err := eh.finalizeEvidenceSubmission(ctx, auditID, controlID, refs, "", false, actorUUID, channelEvidencePortal, clientID)
+	if err != nil {
+		cleanupPortalBlobs(ctx, eh, uploaded)
+		return nil, err
+	}
+	return evidence, nil
+}
+
+// cleanupPortalBlobs best-effort deletes blobs already uploaded before a later
+// upload or finalization failed, so a rejected portal submission leaves no
+// unreferenced files behind in the control's evidence folder.
+func cleanupPortalBlobs(ctx context.Context, eh *evidenceHandler, blobNames []string) {
+	for _, name := range blobNames {
+		if err := eh.svc.DeleteBlob(ctx, name); err != nil {
+			slog.WarnContext(ctx, "failed to clean up orphaned portal evidence blob", "blobName", name, "err", err)
+		}
+	}
 }
 
 // uploadPortalFile reads one part and uploads it, then lets those bytes go —

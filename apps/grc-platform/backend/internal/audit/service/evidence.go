@@ -66,6 +66,10 @@ type EvidenceService interface {
 	// returned so the caller can accumulate it for Submit.
 	UploadFile(ctx context.Context, folderPath, fileName, contentType string, data []byte) (blobName string, err error)
 
+	// DeleteBlob removes one uploaded blob directly from storage, with no DB
+	// record involved — for cleaning up an upload orphaned by a later failure.
+	DeleteBlob(ctx context.Context, blobName string) error
+
 	// Submit records exactly the given files as a new evidence submission —
 	// there is no folder re-listing in the flat evidence layout, so every blob
 	// name must fall under this control's server-derived evidence folder or the
@@ -283,6 +287,10 @@ func (s *evidenceService) UploadFile(ctx context.Context, folderPath, fileName, 
 		return "", err
 	}
 	return blobName, nil
+}
+
+func (s *evidenceService) DeleteBlob(ctx context.Context, blobName string) error {
+	return s.storage.Delete(ctx, blobName)
 }
 
 // displayFileName reconstructs a human-readable name from a stored blob name by
