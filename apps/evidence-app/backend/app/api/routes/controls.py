@@ -6,10 +6,35 @@ from app.database import get_db
 from app.models.control import Control
 from app.models.framework import Framework
 from app.rbac import require_admin
-from app.schemas.control import ControlCreate, ControlResponse, ControlUpdate
+from app.schemas.control import (
+    ControlBulkCreate,
+    ControlBulkRejection,
+    ControlBulkResponse,
+    ControlCreate,
+    ControlResponse,
+    ControlUpdate,
+)
 from app.storage.blob_storage import delete_files
 
 router = APIRouter(prefix="/controls", tags=["Controls"])
+
+# The real SOC 2 export this endpoint exists for is 103 rows. 1000 is
+# generous headroom for that case while still bounding the work one request
+# can ask for: a request that runs long enough will meet the Choreo
+# gateway's own timeout, and a stated, immediate refusal beats a connection
+# that dies with the outcome unknown.
+MAX_BULK_CONTROLS = 1000
+
+# Read off the columns themselves rather than restated as literals here. A
+# migration that widens or narrows one of these would otherwise leave this
+# endpoint quietly refusing rows the database would have taken, or waving
+# through rows it would refuse -- and the second of those is the one that
+# turns a rejected row into a failed import, because a value the database
+# refuses arrives as an error on the single INSERT that carries every other
+# row with it.
+_MAX_CONTROL_REF = Control.__table__.c.control_ref.type.length
+_MAX_TITLE = Control.__table__.c.title.type.length
+_MAX_DESCRIPTION = Control.__table__.c.description.type.length
 
 
 @router.get("", response_model=list[ControlResponse])
@@ -37,6 +62,124 @@ def create_control(payload: ControlCreate, db: Session = Depends(get_db), user: 
     db.commit()
     db.refresh(control)
     return control
+
+
+@router.post("/bulk", response_model=ControlBulkResponse, status_code=201)
+def bulk_create_controls(
+    payload: ControlBulkCreate, db: Session = Depends(get_db), user: User = Depends(require_admin)
+):
+    # The Framework is named once on the payload, not once per row (see
+    # ControlBulkRow), and resolved once here, before any row is looked at.
+    # Same not-found message as create_control above, word for word: naming
+    # a Framework that doesn't exist is the caller's mistake either way.
+    if db.query(Framework).filter(Framework.id == payload.framework_id).first() is None:
+        raise HTTPException(status_code=404, detail="Framework not found")
+
+    # The row cap is checked before a single row is examined, so an
+    # oversized request costs nothing at all rather than failing partway
+    # through validation.
+    if len(payload.controls) > MAX_BULK_CONTROLS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"A bulk import accepts at most {MAX_BULK_CONTROLS} rows per request.",
+        )
+
+    # Existing references for this Framework, read inside the same
+    # transaction the insert below happens in — not from a separate
+    # request-earlier query — so the duplicate check is made against the
+    # same view of the data the insert will land in. Compared trimmed and
+    # lowercased on both sides, matching the browser's own duplicate check,
+    # so " c-1" and "C-1 " are the same Control to both.
+    existing_refs = {
+        control_ref.strip().lower()
+        for (control_ref,) in db.query(Control.control_ref).filter(
+            Control.framework_id == payload.framework_id
+        )
+    }
+
+    # Every row is checked before any row is written — this is the point of
+    # the endpoint, not a detail of it. Under one transaction a single
+    # unusable row would otherwise take the whole import down with it,
+    # which would be strictly worse than the row-by-row loop this replaces.
+    # A row that fails a check is named and appended to `rejected`; it never
+    # reaches `to_create`, so it can never reach the session at all.
+    seen_refs: set[str] = set()
+    to_create: list[Control] = []
+    rejected: list[ControlBulkRejection] = []
+    skipped = 0
+
+    for row in payload.controls:
+        # Trimmed the same way update_control trims a field it's given:
+        # blank becomes None for description, and reference/title are
+        # compared and stored trimmed either way.
+        control_ref = row.control_ref.strip()
+        title = row.title.strip()
+        description = (row.description or "").strip() or None
+
+        if not control_ref:
+            rejected.append(ControlBulkRejection(control_ref=control_ref, reason="Reference is blank."))
+            continue
+        if not title:
+            rejected.append(ControlBulkRejection(control_ref=control_ref, reason="Title is blank."))
+            continue
+        if len(control_ref) > _MAX_CONTROL_REF:
+            rejected.append(
+                ControlBulkRejection(control_ref=control_ref, reason=f"Reference is longer than {_MAX_CONTROL_REF} characters.")
+            )
+            continue
+        if len(title) > _MAX_TITLE:
+            rejected.append(
+                ControlBulkRejection(control_ref=control_ref, reason=f"Title is longer than {_MAX_TITLE} characters.")
+            )
+            continue
+        if description is not None and len(description) > _MAX_DESCRIPTION:
+            rejected.append(
+                ControlBulkRejection(control_ref=control_ref, reason=f"Description is longer than {_MAX_DESCRIPTION} characters.")
+            )
+            continue
+
+        # A reference already stored under this Framework, and a reference
+        # repeated within this same request, land in the same bucket: both
+        # are a Control that already exists by the time the insert runs,
+        # not a row that's wrong. First occurrence in the request wins; a
+        # repeat is silently absorbed here rather than treated as an error.
+        key = control_ref.lower()
+        if key in existing_refs or key in seen_refs:
+            skipped += 1
+            continue
+        seen_refs.add(key)
+        to_create.append(Control(framework_id=payload.framework_id, control_ref=control_ref, title=title, description=description))
+
+    # One transaction, one commit: rows that passed every check above are
+    # inserted together, and either all of them land or none do. `flush()`
+    # sends the single multi-row INSERT (Postgres returns every assigned id
+    # in that same statement) while the transaction is still open, which is
+    # what lets the response below read `.id` off each Control without a
+    # read-back query per row — the exact per-Control round trip this
+    # endpoint exists to remove. Reading it any later would cost that round
+    # trip anyway: db.commit() expires every attribute on every object it
+    # touched, so a `.id` read after commit reloads from the database one
+    # row at a time, silently reintroducing the cost this endpoint exists to
+    # remove.
+    db.add_all(to_create)
+    try:
+        db.flush()
+        created = [ControlResponse.model_validate(control) for control in to_create]
+        db.commit()
+    except IntegrityError as exc:
+        # Nothing in today's schema should reach this — there's no unique
+        # rule on (framework_id, control_ref), so the database itself never
+        # refuses a row this loop already decided to write. Kept as a
+        # safety net for a constraint added later, in the same spirit as
+        # delete_control's own guard further below, so that lands as a
+        # clean 409 rather than an unhandled server error.
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="One or more controls could not be saved due to a conflict.",
+        ) from exc
+
+    return ControlBulkResponse(created=created, skipped=skipped, rejected=rejected)
 
 
 @router.get("/{control_id}", response_model=ControlResponse)
