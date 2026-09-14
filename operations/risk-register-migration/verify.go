@@ -317,7 +317,7 @@ func verifyRow(ctx context.Context, ec *EntityClient, rd RefData, migrationDate 
 	if err != nil {
 		return nil, err
 	}
-	wantEscalation := row.WorkflowStatus == "IN_REMEDIATION" && row.ImplementationDate < migrationDate
+	wantEscalation := wantsSuppressingEscalation(row, migrationDate)
 	hasEscalation := hasOpenMarkerEscalation(escs)
 	switch {
 	case wantEscalation && !hasEscalation:

@@ -293,6 +293,14 @@ func standardPlanCompleted(plans []ActionPlanView) bool {
 	return false
 }
 
+// wantsSuppressingEscalation reports whether row needs a D8 overdue-
+// suppression escalation as of migrationDate. Shared by migrateRow (the
+// write path, step 3 below) and verify.go's verifyRow (the read-only check)
+// so the rule can't drift between what gets written and what gets verified.
+func wantsSuppressingEscalation(row Row, migrationDate string) bool {
+	return row.WorkflowStatus == "IN_REMEDIATION" && row.ImplementationDate < migrationDate
+}
+
 func hasOpenMarkerEscalation(escs []Escalation) bool {
 	for _, e := range escs {
 		if e.Status == "OPEN" && e.CreatedBy == marker {
@@ -429,7 +437,7 @@ func migrateRow(ctx context.Context, ec *EntityClient, cfg Config, rd RefData, r
 	}
 
 	// ── 3. overdue-suppression escalation (IN_REMEDIATION only, D8) ─────────
-	if target == "IN_REMEDIATION" && row.ImplementationDate < cfg.MigrationDate {
+	if wantsSuppressingEscalation(row, cfg.MigrationDate) {
 		escs, err := ec.ListEscalations(ctx, riskID)
 		if err != nil {
 			return err
