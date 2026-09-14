@@ -391,12 +391,17 @@ func riskCategoryIDs(cats []RiskCategory) []int {
 	return ids
 }
 
-// diffActionSteps compares want (CSV order) against got (server order,
-// step_no ascending) positionally — the migration writes steps in CSV order,
-// so a faithful write preserves it exactly.
+// diffActionSteps compares want (CSV order) against got, sorted by StepNo
+// ascending, positionally — the migration writes steps in CSV order, so a
+// faithful write preserves it exactly. Sorting here rather than trusting the
+// entity to already return them that way keeps the check correct regardless
+// of what order the API happens to respond in.
 func diffActionSteps(want []string, got []RiskActionStepView) string {
-	gotDescs := make([]string, len(got))
-	for i, s := range got {
+	sorted := append([]RiskActionStepView(nil), got...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].StepNo < sorted[j].StepNo })
+
+	gotDescs := make([]string, len(sorted))
+	for i, s := range sorted {
 		gotDescs[i] = strOrNil(s.Description)
 	}
 	if len(want) != len(gotDescs) {
