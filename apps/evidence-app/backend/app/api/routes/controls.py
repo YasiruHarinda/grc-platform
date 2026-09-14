@@ -18,13 +18,6 @@ from app.storage.blob_storage import delete_files
 
 router = APIRouter(prefix="/controls", tags=["Controls"])
 
-# The real SOC 2 export this endpoint exists for is 103 rows. 1000 is
-# generous headroom for that case while still bounding the work one request
-# can ask for: a request that runs long enough will meet the Choreo
-# gateway's own timeout, and a stated, immediate refusal beats a connection
-# that dies with the outcome unknown.
-MAX_BULK_CONTROLS = 1000
-
 # Read off the columns themselves rather than restated as literals here. A
 # migration that widens or narrows one of these would otherwise leave this
 # endpoint quietly refusing rows the database would have taken, or waving
@@ -71,21 +64,11 @@ def bulk_create_controls(
     db: Session = Depends(get_db),
     user: User = Depends(require_admin),
 ):
-    # The row cap is checked first, before the Framework is even looked up,
-    # so an oversized request costs one len() and no database work at all.
-    # It cannot be free: FastAPI has already parsed and validated the whole
-    # body into ControlBulkRow objects before this function is entered, so
-    # the cost of *reading* a huge request is paid whatever this does. What
-    # it buys is refusing one in a readable sentence that names the limit,
-    # which is why the check lives here rather than as a max_length on the
-    # schema -- that form refuses during parsing, marginally earlier, but
-    # answers with FastAPI's own validation structure instead of a sentence
-    # an Admin can act on.
-    if len(payload.controls) > MAX_BULK_CONTROLS:
-        raise HTTPException(
-            status_code=422,
-            detail=f"A bulk import accepts at most {MAX_BULK_CONTROLS} rows per request.",
-        )
+    # Nothing checks the row count here. `ControlBulkCreate` caps the list
+    # itself (see MAX_BULK_CONTROLS beside it), so an oversized request is
+    # refused during parsing, before this function is entered and before
+    # the Framework query below costs anything. A second check here would
+    # be unreachable.
 
     # The Framework is named once on the payload, not once per row (see
     # ControlBulkRow), and resolved once here, before any row is looked at.

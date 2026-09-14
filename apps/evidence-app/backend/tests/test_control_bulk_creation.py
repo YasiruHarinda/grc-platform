@@ -251,8 +251,14 @@ def test_bulk_create_over_the_row_cap_is_refused_and_writes_nothing(db_session, 
         json={"framework_id": framework_id, "controls": rows},
     )
 
+    # The cap lives on the schema, so this is pydantic's own validation
+    # refusal: `detail` is a list of errors rather than a single string.
+    # The limit still has to be visible in it, because that is what the
+    # dialog shows the Admin.
     assert response.status_code == 422
-    assert "1000" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert isinstance(detail, list)
+    assert "1000" in str(detail)
     assert db_session.query(Control).filter(Control.framework_id == framework_id).count() == 1  # only make_control's own row
 
 

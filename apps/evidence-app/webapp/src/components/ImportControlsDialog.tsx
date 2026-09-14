@@ -15,6 +15,22 @@ import { controlsApi } from "../api/client";
 import { parseControlsCsv, type ParsedControlRow } from "../utils/parseControlsCsv";
 import type { Control } from "./ControlFormDialog";
 
+// The human-readable half of an error response's `detail`, whichever of its
+// two shapes arrived. A string is used as-is; a pydantic validation list has
+// its first entry's `msg` read out, which for an over-length import reads
+// "List should have at most 1000 items after validation, not 1001". Anything
+// else, including a network error that never reached the server, has no
+// message worth showing and falls back to a sentence that at least says what
+// happened.
+function readDetail(detail: unknown): string {
+  if (typeof detail === "string" && detail) return detail;
+  if (Array.isArray(detail) && detail.length > 0) {
+    const first = detail[0] as { msg?: unknown };
+    if (typeof first?.msg === "string" && first.msg) return first.msg;
+  }
+  return "The import failed. Please try again.";
+}
+
 // The stages this dialog moves through, in order. "pick" is where every
 // open starts; a bad file goes to "error" and can only go back to "pick";
 // a good one goes to "summary", where nothing has been written yet and
@@ -192,18 +208,20 @@ export default function ImportControlsDialog({
       // A whole-request failure, a network error or the server refusing
       // the request outright (missing Framework, over the row limit, a
       // conflict, a non-admin caller). Nothing was written, so this goes
-      // back to "error" with whatever plain reason the server gave, the
-      // same detail-extraction this file already uses for a rejected row.
-      // Read as unknown, then checked: FastAPI's own request-validation
-      // 422 puts a list of objects in `detail`, not a string, and handing
-      // that to the error screen below would render an object as a React
-      // child and blank the dialog. Our own refusals all carry a plain
-      // string, so anything else falls back to the generic message.
+      // back to "error" with whatever plain reason the server gave.
+      //
+      // `detail` arrives in one of two shapes and both have to be read.
+      // The backend's own refusals carry a plain string. FastAPI's
+      // request-validation 422 carries a *list* of error objects instead,
+      // which is what a file over the row limit now comes back as, since
+      // that cap lives on the schema. Handing either the list or one of
+      // its objects to the error screen would render an object as a React
+      // child and blank the dialog, so the message is pulled out of the
+      // first entry rather than the structure being passed along.
       const detail = isAxiosError(err)
         ? (err.response?.data as { detail?: unknown } | undefined)?.detail
         : undefined;
-      const message = typeof detail === "string" && detail ? detail : "The import failed. Please try again.";
-      setPhase({ step: "error", message });
+      setPhase({ step: "error", message: readDetail(detail) });
     }
   }
 
