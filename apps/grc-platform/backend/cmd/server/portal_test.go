@@ -39,9 +39,9 @@ func TestResolvePortalClients(t *testing.T) {
 		{ID: 7, Name: "SRE Team"},
 	}
 
-	t.Run("single case-insensitive match resolves to the id", func(t *testing.T) {
+	t.Run("known id resolves unchanged", func(t *testing.T) {
 		got, err := resolvePortalClients(context.Background(), stubTeams{teams: teams},
-			map[string]string{"client-1": "  sre team "})
+			map[string]int{"client-1": 7})
 		if err != nil {
 			t.Fatalf("err = %v", err)
 		}
@@ -50,26 +50,17 @@ func TestResolvePortalClients(t *testing.T) {
 		}
 	})
 
-	t.Run("no match refuses the boot", func(t *testing.T) {
+	t.Run("unknown id refuses the boot", func(t *testing.T) {
 		_, err := resolvePortalClients(context.Background(), stubTeams{teams: teams},
-			map[string]string{"client-1": "Nonexistent"})
+			map[string]int{"client-1": 99})
 		if err == nil {
-			t.Fatal("want error for an unmatched team name")
-		}
-	})
-
-	t.Run("ambiguous name refuses the boot", func(t *testing.T) {
-		dup := append([]*model.AuditTeam{{ID: 9, Name: "SRE Team"}}, teams...)
-		_, err := resolvePortalClients(context.Background(), stubTeams{teams: dup},
-			map[string]string{"client-1": "SRE Team"})
-		if err == nil {
-			t.Fatal("want error for a name matching two teams")
+			t.Fatal("want error for a team id that does not exist")
 		}
 	})
 
 	t.Run("team service unreachable refuses the boot", func(t *testing.T) {
 		_, err := resolvePortalClients(context.Background(), stubTeams{err: errors.New("boom")},
-			map[string]string{"client-1": "SRE Team"})
+			map[string]int{"client-1": 7})
 		if err == nil {
 			t.Fatal("want error when the team list cannot be fetched")
 		}

@@ -105,7 +105,7 @@ func readUpload(w http.ResponseWriter, r *http.Request) (folderPath, fileName, c
 		contentType = http.DetectContentType(data)
 	}
 	fileName = filepath.Base(header.Filename)
-	if err := validateUploadFileType(fileName, contentType); err != nil {
+	if err := ValidateUploadFileType(fileName, contentType); err != nil {
 		response.WriteError(w, http.StatusBadRequest, err.Error())
 		return "", "", "", nil, false
 	}
@@ -346,7 +346,7 @@ func (h *evidenceHandler) uploadEvidence(w http.ResponseWriter, r *http.Request)
 	// Strip any client-supplied path; keep only the base file name.
 	fileName := filepath.Base(header.Filename)
 
-	if err := validateUploadFileType(fileName, contentType); err != nil {
+	if err := ValidateUploadFileType(fileName, contentType); err != nil {
 		response.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}

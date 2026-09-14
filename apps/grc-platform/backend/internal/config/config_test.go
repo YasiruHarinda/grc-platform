@@ -534,7 +534,7 @@ func TestLoadPortalConfigValidPair(t *testing.T) {
 	setRequiredNonAuthEnv(t)
 	setValidAuthEnv(t)
 	t.Setenv("PORTAL_AUTH_AUDIENCE", "portal-aud")
-	t.Setenv("PORTAL_CLIENTS", "portal-aud:SRE Team, other-client:Platform")
+	t.Setenv("PORTAL_CLIENTS", "portal-aud:7, other-client:3")
 
 	cfg, err := Load()
 	if err != nil {
@@ -543,7 +543,7 @@ func TestLoadPortalConfigValidPair(t *testing.T) {
 	if !cfg.PortalEnabled() {
 		t.Fatal("PortalEnabled() = false, want true")
 	}
-	if cfg.Portal.Clients["portal-aud"] != "SRE Team" || cfg.Portal.Clients["other-client"] != "Platform" {
+	if cfg.Portal.Clients["portal-aud"] != 7 || cfg.Portal.Clients["other-client"] != 3 {
 		t.Fatalf("clients not parsed: %+v", cfg.Portal.Clients)
 	}
 }
@@ -552,7 +552,7 @@ func TestLoadPortalConfigAudienceCollisionRefusesBoot(t *testing.T) {
 	setRequiredNonAuthEnv(t)
 	setValidAuthEnv(t)
 	t.Setenv("PORTAL_AUTH_AUDIENCE", "webapp-aud") // == AUTH_AUDIENCE
-	t.Setenv("PORTAL_CLIENTS", "webapp-aud:SRE")
+	t.Setenv("PORTAL_CLIENTS", "webapp-aud:7")
 
 	if _, err := Load(); err == nil {
 		t.Fatal("Load() = nil, want error on PORTAL_AUTH_AUDIENCE == AUTH_AUDIENCE")
@@ -578,5 +578,16 @@ func TestLoadPortalConfigMalformedClientsRefusesBoot(t *testing.T) {
 
 	if _, err := Load(); err == nil {
 		t.Fatal("Load() = nil, want error on a PORTAL_CLIENTS entry with no ':'")
+	}
+}
+
+func TestLoadPortalConfigNonNumericTeamIDRefusesBoot(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	setValidAuthEnv(t)
+	t.Setenv("PORTAL_AUTH_AUDIENCE", "portal-aud")
+	t.Setenv("PORTAL_CLIENTS", "portal-aud:SRE Team")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() = nil, want error on a PORTAL_CLIENTS team id that is not numeric")
 	}
 }

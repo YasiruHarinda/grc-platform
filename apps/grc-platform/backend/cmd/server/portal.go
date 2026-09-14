@@ -49,39 +49,29 @@ type teamLister interface {
 	ListAll(ctx context.Context) ([]*model.AuditTeam, error)
 }
 
-// resolvePortalClients maps each configured client_id's team NAME to its
-// audit_team.id, matching trimmed and case-insensitively against the live team
-// list. Zero matches, ambiguity, or an unreachable team service refuse the boot.
-func resolvePortalClients(ctx context.Context, teams teamLister, clients map[string]string) (map[string]int, error) {
+// resolvePortalClients verifies each configured client_id's team id against
+// the live team list, so a deleted (or never-existing) team refuses the boot
+// rather than silently binding a client to nothing enforceable.
+func resolvePortalClients(ctx context.Context, teams teamLister, clients map[string]int) (map[string]int, error) {
 	all, err := teams.ListAll(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list audit teams: %w", err)
 	}
+	byID := make(map[int]*model.AuditTeam, len(all))
+	for _, t := range all {
+		byID[t.ID] = t
+	}
 
 	resolved := make(map[string]int, len(clients))
-	for clientID, name := range clients {
-		want := strings.ToLower(strings.TrimSpace(name))
-		var matched []*model.AuditTeam
-		for _, t := range all {
-			if strings.ToLower(strings.TrimSpace(t.Name)) == want {
-				matched = append(matched, t)
-			}
+	for clientID, teamID := range clients {
+		t, ok := byID[teamID]
+		if !ok {
+			return nil, fmt.Errorf("portal client %q: no audit team with id %d", clientID, teamID)
 		}
-		switch len(matched) {
-		case 1:
-			resolved[clientID] = matched[0].ID
-			// Format fixed by the config handover doc — DigiOps greps for this
-			// exact line to confirm the mapping after a deploy.
-			slog.Info(fmt.Sprintf("portal client %s -> team %d (%q)", clientID, matched[0].ID, matched[0].Name))
-		case 0:
-			return nil, fmt.Errorf("portal client %q: no audit team named %q", clientID, name)
-		default:
-			ids := make([]int, 0, len(matched))
-			for _, t := range matched {
-				ids = append(ids, t.ID)
-			}
-			return nil, fmt.Errorf("portal client %q: audit team name %q is ambiguous (ids %v)", clientID, name, ids)
-		}
+		resolved[clientID] = teamID
+		// Format fixed by the config handover doc — DigiOps greps for this
+		// exact line to confirm the mapping after a deploy.
+		slog.Info(fmt.Sprintf("portal client %s -> team %d (%q)", clientID, teamID, t.Name))
 	}
 	return resolved, nil
 }

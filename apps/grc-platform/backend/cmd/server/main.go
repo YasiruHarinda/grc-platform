@@ -274,9 +274,8 @@ func main() {
 		Verifier:             verifier,
 	})(mux)
 
-	// Evidence Portal M2M ingress (config.Config.PortalEnabled). Team names are
-	// resolved to ids against the live team list; an unresolved name refuses
-	// the boot.
+	// Evidence Portal M2M ingress (config.Config.PortalEnabled). Configured team
+	// ids are checked against the live team list; an unknown id refuses the boot.
 	if cfg.PortalEnabled() {
 		resolvedClients, rErr := resolvePortalClients(ctx, auditentity.NewTeamRepository(entityCli), cfg.Portal.Clients)
 		if rErr != nil {

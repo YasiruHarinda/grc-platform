@@ -19,6 +19,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -54,10 +55,10 @@ type Config struct {
 
 // PortalConfig configures the Evidence Portal client-credentials ingress.
 // Audience is the expected `aud`; Clients maps each accepted client_id (token
-// `sub`) to its audit team NAME, resolved to an id at startup by cmd/server.
+// `sub`) to its audit_team.id, verified to still exist at startup by cmd/server.
 type PortalConfig struct {
 	Audience string
-	Clients  map[string]string
+	Clients  map[string]int
 }
 
 // configured reports whether both halves of the portal config are present.
@@ -74,27 +75,31 @@ func (c Config) PortalEnabled() bool {
 	return c.Portal.configured() && c.Auth.TokenValidatorEnabled
 }
 
-// parsePortalClients parses PORTAL_CLIENTS ("id:team[,id:team...]") into a
-// client_id -> audit team name map. The team is named, not numbered: a name is
-// correct in every environment or matches nothing (a loud startup failure).
-func parsePortalClients(raw string) (map[string]string, error) {
+// parsePortalClients parses PORTAL_CLIENTS ("client_id:team_id[,client_id:team_id...]")
+// into a client_id -> audit_team.id map. A team id is checked against the live
+// team list at startup by cmd/server.resolvePortalClients, not here.
+func parsePortalClients(raw string) (map[string]int, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, nil
 	}
-	out := make(map[string]string)
+	out := make(map[string]int)
 	for _, entry := range strings.Split(raw, ",") {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
 			continue
 		}
-		id, team, ok := strings.Cut(entry, ":")
+		id, teamID, ok := strings.Cut(entry, ":")
 		id = strings.TrimSpace(id)
-		team = strings.TrimSpace(team)
-		if !ok || id == "" || team == "" {
-			return nil, fmt.Errorf("PORTAL_CLIENTS entry %q is not in client_id:team_name form", entry)
+		teamID = strings.TrimSpace(teamID)
+		if !ok || id == "" || teamID == "" {
+			return nil, fmt.Errorf("PORTAL_CLIENTS entry %q is not in client_id:team_id form", entry)
 		}
-		out[id] = team
+		n, err := strconv.Atoi(teamID)
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("PORTAL_CLIENTS entry %q: team_id must be a positive integer", entry)
+		}
+		out[id] = n
 	}
 	return out, nil
 }
