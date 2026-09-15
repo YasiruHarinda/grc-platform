@@ -887,7 +887,10 @@ type UpdateControlRequest struct {
 type ChangeRequirementTypeRequest struct {
 	RequirementType string                   `json:"requirementType"` // DESIGN | OE
 	Population      *InlinePopulationRequest `json:"population"`
-	UpdatedBy       string                   `json:"updatedBy"`
+	// Control carries other field edits applied in the same transaction; its
+	// status is ignored because the type change sets it.
+	Control   *UpdateControlRequest `json:"control"`
+	UpdatedBy string                `json:"updatedBy"`
 }
 
 // OverrideControlStatusRequest is the payload for

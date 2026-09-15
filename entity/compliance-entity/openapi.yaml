@@ -4433,6 +4433,10 @@ components:
           description: Required when requirementType is OE; ignored for DESIGN.
           allOf:
           - $ref: '#/components/schemas/InlinePopulationRequest'
+        control:
+          description: Other control field edits applied in the same transaction. status, comments and sampleReference are ignored.
+          allOf:
+          - $ref: '#/components/schemas/UpdateControlRequest'
         updatedBy:
           type: string
     BulkCreateControlsRequest:

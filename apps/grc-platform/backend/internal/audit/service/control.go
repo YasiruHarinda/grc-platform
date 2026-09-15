@@ -322,7 +322,7 @@ func (s *controlService) Update(ctx context.Context, auditID, controlID int, req
 		return result, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "dueDate cannot be cleared"}
 	}
 	// A Requirement Type change is validated here and applied by the entity
-	// before the field update below; population handling follows the target type.
+	// together with the field update; population handling follows the target type.
 	targetType := c.RequirementType
 	typeChanged := req.RequirementType != nil && *req.RequirementType != c.RequirementType
 	if typeChanged {
@@ -362,7 +362,8 @@ func (s *controlService) Update(ctx context.Context, auditID, controlID int, req
 			population = req.Population
 			newStatus = "POPULATION_PENDING"
 		}
-		if err := s.repo.ChangeRequirementType(ctx, auditID, controlID, targetType, population, updatedBy); err != nil {
+		// One entity call so the type change and field edits commit together.
+		if err := s.repo.ChangeRequirementType(ctx, auditID, controlID, targetType, population, req, updatedBy); err != nil {
 			return result, err
 		}
 		// The new round is created with these details, so the latest-round
@@ -380,8 +381,10 @@ func (s *controlService) Update(ctx context.Context, auditID, controlID int, req
 		})
 	}
 
-	if err := s.repo.Update(ctx, auditID, controlID, req, updatedBy); err != nil {
-		return result, err
+	if !typeChanged {
+		if err := s.repo.Update(ctx, auditID, controlID, req, updatedBy); err != nil {
+			return result, err
+		}
 	}
 	if req.Population != nil && targetType == "OE" && !typeChanged {
 		// Deliberately not ActivePopulationID here: that only resolves a round

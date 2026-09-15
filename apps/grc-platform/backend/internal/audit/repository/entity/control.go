@@ -133,6 +133,11 @@ func (r *controlRepo) BulkCreate(ctx context.Context, auditID int, reqs []model.
 }
 
 func (r *controlRepo) Update(ctx context.Context, auditID, controlID int, req model.UpdateControlRequest, updatedBy string) error {
+	return r.c.Patch(ctx, fmt.Sprintf("/audits/%d/controls/%d", auditID, controlID), controlUpdateBody(req, updatedBy), nil)
+}
+
+// controlUpdateBody maps a control edit onto the entity's UpdateControlRequest.
+func controlUpdateBody(req model.UpdateControlRequest, updatedBy string) map[string]any {
 	body := map[string]any{"updatedBy": updatedBy}
 	if req.Description != nil {
 		body["description"] = req.Description
@@ -171,7 +176,7 @@ func (r *controlRepo) Update(ctx context.Context, auditID, controlID int, req mo
 	if req.DueDate != nil {
 		body["dueDate"] = req.DueDate
 	}
-	return r.c.Patch(ctx, fmt.Sprintf("/audits/%d/controls/%d", auditID, controlID), body, nil)
+	return body
 }
 
 func (r *controlRepo) UpdateStatus(ctx context.Context, auditID, controlID int, status string, comment *string, updatedBy string) error {
@@ -189,8 +194,12 @@ func (r *controlRepo) OverrideStatus(ctx context.Context, auditID, controlID int
 	return r.c.Post(ctx, fmt.Sprintf("/audits/%d/controls/%d/status-override", auditID, controlID), body, nil)
 }
 
-func (r *controlRepo) ChangeRequirementType(ctx context.Context, auditID, controlID int, requirementType string, population *model.PopulationDetails, updatedBy string) error {
-	body := map[string]any{"requirementType": requirementType, "updatedBy": updatedBy}
+func (r *controlRepo) ChangeRequirementType(ctx context.Context, auditID, controlID int, requirementType string, population *model.PopulationDetails, fields model.UpdateControlRequest, updatedBy string) error {
+	body := map[string]any{
+		"requirementType": requirementType,
+		"updatedBy":       updatedBy,
+		"control":         controlUpdateBody(fields, updatedBy),
+	}
 	if population != nil {
 		body["population"] = population
 	}

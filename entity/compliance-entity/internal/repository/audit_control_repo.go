@@ -568,50 +568,8 @@ func (r *controlRepo) CountDeletionBlockers(ctx context.Context, controlID int) 
 }
 
 func (r *controlRepo) UpdateControl(ctx context.Context, auditID, controlID int, req domain.UpdateControlRequest) (*domain.AuditControl, error) {
-	sets := []string{}
-	args := []any{}
+	sets, args := controlFieldSets(req)
 
-	if req.Description != nil {
-		sets = append(sets, "description = ?")
-		args = append(args, *req.Description)
-	}
-	if req.ControlType != nil {
-		sets = append(sets, "control_type = ?")
-		args = append(args, *req.ControlType)
-	}
-	if req.Scope != nil {
-		sets = append(sets, "scope = ?")
-		args = append(args, *req.Scope)
-	}
-	if req.EvidenceRequirement != nil {
-		sets = append(sets, "evidence_requirement = ?")
-		args = append(args, *req.EvidenceRequirement)
-	}
-	if req.ClearOwner {
-		sets = append(sets, "owner_id = ?")
-		args = append(args, nil)
-	} else if req.OwnerID != nil {
-		sets = append(sets, "owner_id = ?")
-		args = append(args, *req.OwnerID)
-	}
-	if req.ClearTeam {
-		sets = append(sets, "team_id = ?")
-		args = append(args, nil)
-	} else if req.TeamID != nil {
-		sets = append(sets, "team_id = ?")
-		args = append(args, *req.TeamID)
-	}
-	if req.ClearAuditor {
-		sets = append(sets, "auditor_id = ?")
-		args = append(args, nil)
-	} else if req.AuditorID != nil {
-		sets = append(sets, "auditor_id = ?")
-		args = append(args, *req.AuditorID)
-	}
-	if req.DueDate != nil {
-		sets = append(sets, "due_date = ?")
-		args = append(args, *req.DueDate)
-	}
 	if req.Status != nil {
 		sets = append(sets, "status = ?")
 		args = append(args, *req.Status)
@@ -673,6 +631,54 @@ func (r *controlRepo) UpdateControl(ctx context.Context, auditID, controlID int,
 		return nil, fmt.Errorf("control.Update commit: %w", err)
 	}
 	return r.GetControlByID(ctx, auditID, controlID)
+}
+
+// controlFieldSets builds SET clauses for the editable, non-workflow control fields.
+func controlFieldSets(req domain.UpdateControlRequest) ([]string, []any) {
+	sets := []string{}
+	args := []any{}
+	if req.Description != nil {
+		sets = append(sets, "description = ?")
+		args = append(args, *req.Description)
+	}
+	if req.ControlType != nil {
+		sets = append(sets, "control_type = ?")
+		args = append(args, *req.ControlType)
+	}
+	if req.Scope != nil {
+		sets = append(sets, "scope = ?")
+		args = append(args, *req.Scope)
+	}
+	if req.EvidenceRequirement != nil {
+		sets = append(sets, "evidence_requirement = ?")
+		args = append(args, *req.EvidenceRequirement)
+	}
+	if req.ClearOwner {
+		sets = append(sets, "owner_id = ?")
+		args = append(args, nil)
+	} else if req.OwnerID != nil {
+		sets = append(sets, "owner_id = ?")
+		args = append(args, *req.OwnerID)
+	}
+	if req.ClearTeam {
+		sets = append(sets, "team_id = ?")
+		args = append(args, nil)
+	} else if req.TeamID != nil {
+		sets = append(sets, "team_id = ?")
+		args = append(args, *req.TeamID)
+	}
+	if req.ClearAuditor {
+		sets = append(sets, "auditor_id = ?")
+		args = append(args, nil)
+	} else if req.AuditorID != nil {
+		sets = append(sets, "auditor_id = ?")
+		args = append(args, *req.AuditorID)
+	}
+	if req.DueDate != nil {
+		sets = append(sets, "due_date = ?")
+		args = append(args, *req.DueDate)
+	}
+	return sets, args
 }
 
 // OverrideControlStatus writes the control's demoted status, cascades its
@@ -755,7 +761,31 @@ func (r *controlRepo) ChangeRequirementType(ctx context.Context, auditID, contro
 	if auditStatus == "REMOVED" {
 		return nil, &apierror.ConflictError{Msg: "cannot change requirement type: audit is removed"}
 	}
+	// Other field edits ride in this transaction so neither half commits alone.
+	applyFields := func() error {
+		if req.Control == nil {
+			return nil
+		}
+		sets, args := controlFieldSets(*req.Control)
+		if len(sets) == 0 {
+			return nil
+		}
+		sets = append(sets, "updated_by = ?")
+		args = append(args, req.UpdatedBy, auditID, controlID)
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE audit_control SET "+strings.Join(sets, ", ")+" WHERE audit_id = ? AND id = ?", // #nosec G202
+			args...); err != nil {
+			return fmt.Errorf("control.ChangeRequirementType(%d,%d) fields: %w", auditID, controlID, err)
+		}
+		return nil
+	}
 	if currentType == req.RequirementType {
+		if err := applyFields(); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("control.ChangeRequirementType commit: %w", err)
+		}
 		return r.GetControlByID(ctx, auditID, controlID)
 	}
 
@@ -839,6 +869,9 @@ func (r *controlRepo) ChangeRequirementType(ctx context.Context, auditID, contro
 		 WHERE audit_id = ? AND id = ?`,
 		req.RequirementType, newStatus, req.UpdatedBy, auditID, controlID); err != nil {
 		return nil, fmt.Errorf("control.ChangeRequirementType(%d,%d): %w", auditID, controlID, err)
+	}
+	if err := applyFields(); err != nil {
+		return nil, err
 	}
 	if err := recomputeAuditStatus(ctx, tx, auditID); err != nil {
 		return nil, err
