@@ -858,6 +858,7 @@ type CreateControlRequest struct {
 
 // UpdateControlRequest is the payload for PATCH /audits/{auditId}/controls/{controlId}.
 type UpdateControlRequest struct {
+	ControlNumber       *string `json:"controlNumber"`
 	Description         *string `json:"description"`
 	ControlType         *string `json:"controlType"`
 	Scope               *string `json:"scope"`

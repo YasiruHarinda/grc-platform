@@ -637,6 +637,10 @@ func (r *controlRepo) UpdateControl(ctx context.Context, auditID, controlID int,
 func controlFieldSets(req domain.UpdateControlRequest) ([]string, []any) {
 	sets := []string{}
 	args := []any{}
+	if req.ControlNumber != nil {
+		sets = append(sets, "control_number = ?")
+		args = append(args, *req.ControlNumber)
+	}
 	if req.Description != nil {
 		sets = append(sets, "description = ?")
 		args = append(args, *req.Description)

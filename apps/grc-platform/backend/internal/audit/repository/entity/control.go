@@ -139,6 +139,9 @@ func (r *controlRepo) Update(ctx context.Context, auditID, controlID int, req mo
 // controlUpdateBody maps a control edit onto the entity's UpdateControlRequest.
 func controlUpdateBody(req model.UpdateControlRequest, updatedBy string) map[string]any {
 	body := map[string]any{"updatedBy": updatedBy}
+	if req.ControlNumber != nil {
+		body["controlNumber"] = req.ControlNumber
+	}
 	if req.Description != nil {
 		body["description"] = req.Description
 	}

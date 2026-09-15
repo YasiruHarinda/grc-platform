@@ -154,6 +154,9 @@ func (d *Deps) handleUploadRiskEvidence(w http.ResponseWriter, r *http.Request) 
 	}
 	head = head[:n]
 	sniffed := http.DetectContentType(head)
+	if contentType == "" {
+		contentType = sniffed
+	}
 	if audithandler.RejectBlockedUpload(w, r, fileName, contentType) ||
 		audithandler.RejectBlockedUpload(w, r, fileName, sniffed) {
 		return
