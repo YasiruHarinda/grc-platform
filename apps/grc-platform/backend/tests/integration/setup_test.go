@@ -14,8 +14,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package integration contains end-to-end tests that run against a real MySQL
-// database. Set DB_DSN in the environment before running.
+// Package integration contains end-to-end tests. Some run against a real MySQL
+// database (set DB_DSN); tests that need it skip themselves when testDB is nil.
+// Others wire the real handler chain against in-process fakes and need no DB.
 package integration
 
 import (
@@ -29,19 +30,19 @@ import (
 var testDB *sql.DB
 
 func TestMain(m *testing.M) {
-	dsn := os.Getenv("DB_DSN")
-	if dsn == "" {
-		os.Exit(0) // skip when no database is configured
-	}
-	var err error
-	testDB, err = sql.Open("mysql", dsn)
-	if err != nil {
-		panic("integration: open: " + err.Error())
-	}
-	if err := testDB.Ping(); err != nil {
-		panic("integration: ping: " + err.Error())
+	if dsn := os.Getenv("DB_DSN"); dsn != "" {
+		var err error
+		testDB, err = sql.Open("mysql", dsn)
+		if err != nil {
+			panic("integration: open: " + err.Error())
+		}
+		if err := testDB.Ping(); err != nil {
+			panic("integration: ping: " + err.Error())
+		}
 	}
 	exitCode := m.Run()
-	_ = testDB.Close()
+	if testDB != nil {
+		_ = testDB.Close()
+	}
 	os.Exit(exitCode)
 }

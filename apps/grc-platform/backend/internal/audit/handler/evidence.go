@@ -19,6 +19,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime"
@@ -104,7 +105,7 @@ func readUpload(w http.ResponseWriter, r *http.Request) (folderPath, fileName, c
 		contentType = http.DetectContentType(data)
 	}
 	fileName = filepath.Base(header.Filename)
-	if err := validateUploadFileType(fileName, contentType); err != nil {
+	if err := ValidateUploadFileType(fileName, contentType); err != nil {
 		response.WriteError(w, http.StatusBadRequest, err.Error())
 		return "", "", "", nil, false
 	}
@@ -125,6 +126,61 @@ type evidenceHandler struct {
 	// emails from decideRound and submitSample — see notify.go.
 	notify    *Deps
 	directory *directory.Service
+}
+
+// newEvidenceHandler wires an evidenceHandler from the module Deps. Shared by
+// RegisterRoutes and the Evidence Portal bridge so both build it identically.
+func newEvidenceHandler(deps *Deps) *evidenceHandler {
+	return &evidenceHandler{
+		svc:        deps.Evidence,
+		controlSvc: deps.Control,
+		popSvc:     deps.Population,
+		trailSvc:   deps.Trail,
+		aiClient:   deps.AIAgent,
+		notify:     deps,
+		directory:  deps.Directory,
+	}
+}
+
+// errRoundRollbackFailed marks a finalizeEvidenceSubmission failure where
+// DiscardRound also failed — the round may still exist, so its blobs must not
+// be deleted.
+var errRoundRollbackFailed = errors.New("evidence round rollback unconfirmed")
+
+// finalizeEvidenceSubmission records files as one submitted evidence round for
+// (auditID, controlID), advances the control to EVIDENCE_INTERNAL_REVIEW,
+// sends the status-reached notification, writes the best-effort audit-trail
+// entry (via/issuer name the channel), and fires async AI validation. The
+// web-app submit route and the Evidence Portal ingress both go through here so
+// a submission advances identically whichever channel it arrived on.
+//
+// Submit and the status transition aren't one transaction, so a failed
+// transition discards the round instead of leaving it for a retry to duplicate.
+func (h *evidenceHandler) finalizeEvidenceSubmission(ctx context.Context, auditID, controlID int, files []model.EvidenceFileRef, attestation string, isAdmin bool, actor, via, issuer string) (*model.AuditEvidence, error) {
+	evidence, err := h.svc.Submit(ctx, auditID, controlID, files, attestation, isAdmin, actor)
+	if err != nil {
+		return nil, err
+	}
+
+	statusReq := model.UpdateStatusRequest{Status: "EVIDENCE_INTERNAL_REVIEW"}
+	if err := h.controlSvc.UpdateStatus(ctx, auditID, controlID, statusReq, actor); err != nil {
+		if discardErr := h.svc.DiscardRound(ctx, evidence.ID); discardErr != nil {
+			slog.ErrorContext(ctx, "failed to discard evidence round after status transition failure",
+				"evidenceId", evidence.ID, "controlId", controlID, "err", discardErr)
+			return nil, fmt.Errorf("%w: %w", errRoundRollbackFailed, err)
+		}
+		return nil, err
+	}
+	if control, err := h.controlSvc.GetByID(ctx, auditID, controlID); err == nil && control != nil {
+		h.notify.notifyControlStatusReached(ctx, control, "EVIDENCE_INTERNAL_REVIEW", actor)
+	}
+
+	recordEvidenceTrail(ctx, h.trailSvc, auditID, controlID, evidence.ID, actor, via, issuer, trailFileNames(evidence))
+
+	if len(evidence.Files) > 0 {
+		h.triggerAIValidation(auditID, controlID, evidence.ID, actor)
+	}
+	return evidence, nil
 }
 
 // resolveEvidenceSubmitters batch-resolves each round's CreatedByName from
@@ -290,7 +346,7 @@ func (h *evidenceHandler) uploadEvidence(w http.ResponseWriter, r *http.Request)
 	// Strip any client-supplied path; keep only the base file name.
 	fileName := filepath.Base(header.Filename)
 
-	if err := validateUploadFileType(fileName, contentType); err != nil {
+	if err := ValidateUploadFileType(fileName, contentType); err != nil {
 		response.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -341,33 +397,14 @@ func (h *evidenceHandler) submitEvidence(w http.ResponseWriter, r *http.Request)
 	actor := user.Subject
 	isAdmin := auth.HasPrivilege(r.Context(), privilege.ManageControls)
 
-	evidence, err := h.svc.Submit(r.Context(), auditID, controlID, req.Files, req.Attestation, isAdmin, actor)
+	// Record the round, advance the status, notify, write the trail entry, and
+	// fire AI validation — the shared path the Evidence Portal ingress also
+	// runs, so both channels stay in step. channelWebApp / user.Issuer tag
+	// this submission as a web-app one.
+	evidence, err := h.finalizeEvidenceSubmission(r.Context(), auditID, controlID, req.Files, req.Attestation, isAdmin, actor, channelWebApp, user.Issuer)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
-	}
-
-	// Advance the control to EVIDENCE_INTERNAL_REVIEW now that files are recorded.
-	statusReq := model.UpdateStatusRequest{Status: "EVIDENCE_INTERNAL_REVIEW"}
-	if err := h.controlSvc.UpdateStatus(r.Context(), auditID, controlID, statusReq, actor); err != nil {
-		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
-		return
-	}
-	if control, err := h.controlSvc.GetByID(r.Context(), auditID, controlID); err == nil && control != nil {
-		h.notify.notifyControlStatusReached(r.Context(), control, "EVIDENCE_INTERNAL_REVIEW", actor)
-	}
-
-	// Best-effort audit-trail attribution: this submission came through the web
-	// app. A fileless round has no file names to log, so log the attestation text
-	// instead.
-	recordEvidenceTrail(r.Context(), h.trailSvc, auditID, controlID, evidence.ID, actor, channelWebApp, user.Issuer, trailFileNames(evidence))
-
-	// Fire-and-forget AI validation — skipped for a fileless round, which has
-	// nothing for the validator to analyze. Detached from the request context (a
-	// client disconnect must not cancel it) and best-effort — a failure here
-	// never affects the submission the user just made.
-	if len(evidence.Files) > 0 {
-		h.triggerAIValidation(auditID, controlID, evidence.ID, actor)
 	}
 
 	response.WriteJSONValue(w, http.StatusCreated, evidence)

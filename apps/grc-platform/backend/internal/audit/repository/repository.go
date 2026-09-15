@@ -35,6 +35,9 @@ type AuditRepository interface {
 	// of its controls do. Used by the Audits tab (listAudits).
 	ListScoped(ctx context.Context, scope model.Scope, userID int, scopeTeamIDs []int) ([]*model.Audit, error)
 	GetByID(ctx context.Context, id int) (*model.Audit, error)
+	// GetByIDs returns the audits named by ids, unscoped, without paging every
+	// audit. Empty ids makes no request; a missing id is silently absent.
+	GetByIDs(ctx context.Context, ids []int) ([]*model.Audit, error)
 	// InScope reports whether id is within scope for userID — used by
 	// getAudit to reject out-of-scope direct links (a control-guessing IDOR)
 	// without fetching every audit just to check membership.
@@ -120,6 +123,23 @@ type ControlRepository interface {
 	// reusing ListScoped) because the job has no caller identity to scope
 	// by and needs every audit, not one.
 	ListAllForReminders(ctx context.Context) ([]*model.AuditControl, error)
+}
+
+// PortalControlReader is the read-only slice of control data the Evidence
+// Portal ingress needs: a team-scoped, cross-audit worklist and a single
+// cross-audit lookup by id. Kept separate from ControlRepository because the
+// portal scopes by a config-resolved team id (never a caller identity) and
+// carries no audit id — the same reasons InScope and ListAllForReminders are
+// their own methods rather than variants of ListScoped.
+type PortalControlReader interface {
+	// TeamControls returns every control on teamID whose status is one of
+	// statuses, across every audit. ownerIDs, when non-empty, narrows further
+	// to those owner ids. statuses must be audit_control status enum members;
+	// an unknown one is rejected rather than silently matching nothing.
+	TeamControls(ctx context.Context, teamID int, statuses []string, ownerIDs []int) ([]*model.AuditControl, error)
+	// ControlByID returns the one control with this id (audit id populated on
+	// the result), or (nil, nil) when nothing matches.
+	ControlByID(ctx context.Context, controlID int) (*model.AuditControl, error)
 }
 
 // UserRepository is the data-access contract for the shared user list (owner/auditor dropdowns).
