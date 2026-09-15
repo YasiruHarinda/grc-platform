@@ -109,7 +109,9 @@ type ControlRepository interface {
 	// ChangeRequirementType switches an untouched control between DESIGN and OE.
 	// The entity answers 409 once work has started; population is sent only for OE.
 	// fields are the other control edits, applied in the same entity transaction.
-	ChangeRequirementType(ctx context.Context, auditID, controlID int, requirementType string, population *model.PopulationDetails, fields model.UpdateControlRequest, updatedBy string) error
+	// Returns the control as the entity persisted it, so the caller never has to
+	// recompute the resulting status itself.
+	ChangeRequirementType(ctx context.Context, auditID, controlID int, requirementType string, population *model.PopulationDetails, fields model.UpdateControlRequest, updatedBy string) (*model.AuditControl, error)
 	// Delete removes a control; force tells the entity to skip its
 	// evidence/population deletion guard.
 	Delete(ctx context.Context, auditID, controlID int, force bool) error

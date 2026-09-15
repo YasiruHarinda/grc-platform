@@ -194,7 +194,7 @@ func (r *controlRepo) OverrideStatus(ctx context.Context, auditID, controlID int
 	return r.c.Post(ctx, fmt.Sprintf("/audits/%d/controls/%d/status-override", auditID, controlID), body, nil)
 }
 
-func (r *controlRepo) ChangeRequirementType(ctx context.Context, auditID, controlID int, requirementType string, population *model.PopulationDetails, fields model.UpdateControlRequest, updatedBy string) error {
+func (r *controlRepo) ChangeRequirementType(ctx context.Context, auditID, controlID int, requirementType string, population *model.PopulationDetails, fields model.UpdateControlRequest, updatedBy string) (*model.AuditControl, error) {
 	body := map[string]any{
 		"requirementType": requirementType,
 		"updatedBy":       updatedBy,
@@ -203,7 +203,11 @@ func (r *controlRepo) ChangeRequirementType(ctx context.Context, auditID, contro
 	if population != nil {
 		body["population"] = population
 	}
-	return r.c.Patch(ctx, fmt.Sprintf("/audits/%d/controls/%d/requirement-type", auditID, controlID), body, nil)
+	var c model.AuditControl
+	if err := r.c.Patch(ctx, fmt.Sprintf("/audits/%d/controls/%d/requirement-type", auditID, controlID), body, &c); err != nil {
+		return nil, err
+	}
+	return &c, nil
 }
 
 func (r *controlRepo) Delete(ctx context.Context, auditID, controlID int, force bool) error {

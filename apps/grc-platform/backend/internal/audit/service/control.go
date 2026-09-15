@@ -357,13 +357,15 @@ func (s *controlService) Update(ctx context.Context, auditID, controlID int, req
 
 	if typeChanged {
 		var population *model.PopulationDetails
-		newStatus := "EVIDENCE_PENDING"
 		if targetType == "OE" {
 			population = req.Population
-			newStatus = "POPULATION_PENDING"
 		}
 		// One entity call so the type change and field edits commit together.
-		if err := s.repo.ChangeRequirementType(ctx, auditID, controlID, targetType, population, req, updatedBy); err != nil {
+		// updated is the entity's own persisted view of the control — read its
+		// status back rather than recomputing it here, so the trail can never
+		// record a status the entity didn't actually set.
+		updated, err := s.repo.ChangeRequirementType(ctx, auditID, controlID, targetType, population, req, updatedBy)
+		if err != nil {
 			return result, err
 		}
 		// The new round is created with these details, so the latest-round
@@ -377,7 +379,7 @@ func (s *controlService) Update(ctx context.Context, auditID, controlID int, req
 			"from":       c.RequirementType,
 			"to":         targetType,
 			"statusFrom": c.Status,
-			"statusTo":   newStatus,
+			"statusTo":   updated.Status,
 		})
 	}
 
