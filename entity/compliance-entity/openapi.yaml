@@ -1210,7 +1210,7 @@ paths:
               $ref: '#/components/schemas/ChangeRequirementTypeRequest'
       responses:
         '200':
-          description: Requirement type changed (or already the requested type)
+          description: Requirement type changed, or returned unchanged when already the requested type (no population required in that case)
           content:
             application/json:
               schema:

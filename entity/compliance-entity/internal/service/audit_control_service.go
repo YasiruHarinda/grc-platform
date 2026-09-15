@@ -582,14 +582,7 @@ func (s *controlService) ChangeRequirementType(ctx context.Context, auditID, con
 	if !validRequirementTypes[req.RequirementType] {
 		return domain.AuditControl{}, &apierror.ValidationError{Msg: "requirementType must be DESIGN or OE"}
 	}
-	if req.RequirementType == "OE" {
-		if req.Population == nil || strings.TrimSpace(req.Population.Description) == "" {
-			return domain.AuditControl{}, &apierror.ValidationError{Msg: "population.description is required for OE controls"}
-		}
-		if req.Population.DueDate == nil || strings.TrimSpace(*req.Population.DueDate) == "" {
-			return domain.AuditControl{}, &apierror.ValidationError{Msg: "population.dueDate is required for OE controls"}
-		}
-	}
+	// Population is validated in the repo, after the no-op check, so OE -> OE needs none.
 
 	audit, err := s.auditRepo.GetAuditByID(ctx, auditID)
 	if err != nil {

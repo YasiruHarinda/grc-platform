@@ -784,6 +784,12 @@ func (r *controlRepo) ChangeRequirementType(ctx context.Context, auditID, contro
 	var newStatus string
 	switch req.RequirementType {
 	case "OE":
+		if req.Population == nil || strings.TrimSpace(req.Population.Description) == "" {
+			return nil, &apierror.ValidationError{Msg: "population.description is required for OE controls"}
+		}
+		if req.Population.DueDate == nil || strings.TrimSpace(*req.Population.DueDate) == "" {
+			return nil, &apierror.ValidationError{Msg: "population.dueDate is required for OE controls"}
+		}
 		if status != "EVIDENCE_PENDING" || len(pops) > 0 {
 			return nil, errRequirementTypeLocked
 		}
