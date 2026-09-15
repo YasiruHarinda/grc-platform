@@ -256,6 +256,7 @@ func NewRouter(db *sql.DB, store *storage.Service) http.Handler {
 	mux.HandleFunc("POST /audits/{auditId}/controls", controlH.CreateControl)
 	mux.HandleFunc("PATCH /audits/{auditId}/controls/{controlId}", controlH.UpdateControl)
 	mux.HandleFunc("POST /audits/{auditId}/controls/{controlId}/status-override", controlH.OverrideControlStatus)
+	mux.HandleFunc("PATCH /audits/{auditId}/controls/{controlId}/requirement-type", controlH.ChangeRequirementType)
 	mux.HandleFunc("DELETE /audits/{auditId}/controls/{controlId}", controlH.DeleteControl)
 
 	// Evidence (nested creation/list under controls; flat access by evidence ID)

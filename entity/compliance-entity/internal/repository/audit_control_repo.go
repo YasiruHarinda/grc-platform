@@ -43,6 +43,9 @@ type ControlRepository interface {
 	// stale. req.ExpectedStatus is the atomic concurrency guard, same as
 	// UpdateControl.
 	OverrideControlStatus(ctx context.Context, auditID, controlID int, req domain.OverrideControlStatusRequest) (*domain.AuditControl, error)
+	// ChangeRequirementType switches an untouched control between DESIGN and OE
+	// in one locked transaction. Returns ConflictError once work has started.
+	ChangeRequirementType(ctx context.Context, auditID, controlID int, req domain.ChangeRequirementTypeRequest) (*domain.AuditControl, error)
 	DeleteControl(ctx context.Context, auditID, controlID int) error
 	// CountDeletionBlockers returns how many audit_evidence rows exist for the
 	// control and how many audit_population rows count as active: any status
@@ -353,15 +356,7 @@ func (r *controlRepo) CreateControl(ctx context.Context, auditID int, req domain
 	}
 	id, _ := res.LastInsertId()
 	if req.Population != nil && strings.EqualFold(req.RequirementType, "OE") {
-		p := req.Population
-		desc := nullableString(&p.Description)
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO audit_population
-			 (control_id, owner_id, team_id, reference_number, description, due_date, comments, status, created_by, updated_by)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
-			id, nullableInt(p.OwnerID), nullableInt(p.TeamID),
-			p.ReferenceNumber, desc, p.DueDate, nullableString(p.Comments),
-			req.CreatedBy, req.CreatedBy); err != nil {
+		if err := insertPendingPopulation(ctx, tx, int(id), req.Population, req.CreatedBy); err != nil {
 			return nil, fmt.Errorf("control.Create population: %w", err)
 		}
 	}
@@ -413,15 +408,7 @@ func (r *controlRepo) BulkCreateControls(ctx context.Context, auditID int, reqs 
 		id, _ := res.LastInsertId()
 		ids = append(ids, int(id))
 		if req.Population != nil && strings.EqualFold(req.RequirementType, "OE") {
-			p := req.Population
-			desc := nullableString(&p.Description)
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO audit_population
-				 (control_id, owner_id, team_id, reference_number, description, due_date, comments, status, created_by, updated_by)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
-				id, nullableInt(p.OwnerID), nullableInt(p.TeamID),
-				p.ReferenceNumber, desc, p.DueDate, nullableString(p.Comments),
-				req.CreatedBy, req.CreatedBy); err != nil {
+			if err := insertPendingPopulation(ctx, tx, int(id), req.Population, req.CreatedBy); err != nil {
 				return nil, fmt.Errorf("control.BulkCreate population %q: %w", req.ControlNumber, err)
 			}
 		}
@@ -489,33 +476,11 @@ func (r *controlRepo) DeleteControl(ctx context.Context, auditID, controlID int)
 	}
 
 	// fk_notif_control / fk_notif_population are ON DELETE RESTRICT, so unlink
-	// the send-log rows before the cascade. Non-reminder rows (no dedup key)
-	// are always safe to null and are kept.
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE audit_notification SET control_id = NULL, population_id = NULL
-		 WHERE (control_id = ? OR population_id IN (SELECT id FROM audit_population WHERE control_id = ?))
-		   AND reminder_dedup_key IS NULL`,
+	// the send-log rows before the cascade.
+	if err := detachNotifications(ctx, tx,
+		"(control_id = ? OR population_id IN (SELECT id FROM audit_population WHERE control_id = ?))",
 		controlID, controlID); err != nil {
 		return fmt.Errorf("control.Delete(%d,%d) notifications: %w", auditID, controlID, err)
-	}
-	// Reminder rows can collide on uq_notif_reminder_dedup once nulled (same
-	// recipient/tier/date) — null them if we can, else drop them (a deleted
-	// control's reminder log has no further use).
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE audit_notification SET control_id = NULL, population_id = NULL
-		 WHERE (control_id = ? OR population_id IN (SELECT id FROM audit_population WHERE control_id = ?))
-		   AND reminder_dedup_key IS NOT NULL`,
-		controlID, controlID); err != nil {
-		if !isDuplicateKey(err) {
-			return fmt.Errorf("control.Delete(%d,%d) notifications: %w", auditID, controlID, err)
-		}
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM audit_notification
-			 WHERE (control_id = ? OR population_id IN (SELECT id FROM audit_population WHERE control_id = ?))
-			   AND reminder_dedup_key IS NOT NULL`,
-			controlID, controlID); err != nil {
-			return fmt.Errorf("control.Delete(%d,%d) notifications: %w", auditID, controlID, err)
-		}
 	}
 
 	result, err := tx.ExecContext(ctx,
@@ -532,6 +497,42 @@ func (r *controlRepo) DeleteControl(ctx context.Context, auditID, controlID int)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("control.Delete(%d,%d) commit: %w", auditID, controlID, err)
+	}
+	return nil
+}
+
+// insertPendingPopulation writes an OE control's initial PENDING
+// audit_population round.
+func insertPendingPopulation(ctx context.Context, tx *sql.Tx, controlID int, p *domain.InlinePopulationRequest, by string) error {
+	_, err := tx.ExecContext(ctx,
+		`INSERT INTO audit_population
+		 (control_id, owner_id, team_id, reference_number, description, due_date, comments, status, created_by, updated_by)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
+		controlID, nullableInt(p.OwnerID), nullableInt(p.TeamID),
+		p.ReferenceNumber, nullableString(&p.Description), p.DueDate, nullableString(p.Comments),
+		by, by)
+	return err
+}
+
+// detachNotifications unlinks matching send-log rows so RESTRICT FKs don't block a delete.
+// Reminder rows that would collide on uq_notif_reminder_dedup once nulled are dropped.
+func detachNotifications(ctx context.Context, tx *sql.Tx, where string, args ...any) error {
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE audit_notification SET control_id = NULL, population_id = NULL WHERE "+where+" AND reminder_dedup_key IS NULL",
+		args...); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE audit_notification SET control_id = NULL, population_id = NULL WHERE "+where+" AND reminder_dedup_key IS NOT NULL",
+		args...); err != nil {
+		if !isDuplicateKey(err) {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			"DELETE FROM audit_notification WHERE "+where+" AND reminder_dedup_key IS NOT NULL",
+			args...); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -567,50 +568,8 @@ func (r *controlRepo) CountDeletionBlockers(ctx context.Context, controlID int) 
 }
 
 func (r *controlRepo) UpdateControl(ctx context.Context, auditID, controlID int, req domain.UpdateControlRequest) (*domain.AuditControl, error) {
-	sets := []string{}
-	args := []any{}
+	sets, args := controlFieldSets(req)
 
-	if req.Description != nil {
-		sets = append(sets, "description = ?")
-		args = append(args, *req.Description)
-	}
-	if req.ControlType != nil {
-		sets = append(sets, "control_type = ?")
-		args = append(args, *req.ControlType)
-	}
-	if req.Scope != nil {
-		sets = append(sets, "scope = ?")
-		args = append(args, *req.Scope)
-	}
-	if req.EvidenceRequirement != nil {
-		sets = append(sets, "evidence_requirement = ?")
-		args = append(args, *req.EvidenceRequirement)
-	}
-	if req.ClearOwner {
-		sets = append(sets, "owner_id = ?")
-		args = append(args, nil)
-	} else if req.OwnerID != nil {
-		sets = append(sets, "owner_id = ?")
-		args = append(args, *req.OwnerID)
-	}
-	if req.ClearTeam {
-		sets = append(sets, "team_id = ?")
-		args = append(args, nil)
-	} else if req.TeamID != nil {
-		sets = append(sets, "team_id = ?")
-		args = append(args, *req.TeamID)
-	}
-	if req.ClearAuditor {
-		sets = append(sets, "auditor_id = ?")
-		args = append(args, nil)
-	} else if req.AuditorID != nil {
-		sets = append(sets, "auditor_id = ?")
-		args = append(args, *req.AuditorID)
-	}
-	if req.DueDate != nil {
-		sets = append(sets, "due_date = ?")
-		args = append(args, *req.DueDate)
-	}
 	if req.Status != nil {
 		sets = append(sets, "status = ?")
 		args = append(args, *req.Status)
@@ -674,6 +633,58 @@ func (r *controlRepo) UpdateControl(ctx context.Context, auditID, controlID int,
 	return r.GetControlByID(ctx, auditID, controlID)
 }
 
+// controlFieldSets builds SET clauses for the editable, non-workflow control fields.
+func controlFieldSets(req domain.UpdateControlRequest) ([]string, []any) {
+	sets := []string{}
+	args := []any{}
+	if req.ControlNumber != nil {
+		sets = append(sets, "control_number = ?")
+		args = append(args, *req.ControlNumber)
+	}
+	if req.Description != nil {
+		sets = append(sets, "description = ?")
+		args = append(args, *req.Description)
+	}
+	if req.ControlType != nil {
+		sets = append(sets, "control_type = ?")
+		args = append(args, *req.ControlType)
+	}
+	if req.Scope != nil {
+		sets = append(sets, "scope = ?")
+		args = append(args, *req.Scope)
+	}
+	if req.EvidenceRequirement != nil {
+		sets = append(sets, "evidence_requirement = ?")
+		args = append(args, *req.EvidenceRequirement)
+	}
+	if req.ClearOwner {
+		sets = append(sets, "owner_id = ?")
+		args = append(args, nil)
+	} else if req.OwnerID != nil {
+		sets = append(sets, "owner_id = ?")
+		args = append(args, *req.OwnerID)
+	}
+	if req.ClearTeam {
+		sets = append(sets, "team_id = ?")
+		args = append(args, nil)
+	} else if req.TeamID != nil {
+		sets = append(sets, "team_id = ?")
+		args = append(args, *req.TeamID)
+	}
+	if req.ClearAuditor {
+		sets = append(sets, "auditor_id = ?")
+		args = append(args, nil)
+	} else if req.AuditorID != nil {
+		sets = append(sets, "auditor_id = ?")
+		args = append(args, *req.AuditorID)
+	}
+	if req.DueDate != nil {
+		sets = append(sets, "due_date = ?")
+		args = append(args, *req.DueDate)
+	}
+	return sets, args
+}
+
 // OverrideControlStatus writes the control's demoted status, cascades its
 // dependent population/evidence row per overridePopulationTarget/
 // overrideEvidenceTarget, and recomputes the derived audit status — all in one
@@ -717,6 +728,160 @@ func (r *controlRepo) OverrideControlStatus(ctx context.Context, auditID, contro
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("control.OverrideStatus commit: %w", err)
+	}
+	return r.GetControlByID(ctx, auditID, controlID)
+}
+
+// errRequirementTypeLocked is returned once work has started on a control.
+var errRequirementTypeLocked = &apierror.ConflictError{Msg: "Requirement Type can't be changed once work has started on this control"}
+
+// ChangeRequirementType switches an untouched control between DESIGN and OE.
+// Rows are locked before the check so a concurrent submit or upload can't slip in.
+func (r *controlRepo) ChangeRequirementType(ctx context.Context, auditID, controlID int, req domain.ChangeRequirementTypeRequest) (*domain.AuditControl, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("control.ChangeRequirementType begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	var currentType, status string
+	err = tx.QueryRowContext(ctx,
+		"SELECT requirement_type, status FROM audit_control WHERE audit_id = ? AND id = ? FOR UPDATE",
+		auditID, controlID).Scan(&currentType, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, &apierror.NotFoundError{Msg: fmt.Sprintf("control %d not found in audit %d", controlID, auditID)}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("control.ChangeRequirementType(%d,%d) lock: %w", auditID, controlID, err)
+	}
+	// Locked after the control to keep recomputeAuditStatus's lock order; a
+	// concurrent DeleteAudit either waits or is seen here.
+	var auditStatus string
+	if err := tx.QueryRowContext(ctx,
+		"SELECT status FROM audit WHERE id = ? FOR UPDATE", auditID,
+	).Scan(&auditStatus); err != nil {
+		return nil, fmt.Errorf("control.ChangeRequirementType(%d,%d) lock audit: %w", auditID, controlID, err)
+	}
+	if auditStatus == "REMOVED" {
+		return nil, &apierror.ConflictError{Msg: "cannot change requirement type: audit is removed"}
+	}
+	// Other field edits ride in this transaction so neither half commits alone.
+	applyFields := func() error {
+		if req.Control == nil {
+			return nil
+		}
+		sets, args := controlFieldSets(*req.Control)
+		if len(sets) == 0 {
+			return nil
+		}
+		sets = append(sets, "updated_by = ?")
+		args = append(args, req.UpdatedBy, auditID, controlID)
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE audit_control SET "+strings.Join(sets, ", ")+" WHERE audit_id = ? AND id = ?", // #nosec G202
+			args...); err != nil {
+			return fmt.Errorf("control.ChangeRequirementType(%d,%d) fields: %w", auditID, controlID, err)
+		}
+		return nil
+	}
+	if currentType == req.RequirementType {
+		if err := applyFields(); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("control.ChangeRequirementType commit: %w", err)
+		}
+		return r.GetControlByID(ctx, auditID, controlID)
+	}
+
+	type popRound struct {
+		id     int
+		status string
+	}
+	rows, err := tx.QueryContext(ctx,
+		"SELECT id, status FROM audit_population WHERE control_id = ? FOR UPDATE", controlID)
+	if err != nil {
+		return nil, fmt.Errorf("control.ChangeRequirementType(%d,%d) lock populations: %w", auditID, controlID, err)
+	}
+	var pops []popRound
+	for rows.Next() {
+		var p popRound
+		if err := rows.Scan(&p.id, &p.status); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("control.ChangeRequirementType(%d,%d) scan population: %w", auditID, controlID, err)
+		}
+		pops = append(pops, p)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("control.ChangeRequirementType(%d,%d) populations: %w", auditID, controlID, err)
+	}
+
+	var evidenceCount int
+	if err := tx.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM audit_evidence WHERE control_id = ? FOR UPDATE", controlID,
+	).Scan(&evidenceCount); err != nil {
+		return nil, fmt.Errorf("control.ChangeRequirementType(%d,%d) evidence: %w", auditID, controlID, err)
+	}
+	if evidenceCount > 0 {
+		return nil, errRequirementTypeLocked
+	}
+
+	var newStatus string
+	switch req.RequirementType {
+	case "OE":
+		if req.Population == nil || strings.TrimSpace(req.Population.Description) == "" {
+			return nil, &apierror.ValidationError{Msg: "population.description is required for OE controls"}
+		}
+		if req.Population.DueDate == nil || strings.TrimSpace(*req.Population.DueDate) == "" {
+			return nil, &apierror.ValidationError{Msg: "population.dueDate is required for OE controls"}
+		}
+		if status != "EVIDENCE_PENDING" || len(pops) > 0 {
+			return nil, errRequirementTypeLocked
+		}
+		if err := insertPendingPopulation(ctx, tx, controlID, req.Population, req.UpdatedBy); err != nil {
+			return nil, fmt.Errorf("control.ChangeRequirementType(%d,%d) population: %w", auditID, controlID, err)
+		}
+		newStatus = "POPULATION_PENDING"
+	case "DESIGN":
+		if status != "POPULATION_PENDING" || len(pops) != 1 || pops[0].status != "PENDING" {
+			return nil, errRequirementTypeLocked
+		}
+		var fileCount int
+		if err := tx.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM audit_evidence_file WHERE population_id = ? FOR UPDATE", pops[0].id,
+		).Scan(&fileCount); err != nil {
+			return nil, fmt.Errorf("control.ChangeRequirementType(%d,%d) population files: %w", auditID, controlID, err)
+		}
+		if fileCount > 0 {
+			return nil, errRequirementTypeLocked
+		}
+		if err := detachNotifications(ctx, tx, "population_id = ?", pops[0].id); err != nil {
+			return nil, fmt.Errorf("control.ChangeRequirementType(%d,%d) notifications: %w", auditID, controlID, err)
+		}
+		if _, err := tx.ExecContext(ctx, "DELETE FROM audit_population WHERE id = ?", pops[0].id); err != nil {
+			return nil, fmt.Errorf("control.ChangeRequirementType(%d,%d) delete population: %w", auditID, controlID, err)
+		}
+		newStatus = "EVIDENCE_PENDING"
+	default:
+		return nil, &apierror.ValidationError{Msg: "requirementType must be DESIGN or OE"}
+	}
+
+	// Clear the override marker too: the control is back at a fresh starting status.
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE audit_control
+		 SET requirement_type = ?, status = ?, status_overridden = FALSE, overridden_by = NULL, overridden_at = NULL, updated_by = ?
+		 WHERE audit_id = ? AND id = ?`,
+		req.RequirementType, newStatus, req.UpdatedBy, auditID, controlID); err != nil {
+		return nil, fmt.Errorf("control.ChangeRequirementType(%d,%d): %w", auditID, controlID, err)
+	}
+	if err := applyFields(); err != nil {
+		return nil, err
+	}
+	if err := recomputeAuditStatus(ctx, tx, auditID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("control.ChangeRequirementType commit: %w", err)
 	}
 	return r.GetControlByID(ctx, auditID, controlID)
 }

@@ -469,25 +469,8 @@ func (s *controlService) UpdateControl(ctx context.Context, auditID, controlID i
 	if req.UpdatedBy == "" {
 		return domain.AuditControl{}, &apierror.ValidationError{Msg: "updatedBy is required"}
 	}
-	if req.ControlType != nil {
-		upper := strings.ToUpper(*req.ControlType)
-		if !validControlTypes[upper] {
-			return domain.AuditControl{}, &apierror.ValidationError{Msg: "invalid controlType: " + *req.ControlType}
-		}
-		req.ControlType = &upper
-	}
-	if req.Scope != nil {
-		upper := strings.ToUpper(*req.Scope)
-		if !validScopes[upper] {
-			return domain.AuditControl{}, &apierror.ValidationError{Msg: "invalid scope: " + *req.Scope}
-		}
-		req.Scope = &upper
-	}
-	// DueDate is optional on update (nil means "leave unchanged" — e.g. a
-	// status-transition PATCH never sends it), but a caller that does send the
-	// field may not clear a control's due date to empty.
-	if req.DueDate != nil && strings.TrimSpace(*req.DueDate) == "" {
-		return domain.AuditControl{}, &apierror.ValidationError{Msg: "dueDate cannot be cleared"}
+	if err := normalizeControlFields(&req); err != nil {
+		return domain.AuditControl{}, err
 	}
 	if req.Status != nil {
 		if !validControlStatuses[strings.ToUpper(*req.Status)] {
@@ -513,6 +496,31 @@ func (s *controlService) UpdateControl(ctx context.Context, auditID, controlID i
 		return domain.AuditControl{}, err
 	}
 	return *c, nil
+}
+
+// normalizeControlFields validates and upper-cases the editable control fields in place.
+func normalizeControlFields(req *domain.UpdateControlRequest) error {
+	if req.ControlType != nil {
+		upper := strings.ToUpper(*req.ControlType)
+		if !validControlTypes[upper] {
+			return &apierror.ValidationError{Msg: "invalid controlType: " + *req.ControlType}
+		}
+		req.ControlType = &upper
+	}
+	if req.Scope != nil {
+		upper := strings.ToUpper(*req.Scope)
+		if !validScopes[upper] {
+			return &apierror.ValidationError{Msg: "invalid scope: " + *req.Scope}
+		}
+		req.Scope = &upper
+	}
+	// DueDate is optional on update (nil means "leave unchanged" — e.g. a
+	// status-transition PATCH never sends it), but a caller that does send the
+	// field may not clear a control's due date to empty.
+	if req.DueDate != nil && strings.TrimSpace(*req.DueDate) == "" {
+		return &apierror.ValidationError{Msg: "dueDate cannot be cleared"}
+	}
+	return nil
 }
 
 // OverrideControlStatus backward-overrides a control's status: legality is
@@ -560,6 +568,44 @@ func (s *controlService) OverrideControlStatus(ctx context.Context, auditID, con
 	// preventing TOCTOU races between the read above and the write below.
 	req.ExpectedStatus = current.Status
 	c, err := s.repo.OverrideControlStatus(ctx, auditID, controlID, req)
+	if err != nil {
+		return domain.AuditControl{}, err
+	}
+	return *c, nil
+}
+
+// ChangeRequirementType switches an untouched control between DESIGN and OE.
+// Whether the control is still untouched is decided by the repo under lock.
+func (s *controlService) ChangeRequirementType(ctx context.Context, auditID, controlID int, req domain.ChangeRequirementTypeRequest) (domain.AuditControl, error) {
+	if auditID <= 0 {
+		return domain.AuditControl{}, &apierror.ValidationError{Msg: "auditId must be a positive integer"}
+	}
+	if controlID <= 0 {
+		return domain.AuditControl{}, &apierror.ValidationError{Msg: "controlId must be a positive integer"}
+	}
+	if req.UpdatedBy == "" {
+		return domain.AuditControl{}, &apierror.ValidationError{Msg: "updatedBy is required"}
+	}
+	req.RequirementType = strings.ToUpper(req.RequirementType)
+	if !validRequirementTypes[req.RequirementType] {
+		return domain.AuditControl{}, &apierror.ValidationError{Msg: "requirementType must be DESIGN or OE"}
+	}
+	// Population is validated in the repo, after the no-op check, so OE -> OE needs none.
+	if req.Control != nil {
+		if err := normalizeControlFields(req.Control); err != nil {
+			return domain.AuditControl{}, err
+		}
+	}
+
+	audit, err := s.auditRepo.GetAuditByID(ctx, auditID)
+	if err != nil {
+		return domain.AuditControl{}, err
+	}
+	if audit.Status == "REMOVED" {
+		return domain.AuditControl{}, &apierror.ConflictError{Msg: "cannot change requirement type: audit is removed"}
+	}
+
+	c, err := s.repo.ChangeRequirementType(ctx, auditID, controlID, req)
 	if err != nil {
 		return domain.AuditControl{}, err
 	}

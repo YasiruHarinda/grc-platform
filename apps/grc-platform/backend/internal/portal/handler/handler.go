@@ -309,12 +309,8 @@ func (h *portalHandler) submitEvidence(w http.ResponseWriter, r *http.Request) {
 		// writes its own Content-Type header, so the declared value alone is
 		// evidence of nothing: HTML sent as "application/pdf" under a .pdf name
 		// would otherwise clear both the extension and the type check.
-		if err := audithandler.ValidateUploadFileType(fileName, contentType); err != nil {
-			response.WriteError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		if err := audithandler.ValidateUploadFileType(fileName, sniffed); err != nil {
-			response.WriteError(w, http.StatusBadRequest, err.Error())
+		if audithandler.RejectBlockedUpload(w, r, fileName, contentType) ||
+			audithandler.RejectBlockedUpload(w, r, fileName, sniffed) {
 			return
 		}
 		// The part is handed over as an opener, not as bytes: the bridge reads

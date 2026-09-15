@@ -100,13 +100,16 @@ func readUpload(w http.ResponseWriter, r *http.Request) (folderPath, fileName, c
 		response.WriteError(w, http.StatusBadRequest, "could not read uploaded file")
 		return "", "", "", nil, false
 	}
+	sniffed := http.DetectContentType(data)
 	contentType = header.Header.Get("Content-Type")
 	if contentType == "" {
-		contentType = http.DetectContentType(data)
+		contentType = sniffed
 	}
 	fileName = filepath.Base(header.Filename)
-	if err := ValidateUploadFileType(fileName, contentType); err != nil {
-		response.WriteError(w, http.StatusBadRequest, err.Error())
+	// Both the declared and the sniffed type must pass — the declared value
+	// alone is client-controlled, so HTML sent as "application/pdf" would
+	// otherwise clear it.
+	if RejectBlockedUpload(w, r, fileName, contentType) || RejectBlockedUpload(w, r, fileName, sniffed) {
 		return "", "", "", nil, false
 	}
 	return folderPath, fileName, contentType, data, true
@@ -338,16 +341,19 @@ func (h *evidenceHandler) uploadEvidence(w http.ResponseWriter, r *http.Request)
 
 	// Resolve content type from the part header, sniffing the bytes as a fallback
 	// rather than blindly trusting the client-declared type.
+	sniffed := http.DetectContentType(data)
 	contentType := header.Header.Get("Content-Type")
 	if contentType == "" {
-		contentType = http.DetectContentType(data)
+		contentType = sniffed
 	}
 
 	// Strip any client-supplied path; keep only the base file name.
 	fileName := filepath.Base(header.Filename)
 
-	if err := ValidateUploadFileType(fileName, contentType); err != nil {
-		response.WriteError(w, http.StatusBadRequest, err.Error())
+	// Both the declared and the sniffed type must pass — the declared value
+	// alone is client-controlled, so HTML sent as "application/pdf" would
+	// otherwise clear it.
+	if RejectBlockedUpload(w, r, fileName, contentType) || RejectBlockedUpload(w, r, fileName, sniffed) {
 		return
 	}
 

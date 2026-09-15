@@ -18,8 +18,12 @@ package handler
 
 import (
 	"fmt"
+	"log/slog"
+	"net/http"
 	"path/filepath"
 	"strings"
+
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 )
 
 // Keep this file's blocklist in sync with its twin:
@@ -71,4 +75,17 @@ func ValidateUploadFileType(fileName, contentType string) error {
 		}
 	}
 	return nil
+}
+
+// RejectBlockedUpload logs and answers 400 naming the file when its type is blocked.
+// Returns true when the request was rejected.
+func RejectBlockedUpload(w http.ResponseWriter, r *http.Request, fileName, contentType string) bool {
+	err := ValidateUploadFileType(fileName, contentType)
+	if err == nil {
+		return false
+	}
+	slog.WarnContext(r.Context(), "upload rejected: file type not allowed",
+		"path", r.URL.Path, "fileName", fileName, "contentType", contentType, "reason", err.Error())
+	response.WriteError(w, http.StatusBadRequest, fmt.Sprintf("%q can't be uploaded: %s", fileName, err))
+	return true
 }

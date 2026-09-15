@@ -131,6 +131,7 @@ export interface AuditControl {
   populationDueDate?: string | null;
   populationOwnerName?: string | null;
   populationTeamName?: string | null;
+  populationStatus?: string | null;
   // Set when this control's status was last set by a backward override
   // rather than the ordinary workflow.
   statusOverridden?: boolean;
@@ -194,6 +195,8 @@ export interface AddControlRequest {
 
 export interface UpdateControlRequest {
   description?: string;
+  /** Only an untouched control can change type; the backend answers 409 otherwise. */
+  requirementType?: RequirementType;
   controlType?: ControlType;
   scope?: ControlScope;
   evidenceRequirement?: string | null;

@@ -1043,14 +1043,16 @@ function OEEvidenceSection({
   canSubmitEvidence,
   canReviewEvidence,
   canManageControls,
-  isAuditor,
+  canSelectSample,
+  canValidateEvidence,
 }: {
   control: AuditControl;
   onStatusChange: (s: ControlStatus) => void;
   canSubmitEvidence: boolean;
   canReviewEvidence: boolean;
   canManageControls: boolean;
-  isAuditor: boolean;
+  canSelectSample: boolean;
+  canValidateEvidence: boolean;
 }): JSX.Element {
   const activeStep = oeActiveStep(control.status);
   // Population Submission is shown to everyone who can see the control, from
@@ -1081,6 +1083,13 @@ function OEEvidenceSection({
   // COMPLETE first, which re-opens this on whatever earlier status it lands on.
   const canDeletePopulationRecord =
     control.status !== "COMPLETE" && (canEditPopulationFiles || canManageControls);
+  // The Submit/Resubmit Population card is the team's own surface — hidden
+  // from anyone without SubmitEvidence (the external auditor above all), the
+  // same way the "Submit Evidence" card at SUBMITTED_SAMPLE is, since the
+  // upload/submit routes have no auditor path at all. ManageControls keeps it
+  // for the leftover-file cleanup canDeletePopulationRecord exists for, but
+  // without the upload box (gated on canSubmitEvidence below).
+  const showPopulationSubmitCard = canSubmitEvidence || canManageControls;
 
   return (
     <>
@@ -1119,24 +1128,28 @@ function OEEvidenceSection({
                   to POPULATION_PENDING) live inside this same card via
                   SubmittedPopulationFiles rather than a separate card — same
                   layout as DesignEvidenceSection's Evidence Submission card. */}
-              <SectionCard
-                icon={<FileUp size={16} />}
-                iconBg="transparent"
-                title={control.comments ? "Resubmit Population" : "Submit Population"}
-                flexContent
-              >
-                <SubmittedPopulationFiles auditId={control.auditId} controlId={control.id} rejectionReason={control.comments ?? null} canDelete={canDeletePopulationRecord} />
-                <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
-                  <EvidenceUploadBox
-                    auditId={control.auditId}
-                    controlId={control.id}
-                    phase="population"
-                    hint="CSV or XLSX complete list of in-scope items"
-                    buttonLabel={control.comments ? "Resubmit Population" : "Submit Population"}
-                    onSubmitted={() => onStatusChange("POPULATION_INTERNAL_REVIEW")}
-                  />
-                </Box>
-              </SectionCard>
+              {showPopulationSubmitCard && (
+                <SectionCard
+                  icon={<FileUp size={16} />}
+                  iconBg="transparent"
+                  title={control.comments ? "Resubmit Population" : "Submit Population"}
+                  flexContent
+                >
+                  <SubmittedPopulationFiles auditId={control.auditId} controlId={control.id} rejectionReason={control.comments ?? null} canDelete={canDeletePopulationRecord} />
+                  {canSubmitEvidence && (
+                    <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
+                      <EvidenceUploadBox
+                        auditId={control.auditId}
+                        controlId={control.id}
+                        phase="population"
+                        hint="CSV or XLSX complete list of in-scope items"
+                        buttonLabel={control.comments ? "Resubmit Population" : "Submit Population"}
+                        onSubmitted={() => onStatusChange("POPULATION_INTERNAL_REVIEW")}
+                      />
+                    </Box>
+                  )}
+                </SectionCard>
+              )}
             </>
           )}
 
@@ -1187,7 +1200,7 @@ function OEEvidenceSection({
               {canSubmitEvidence && (
                 <AIValidationCard auditId={control.auditId} controlId={control.id} variant="submitter" phase="population" />
               )}
-              {isAuditor ? (
+              {canValidateEvidence ? (
                 <PopulationReviewCard auditId={control.auditId} controlId={control.id} mode="validate" onDecided={onStatusChange} />
               ) : (
                 <SectionCard icon={<Clock size={16} />} iconBg="transparent" title="Population Under Auditor Validation">
@@ -1208,19 +1221,23 @@ function OEEvidenceSection({
 
           {control.status === "POPULATION_NEED_CLARIFICATION" && (
             <>
-              <SectionCard icon={<FileUp size={16} />} iconBg="transparent" title="Resubmit Population" flexContent>
-                <SubmittedPopulationFiles auditId={control.auditId} controlId={control.id} canDelete={canDeletePopulationRecord} />
-                <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
-                  <EvidenceUploadBox
-                    auditId={control.auditId}
-                    controlId={control.id}
-                    phase="population"
-                    hint="CSV or XLSX — complete list of in-scope items"
-                    buttonLabel="Resubmit Population"
-                    onSubmitted={() => onStatusChange("POPULATION_INTERNAL_REVIEW")}
-                  />
-                </Box>
-              </SectionCard>
+              {showPopulationSubmitCard && (
+                <SectionCard icon={<FileUp size={16} />} iconBg="transparent" title="Resubmit Population" flexContent>
+                  <SubmittedPopulationFiles auditId={control.auditId} controlId={control.id} canDelete={canDeletePopulationRecord} />
+                  {canSubmitEvidence && (
+                    <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
+                      <EvidenceUploadBox
+                        auditId={control.auditId}
+                        controlId={control.id}
+                        phase="population"
+                        hint="CSV or XLSX — complete list of in-scope items"
+                        buttonLabel="Resubmit Population"
+                        onSubmitted={() => onStatusChange("POPULATION_INTERNAL_REVIEW")}
+                      />
+                    </Box>
+                  )}
+                </SectionCard>
+              )}
             </>
           )}
         </>
@@ -1243,7 +1260,7 @@ function OEEvidenceSection({
 
       {/* ── Step 1a: Population approved → auditor selects the sample ── */}
       {(control.status === "POPULATION_COMPLETE" || control.status === "AWAITING_SAMPLE") && (
-        isAuditor ? (
+        canSelectSample ? (
           <SampleUploadCard
             auditId={control.auditId}
             controlId={control.id}
@@ -1260,7 +1277,7 @@ function OEEvidenceSection({
           summary) so they can fix the sample right after submitting it. */}
       {control.status === "SUBMITTED_SAMPLE" && (
         <>
-          {isAuditor ? (
+          {canSelectSample ? (
             <SampleUploadCard
               auditId={control.auditId}
               controlId={control.id}
@@ -1485,10 +1502,15 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
   // external auditor does not; the trail endpoints enforce the same gate.
   const canViewHistory = can(AuditPrivilege.ViewInternalComments);
   const currentUserId = useCurrentUserId();
-  // The assigned auditor POC (or an admin, who bypasses every gate the same way
-  // on the backend) — drives population validation, sample selection, and
-  // evidence validation across both DESIGN and OE controls.
-  const isAuditor = Boolean(control) && (isAssignedAuditor(control as AuditControl, currentUserId) || canManageControls);
+  // The assigned auditor POC's actions carry a privilege each on the backend —
+  // sample selection needs SelectSample, both validation decisions need
+  // ValidateEvidence — layered on top of being this control's auditor (see
+  // requireAssignedAuditor). Kept as two flags rather than one isAuditor so a
+  // card is never offered to an auditor whose grants can't back it. Admins
+  // (ManageControls) bypass the assignment check the same way they do server-side.
+  const isControlAuditor = Boolean(control) && isAssignedAuditor(control as AuditControl, currentUserId);
+  const canSelectSample = canManageControls || (isControlAuditor && can(AuditPrivilege.SelectSample));
+  const canValidateEvidence = canManageControls || (isControlAuditor && can(AuditPrivilege.ValidateEvidence));
   const validateEvidence = useValidateEvidence();
   const reviewEvidence = useReviewEvidence();
   const overrideStatus = useOverrideControlStatus();
@@ -1805,7 +1827,8 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
                 canSubmitEvidence={canSubmitEvidence}
                 canReviewEvidence={canReviewEvidence}
                 canManageControls={canManageControls}
-                isAuditor={isAuditor}
+                canSelectSample={canSelectSample}
+                canValidateEvidence={canValidateEvidence}
               />
             ) : (
               <DesignEvidenceSection
@@ -1868,7 +1891,7 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
                 every REVIEW_EVIDENCE holder: this is the external-auditor decision,
                 distinct from the Internal Review card above. Same rule: shown
                 only during EVIDENCE_UNDER_VALIDATION, not before or after. */}
-            {isAuditor && displayStatus === "EVIDENCE_UNDER_VALIDATION" && (
+            {canValidateEvidence && displayStatus === "EVIDENCE_UNDER_VALIDATION" && (
             <SectionCard
               icon={<ClipboardCheck size={16} />}
               iconBg="transparent"

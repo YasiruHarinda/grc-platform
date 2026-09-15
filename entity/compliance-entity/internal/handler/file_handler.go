@@ -122,14 +122,20 @@ func (h *FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		apierror.WriteJSON(w, http.StatusBadRequest, "could not read uploaded file")
 		return
 	}
+	sniffed := http.DetectContentType(data)
 	contentType := header.Header.Get("Content-Type")
 	if contentType == "" {
-		contentType = http.DetectContentType(data)
+		contentType = sniffed
 	}
 
-	if err := validateUploadFileType(filepath.Base(header.Filename), contentType); err != nil {
-		apierror.WriteJSON(w, http.StatusBadRequest, err.Error())
-		return
+	// Check the sniffed type too: the declared one is client-controlled, so HTML
+	// sent as "application/pdf" would otherwise pass.
+	fileName := filepath.Base(header.Filename)
+	for _, ct := range []string{contentType, sniffed} {
+		if err := validateUploadFileType(fileName, ct); err != nil {
+			apierror.WriteJSON(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 
 	if err := h.storage.UploadBlob(r.Context(), blobName, contentType, data); err != nil {

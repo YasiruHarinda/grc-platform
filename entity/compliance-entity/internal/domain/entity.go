@@ -858,6 +858,7 @@ type CreateControlRequest struct {
 
 // UpdateControlRequest is the payload for PATCH /audits/{auditId}/controls/{controlId}.
 type UpdateControlRequest struct {
+	ControlNumber       *string `json:"controlNumber"`
 	Description         *string `json:"description"`
 	ControlType         *string `json:"controlType"`
 	Scope               *string `json:"scope"`
@@ -880,6 +881,17 @@ type UpdateControlRequest struct {
 	SampleReference *string `json:"sampleReference"`
 	UpdatedBy       string  `json:"updatedBy"`
 	ExpectedStatus  string  `json:"-"` // set server-side for atomic transition; never decoded from JSON
+}
+
+// ChangeRequirementTypeRequest is the payload for PATCH /audits/{auditId}/controls/{controlId}/requirement-type.
+// Population is required when switching to OE and ignored for DESIGN.
+type ChangeRequirementTypeRequest struct {
+	RequirementType string                   `json:"requirementType"` // DESIGN | OE
+	Population      *InlinePopulationRequest `json:"population"`
+	// Control carries other field edits applied in the same transaction; its
+	// status is ignored because the type change sets it.
+	Control   *UpdateControlRequest `json:"control"`
+	UpdatedBy string                `json:"updatedBy"`
 }
 
 // OverrideControlStatusRequest is the payload for
