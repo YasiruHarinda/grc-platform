@@ -17,6 +17,8 @@
 package handler
 
 import (
+	"bytes"
+	"errors"
 	"io"
 	"mime"
 	"net/http"
@@ -36,6 +38,10 @@ import (
 // travel through the backend, so bound them to protect memory and the
 // gateway). Matches riskservice.maxRiskEvidenceBytes.
 const maxRiskEvidenceUploadBytes = 25 << 20 // 25 MiB
+
+// sniffPeekBytes is how many leading bytes http.DetectContentType inspects —
+// reading more would only waste memory on a value the sniffer ignores.
+const sniffPeekBytes = 512
 
 // handleUploadRiskEvidence serves POST /api/v1/risks/{id}/evidence.
 //
@@ -134,12 +140,28 @@ func (d *Deps) handleUploadRiskEvidence(w http.ResponseWriter, r *http.Request) 
 
 	fileName := filepath.Base(header.Filename)
 	contentType := header.Header.Get("Content-Type")
-	if audithandler.RejectBlockedUpload(w, r, fileName, contentType) {
+
+	// Peek the leading bytes to sniff the real type without buffering the
+	// whole file — the rest still streams straight through to storage. Both
+	// the declared and the sniffed type must pass: the declared value alone
+	// is client-controlled, so HTML sent as "application/pdf" would
+	// otherwise clear it.
+	head := make([]byte, sniffPeekBytes)
+	n, err := io.ReadFull(f, head)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		response.WriteError(w, http.StatusBadRequest, "could not read uploaded file")
 		return
 	}
+	head = head[:n]
+	sniffed := http.DetectContentType(head)
+	if audithandler.RejectBlockedUpload(w, r, fileName, contentType) ||
+		audithandler.RejectBlockedUpload(w, r, fileName, sniffed) {
+		return
+	}
+	body := io.MultiReader(bytes.NewReader(head), f)
 	note := r.FormValue("note")
 
-	ev, err := d.Evidence.Upload(r.Context(), riskID, evidenceType, actionPlanID, fileName, contentType, io.LimitReader(f, maxRiskEvidenceUploadBytes+1), note, by)
+	ev, err := d.Evidence.Upload(r.Context(), riskID, evidenceType, actionPlanID, fileName, contentType, io.LimitReader(body, maxRiskEvidenceUploadBytes+1), note, by)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
