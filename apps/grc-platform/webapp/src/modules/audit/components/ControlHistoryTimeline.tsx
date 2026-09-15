@@ -152,6 +152,18 @@ function trailToEvent(e: TrailEntry, fileNamesByEvidenceId: Map<number, string[]
       return { ...base, tone: "ai", title: "AI validation completed", body: readComment(d) };
     case "OVERRIDDEN":
       return { ...base, tone: "overridden", title: "Status manually overridden", from, to };
+    case "UPDATED":
+      if (d.field === "requirementType") {
+        const label = (v: unknown) => (v === "OE" ? "OE" : "Design");
+        return {
+          ...base,
+          tone: "overridden",
+          title: `Requirement Type changed: ${label(d.from)} → ${label(d.to)}`,
+          from: asStatus(d.statusFrom),
+          to: asStatus(d.statusTo),
+        };
+      }
+      return { ...base, tone: "created", title: "updated" };
     default:
       // ESCALATED / EXPORTED etc. — show generically rather than dropping.
       return { ...base, tone: "created", title: e.action.toLowerCase().replace(/_/g, " ") };

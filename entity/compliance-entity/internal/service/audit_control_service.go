@@ -565,3 +565,43 @@ func (s *controlService) OverrideControlStatus(ctx context.Context, auditID, con
 	}
 	return *c, nil
 }
+
+// ChangeRequirementType switches an untouched control between DESIGN and OE.
+// Whether the control is still untouched is decided by the repo under lock.
+func (s *controlService) ChangeRequirementType(ctx context.Context, auditID, controlID int, req domain.ChangeRequirementTypeRequest) (domain.AuditControl, error) {
+	if auditID <= 0 {
+		return domain.AuditControl{}, &apierror.ValidationError{Msg: "auditId must be a positive integer"}
+	}
+	if controlID <= 0 {
+		return domain.AuditControl{}, &apierror.ValidationError{Msg: "controlId must be a positive integer"}
+	}
+	if req.UpdatedBy == "" {
+		return domain.AuditControl{}, &apierror.ValidationError{Msg: "updatedBy is required"}
+	}
+	req.RequirementType = strings.ToUpper(req.RequirementType)
+	if !validRequirementTypes[req.RequirementType] {
+		return domain.AuditControl{}, &apierror.ValidationError{Msg: "requirementType must be DESIGN or OE"}
+	}
+	if req.RequirementType == "OE" {
+		if req.Population == nil || strings.TrimSpace(req.Population.Description) == "" {
+			return domain.AuditControl{}, &apierror.ValidationError{Msg: "population.description is required for OE controls"}
+		}
+		if req.Population.DueDate == nil || strings.TrimSpace(*req.Population.DueDate) == "" {
+			return domain.AuditControl{}, &apierror.ValidationError{Msg: "population.dueDate is required for OE controls"}
+		}
+	}
+
+	audit, err := s.auditRepo.GetAuditByID(ctx, auditID)
+	if err != nil {
+		return domain.AuditControl{}, err
+	}
+	if audit.Status == "REMOVED" {
+		return domain.AuditControl{}, &apierror.ConflictError{Msg: "cannot change requirement type: audit is removed"}
+	}
+
+	c, err := s.repo.ChangeRequirementType(ctx, auditID, controlID, req)
+	if err != nil {
+		return domain.AuditControl{}, err
+	}
+	return *c, nil
+}

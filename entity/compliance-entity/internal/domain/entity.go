@@ -882,6 +882,14 @@ type UpdateControlRequest struct {
 	ExpectedStatus  string  `json:"-"` // set server-side for atomic transition; never decoded from JSON
 }
 
+// ChangeRequirementTypeRequest is the payload for PATCH /audits/{auditId}/controls/{controlId}/requirement-type.
+// Population is required when switching to OE and ignored for DESIGN.
+type ChangeRequirementTypeRequest struct {
+	RequirementType string                   `json:"requirementType"` // DESIGN | OE
+	Population      *InlinePopulationRequest `json:"population"`
+	UpdatedBy       string                   `json:"updatedBy"`
+}
+
 // OverrideControlStatusRequest is the payload for
 // POST /audits/{auditId}/controls/{controlId}/status-override. Unlike
 // UpdateControlRequest's Status field, the target here is validated by rank

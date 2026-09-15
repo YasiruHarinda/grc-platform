@@ -215,6 +215,31 @@ func (h *ControlHandler) UpdateControl(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(c)
 }
 
+// ChangeRequirementType handles PATCH /audits/{auditId}/controls/{controlId}/requirement-type.
+func (h *ControlHandler) ChangeRequirementType(w http.ResponseWriter, r *http.Request) {
+	auditID, err := strconv.Atoi(r.PathValue("auditId"))
+	if err != nil {
+		writeServiceError(w, r, &apierror.ValidationError{Msg: "auditId must be a positive integer"})
+		return
+	}
+	controlID, err := strconv.Atoi(r.PathValue("controlId"))
+	if err != nil {
+		writeServiceError(w, r, &apierror.ValidationError{Msg: "controlId must be a positive integer"})
+		return
+	}
+	var req domain.ChangeRequirementTypeRequest
+	if !decodeRequest(w, r, &req) {
+		return
+	}
+	c, err := h.svc.ChangeRequirementType(r.Context(), auditID, controlID, req)
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(c)
+}
+
 // OverrideControlStatus handles POST /audits/{auditId}/controls/{controlId}/status-override.
 func (h *ControlHandler) OverrideControlStatus(w http.ResponseWriter, r *http.Request) {
 	auditID, err := strconv.Atoi(r.PathValue("auditId"))

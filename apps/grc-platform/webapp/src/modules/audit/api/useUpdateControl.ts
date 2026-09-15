@@ -19,6 +19,8 @@ import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { controlsQueryKey } from "@modules/audit/api/useGetControls";
 import { auditQueryKey } from "@modules/audit/api/useGetAudit";
+import { populationQueryKey } from "@modules/audit/api/useGetPopulation";
+import { trailQueryKey } from "@modules/audit/api/useGetTrail";
 import type { UpdateControlRequest } from "@modules/audit/types/audit";
 import { extractErrorMessage } from "@modules/audit/api/apiError";
 
@@ -48,9 +50,12 @@ export function useUpdateControl() {
       }
     },
 
-    onSuccess: (_data, { auditId }) => {
+    onSuccess: (_data, { auditId, controlId }) => {
       void queryClient.invalidateQueries({ queryKey: controlsQueryKey(auditId) });
       void queryClient.invalidateQueries({ queryKey: auditQueryKey(auditId) });
+      // A Requirement Type change adds/removes the population round and logs a trail entry.
+      void queryClient.invalidateQueries({ queryKey: populationQueryKey(auditId, controlId) });
+      void queryClient.invalidateQueries({ queryKey: trailQueryKey(auditId, controlId) });
     },
   });
 }

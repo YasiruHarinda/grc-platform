@@ -106,6 +106,9 @@ type ControlRepository interface {
 	// rank-based status-override endpoint (see ControlService.OverrideStatus) —
 	// distinct from UpdateStatus, which drives the ordinary forward workflow.
 	OverrideStatus(ctx context.Context, auditID, controlID int, status string, updatedBy string) error
+	// ChangeRequirementType switches an untouched control between DESIGN and OE.
+	// The entity answers 409 once work has started; population is sent only for OE.
+	ChangeRequirementType(ctx context.Context, auditID, controlID int, requirementType string, population *model.PopulationDetails, updatedBy string) error
 	// Delete removes a control; force tells the entity to skip its
 	// evidence/population deletion guard.
 	Delete(ctx context.Context, auditID, controlID int, force bool) error

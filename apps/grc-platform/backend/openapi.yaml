@@ -4324,6 +4324,7 @@ components:
         requirementType:
           type: string
           nullable: true
+          description: Allowed only while no work has started on the control (409 otherwise). Changing to OE requires population.
           enum:
           - DESIGN
           - OE

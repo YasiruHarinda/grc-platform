@@ -321,10 +321,23 @@ func (s *controlService) Update(ctx context.Context, auditID, controlID int, req
 	if req.DueDate != nil && strings.TrimSpace(*req.DueDate) == "" {
 		return result, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "dueDate cannot be cleared"}
 	}
+	// A Requirement Type change is validated here and applied by the entity
+	// before the field update below; population handling follows the target type.
+	targetType := c.RequirementType
+	typeChanged := req.RequirementType != nil && *req.RequirementType != c.RequirementType
+	if typeChanged {
+		if *req.RequirementType != "DESIGN" && *req.RequirementType != "OE" {
+			return result, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "requirementType must be DESIGN or OE"}
+		}
+		targetType = *req.RequirementType
+		if targetType == "OE" && req.Population == nil {
+			return result, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "population is required when changing to OE"}
+		}
+	}
 	// Population is only meaningful for OE controls — silently ignored for
 	// DESIGN controls rather than erroring, since the form simply never sends
 	// it for them.
-	if req.Population != nil && c.RequirementType == "OE" {
+	if req.Population != nil && targetType == "OE" {
 		if strings.TrimSpace(req.Population.Description) == "" {
 			return result, &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "population.description is required"}
 		}
@@ -342,10 +355,35 @@ func (s *controlService) Update(ctx context.Context, auditID, controlID int, req
 		result.NewAuditorID = req.AuditorID
 	}
 
+	if typeChanged {
+		var population *model.PopulationDetails
+		newStatus := "EVIDENCE_PENDING"
+		if targetType == "OE" {
+			population = req.Population
+			newStatus = "POPULATION_PENDING"
+		}
+		if err := s.repo.ChangeRequirementType(ctx, auditID, controlID, targetType, population, updatedBy); err != nil {
+			return result, err
+		}
+		// The new round is created with these details, so the latest-round
+		// update below is skipped; its owner still gets the assignment email.
+		if population != nil && population.OwnerID != nil {
+			result.PopulationOwnerChanged = true
+			result.NewPopulationOwnerID = population.OwnerID
+		}
+		s.recordTrail(ctx, auditID, controlID, "UPDATED", updatedBy, map[string]any{
+			"field":      "requirementType",
+			"from":       c.RequirementType,
+			"to":         targetType,
+			"statusFrom": c.Status,
+			"statusTo":   newStatus,
+		})
+	}
+
 	if err := s.repo.Update(ctx, auditID, controlID, req, updatedBy); err != nil {
 		return result, err
 	}
-	if req.Population != nil && c.RequirementType == "OE" {
+	if req.Population != nil && targetType == "OE" && !typeChanged {
 		// Deliberately not ActivePopulationID here: that only resolves a round
 		// still in PENDING/COMPLIANCE_REJECTED/AUDITOR_REJECTED, so it returns
 		// not-found (silently skipping the edit) for any control whose
