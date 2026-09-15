@@ -108,6 +108,14 @@ type fakeEntity struct {
 	grants      map[int][]Grant      // by user id
 	users       map[string]int       // uuid -> user id
 
+	// createReqByRisk and the two maps below back the /detail and
+	// /action-plans fakes verify_test.go exercises: the full POST /risks body
+	// the migration sent, plus the two fields the entity sets after create
+	// that CreateRiskRequest doesn't carry (D9 audit fields).
+	createReqByRisk        map[int]CreateRiskRequest
+	complianceApprovalDate map[int]string // by risk id
+	planCompletedDate      map[int]string // by risk id
+
 	// cumulative call log (snapshot lengths between runs to detect no-ops)
 	createdRisks []CreateRiskRequest
 	riskPatches  []PatchRiskRequest
@@ -129,7 +137,9 @@ func newFakeEntity(t *testing.T) *fakeEntity {
 	return &fakeEntity{
 		t: t, risks: map[int]*Risk{}, escalations: map[int][]Escalation{},
 		planStatus: map[int]string{}, grants: map[int][]Grant{}, users: map[string]int{},
-		nextRiskID: 1000, nextUserID: 500,
+		createReqByRisk: map[int]CreateRiskRequest{}, complianceApprovalDate: map[int]string{},
+		planCompletedDate: map[int]string{},
+		nextRiskID:        1000, nextUserID: 500,
 	}
 }
 
@@ -152,6 +162,18 @@ func (fe *fakeEntity) handle(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case r.Method == http.MethodPost && p == "/risks/search":
+		// Mirrors the real entity's strict RiskQuarterKeys validation
+		// (internal/service/risk_service.go) — searchMarkerRisks must never
+		// let an unresolved/invalid quarter reach this filter (state.go).
+		var req SearchRisksRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		for _, qk := range req.RiskQuarterKeys {
+			if !validQuarters[strings.ToUpper(qk)] {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"code":400,"message":"invalid riskQuarterKey"}`))
+				return
+			}
+		}
 		all := make([]Risk, 0, len(fe.risks))
 		for _, rk := range fe.risks {
 			all = append(all, *rk)
@@ -189,10 +211,51 @@ func (fe *fakeEntity) handle(w http.ResponseWriter, r *http.Request) {
 			RiskYear: body.RiskYear, RiskQuarter: body.RiskQuarter,
 			WorkflowStatus: "PENDING_RISK_OWNER_APPROVAL", CreatedBy: marker,
 		}
+		fe.createReqByRisk[fe.nextRiskID] = body
 		w.WriteHeader(http.StatusCreated)
 		_ = enc.Encode(map[string]any{
 			"id": fe.nextRiskID, "workflowStatus": "PENDING_RISK_OWNER_APPROVAL",
 			"actionPlanId": fe.planID(fe.nextRiskID), "createdBy": marker,
+		})
+
+	case r.Method == http.MethodGet && strings.HasSuffix(p, "/detail") && strings.HasPrefix(p, "/risks/"):
+		id, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(p, "/risks/"), "/detail"))
+		body, ok := fe.createReqByRisk[id]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"code":404,"message":"not found"}`))
+			return
+		}
+		rk := fe.risks[id]
+		planStatus := fe.planStatus[id]
+		if planStatus == "" {
+			planStatus = "PENDING"
+		}
+		var complianceApprovalDate any
+		if d, ok := fe.complianceApprovalDate[id]; ok {
+			complianceApprovalDate = d
+		}
+		_ = enc.Encode(map[string]any{
+			"id": id, "riskTitle": body.RiskTitle, "riskDescription": body.RiskDescription,
+			"riskYear": body.RiskYear, "riskQuarter": body.RiskQuarter,
+			"sourceRegisterId": body.SourceRegisterID, "assignmentTeamId": body.AssignmentTeamID,
+			"assignerId": body.AssignerID, "ownerId": body.OwnerID,
+			"managementApproverId": body.ManagementApproverID, "workflowStatus": rk.WorkflowStatus,
+			"treatmentStrategy": body.TreatmentStrategy, "implementationDate": body.ImplementationDate,
+			"reassessmentDate": body.ReassessmentDate, "riskIdentifiedDate": body.RiskIdentifiedDate,
+			"identifiedByType": body.IdentifiedByType, "identifiedByName": body.IdentifiedByName,
+			"impactDescription": body.ImpactDescription, "progress": body.Progress,
+			"complianceApprovalBy": nil, "complianceApprovalDate": complianceApprovalDate,
+			"gitIssueUrl": body.GitIssueURL, "emailSubject": body.EmailSubject, "remarks": body.Remarks,
+			"createdBy":            body.CreatedBy,
+			"grossScore":           map[string]any{"likelihood": body.Likelihood, "impact": body.Impact},
+			"complianceReferences": fakeIDRefs(body.ComplianceReferenceIDs),
+			"riskCategories":       fakeIDRefs(body.RiskCategoryIDs),
+			"actionPlan": map[string]any{
+				"id": fe.planID(id), "actionOwnerId": body.ActionOwnerID,
+				"description": body.ActionPlanDescription, "status": planStatus, "planType": "STANDARD",
+				"steps": fakeActionSteps(body.ActionSteps),
+			},
 		})
 
 	case r.Method == http.MethodPatch && strings.HasPrefix(p, "/risks/"):
@@ -202,6 +265,9 @@ func (fe *fakeEntity) handle(w http.ResponseWriter, r *http.Request) {
 		fe.riskPatches = append(fe.riskPatches, body)
 		if rk := fe.risks[id]; rk != nil && body.WorkflowStatus != nil {
 			rk.WorkflowStatus = *body.WorkflowStatus
+		}
+		if body.ComplianceApprovalDate != nil {
+			fe.complianceApprovalDate[id] = *body.ComplianceApprovalDate
 		}
 		_ = enc.Encode(map[string]any{"id": id})
 
@@ -222,8 +288,12 @@ func (fe *fakeEntity) handle(w http.ResponseWriter, r *http.Request) {
 		if status == "" {
 			status = "PENDING"
 		}
+		var completedDate any
+		if d, ok := fe.planCompletedDate[id]; ok {
+			completedDate = d
+		}
 		_ = enc.Encode(map[string]any{"plans": []map[string]any{
-			{"id": fe.planID(id), "planType": "STANDARD", "status": status},
+			{"id": fe.planID(id), "planType": "STANDARD", "status": status, "completedDate": completedDate},
 		}})
 
 	case r.Method == http.MethodPatch && strings.HasPrefix(p, "/action-plans/"):
@@ -233,6 +303,9 @@ func (fe *fakeEntity) handle(w http.ResponseWriter, r *http.Request) {
 		fe.planPatches = append(fe.planPatches, body)
 		if body.Status != nil {
 			fe.planStatus[fe.riskForPlan(planID)] = *body.Status
+		}
+		if body.CompletedDate != nil {
+			fe.planCompletedDate[fe.riskForPlan(planID)] = *body.CompletedDate
 		}
 		_ = enc.Encode(map[string]any{"id": planID})
 
@@ -244,7 +317,7 @@ func (fe *fakeEntity) handle(w http.ResponseWriter, r *http.Request) {
 		uid, _ := strconv.Atoi(strings.TrimPrefix(p, "/grants/user/"))
 		var body CreateGrantRequest
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		fe.grants[uid] = append(fe.grants[uid], Grant{RoleID: body.RoleID, ScopeType: body.ScopeType, ScopeID: body.ScopeID})
+		fe.grants[uid] = append(fe.grants[uid], Grant{RoleID: body.RoleID, ScopeType: body.ScopeType, ScopeID: body.ScopeID, CreatedBy: marker})
 		fe.grantPosts = append(fe.grantPosts, grantCall{userID: uid, body: body})
 		w.WriteHeader(http.StatusCreated)
 		_ = enc.Encode(map[string]any{"id": 1})
@@ -253,6 +326,30 @@ func (fe *fakeEntity) handle(w http.ResponseWriter, r *http.Request) {
 		fe.t.Errorf("unexpected %s %s", r.Method, p)
 		w.WriteHeader(http.StatusNotFound)
 	}
+}
+
+// validQuarters mirrors the entity's own validRiskQuarters allow-list.
+var validQuarters = map[string]bool{"Q1": true, "Q2": true, "Q3": true, "Q4": true}
+
+// fakeIDRefs wraps ids the way the entity's /detail response shapes both its
+// complianceReferences and riskCategories lists — only .ID is read by
+// verify.go, so name/description are omitted.
+func fakeIDRefs(ids []int) []map[string]any {
+	out := make([]map[string]any, len(ids))
+	for i, id := range ids {
+		out[i] = map[string]any{"id": id}
+	}
+	return out
+}
+
+// fakeActionSteps mirrors the entity's step_no assignment: 1-based, by
+// position, matching CreateRiskRequest.ActionSteps' CSV order.
+func fakeActionSteps(steps []ActionStepInput) []map[string]any {
+	out := make([]map[string]any, len(steps))
+	for i, s := range steps {
+		out[i] = map[string]any{"stepNo": i + 1, "description": s.Description}
+	}
+	return out
 }
 
 // runPipeline threads a fresh Report through resolve → reconstruct → migrate

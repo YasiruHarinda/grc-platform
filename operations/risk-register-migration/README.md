@@ -27,6 +27,13 @@ this repo). Section references (§n) in the code comments point there.
      nightly escalation job
    - `IN_REMEDIATION` → ensure the §6 role grants
    - `CLOSED` → also `PATCH` the action plan to `COMPLETED`
+7. **Verify** (real run only, `verify.go`) — re-reads every migratable row back
+   from the entity (`GET /risks/{id}/detail` + escalations + grants) and diffs
+   it, field by field, against the CSV; also confirms every rejected row still
+   has no matching risk. Runs unconditionally, covering every migratable row —
+   including ones already complete from an earlier run and `Skipped` this
+   time — not just what this invocation wrote. A disagreement becomes a
+   `MISMATCH` finding in the same report as `REJECT`/`WARN`.
 
 ## Buckets
 
@@ -139,7 +146,9 @@ go run . -input "$IN" -migration-date 2026-09-15 -dry-run=false   # real run
 echo "exit=$?"
 ```
 
-Verify:
+The tool now verifies itself automatically (see "Verification" above) — the
+manual SQL below is a direct-to-DB cross-check, useful when you want to see
+the raw rows yourself or double another way, not a required step:
 
 ```sql
 SELECT risk_code, workflow_status, treatment_strategy
@@ -165,13 +174,42 @@ size for a first local pass before trying the real register export.
 
 ## Report
 
-The run prints two blocks to stdout (captured by Choreo):
+The run prints two blocks to stdout in a single write (captured by Choreo —
+see the note in `report.go` on why it's one `Write` call, not several):
 
 - **`errors.csv`** — one row per finding: `migration_id, csv_row, risk_title,
-  severity (REJECT|WARN), failure, detail`.
+  severity (REJECT|WARN|MISMATCH), failure, detail`. `MISMATCH` findings come
+  from the post-write verification pass (`verify.go`), not the write pipeline
+  itself — see below.
 - **`report.txt`** — findings-by-code counts, the distinct unresolved people,
   the Migration IDs that got a suppressing escalation, the grant count, and
   (real run) per-bucket migrated counts.
+
+A real run additionally logs one `verifying` progress line every 10 rows and
+one `verification complete` summary line (verified-ok / mismatch / confirmed-
+absent-rejected counts) via `slog`, from the verification pass described next.
+
+## Verification
+
+Every real run ends with an automatic, read-only pass (`verify.go`) that
+re-reads the entity and checks it agrees with the CSV — reusing the same
+compliance-entity API this tool writes through, never MySQL directly:
+
+- Every **migratable** row (not just ones this run wrote — a resumed run's
+  already-`Skipped` rows are re-checked too) gets its risk fetched via
+  `GET /risks/{id}/detail` and diffed field by field: title, description,
+  register/team/category/compliance-ref ids, owner/assigner/mgmt-approver/
+  action-owner ids, dates, likelihood/impact, treatment strategy, workflow
+  status, and the action plan (status, description, steps, and — for `CLOSED`
+  — its completed date). Escalations and grants are checked both ways: missing
+  (expected but absent) and unexpected (a marker-created escalation/grant
+  present that no migratable row calls for).
+- Every **rejected** row gets a cheap negative check: no marker-created risk
+  should exist for it.
+
+A disagreement is a `MISMATCH` finding in the same report as `REJECT`/`WARN`
+and trips the same `exitFindings` (2) exit code — there's no separate flag to
+disable verification and no new exit code.
 
 ## Rollback
 
@@ -182,11 +220,12 @@ DB. The tool never deletes.
 
 Implemented (T1–T9, T11): HTTP + SCIM clients, preflight + reference data, CSV
 value mapping, identity resolution, resume-state reconstruction, the write
-pipeline, the report, and a table-driven test suite including an end-to-end
-pass over `testdata/risks.csv` (built from the real "Risk Form Structure" tab)
-against a stateful in-memory fake of the entity — including a second run that
-must be a clean no-op. `go test ./...` is green (~80% statement coverage; the
-gap is `main`/`run`/`loadConfig` CLI bootstrap).
+pipeline, the post-write verification pass, the report, and a table-driven
+test suite including an end-to-end pass over `testdata/risks.csv` (built from
+the real "Risk Form Structure" tab) against a stateful in-memory fake of the
+entity — including a second run that must be a clean no-op, and a verification
+pass over that same clean run that must report zero mismatches. `go test ./...`
+is green (the gap is `main`/`run`/`loadConfig` CLI bootstrap).
 
 Not yet done: `.choreo/component.yaml` confirmation as a real Manual Task in the
 Choreo console (T10) and the staging/production dry-run → real-run passes (T12).

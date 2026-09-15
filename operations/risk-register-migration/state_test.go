@@ -125,6 +125,32 @@ func run6(t *testing.T, s *stateStub, rd RefData, rows []Row) (map[int]ResumeSta
 	return prog, rep
 }
 
+// TestSearchMarkerRisks_AllRowsInvalidSkipsSearch: when every row has an
+// unresolved natural-key component (verify.go passes rejected rows through
+// unfiltered), searchMarkerRisks must not fall back to an unscoped search —
+// an empty SearchRisksRequest omits its filters entirely and the entity
+// treats that as "no restriction," which would otherwise page through the
+// whole risks table for a result set that can never match any of these rows.
+func TestSearchMarkerRisks_AllRowsInvalidSkipsSearch(t *testing.T) {
+	s := &stateStub{t: t, risks: []Risk{markerRisk(1, "Unrelated risk", 8, 2025, "Q3", "IN_REMEDIATION")}}
+	rows := []Row{
+		{MigrationID: 1, CSVLine: 2, RiskTitle: "no source register", SourceRegisterID: 0, RiskYear: 2025, RiskQuarter: "Q3"},
+		{MigrationID: 2, CSVLine: 3, RiskTitle: "no year", SourceRegisterID: 8, RiskYear: 0, RiskQuarter: "Q3"},
+		{MigrationID: 3, CSVLine: 4, RiskTitle: "bad quarter", SourceRegisterID: 8, RiskYear: 2025, RiskQuarter: ""},
+	}
+
+	got, err := searchMarkerRisks(context.Background(), s.client(t), rows)
+	if err != nil {
+		t.Fatalf("searchMarkerRisks: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %d risks, want 0", len(got))
+	}
+	if s.searchCalls != 0 {
+		t.Errorf("searchCalls = %d, want 0 — no row has a valid natural-key component to search on", s.searchCalls)
+	}
+}
+
 func TestReconstructState_NoneAndCreated_WithPaging(t *testing.T) {
 	rd := sheetTestRefData(t)
 	s := &stateStub{
