@@ -26,12 +26,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/apierror"
 )
 
 // Service is a client to the Compliance Entity's /files endpoints.
@@ -106,6 +109,12 @@ func (s *Service) UploadBlob(ctx context.Context, blobName, contentType string, 
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
+		// Pass the entity's 400 reason (e.g. a blocked file type) to the caller instead of a 500.
+		var e struct{ Message string `json:"message"` }
+		if resp.StatusCode == http.StatusBadRequest && json.Unmarshal(body, &e) == nil && e.Message != "" {
+			slog.WarnContext(ctx, "upload rejected by entity", "blobName", blobName, "reason", e.Message)
+			return &apierror.Error{StatusCode: http.StatusBadRequest, Body: e.Message}
+		}
 		return fmt.Errorf("file: upload: entity returned %d: %s", resp.StatusCode, string(body))
 	}
 	return nil

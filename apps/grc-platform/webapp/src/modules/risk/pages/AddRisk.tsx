@@ -324,7 +324,7 @@ export default function AddRisk(): JSX.Element {
     // in form state through the whole wizard and only uploaded now. Each
     // upload is caught individually so one failure doesn't stop the rest of
     // the batch from being attempted.
-    let anyAttachmentFailed = false;
+    const failedReasons: string[] = [];
     for (const attachment of data.evidenceAttachments) {
       if (!attachment.file) continue;
       try {
@@ -333,13 +333,13 @@ export default function AddRisk(): JSX.Element {
           file: attachment.file,
           note: attachment.note || undefined,
         });
-      } catch {
-        anyAttachmentFailed = true;
+      } catch (err) {
+        failedReasons.push(err instanceof Error ? err.message : `"${attachment.file.name}" failed to upload`);
       }
     }
-    if (anyAttachmentFailed) {
+    if (failedReasons.length > 0) {
       setAttachmentWarning(
-        "The risk was created, but one or more attachments failed to upload. Add them from the risk details view.",
+        `The risk was created, but one or more attachments failed to upload (${failedReasons.join("; ")}). Add them from the risk details view.`,
       );
     }
 

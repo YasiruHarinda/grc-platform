@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 
+	audithandler "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/handler"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
 	riskservice "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/service"
@@ -133,6 +134,9 @@ func (d *Deps) handleUploadRiskEvidence(w http.ResponseWriter, r *http.Request) 
 
 	fileName := filepath.Base(header.Filename)
 	contentType := header.Header.Get("Content-Type")
+	if audithandler.RejectBlockedUpload(w, r, fileName, contentType) {
+		return
+	}
 	note := r.FormValue("note")
 
 	ev, err := d.Evidence.Upload(r.Context(), riskID, evidenceType, actionPlanID, fileName, contentType, io.LimitReader(f, maxRiskEvidenceUploadBytes+1), note, by)
