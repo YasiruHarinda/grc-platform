@@ -744,6 +744,17 @@ func (r *controlRepo) ChangeRequirementType(ctx context.Context, auditID, contro
 	if err != nil {
 		return nil, fmt.Errorf("control.ChangeRequirementType(%d,%d) lock: %w", auditID, controlID, err)
 	}
+	// Locked after the control to keep recomputeAuditStatus's lock order; a
+	// concurrent DeleteAudit either waits or is seen here.
+	var auditStatus string
+	if err := tx.QueryRowContext(ctx,
+		"SELECT status FROM audit WHERE id = ? FOR UPDATE", auditID,
+	).Scan(&auditStatus); err != nil {
+		return nil, fmt.Errorf("control.ChangeRequirementType(%d,%d) lock audit: %w", auditID, controlID, err)
+	}
+	if auditStatus == "REMOVED" {
+		return nil, &apierror.ConflictError{Msg: "cannot change requirement type: audit is removed"}
+	}
 	if currentType == req.RequirementType {
 		return r.GetControlByID(ctx, auditID, controlID)
 	}
