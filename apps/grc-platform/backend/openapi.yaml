@@ -4488,6 +4488,16 @@ components:
         populationTeamName:
           type: string
           nullable: true
+        populationStatus:
+          type: string
+          nullable: true
+          enum:
+          - PENDING
+          - SUBMITTED
+          - COMPLIANCE_APPROVED
+          - COMPLIANCE_REJECTED
+          - APPROVED
+          - AUDITOR_REJECTED
     ControlListResponse:
       type: object
       properties:
