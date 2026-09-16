@@ -296,10 +296,10 @@ func verifyRow(ctx context.Context, ec *EntityClient, rd RefData, migrationDate 
 	add("Compliance Approval By", "", intOrNil(detail.ComplianceApprovalBy))
 
 	if detail.GrossScore == nil {
-		out = append(out, fieldMismatch{"Likelihood/Impact", fmt.Sprintf("%d/%d", row.Likelihood, row.Impact), "no gross score"})
+		out = append(out, fieldMismatch{"Gross Likelihood/Impact", fmt.Sprintf("%d/%d", row.GrossLikelihood, row.GrossImpact), "no gross score"})
 	} else {
-		add("Likelihood", strconv.Itoa(row.Likelihood), strconv.Itoa(detail.GrossScore.Likelihood))
-		add("Impact", strconv.Itoa(row.Impact), strconv.Itoa(detail.GrossScore.Impact))
+		add("Gross Likelihood", strconv.Itoa(row.GrossLikelihood), strconv.Itoa(detail.GrossScore.Likelihood))
+		add("Gross Impact", strconv.Itoa(row.GrossImpact), strconv.Itoa(detail.GrossScore.Impact))
 	}
 
 	if diff := diffIntSets(row.ComplianceRefIDs, complianceRefIDs(detail.ComplianceReferences)); diff != "" {

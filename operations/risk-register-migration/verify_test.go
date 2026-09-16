@@ -41,7 +41,7 @@ func verifyBaseRow() Row {
 		RiskDescription:  "a description",
 		ComplianceRefIDs: []int{40}, // ISO
 		RiskCategoryIDs:  []int{30}, // Access Control & Credentials
-		Likelihood:       2, Impact: 2,
+		GrossLikelihood:  2, GrossImpact: 2, ResidualLikelihood: 2, ResidualImpact: 2,
 		ImpactDescription:  "impact desc",
 		ImplementationDate: "2025-06-30", // overdue vs migrationDate 2026-09-15
 		ReassessmentDate:   "2025-12-01",
@@ -170,7 +170,7 @@ func TestVerifyRow_DetectsFieldMismatches(t *testing.T) {
 				req.Likelihood = 3
 				fe.createReqByRisk[riskID] = req
 			},
-			wantField: "Likelihood",
+			wantField: "Gross Likelihood",
 		},
 		{
 			name: "risk category set diverged",
