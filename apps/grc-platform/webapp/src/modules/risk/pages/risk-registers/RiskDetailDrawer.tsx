@@ -1026,8 +1026,14 @@ export default function RiskDetailDrawer({
                 <Stack direction="row" gap={1} sx={{ mt: 1.5 }} flexWrap="wrap">
                   <Chip label={statusCfg.label} color={statusCfg.color} size="small" sx={statusCfg.sx} />
                   {(() => {
+                    // Only show a separate Residual chip once a real
+                    // reassessment exists — otherwise it's the gross score
+                    // shown twice, which reads as a bug rather than "nothing
+                    // has changed yet". The Gross chip alone already implies
+                    // that.
+                    const hasReassessment = detail.assessments.some((a) => !a.is_initial);
                     const residual = detail.effective_score ?? detail.gross_score;
-                    return residual && <ScoreChip label="Residual Score" score={residual} />;
+                    return hasReassessment && residual && <ScoreChip label="Residual Score" score={residual} />;
                   })()}
                   {detail.gross_score && <ScoreChip label="Gross Score" score={detail.gross_score} />}
                   <Chip
