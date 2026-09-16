@@ -170,9 +170,32 @@ func searchMarkerRisks(ctx context.Context, ec *EntityClient, rows []Row) ([]Ris
 	ySet := map[int]struct{}{}
 	qSet := map[string]struct{}{}
 	for _, r := range rows {
+		// A row can reach here with an unresolved/unparseable natural-key
+		// component — e.g. verify.go passes every row, rejected ones
+		// included, and a rejected row's invalid Quarter is left "" by
+		// mapRow (reconstructState's caller, by contrast, always pre-filters
+		// to migratable rows, so this is a no-op there). Sending "" (or a
+		// zero id/year) straight through as a filter would 400 against the
+		// entity's strict Q1..Q4 validation on RiskQuarterKeys and abort the
+		// whole search — not just skip that one row. A row like that can't
+		// match any real risk by natural key anyway, so it contributes
+		// nothing to the filter; the per-row natural-key lookup afterwards
+		// still correctly reports it as having no match.
+		if !quarterRe.MatchString(r.RiskQuarter) || r.SourceRegisterID <= 0 || r.RiskYear <= 0 {
+			continue
+		}
 		srSet[r.SourceRegisterID] = struct{}{}
 		ySet[r.RiskYear] = struct{}{}
 		qSet[r.RiskQuarter] = struct{}{}
+	}
+	// If every row was skipped above, all three sets are empty — an empty
+	// SearchRisksRequest omits its filters entirely (json:",omitempty") and
+	// the entity treats an absent filter as unrestricted, so this would
+	// otherwise page through every risk in the register rather than none.
+	// None of those skipped rows can match anything by natural key anyway
+	// (see the comment above), so nothing is lost by stopping here.
+	if len(srSet) == 0 && len(ySet) == 0 && len(qSet) == 0 {
+		return nil, nil
 	}
 	req := SearchRisksRequest{
 		SourceRegisterIDs: intKeys(srSet),
@@ -301,6 +324,14 @@ func standardPlanCompleted(plans []ActionPlanView) bool {
 		}
 	}
 	return false
+}
+
+// wantsSuppressingEscalation reports whether row needs a D8 overdue-
+// suppression escalation as of migrationDate. Shared by migrateRow (the
+// write path, step 3 below) and verify.go's verifyRow (the read-only check)
+// so the rule can't drift between what gets written and what gets verified.
+func wantsSuppressingEscalation(row Row, migrationDate string) bool {
+	return row.WorkflowStatus == "IN_REMEDIATION" && row.ImplementationDate < migrationDate
 }
 
 func hasOpenMarkerEscalation(escs []Escalation) bool {
@@ -492,7 +523,7 @@ func migrateRow(ctx context.Context, ec *EntityClient, cfg Config, rd RefData, r
 	}
 
 	// ── 3. overdue-suppression escalation (IN_REMEDIATION only, D8) ─────────
-	if target == "IN_REMEDIATION" && row.ImplementationDate < cfg.MigrationDate {
+	if wantsSuppressingEscalation(row, cfg.MigrationDate) {
 		escs, err := ec.ListEscalations(ctx, riskID)
 		if err != nil {
 			return err

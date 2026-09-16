@@ -45,7 +45,7 @@ func TestReportEmit_Narrative(t *testing.T) {
 	out := sb.String()
 
 	must := []string{
-		"migrated=3  skipped(resume)=1  rejected=3  warnings=2",
+		"migrated=3  skipped(resume)=1  rejected=3  warnings=2  mismatches=0",
 		"----- errors.csv -----",
 		"----- report.txt -----",
 		"findings by code:",
@@ -81,5 +81,23 @@ func TestReportEmit_CleanRunHasNoNarrativeClutter(t *testing.T) {
 	}
 	if !strings.Contains(out, "migrated by bucket: IN_REMEDIATION=1") {
 		t.Errorf("bucket line missing:\n%s", out)
+	}
+}
+
+// TestReportEmit_MismatchOnlyRunIsNotReportedClean guards against a
+// verification-only failure (no REJECT/WARN from the write pipeline itself)
+// hiding behind a headline that reads rejected=0 warnings=0 — the summary
+// line must surface a MISMATCH finding just as visibly as a REJECT/WARN one.
+func TestReportEmit_MismatchOnlyRunIsNotReportedClean(t *testing.T) {
+	r := NewReport()
+	r.Migrated("IN_REMEDIATION")
+	r.Add(Finding{MigrationID: 1, CSVRow: 2, Severity: SevMismatch, Failure: "Risk Title", Detail: "expected Foo, got Bar"})
+
+	var sb strings.Builder
+	r.Emit(&sb)
+	out := sb.String()
+
+	if !strings.Contains(out, "migrated=1  skipped(resume)=0  rejected=0  warnings=0  mismatches=1") {
+		t.Errorf("summary line should surface the mismatch, not read as clean:\n%s", out)
 	}
 }

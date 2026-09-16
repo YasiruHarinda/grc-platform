@@ -149,6 +149,13 @@ function controlToForm(c: AuditControl, users: AuditUser[], teams: AuditTeam[]):
   };
 }
 
+// Mirrors the backend's untouched-control rule as a UI hint only: the
+// payload doesn't say whether files were uploaded, so the backend decides.
+function canChangeRequirementType(c: AuditControl): boolean {
+  if (c.requirementType === "DESIGN") return c.status === "EVIDENCE_PENDING";
+  return c.status === "POPULATION_PENDING" && c.populationStatus === "PENDING";
+}
+
 // ── ControlFormDialog ────────────────────────────────────────────────────────
 
 interface ControlFormDialogProps {
@@ -161,6 +168,8 @@ interface ControlFormDialogProps {
   isSaving: boolean;
   error: string | null;
   editMode?: boolean;
+  /** Edit mode only: whether the control is still untouched. */
+  requirementTypeEditable?: boolean;
   onSave: (form: ControlFormState) => void;
   onClose: () => void;
 }
@@ -175,6 +184,7 @@ function ControlFormDialog({
   isSaving,
   error,
   editMode = false,
+  requirementTypeEditable = false,
   onSave,
   onClose,
 }: ControlFormDialogProps): JSX.Element {
@@ -222,6 +232,11 @@ function ControlFormDialog({
       <DialogContent dividers>
         <Stack spacing={2} sx={{ pt: 1 }}>
           {error && <Alert severity="error">{error}</Alert>}
+          {editMode && initialValues.requirementType === "OE" && form.requirementType === "DESIGN" && (
+            <Alert severity="warning">
+              Changing to Design removes this control&apos;s population round and its details.
+            </Alert>
+          )}
 
           <Stack direction="row" spacing={2}>
             <TextField
@@ -246,18 +261,26 @@ function ControlFormDialog({
           </Stack>
 
           <Stack direction="row" spacing={2}>
-            <FormControl size="small" required sx={{ flex: 1 }}>
-              <InputLabel>Req. Type</InputLabel>
-              <Select
-                label="Req. Type"
-                value={form.requirementType}
-                onChange={(e) => set("requirementType", e.target.value as RequirementType)}
-                disabled={editMode}
-              >
-                <MenuItem value="DESIGN">Design</MenuItem>
-                <MenuItem value="OE">OE</MenuItem>
-              </Select>
-            </FormControl>
+            <Tooltip
+              title={
+                editMode && !requirementTypeEditable
+                  ? "Requirement Type can't be changed once work has started on this control"
+                  : ""
+              }
+            >
+              <FormControl size="small" required sx={{ flex: 1 }}>
+                <InputLabel>Req. Type</InputLabel>
+                <Select
+                  label="Req. Type"
+                  value={form.requirementType}
+                  onChange={(e) => set("requirementType", e.target.value as RequirementType)}
+                  disabled={editMode && !requirementTypeEditable}
+                >
+                  <MenuItem value="DESIGN">Design</MenuItem>
+                  <MenuItem value="OE">OE</MenuItem>
+                </Select>
+              </FormControl>
+            </Tooltip>
             <FormControl size="small" required sx={{ flex: 1 }}>
               <InputLabel>Control Type</InputLabel>
               <Select
@@ -461,8 +484,8 @@ function DeleteDialog({
         {error && <Alert severity="error" sx={{ mb: 1 }}>{error}</Alert>}
         {blockedReason && (
           <Alert severity="warning" sx={{ mb: 1 }}>
-            {blockedReason}. Removing it anyway permanently deletes that work —
-            evidence, uploaded files and submission history — with the control.
+            {blockedReason}. Removing it anyway permanently deletes that work
+            (evidence, uploaded files and submission history with the control).
           </Alert>
         )}
         <Typography variant="body2">
@@ -571,6 +594,7 @@ export default function ControlSettingsPanel({
         : null;
     const req: UpdateControlRequest = {
       description: form.description.trim(),
+      requirementType: form.requirementType,
       controlType: form.controlType,
       scope: form.scope,
       evidenceRequirement: form.evidenceRequirement.trim() || null,
@@ -782,6 +806,7 @@ export default function ControlSettingsPanel({
         isSaving={updateMutation.isPending}
         error={mutationError}
         editMode
+        requirementTypeEditable={editingControl ? canChangeRequirementType(editingControl) : false}
         onSave={handleEdit}
         onClose={() => setEditingControl(null)}
       />

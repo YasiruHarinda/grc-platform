@@ -72,6 +72,67 @@ func findingsFor(fs []Finding, failure string) []Finding {
 	return out
 }
 
+// TestParseSheet_StripsUTF8BOM guards against a file exported as "CSV UTF-8"
+// (e.g. from Excel on Windows) that prepends a byte-order mark to the header
+// row — an otherwise perfectly valid register must not be rejected wholesale
+// just because of that invisible prefix.
+func TestParseSheet_StripsUTF8BOM(t *testing.T) {
+	csvText := buildCSV(t, map[string]string{
+		"Year":                          "2025",
+		"Quarter":                       "Q3",
+		"Source Register":               "Asgardeo",
+		"Risk Title":                    "BOM smoke test",
+		"Security Compliance Reference": "ISO",
+		"Risk Category":                 "Access Control & Credentials",
+		"Risk Assigned To":              "user1@wso2.com",
+		"Likelihood":                    "2",
+		"Impact":                        "2",
+		"Implementation Date":           "2025-06-30",
+		"Assignment Team":               "Legal",
+		"Risk Owner":                    "user2@wso2.com",
+		"Management Approver":           "user3@wso2.com",
+		"Action Steps":                  "Do the thing",
+		"Treatment Strategy":            "Accept",
+		"Workflow Status":               "IN_REMEDIATION",
+		"Migration ID":                  "1",
+	})
+	withBOM := "\xEF\xBB\xBF" + csvText
+
+	rows, fs, err := parseSheet(strings.NewReader(withBOM), sheetTestRefData(t))
+	if err != nil {
+		t.Fatalf("parseSheet with a BOM-prefixed header: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	if rejects := findingsFor(fs, "Year"); len(rejects) != 0 {
+		t.Errorf("Year should have parsed despite the BOM, got findings: %+v", rejects)
+	}
+}
+
+// TestParseSheet_StripsUTF8BOM_QuotedHeader guards the case buildCSV can't
+// exercise: some exporters quote every field regardless of whether quoting is
+// structurally necessary. Stripping the BOM has to happen on the raw byte
+// stream before encoding/csv tokenizes it — stripping it from the already-
+// parsed header string is too late, because a BOM sitting ahead of an opening
+// `"` pushes that quote off position zero of the field, and encoding/csv (not
+// in lazy-quotes mode) rejects the whole file with "bare \" in
+// non-quoted-field" before parsing ever reaches the header-matching step.
+func TestParseSheet_StripsUTF8BOM_QuotedHeader(t *testing.T) {
+	quoted := make([]string, len(expectedHeaders))
+	for i, h := range expectedHeaders {
+		quoted[i] = `"` + h + `"`
+	}
+	header := strings.Join(quoted, ",")
+	row := strings.Repeat(",", len(expectedHeaders)-1) // one blank data row is enough
+	withBOM := "\xEF\xBB\xBF" + header + "\n" + row + "\n"
+
+	_, _, err := parseSheet(strings.NewReader(withBOM), sheetTestRefData(t))
+	if err != nil {
+		t.Fatalf("parseSheet with a BOM-prefixed, fully-quoted header: %v", err)
+	}
+}
+
 func TestMapRow_CleanRow(t *testing.T) {
 	csvText := buildCSV(t, map[string]string{
 		"Year":                          "2025.0",

@@ -273,8 +273,14 @@ func departureDigestSubject(i AuditEventInfo) string {
 
 // DepartureDigestSubject is the subject both hubs' departure digests carry, so
 // an admin receiving the audit and risk halves of one run sees one wording.
+// Says "inactive accounts", not "people have left": the trigger is a directory
+// account going inactive, which is not evidence that anyone resigned.
 func DepartureDigestSubject(people int) string {
-	return fmt.Sprintf("[GRC Platform] Reassignment needed — %d person(s) have left", people)
+	noun := "accounts"
+	if people == 1 {
+		noun = "account"
+	}
+	return fmt.Sprintf("[GRC Platform] Reassignment needed - %d inactive %s", people, noun)
 }
 
 // auditEventTemplates is the single place to see everything the audit module
@@ -384,7 +390,7 @@ var auditBodyTemplate = template.Must(template.New("auditEvent").Parse(`<html>
 <body style="margin:0; padding:0; background-color:#f4f5f7;">
 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f5f7; padding:24px 12px;">
 <tr><td align="center">
-<table width="680" cellpadding="0" cellspacing="0" border="0" style="max-width:680px; background-color:#ffffff; border:1px solid #e1e4e8; border-radius:6px; font-family:Arial,Helvetica,sans-serif; font-size:14px; color:#1a1a1a;">
+<table width="900" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:900px; background-color:#ffffff; border:1px solid #e1e4e8; border-radius:6px; font-family:Arial,Helvetica,sans-serif; font-size:14px; color:#1a1a1a;">
 
 <tr><td style="padding:20px 24px 8px 24px; font-size:15px; line-height:1.5;">{{.Lead}}</td></tr>
 

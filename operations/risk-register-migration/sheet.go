@@ -17,6 +17,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/csv"
 	"fmt"
 	"io"
@@ -106,7 +107,7 @@ var expectedHeaders = []string{
 // aborts the run; a row-level problem becomes a REJECT/WARN Finding and the row
 // is still returned (callers drop REJECTed rows via the Report).
 func parseSheet(r io.Reader, refs RefData) ([]Row, []Finding, error) {
-	cr := csv.NewReader(r)
+	cr := csv.NewReader(stripBOM(r))
 	cr.FieldsPerRecord = -1
 	cr.TrimLeadingSpace = true
 
@@ -174,6 +175,29 @@ func mapHeader(header []string) (map[string]int, error) {
 
 func normHeader(s string) string {
 	return strings.ToLower(strings.Join(strings.Fields(s), " "))
+}
+
+// utf8BOM is the byte-order mark some spreadsheet tools prepend when saving
+// "CSV UTF-8" (Excel does this on Windows; a plain "Download as CSV" from
+// Google Sheets does not). It lands as an invisible prefix on the raw bytes of
+// the file, ahead of the first header cell — for a file that is otherwise
+// perfectly valid. Operators exporting the register shouldn't have to know
+// this; strip it instead of documenting around it.
+const utf8BOM = "\xEF\xBB\xBF"
+
+// stripBOM discards a leading UTF-8 BOM from r, if present, before any CSV
+// tokenization happens. This has to run on the raw byte stream, not on the
+// parsed header string afterwards: if the first header cell is quoted (some
+// exporters quote every field), a BOM sitting before the opening `"` moves
+// that quote off position zero of the field, and encoding/csv's non-lazy
+// quote handling rejects the whole file with "bare \" in non-quoted-field"
+// before a post-parse strip ever gets a chance to run.
+func stripBOM(r io.Reader) io.Reader {
+	br := bufio.NewReader(r)
+	if prefix, _ := br.Peek(len(utf8BOM)); string(prefix) == utf8BOM {
+		_, _ = br.Discard(len(utf8BOM))
+	}
+	return br
 }
 
 // isSkippable drops the legend row and fully blank rows (plan §4).

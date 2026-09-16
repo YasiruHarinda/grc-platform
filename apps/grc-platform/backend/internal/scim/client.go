@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -494,7 +495,12 @@ func (c *Client) LookupByEmail(ctx context.Context, email string) (*DirectoryUse
 	if err != nil {
 		return nil, err
 	}
-	if len(users) == 0 {
+	// Exactly one match expected for an exact-email filter; treat an ambiguous
+	// result the same as "no such user" rather than silently picking the first.
+	if len(users) != 1 {
+		if len(users) > 1 {
+			slog.WarnContext(ctx, "scim: ambiguous email match, refusing to resolve", "matches", len(users))
+		}
 		return nil, nil
 	}
 	return &users[0], nil

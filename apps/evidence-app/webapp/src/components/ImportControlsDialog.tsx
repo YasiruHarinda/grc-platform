@@ -15,27 +15,46 @@ import { controlsApi } from "../api/client";
 import { parseControlsCsv, type ParsedControlRow } from "../utils/parseControlsCsv";
 import type { Control } from "./ControlFormDialog";
 
+// The human-readable half of an error response's `detail`, whichever of its
+// two shapes arrived. A string is used as-is; a pydantic validation list has
+// its first entry's `msg` read out, which for an over-length import reads
+// "List should have at most 1000 items after validation, not 1001". Anything
+// else, including a network error that never reached the server, has no
+// message worth showing and falls back to a sentence that at least says what
+// happened.
+function readDetail(detail: unknown): string {
+  if (typeof detail === "string" && detail) return detail;
+  if (Array.isArray(detail) && detail.length > 0) {
+    const first = detail[0] as { msg?: unknown };
+    if (typeof first?.msg === "string" && first.msg) return first.msg;
+  }
+  return "The import failed. Please try again.";
+}
+
 // The stages this dialog moves through, in order. "pick" is where every
 // open starts; a bad file goes to "error" and can only go back to "pick";
 // a good one goes to "summary", where nothing has been written yet and
-// Cancel is still free; confirming moves to "importing" while the requests
-// go out one at a time, and "done" is the last stop, reachable even when
-// nothing needed creating (a full re-import still finishes and reports
-// what it skipped).
+// Cancel is still free; confirming moves to "importing" while the single
+// bulk request is in flight, and "done" is the last stop, reachable even
+// when nothing needed creating (a full re-import still finishes and
+// reports what it skipped). A whole-request failure (network error, or the
+// server refusing the request outright) lands back on "error" instead of
+// "done", since nothing was written and the Admin needs a message they can
+// act on rather than a blank dialog.
 type ImportPhase =
   | { step: "pick" }
   | { step: "error"; message: string }
   | { step: "summary"; toCreate: ParsedControlRow[]; alreadyThereCount: number; unusableRowCount: number }
-  | { step: "importing"; total: number; done: number }
-  | { step: "done"; created: number; skipped: number; failed: { reference: string; message: string }[] };
+  | { step: "importing" }
+  | { step: "done"; created: number; skipped: number; failed: { label: string; message: string }[] };
 
 /**
  * Fills a Framework's Controls from the SRE team's CSV export in one pass,
  * instead of an Admin opening ControlFormDialog a hundred times. Parsing
  * and the title rule live in parseControlsCsv — this component only reads
  * the file, shows what parseControlsCsv found before anything is written,
- * and then creates the usable rows one request at a time, since the
- * backend has no bulk endpoint.
+ * and then sends every usable row to the backend's bulk endpoint in one
+ * request.
  *
  * Opened either by the browse button below or by a drop on the Controls
  * column — a dropped file arrives as `initialFile` and is fed straight
@@ -144,36 +163,66 @@ export default function ImportControlsDialog({
   async function handleConfirm() {
     if (phase.step !== "summary") return;
     const { toCreate, alreadyThereCount } = phase;
-    setPhase({ step: "importing", total: toCreate.length, done: 0 });
+    setPhase({ step: "importing" });
 
-    let created = 0;
-    const failed: { reference: string; message: string }[] = [];
-
-    // One request per Control, in order, because the backend has no bulk
-    // endpoint. A failed row is recorded and the loop moves on rather than
-    // stopping, so one bad row never costs the other ninety-nine.
-    for (const row of toCreate) {
-      try {
-        await controlsApi.create({
-          framework_id: frameworkId,
+    // One request for the whole file. The server checks every row before
+    // writing any of them and commits once, so there is nothing to count
+    // as it runs — either the request comes back with the outcome, or
+    // nothing was written at all.
+    try {
+      const result = await controlsApi.bulkCreate({
+        framework_id: frameworkId,
+        controls: toCreate.map((row) => ({
           control_ref: row.reference,
           title: row.title,
           description: row.description,
-        });
-        created += 1;
-      } catch (err) {
-        const detail = isAxiosError(err)
-          ? (err.response?.data as { detail?: string } | undefined)?.detail
-          : undefined;
-        failed.push({ reference: row.reference, message: detail || "The server rejected this row." });
-      }
-      setPhase((prev) => (prev.step === "importing" ? { ...prev, done: prev.done + 1 } : prev));
-    }
+        })),
+      });
 
-    // Refresh the Controls column with what's already loaded for this
-    // framework rather than starting a second query for the same data.
-    onImported();
-    setPhase({ step: "done", created, skipped: alreadyThereCount, failed });
+      // Refresh the Controls column with what's already loaded for this
+      // framework rather than starting a second query for the same data.
+      onImported();
+
+      // Both counts, added, because the two sides skip different rows and
+      // neither number is the whole answer on its own. The rows this
+      // browser already knew were stored never went in the request at all
+      // (see `toCreate` above), so the server cannot count them; the
+      // server's own count catches what this page's snapshot missed,
+      // which is what another Admin importing at the same moment looks
+      // like. Reporting the server's count alone is what made a full
+      // re-import say "0 skipped" one screen after the summary said 103.
+      //
+      // A rejected row is labelled by its reference where it has one, and
+      // by its position in the file where it does not: a row rejected for
+      // a *blank* reference has nothing else to identify it by.
+      setPhase({
+        step: "done",
+        created: result.created.length,
+        skipped: alreadyThereCount + result.skipped,
+        failed: result.rejected.map((r) => ({
+          label: r.control_ref || `Row ${r.row_number}`,
+          message: r.reason,
+        })),
+      });
+    } catch (err) {
+      // A whole-request failure, a network error or the server refusing
+      // the request outright (missing Framework, over the row limit, a
+      // conflict, a non-admin caller). Nothing was written, so this goes
+      // back to "error" with whatever plain reason the server gave.
+      //
+      // `detail` arrives in one of two shapes and both have to be read.
+      // The backend's own refusals carry a plain string. FastAPI's
+      // request-validation 422 carries a *list* of error objects instead,
+      // which is what a file over the row limit now comes back as, since
+      // that cap lives on the schema. Handing either the list or one of
+      // its objects to the error screen would render an object as a React
+      // child and blank the dialog, so the message is pulled out of the
+      // first entry rather than the structure being passed along.
+      const detail = isAxiosError(err)
+        ? (err.response?.data as { detail?: unknown } | undefined)?.detail
+        : undefined;
+      setPhase({ step: "error", message: readDetail(detail) });
+    }
   }
 
   function handleClose() {
@@ -291,13 +340,8 @@ export default function ImportControlsDialog({
 
         {phase.step === "importing" && (
           <Stack spacing={2} sx={{ pt: 1 }}>
-            <Typography variant="body2">
-              Creating controls… {phase.done} of {phase.total}
-            </Typography>
-            <LinearProgress
-              variant="determinate"
-              value={phase.total === 0 ? 100 : (phase.done / phase.total) * 100}
-            />
+            <Typography variant="body2">Creating controls…</Typography>
+            <LinearProgress />
           </Stack>
         )}
 
@@ -329,8 +373,8 @@ export default function ImportControlsDialog({
                 </Typography>
                 <Stack spacing={0.25}>
                   {phase.failed.map((f, i) => (
-                    <Typography key={`${f.reference}-${i}`} variant="body2">
-                      • <strong>{f.reference}</strong>: {f.message}
+                    <Typography key={`${f.label}-${i}`} variant="body2">
+                      • <strong>{f.label}</strong>: {f.message}
                     </Typography>
                   ))}
                 </Stack>

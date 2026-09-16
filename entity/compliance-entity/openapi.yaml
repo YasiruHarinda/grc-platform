@@ -1184,6 +1184,45 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /audits/{auditId}/controls/{controlId}/requirement-type:
+    patch:
+      tags:
+      - Controls
+      summary: Change an untouched control's requirement type
+      description: Switches a control between DESIGN and OE while no work has started on it. DESIGN to OE creates a PENDING population round and resets the status to POPULATION_PENDING; OE to DESIGN removes the PENDING population round and resets the status to EVIDENCE_PENDING. 409 once work has started.
+      operationId: changeRequirementType
+      parameters:
+      - name: auditId
+        in: path
+        required: true
+        schema:
+          type: integer
+      - name: controlId
+        in: path
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeRequirementTypeRequest'
+      responses:
+        '200':
+          description: Requirement type changed, or returned unchanged when already the requested type (no population required in that case)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditControl'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /audit-controls/{controlId}/evidence-assignment:
     get:
       tags:
@@ -4377,6 +4416,27 @@ components:
       properties:
         status:
           type: string
+        updatedBy:
+          type: string
+    ChangeRequirementTypeRequest:
+      type: object
+      required:
+      - requirementType
+      - updatedBy
+      properties:
+        requirementType:
+          type: string
+          enum:
+          - DESIGN
+          - OE
+        population:
+          description: Required when requirementType is OE; ignored for DESIGN.
+          allOf:
+          - $ref: '#/components/schemas/InlinePopulationRequest'
+        control:
+          description: Other control field edits applied in the same transaction. status, comments and sampleReference are ignored.
+          allOf:
+          - $ref: '#/components/schemas/UpdateControlRequest'
         updatedBy:
           type: string
     BulkCreateControlsRequest:

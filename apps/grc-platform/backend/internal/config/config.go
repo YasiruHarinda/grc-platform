@@ -19,6 +19,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -47,6 +48,63 @@ type Config struct {
 	// the overdue-risk escalation and the audit due-date reminder digest. See
 	// SchedulerEnabledDefault.
 	SchedulerEnabled bool
+	// Portal configures the Evidence Portal machine-to-machine ingress
+	// (/api/v1/evidence-portal/*). Zero value means the ingress does not mount.
+	Portal PortalConfig
+}
+
+// PortalConfig configures the Evidence Portal client-credentials ingress.
+// Audience is the expected `aud`; Clients maps each accepted client_id (token
+// `sub`) to its audit_team.id, verified to still exist at startup by cmd/server.
+type PortalConfig struct {
+	Audience string
+	Clients  map[string]int
+}
+
+// configured reports whether both halves of the portal config are present.
+// The full mount gate additionally requires a real token validator — see
+// Config.PortalEnabled.
+func (p PortalConfig) configured() bool {
+	return p.Audience != "" && len(p.Clients) > 0
+}
+
+// PortalEnabled is the three-term mount gate: audience + clients + signature
+// verification. The machine ingress is never extended the local-dev
+// unverified-decode bypass, so it simply does not mount when that is on.
+func (c Config) PortalEnabled() bool {
+	return c.Portal.configured() && c.Auth.TokenValidatorEnabled
+}
+
+// parsePortalClients parses PORTAL_CLIENTS ("client_id:team_id[,client_id:team_id...]")
+// into a client_id -> audit_team.id map. A team id is checked against the live
+// team list at startup by cmd/server.resolvePortalClients, not here.
+func parsePortalClients(raw string) (map[string]int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	out := make(map[string]int)
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		id, teamID, ok := strings.Cut(entry, ":")
+		id = strings.TrimSpace(id)
+		teamID = strings.TrimSpace(teamID)
+		if !ok || id == "" || teamID == "" {
+			return nil, fmt.Errorf("PORTAL_CLIENTS entry %q is not in client_id:team_id form", entry)
+		}
+		n, err := strconv.Atoi(teamID)
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("PORTAL_CLIENTS entry %q: team_id must be a positive integer", entry)
+		}
+		if _, dup := out[id]; dup {
+			return nil, fmt.Errorf("PORTAL_CLIENTS entry %q: client_id %q is already bound to a team", entry, id)
+		}
+		out[id] = n
+	}
+	return out, nil
 }
 
 // SchedulerEnabledDefault is the built-in setting for the background
@@ -317,6 +375,24 @@ func Load() (Config, error) {
 		authCfg.IdPs = idps
 	}
 
+	portalAudience := strings.TrimSpace(os.Getenv("PORTAL_AUTH_AUDIENCE"))
+	portalClients, err := parsePortalClients(os.Getenv("PORTAL_CLIENTS"))
+	if err != nil {
+		return Config{}, err
+	}
+	// Both halves or neither — a half-configured portal must fail at startup.
+	if (portalAudience == "") != (len(portalClients) == 0) {
+		return Config{}, fmt.Errorf("PORTAL_AUTH_AUDIENCE and PORTAL_CLIENTS must be set together or not at all")
+	}
+	// Issuer and keys are shared by construction, so `aud` is the only thing
+	// separating a portal token from a webapp user token — a collision merges
+	// the two token families.
+	for _, idp := range authCfg.IdPs {
+		if portalAudience != "" && portalAudience == idp.Audience {
+			return Config{}, fmt.Errorf("PORTAL_AUTH_AUDIENCE must differ from AUTH_AUDIENCE (%q)", idp.Audience)
+		}
+	}
+
 	complianceEntityBaseURL, err := mustEnv("COMPLIANCE_ENTITY_BASE_URL")
 	if err != nil {
 		return Config{}, err
@@ -432,6 +508,7 @@ func Load() (Config, error) {
 		},
 		LeadEscalationEmailsEnabled: leadEscalationEmailsEnabled(),
 		SchedulerEnabled:            schedulerEnabled(),
+		Portal:                      PortalConfig{Audience: portalAudience, Clients: portalClients},
 	}, nil
 }
 

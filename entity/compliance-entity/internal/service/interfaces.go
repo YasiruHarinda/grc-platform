@@ -87,6 +87,9 @@ type ControlService interface {
 	// demotion only), cascading dependent population/evidence rows and
 	// stamping the override marker. See ControlRepository.OverrideControlStatus.
 	OverrideControlStatus(ctx context.Context, auditID, controlID int, req domain.OverrideControlStatusRequest) (domain.AuditControl, error)
+	// ChangeRequirementType switches an untouched control between DESIGN and
+	// OE. See ControlRepository.ChangeRequirementType.
+	ChangeRequirementType(ctx context.Context, auditID, controlID int, req domain.ChangeRequirementTypeRequest) (domain.AuditControl, error)
 	// DeleteControl removes a control; force skips the evidence/population
 	// guard so an admin can still delete a control work has started on.
 	DeleteControl(ctx context.Context, auditID, controlID int, force bool) error

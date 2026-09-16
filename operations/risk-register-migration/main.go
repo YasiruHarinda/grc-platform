@@ -246,6 +246,16 @@ func run(ctx context.Context, cfg Config) int {
 		}
 	}
 
+	// ── Verify (plan §verification) — read the entity back and diff it
+	// against the CSV, unconditionally, regardless of what this run itself
+	// wrote (verify.go covers every migratable row, including ones already
+	// complete from an earlier run and Skipped this time) ────────────────────
+	if err := verifyMigration(ctx, log, ec, refs, cfg.MigrationDate, rows, rep); err != nil {
+		log.Error("verification failed — could not confirm the entity matches the CSV", "err", err)
+		rep.Emit(os.Stdout)
+		return exitStructural
+	}
+
 	rep.Emit(os.Stdout)
 	if rep.HasFindings() {
 		return exitFindings
