@@ -20,20 +20,29 @@ this repo). Section references (§n) in the code comments point there.
 4. **Dry run** (default) stops here and prints the report.
 5. **Reconstruct resume state** from the entity (§8) — no ledger file.
 6. **Write** each row in `Migration ID` order (§5):
-   - `POST /risks` (born `PENDING_RISK_OWNER_APPROVAL`, `created_by` = marker)
+   - `POST /risks` (born `PENDING_RISK_OWNER_APPROVAL`, `created_by` = marker;
+     `likelihood`/`impact` in this call are the row's **Gross** values, and
+     set the immutable `gross_score_id`)
+   - Residual differs from Gross → `POST /risks/{id}/assessments` with the
+     row's **Residual** values, so the CSV's current-state numbers show up
+     as a real reassessment (skipped entirely when Residual == Gross)
    - walk `workflow_status` to the row's bucket via `PATCH` (no-op when
      `from == to`)
    - `IN_REMEDIATION` + overdue → `POST /risks/{id}/escalations` to suppress the
      nightly escalation job
-   - `IN_REMEDIATION` → ensure the §6 role grants
+   - `IN_REMEDIATION` → ensure the §6 role grants (the ACCEPT+HIGH management
+     grant is gated on **Gross** likelihood × impact ≥ 7, matching the live
+     backend's gross-based approval rule)
    - `CLOSED` → also `PATCH` the action plan to `COMPLETED`
 7. **Verify** (real run only, `verify.go`) — re-reads every migratable row back
-   from the entity (`GET /risks/{id}/detail` + escalations + grants) and diffs
-   it, field by field, against the CSV; also confirms every rejected row still
-   has no matching risk. Runs unconditionally, covering every migratable row —
-   including ones already complete from an earlier run and `Skipped` this
-   time — not just what this invocation wrote. A disagreement becomes a
-   `MISMATCH` finding in the same report as `REJECT`/`WARN`.
+   from the entity (`GET /risks/{id}/detail` + escalations + grants, plus
+   `GET /risks/{id}/assessments` for any row where Residual differs from
+   Gross) and diffs it, field by field, against the CSV; also confirms every
+   rejected row still has no matching risk. Runs unconditionally, covering
+   every migratable row — including ones already complete from an earlier
+   run and `Skipped` this time — not just what this invocation wrote. A
+   disagreement becomes a `MISMATCH` finding in the same report as
+   `REJECT`/`WARN`.
 
 ## Buckets
 
@@ -199,11 +208,15 @@ compliance-entity API this tool writes through, never MySQL directly:
   already-`Skipped` rows are re-checked too) gets its risk fetched via
   `GET /risks/{id}/detail` and diffed field by field: title, description,
   register/team/category/compliance-ref ids, owner/assigner/mgmt-approver/
-  action-owner ids, dates, likelihood/impact, treatment strategy, workflow
-  status, and the action plan (status, description, steps, and — for `CLOSED`
-  — its completed date). Escalations and grants are checked both ways: missing
-  (expected but absent) and unexpected (a marker-created escalation/grant
-  present that no migratable row calls for).
+  action-owner ids, dates, gross likelihood/impact, treatment strategy,
+  workflow status, and the action plan (status, description, steps, and —
+  for `CLOSED` — its completed date). Escalations and grants are checked both
+  ways: missing (expected but absent) and unexpected (a marker-created
+  escalation/grant present that no migratable row calls for).
+- Every row whose Residual differs from its Gross also gets a
+  `GET /risks/{id}/assessments` call: a marker-authored entry must exist with
+  residual likelihood/impact matching the CSV, or it's a `MISMATCH` — either
+  "no residual assessment" (missing) or a value diff (wrong).
 - Every **rejected** row gets a cheap negative check: no marker-created risk
   should exist for it.
 
