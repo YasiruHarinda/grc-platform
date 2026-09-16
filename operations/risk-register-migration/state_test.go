@@ -33,6 +33,7 @@ type stateStub struct {
 	escalations map[int][]Escalation
 	plans       map[int][]ActionPlanView
 	grants      map[int][]Grant
+	assessments map[int][]Assessment
 	pageSize    int // force small pages to exercise paging; 0 = honour the request
 
 	searchCalls int
@@ -74,6 +75,9 @@ func (s *stateStub) client(t *testing.T) *EntityClient {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/action-plans"):
 			id := pathID(r.URL.Path, "/risks/", "/action-plans")
 			_ = json.NewEncoder(w).Encode(map[string]any{"plans": s.plans[id]})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/assessments"):
+			id := pathID(r.URL.Path, "/risks/", "/assessments")
+			_ = json.NewEncoder(w).Encode(map[string]any{"assessments": s.assessments[id]})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/grants/user/"):
 			id, _ := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/grants/user/"))
 			_ = json.NewEncoder(w).Encode(map[string]any{"userId": id, "grants": s.grants[id]})
@@ -104,7 +108,8 @@ func baseRow(migID int, title, status string) Row {
 		SourceRegisterID: 8, AssignmentTeamID: 1,
 		OwnerID: 100, AssignerID: 101, ManagementApproverID: 102,
 		WorkflowStatus: status, ImplementationDate: "2020-01-01",
-		TreatmentStrategy: "REMEDIATE", Likelihood: 2, Impact: 2,
+		TreatmentStrategy: "REMEDIATE",
+		GrossLikelihood:   2, GrossImpact: 2, ResidualLikelihood: 2, ResidualImpact: 2,
 	}
 }
 
@@ -211,7 +216,8 @@ func TestReconstructState_ConditionalManagementGrant(t *testing.T) {
 	row := baseRow(1, "ACCEPT high", "IN_REMEDIATION")
 	row.ImplementationDate = "2099-01-01" // not overdue
 	row.TreatmentStrategy = "ACCEPT"
-	row.Likelihood, row.Impact = 3, 3 // 9 >= 7 -> management grant required
+	row.GrossLikelihood, row.GrossImpact = 3, 3 // 9 >= 7 -> management grant required
+	row.ResidualLikelihood, row.ResidualImpact = 3, 3
 
 	prog, _ := run6(t, s, rd, []Row{row})
 	if prog[1].Progress != ProgressEscalated {
@@ -223,6 +229,39 @@ func TestReconstructState_ConditionalManagementGrant(t *testing.T) {
 	prog, _ = run6(t, s, rd, []Row{row})
 	if prog[1].Progress != ProgressComplete {
 		t.Fatalf("with all three grants -> want ProgressComplete, got %v", prog[1])
+	}
+}
+
+func TestReconstructState_ResidualAssessmentOutstanding(t *testing.T) {
+	rd := sheetTestRefData(t)
+	s := &stateStub{
+		t:     t,
+		risks: []Risk{markerRisk(70, "Residual differs", 8, 2025, "Q3", "IN_REMEDIATION")},
+		grants: map[int][]Grant{
+			100: {{RoleID: 10, ScopeType: "RISK_TEAM", ScopeID: 1}},
+			101: {{RoleID: 11, ScopeType: "RISK_TEAM", ScopeID: 8}},
+		},
+	}
+	row := baseRow(1, "Residual differs", "IN_REMEDIATION")
+	row.ImplementationDate = "2099-01-01"             // not overdue — isolate the assessment gate
+	row.ResidualLikelihood, row.ResidualImpact = 3, 3 // differs from Gross (2,2)
+
+	prog, _ := run6(t, s, rd, []Row{row})
+	if prog[1].Progress == ProgressComplete {
+		t.Fatalf("residual assessment not yet written — must not report ProgressComplete, got %v", prog[1])
+	}
+	if prog[1].HasAssessment {
+		t.Errorf("HasAssessment should be false, got %v", prog[1])
+	}
+
+	// A marker-authored assessment already exists -> now complete.
+	s.assessments = map[int][]Assessment{70: {{ID: 1, AssessedBy: marker}}}
+	prog, _ = run6(t, s, rd, []Row{row})
+	if prog[1].Progress != ProgressComplete {
+		t.Fatalf("assessment present -> want ProgressComplete, got %v", prog[1])
+	}
+	if !prog[1].HasAssessment {
+		t.Errorf("HasAssessment should be true, got %v", prog[1])
 	}
 }
 

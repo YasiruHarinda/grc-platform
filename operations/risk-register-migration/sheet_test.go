@@ -85,8 +85,10 @@ func TestMapRow_CleanRow(t *testing.T) {
 		"Select Employee/ Name of External Person/ Tool": "Employee One",
 		"Risk Identified Date":                           "45667.0",
 		"Risk Assigned To":                               "User1@wso2.com",
-		"Likelihood":                                     "3.0",
-		"Impact":                                         "2.0",
+		"Gross Likelihood":                               "3.0",
+		"Gross Impact":                                   "2.0",
+		"Residual Likelihood":                            "2.0",
+		"Residual Impact":                                "2.0",
 		"Impact Description":                             "service interruption",
 		"Implementation Date":                            "45838.0",
 		"Reassessment Date":                              "30th Sep 2025",
@@ -117,8 +119,11 @@ func TestMapRow_CleanRow(t *testing.T) {
 	if r.MigrationID != 1 || r.RiskYear != 2025 || r.RiskQuarter != "Q3" {
 		t.Errorf("scalars: %+v", r)
 	}
-	if r.Likelihood != 3 || r.Impact != 2 {
-		t.Errorf("likelihood/impact: %d/%d", r.Likelihood, r.Impact)
+	if r.GrossLikelihood != 3 || r.GrossImpact != 2 {
+		t.Errorf("gross likelihood/impact: %d/%d", r.GrossLikelihood, r.GrossImpact)
+	}
+	if r.ResidualLikelihood != 2 || r.ResidualImpact != 2 {
+		t.Errorf("residual likelihood/impact: %d/%d", r.ResidualLikelihood, r.ResidualImpact)
 	}
 	if r.TreatmentStrategy != "ACCEPT" || r.WorkflowStatus != "IN_REMEDIATION" || r.IdentifiedByType != "EMPLOYEE" {
 		t.Errorf("enums: %q %q %q", r.TreatmentStrategy, r.WorkflowStatus, r.IdentifiedByType)
@@ -162,8 +167,10 @@ func TestMapRow_MessyRowRejects(t *testing.T) {
 		"Risk Identified By":            "Robot",
 		"Risk Identified Date":          "1/2/2024",
 		"Risk Assigned To":              "x@wso2.com",
-		"Likelihood":                    "5.0",
-		"Impact":                        "0",
+		"Gross Likelihood":              "5.0",
+		"Gross Impact":                  "0",
+		"Residual Likelihood":           "5.0",
+		"Residual Impact":               "0",
 		"Implementation Date":           "",
 		"Reassessment Date":             "whenever",
 		"Assignment Team":               "",
@@ -185,7 +192,8 @@ func TestMapRow_MessyRowRejects(t *testing.T) {
 
 	wantReject := []string{
 		"Year", "Quarter", "Risk Title", "Source Register", "Risk Category",
-		"Likelihood", "Impact", "Implementation Date", "Assignment Team",
+		"Gross Likelihood", "Gross Impact", "Residual Likelihood", "Residual Impact",
+		"Implementation Date", "Assignment Team",
 		"Treatment Strategy", "Workflow Status", "Security Compliance Reference",
 	}
 	for _, f := range wantReject {
@@ -225,7 +233,9 @@ func TestParseSheet_DuplicateMigrationIDRejects(t *testing.T) {
 	base := map[string]string{
 		"Year": "2025", "Quarter": "Q3", "Source Register": "Asgardeo",
 		"Security Compliance Reference": "ISO", "Risk Category": "Access Control & Credentials",
-		"Risk Assigned To": "a@wso2.com", "Likelihood": "3", "Impact": "2",
+		"Risk Assigned To": "a@wso2.com",
+		"Gross Likelihood": "3", "Gross Impact": "2",
+		"Residual Likelihood": "3", "Residual Impact": "2",
 		"Implementation Date": "45838.0", "Assignment Team": "Legal",
 		"Risk Owner": "b@wso2.com", "Management Approver": "c@wso2.com",
 		"Action Plan Description": "x", "Action Steps": "step 1",

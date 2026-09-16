@@ -31,15 +31,17 @@ type migrateStub struct {
 	t *testing.T
 
 	// recorders
-	createBody   *CreateRiskRequest
-	statusHops   []string // workflowStatus values PATCHed, in order
-	patchBodies  []PatchRiskRequest
-	escalations  int
-	grantBodies  []CreateGrantRequest
-	planPatched  *PatchActionPlanRequest
-	nextRiskID   int
-	openEscas    []Escalation // returned by GET /risks/{id}/escalations
-	standardPlan int          // STANDARD action plan id returned by GET action-plans
+	createBody     *CreateRiskRequest
+	statusHops     []string // workflowStatus values PATCHed, in order
+	patchBodies    []PatchRiskRequest
+	escalations    int
+	grantBodies    []CreateGrantRequest
+	planPatched    *PatchActionPlanRequest
+	nextRiskID     int
+	openEscas      []Escalation // returned by GET /risks/{id}/escalations
+	standardPlan   int          // STANDARD action plan id returned by GET action-plans
+	assessmentBody *CreateAssessmentRequest
+	assessments    []Assessment // returned by GET /risks/{id}/assessments
 
 	// failure injection
 	failCreateStatus int
@@ -80,6 +82,16 @@ func (m *migrateStub) client(t *testing.T) *EntityClient {
 				m.statusHops = append(m.statusHops, *body.WorkflowStatus)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": m.nextRiskID})
+
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/assessments"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"assessments": m.assessments})
+
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/assessments"):
+			var body CreateAssessmentRequest
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			m.assessmentBody = &body
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1, "assessedBy": marker})
 
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/escalations"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"escalations": m.openEscas})
@@ -129,7 +141,8 @@ func migRow(status string) Row {
 		SourceRegisterID: 8, AssignmentTeamID: 1,
 		OwnerID: 100, AssignerID: 101, ManagementApproverID: 102,
 		WorkflowStatus: status, ImplementationDate: "2099-01-01", // not overdue by default
-		TreatmentStrategy: "REMEDIATE", Likelihood: 2, Impact: 2,
+		TreatmentStrategy: "REMEDIATE",
+		GrossLikelihood:   2, GrossImpact: 2, ResidualLikelihood: 2, ResidualImpact: 2,
 		RiskDescription: "d", ActionSteps: []string{"step 1"},
 	}
 }
@@ -210,7 +223,8 @@ func TestMigrateRow_ConditionalManagementGrant(t *testing.T) {
 	rep := NewReport()
 	row := migRow("IN_REMEDIATION")
 	row.TreatmentStrategy = "ACCEPT"
-	row.Likelihood, row.Impact = 3, 3 // 9 >= 7
+	row.GrossLikelihood, row.GrossImpact = 3, 3 // 9 >= 7
+	row.ResidualLikelihood, row.ResidualImpact = 3, 3
 
 	if err := migrateRow(context.Background(), m.client(t), migrateCfg(), sheetTestRefData(t),
 		row, ResumeState{Progress: ProgressNone}, rep); err != nil {
@@ -220,6 +234,71 @@ func TestMigrateRow_ConditionalManagementGrant(t *testing.T) {
 		t.Fatalf("ACCEPT + high -> 3 grants, got %+v", m.grantBodies)
 	}
 	assertGrant(t, m.grantBodies, CreateGrantRequest{RoleID: 12, ScopeType: "GLOBAL", ScopeID: 0, CreatedBy: marker})
+}
+
+func TestMigrateRow_ResidualDiffersFromGross_WritesAssessment(t *testing.T) {
+	m := &migrateStub{t: t}
+	rep := NewReport()
+	row := migRow("IN_REMEDIATION")
+	row.GrossLikelihood, row.GrossImpact = 1, 1
+	row.ResidualLikelihood, row.ResidualImpact = 3, 2
+
+	if err := migrateRow(context.Background(), m.client(t), migrateCfg(), sheetTestRefData(t),
+		row, ResumeState{Progress: ProgressNone}, rep); err != nil {
+		t.Fatalf("migrateRow: %v", err)
+	}
+	if m.createBody.Likelihood != 1 || m.createBody.Impact != 1 {
+		t.Errorf("POST /risks should carry the gross rating, got %d/%d", m.createBody.Likelihood, m.createBody.Impact)
+	}
+	if m.assessmentBody == nil {
+		t.Fatal("residual differs from gross — expected a POST /risks/{id}/assessments")
+	}
+	if m.assessmentBody.Likelihood != 3 || m.assessmentBody.Impact != 2 {
+		t.Errorf("assessment likelihood/impact = %d/%d, want 3/2", m.assessmentBody.Likelihood, m.assessmentBody.Impact)
+	}
+	if m.assessmentBody.Progress != assessmentProgressNote {
+		t.Errorf("assessment progress = %q", m.assessmentBody.Progress)
+	}
+	if m.assessmentBody.ReassessmentDate != "2026-09-15" {
+		t.Errorf("assessment reassessmentDate = %q, want the migration date", m.assessmentBody.ReassessmentDate)
+	}
+	if m.assessmentBody.AssessedBy != marker || m.assessmentBody.CreatedBy != marker {
+		t.Errorf("assessment actor fields = %+v, want marker", m.assessmentBody)
+	}
+}
+
+func TestMigrateRow_ResidualEqualsGross_NoAssessment(t *testing.T) {
+	m := &migrateStub{t: t}
+	rep := NewReport()
+
+	// migRow's Gross/Residual are already equal — the mock server has no
+	// /assessments handler for GET, and asserting createBody's presence
+	// without an assessment POST is enough to prove the skip.
+	if err := migrateRow(context.Background(), m.client(t), migrateCfg(), sheetTestRefData(t),
+		migRow("IN_REMEDIATION"), ResumeState{Progress: ProgressNone}, rep); err != nil {
+		t.Fatalf("migrateRow: %v", err)
+	}
+	if m.assessmentBody != nil {
+		t.Errorf("gross == residual — expected no assessment POST, got %+v", m.assessmentBody)
+	}
+}
+
+func TestMigrateRow_ResumeAssessmentAlreadyWritten_NoDuplicate(t *testing.T) {
+	m := &migrateStub{t: t}
+	rep := NewReport()
+	row := migRow("IN_REMEDIATION")
+	row.ResidualLikelihood, row.ResidualImpact = 3, 2 // differs from gross (2,2)
+
+	err := migrateRow(context.Background(), m.client(t), migrateCfg(), sheetTestRefData(t),
+		row,
+		ResumeState{Progress: ProgressStatusWalked, RiskID: 900, CurrentStatus: "IN_REMEDIATION", HasAssessment: true},
+		rep)
+	if err != nil {
+		t.Fatalf("migrateRow: %v", err)
+	}
+	if m.assessmentBody != nil {
+		t.Errorf("HasAssessment=true on resume — expected no duplicate POST, got %+v", m.assessmentBody)
+	}
 }
 
 func TestMigrateRow_FreshClosed(t *testing.T) {

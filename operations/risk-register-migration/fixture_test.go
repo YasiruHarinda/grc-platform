@@ -341,7 +341,8 @@ func TestFixture_Parse(t *testing.T) {
 	// Row 6: the messy row — every listed column REJECTs, three WARN.
 	wantReject := []string{
 		"Year", "Quarter", "Source Register", "Risk Title", "Risk Category",
-		"Likelihood", "Impact", "Implementation Date", "Assignment Team",
+		"Gross Likelihood", "Gross Impact", "Residual Likelihood", "Residual Impact",
+		"Implementation Date", "Assignment Team",
 		"Treatment Strategy", "Workflow Status", "Security Compliance Reference",
 	}
 	for _, code := range wantReject {

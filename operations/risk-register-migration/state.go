@@ -26,8 +26,11 @@ import (
 // RowProgress is how far a row got on a previous run. There is no ledger file
 // (a Manual Task's disk is ephemeral); this is reconstructed from the entity
 // every run (plan §8). Each value means "this stage is done — resume from the
-// next one". ProgressGranted is defined for symmetry but coincides with
-// ProgressComplete: grants are the last step for an IN_REMEDIATION row.
+// next one". ProgressGranted used to coincide with ProgressComplete (grants
+// were the last step for an IN_REMEDIATION row), but no longer does: stageOf
+// now holds a row at ProgressGranted whenever its residual assessment
+// (needsResidualAssessment) is still outstanding, so it is a real, distinct
+// checkpoint — not just defined for symmetry.
 type RowProgress int
 
 const (
@@ -35,7 +38,7 @@ const (
 	ProgressCreated                         // POST /risks done; workflow_status not yet at the target bucket
 	ProgressStatusWalked                    // workflow_status at the target bucket; escalation / plan not yet done
 	ProgressEscalated                       // (IN_REMEDIATION) suppressing escalation present or not needed; grants outstanding
-	ProgressGranted                         // all expected grants present (see note above)
+	ProgressGranted                         // grants (and, for CLOSED, the plan) done; residual assessment may still be outstanding (see note above)
 	ProgressComplete                        // nothing left to do for this row
 )
 
@@ -45,6 +48,11 @@ type ResumeState struct {
 	Progress      RowProgress
 	RiskID        int    // 0 when Progress == ProgressNone
 	CurrentStatus string // the matched risk's workflow_status; "" when there is no match
+	// HasAssessment is true when this migration already wrote the row's
+	// residual assessment (see needsResidualAssessment). Always false when
+	// Progress == ProgressNone — there is no risk yet, so there is nothing to
+	// have written.
+	HasAssessment bool
 }
 
 // riskState is the per-risk snapshot reconstructState pulls together.
@@ -54,6 +62,10 @@ type riskState struct {
 	planDone    bool
 	// grantsByUser is keyed by user.id -> set of grantKey(roleID, scopeType, scopeID).
 	grantsByUser map[int]map[string]struct{}
+	// hasAssessment mirrors ResumeState.HasAssessment — set unconditionally
+	// (unlike escalations/grants, a residual assessment isn't gated by
+	// workflow_status).
+	hasAssessment bool
 }
 
 // statusRank is the linear order of the workflow states this migration walks
@@ -136,6 +148,7 @@ func reconstructState(ctx context.Context, ec *EntityClient, rd RefData, migrati
 				Progress:      stageOf(row, rd, migrationDate, st),
 				RiskID:        matches[0].ID,
 				CurrentStatus: matches[0].WorkflowStatus,
+				HasAssessment: st.hasAssessment,
 			}
 		default:
 			rep.Add(Finding{
@@ -206,7 +219,10 @@ func expectedGrants(row Row, rd RefData) []expectedGrant {
 		{row.OwnerID, rd.RoleIDByName[roleRiskOwner], "RISK_TEAM", row.AssignmentTeamID},
 		{row.AssignerID, rd.RoleIDByName[roleRiskAssigner], "RISK_TEAM", row.SourceRegisterID},
 	}
-	if row.TreatmentStrategy == "ACCEPT" && row.Likelihood*row.Impact >= 7 {
+	// Gross, not residual — mirrors the live backend's needsManagementSignOff,
+	// which is deliberately gross-based so a reassessment that lowers the
+	// residual level can't quietly route a risk around its named approver.
+	if row.TreatmentStrategy == "ACCEPT" && row.GrossLikelihood*row.GrossImpact >= 7 {
 		gs = append(gs, expectedGrant{row.ManagementApproverID, rd.RoleIDByName[roleRiskManagement], "GLOBAL", 0})
 	}
 	return gs
@@ -240,6 +256,14 @@ func fetchRiskState(ctx context.Context, ec *EntityClient, rd RefData, risk *Ris
 		return st, err
 	}
 	st.escalations = escs
+
+	if needsResidualAssessment(row) {
+		assessments, err := ec.ListAssessments(ctx, risk.ID)
+		if err != nil {
+			return st, err
+		}
+		st.hasAssessment = hasMarkerAssessment(assessments)
+	}
 
 	if row.WorkflowStatus == "CLOSED" {
 		plans, err := ec.ListActionPlans(ctx, risk.ID)
@@ -288,6 +312,28 @@ func hasOpenMarkerEscalation(escs []Escalation) bool {
 	return false
 }
 
+// needsResidualAssessment reports whether a row's current state has already
+// diverged from its original gross rating. When it hasn't, the risk is left
+// exactly as a fresh risk-hub risk would be — no reassessment yet, effective
+// score falls back to gross — and no risk_assessment row is written.
+func needsResidualAssessment(row Row) bool {
+	return row.ResidualLikelihood != row.GrossLikelihood || row.ResidualImpact != row.GrossImpact
+}
+
+// assessmentProgressNote is the fixed Progress text migrateRow sends with the
+// synthetic assessment it writes for a residual value inherited from the
+// legacy risk register, not from a real in-app reassessment.
+const assessmentProgressNote = "Migrated from legacy risk register."
+
+func hasMarkerAssessment(assessments []Assessment) bool {
+	for _, a := range assessments {
+		if a.AssessedBy == marker {
+			return true
+		}
+	}
+	return false
+}
+
 // stageOf turns an entity snapshot into a RowProgress: the highest stage
 // already finished for that row (plan §8).
 func stageOf(row Row, rd RefData, migrationDate string, st riskState) RowProgress {
@@ -302,12 +348,18 @@ func stageOf(row Row, rd RefData, migrationDate string, st riskState) RowProgres
 		if !grantsSatisfied(row, rd, st.grantsByUser) {
 			return ProgressEscalated // D10 grants outstanding
 		}
+		if needsResidualAssessment(row) && !st.hasAssessment {
+			return ProgressGranted // grants done; the residual assessment is still outstanding
+		}
 		return ProgressComplete
 	}
 
 	// CLOSED: the only step left after the status walk is completing the plan.
 	if !st.planDone {
 		return ProgressStatusWalked
+	}
+	if needsResidualAssessment(row) && !st.hasAssessment {
+		return ProgressGranted // plan done; the residual assessment is still outstanding
 	}
 	return ProgressComplete
 }
@@ -349,9 +401,14 @@ func walkPath(target string) []string {
 // says are still outstanding. Every step is guarded so a resumed run re-enters
 // safely: status PATCHes are skipped once statusAtLeast(current, hop); the
 // suppressing escalation is guarded by a GET; grant POSTs are idempotent
-// server-side; the plan PATCH is a plain column set.
+// server-side; the plan PATCH is a plain column set; the assessment POST is
+// guarded by rs.HasAssessment (from a fresh GET on resume, per fetchRiskState).
 //
 //  1. POST /risks (createdBy=marker) — only when Progress == ProgressNone
+//     1b. Residual differs from Gross (needsResidualAssessment) and not already
+//     written → POST /risks/{id}/assessments with the row's residual
+//     likelihood/impact, so the migrated risk's current standing shows up
+//     exactly as a real reassessment would (drawer, register, dashboards).
 //  2. walk workflow_status along walkPath(target) via PATCH /risks/{id}
 //     IN_REMEDIATION hop also sets complianceApprovalDate = migrationDate (D9)
 //  3. IN_REMEDIATION + implementation_date < migrationDate + no OPEN marker
@@ -388,6 +445,26 @@ func migrateRow(ctx context.Context, ec *EntityClient, cfg Config, rd RefData, r
 		}
 		riskID = created.ID
 		current = created.WorkflowStatus // PENDING_RISK_OWNER_APPROVAL
+	}
+
+	// ── 1b. residual assessment ─────────────────────────────────────────────
+	if needsResidualAssessment(row) && !rs.HasAssessment {
+		_, err := ec.CreateAssessment(ctx, riskID, CreateAssessmentRequest{
+			Likelihood:       row.ResidualLikelihood,
+			Impact:           row.ResidualImpact,
+			Progress:         assessmentProgressNote,
+			ReassessmentDate: cfg.MigrationDate,
+			AssessedBy:       marker,
+			CreatedBy:        marker,
+		})
+		if err != nil {
+			if isRowLevel(err) {
+				rejectRow(rep, row, "POST /risks/{id}/assessments", err)
+				return nil
+			}
+			return err
+		}
+		rep.AssessmentWritten()
 	}
 
 	// ── 2. status walk ─────────────────────────────────────────────────────
@@ -491,8 +568,8 @@ func buildCreateRiskRequest(row Row) CreateRiskRequest {
 		ManagementApproverID:   row.ManagementApproverID,
 		RiskYear:               row.RiskYear,
 		RiskQuarter:            row.RiskQuarter,
-		Likelihood:             row.Likelihood,
-		Impact:                 row.Impact,
+		Likelihood:             row.GrossLikelihood,
+		Impact:                 row.GrossImpact,
 		TreatmentStrategy:      ptrOrNil(row.TreatmentStrategy),
 		ImplementationDate:     ptrOrNil(row.ImplementationDate),
 		ReassessmentDate:       ptrOrNil(row.ReassessmentDate),
