@@ -63,6 +63,18 @@ func verifyBaseClosedRow() Row {
 	return row
 }
 
+// verifyResidualRow is verifyBaseRow with Residual diverging from Gross, so
+// migrateRow writes a synthetic risk_assessment (needsResidualAssessment) —
+// the case the gross-only check above can't see.
+func verifyResidualRow() Row {
+	row := verifyBaseRow()
+	row.MigrationID = 3
+	row.RiskTitle = "Verify test risk (residual diverges)"
+	row.GrossLikelihood, row.GrossImpact = 2, 2
+	row.ResidualLikelihood, row.ResidualImpact = 1, 1
+	return row
+}
+
 // setupVerifyFixture drives row through migrateRow against a fresh fake
 // entity — the same production code path a real run uses — and returns the
 // resulting risk id plus the fake/client for tampering and re-verification.
@@ -117,6 +129,23 @@ func TestVerifyRow_ClosedBaselineHasNoMismatches(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("unexpected mismatches on a clean CLOSED baseline: %+v", got)
+	}
+}
+
+// TestVerifyRow_ResidualDivergesFromGross_CleanBaselineHasNoMismatches proves
+// verifyRow doesn't false-positive on the residual assessment migrateRow just
+// wrote for it — the counterpart to the two "missed" cases below.
+func TestVerifyRow_ResidualDivergesFromGross_CleanBaselineHasNoMismatches(t *testing.T) {
+	rd := fixtureRefData(t)
+	row := verifyResidualRow()
+	_, ec, riskID := setupVerifyFixture(t, rd, row)
+
+	got, err := verifyRow(context.Background(), ec, rd, "2026-09-15", row, riskID, map[int][]Grant{})
+	if err != nil {
+		t.Fatalf("verifyRow: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("unexpected mismatches on a clean residual-diverges baseline: %+v", got)
 	}
 }
 
@@ -259,6 +288,23 @@ func TestVerifyRow_DetectsFieldMismatches(t *testing.T) {
 				delete(fe.complianceApprovalDate, riskID)
 			},
 			wantField: "Compliance Approval Date",
+		},
+		{
+			name: "residual assessment missing",
+			row:  verifyResidualRow(),
+			tamper: func(fe *fakeEntity, riskID int) {
+				delete(fe.assessments, riskID)
+			},
+			wantField: "Residual Likelihood/Impact",
+		},
+		{
+			name: "residual assessment value diverged",
+			row:  verifyResidualRow(),
+			tamper: func(fe *fakeEntity, riskID int) {
+				as := fe.assessments[riskID]
+				as[len(as)-1].ResidualLikelihood = 3
+			},
+			wantField: "Residual Likelihood",
 		},
 	}
 

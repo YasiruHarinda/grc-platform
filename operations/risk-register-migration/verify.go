@@ -302,6 +302,26 @@ func verifyRow(ctx context.Context, ec *EntityClient, rd RefData, migrationDate 
 		add("Gross Impact", strconv.Itoa(row.GrossImpact), strconv.Itoa(detail.GrossScore.Impact))
 	}
 
+	// The gross score alone doesn't prove the residual write happened — a row
+	// whose Residual differs from its Gross (needsResidualAssessment) must
+	// have a marker-authored risk_assessment carrying that exact value,
+	// checked the same way migrateRow/fetchRiskState detect it on resume
+	// (findMarkerAssessment), or the residual value silently never landed.
+	if needsResidualAssessment(row) {
+		assessments, err := ec.ListAssessments(ctx, riskID)
+		if err != nil {
+			return nil, err
+		}
+		a, found := findMarkerAssessment(assessments)
+		if !found {
+			out = append(out, fieldMismatch{"Residual Likelihood/Impact",
+				fmt.Sprintf("%d/%d", row.ResidualLikelihood, row.ResidualImpact), "no residual assessment"})
+		} else {
+			add("Residual Likelihood", strconv.Itoa(row.ResidualLikelihood), strconv.Itoa(a.ResidualLikelihood))
+			add("Residual Impact", strconv.Itoa(row.ResidualImpact), strconv.Itoa(a.ResidualImpact))
+		}
+	}
+
 	if diff := diffIntSets(row.ComplianceRefIDs, complianceRefIDs(detail.ComplianceReferences)); diff != "" {
 		out = append(out, fieldMismatch{"Security Compliance Reference", fmt.Sprint(row.ComplianceRefIDs), diff})
 	}

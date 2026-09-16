@@ -106,6 +106,7 @@ type fakeEntity struct {
 	escalations map[int][]Escalation // by risk id
 	planStatus  map[int]string       // by risk id; "" == PENDING
 	grants      map[int][]Grant      // by user id
+	assessments map[int][]Assessment // by risk id
 	users       map[string]int       // uuid -> user id
 
 	// createReqByRisk and the two maps below back the /detail and
@@ -136,7 +137,7 @@ type grantCall struct {
 func newFakeEntity(t *testing.T) *fakeEntity {
 	return &fakeEntity{
 		t: t, risks: map[int]*Risk{}, escalations: map[int][]Escalation{},
-		planStatus: map[int]string{}, grants: map[int][]Grant{}, users: map[string]int{},
+		planStatus: map[int]string{}, grants: map[int][]Grant{}, assessments: map[int][]Assessment{}, users: map[string]int{},
 		createReqByRisk: map[int]CreateRiskRequest{}, complianceApprovalDate: map[int]string{},
 		planCompletedDate: map[int]string{},
 		nextRiskID:        1000, nextUserID: 500,
@@ -274,6 +275,19 @@ func (fe *fakeEntity) handle(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && strings.HasSuffix(p, "/escalations"):
 		id, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(p, "/risks/"), "/escalations"))
 		_ = enc.Encode(map[string]any{"escalations": fe.escalations[id]})
+
+	case r.Method == http.MethodGet && strings.HasSuffix(p, "/assessments"):
+		id, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(p, "/risks/"), "/assessments"))
+		_ = enc.Encode(map[string]any{"assessments": fe.assessments[id]})
+
+	case r.Method == http.MethodPost && strings.HasSuffix(p, "/assessments"):
+		id, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(p, "/risks/"), "/assessments"))
+		var body CreateAssessmentRequest
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		a := Assessment{ID: len(fe.assessments[id]) + 1, AssessedBy: body.AssessedBy, ResidualLikelihood: body.Likelihood, ResidualImpact: body.Impact}
+		fe.assessments[id] = append(fe.assessments[id], a)
+		w.WriteHeader(http.StatusCreated)
+		_ = enc.Encode(a)
 
 	case r.Method == http.MethodPost && strings.HasSuffix(p, "/escalations"):
 		id, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(p, "/risks/"), "/escalations"))

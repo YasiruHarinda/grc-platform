@@ -218,11 +218,15 @@ type CreateAssessmentRequest struct {
 }
 
 // Assessment is the trimmed view of domain.RiskAssessment we need back from
-// POST/GET /risks/{riskId}/assessments — just enough to detect, on resume,
-// whether this migration already wrote the residual assessment for a risk.
+// POST/GET /risks/{riskId}/assessments: enough to detect, on resume, whether
+// this migration already wrote the residual assessment for a risk (ID,
+// AssessedBy), and enough for verify.go to confirm the value it wrote is
+// still the value the CSV asked for (ResidualLikelihood, ResidualImpact).
 type Assessment struct {
-	ID         int    `json:"id"`
-	AssessedBy string `json:"assessedBy"`
+	ID                 int    `json:"id"`
+	AssessedBy         string `json:"assessedBy"`
+	ResidualLikelihood int    `json:"residualLikelihood"`
+	ResidualImpact     int    `json:"residualImpact"`
 }
 
 type CreateUserRequest struct {

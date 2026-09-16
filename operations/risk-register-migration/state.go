@@ -357,12 +357,21 @@ func needsResidualAssessment(row Row) bool {
 const assessmentProgressNote = "Migrated from legacy risk register."
 
 func hasMarkerAssessment(assessments []Assessment) bool {
+	_, ok := findMarkerAssessment(assessments)
+	return ok
+}
+
+// findMarkerAssessment returns this migration's own assessment entry, if any
+// — the one whose AssessedBy is the marker. Shared by fetchRiskState's
+// existence check and verify.go's value check, so both agree on what "this
+// migration's assessment" means.
+func findMarkerAssessment(assessments []Assessment) (Assessment, bool) {
 	for _, a := range assessments {
 		if a.AssessedBy == marker {
-			return true
+			return a, true
 		}
 	}
-	return false
+	return Assessment{}, false
 }
 
 // stageOf turns an entity snapshot into a RowProgress: the highest stage
