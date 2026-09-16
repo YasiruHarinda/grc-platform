@@ -29,13 +29,20 @@ export interface DueInfo {
 }
 
 // dueInfo derives a color, a relative label, and a sort key from a YYYY-MM-DD date.
+//
+// "Today" is anchored to the UTC calendar date, not the browser's local one —
+// the DB connection is pinned to UTC (see normalizeDSN in entity/compliance-entity's
+// db/mysql.go), so the Work Queue's Due Soon/Overdue buckets are computed against
+// UTC's CURDATE(). For a user in a timezone ahead of UTC, local midnight arrives
+// hours before UTC midnight; using local "today" here made a due date already
+// bucketed as "Due Soon" by the backend render as "1d overdue" client-side.
 export function dueInfo(dueDate: string | null | undefined): DueInfo {
   if (!dueDate) {
     return { color: "text.disabled", label: "—", sortKey: Number.POSITIVE_INFINITY, days: Number.POSITIVE_INFINITY };
   }
-  const due = new Date(`${dueDate}T00:00:00`);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const due = new Date(`${dueDate}T00:00:00Z`);
+  const now = new Date();
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const days = Math.round((due.getTime() - today.getTime()) / 86_400_000);
 
   let color = "text.primary";
