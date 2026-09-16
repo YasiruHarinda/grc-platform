@@ -271,7 +271,7 @@ func buildPortalStack(t *testing.T, fakeEnt *fakeEntity, withDirectory bool) *ht
 	}
 
 	verifier, err := middleware.NewIdPVerifierWithKeyFuncs(
-		[]config.IdPConfig{{Issuer: epIssuer, Audience: epWebAud}},
+		[]config.IdPConfig{{Issuer: epIssuer, Audiences: []string{epWebAud}}},
 		map[string]jwt.Keyfunc{epIssuer: func(*jwt.Token) (any, error) { return &epKey.PublicKey, nil }},
 	)
 	if err != nil {

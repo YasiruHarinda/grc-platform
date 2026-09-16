@@ -89,7 +89,7 @@ Copy `.env` and fill in the values:
 |---|---|
 | `AUTH_JWKS_ENDPOINT` | Asgardeo JWKS URL |
 | `AUTH_ISSUER` | Expected `iss` claim |
-| `AUTH_AUDIENCE` | Expected `aud` claim |
+| `AUTH_AUDIENCE` | Expected `aud` claim. Comma-separated to front this backend with more than one application — each mints tokens carrying its own client ID, and a token matching any entry is accepted. Every entry must differ from `PORTAL_AUTH_AUDIENCE`; an empty entry (stray comma) fails startup |
 | `AUTH_TOKEN_VALIDATOR_ENABLED` | Set to `false` to skip signature verification locally (default `true`). Disables every privilege check too (allow-all) — requires `APP_ENV=local` or the server refuses to start |
 | `APP_ENV` | Set to `local` to permit `AUTH_TOKEN_VALIDATOR_ENABLED=false`. Leave unset in every deployed environment |
 
