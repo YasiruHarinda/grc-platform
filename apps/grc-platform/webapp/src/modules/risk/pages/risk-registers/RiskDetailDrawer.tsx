@@ -49,7 +49,15 @@ import {
   X,
 } from "@wso2/oxygen-ui-icons-react";
 import type { JSX, ReactNode } from "react";
-import type { ActionPlan, ActionPlanStep, Escalation, HistoryEntry, RiskDetail, RiskEvidence } from "../../api/riskApi";
+import type {
+  ActionPlan,
+  ActionPlanStep,
+  Escalation,
+  HistoryEntry,
+  RiskDetail,
+  RiskEvidence,
+  RiskScoreInfo,
+} from "../../api/riskApi";
 import { deleteRiskEvidence, fetchRiskEvidence, uploadRiskEvidence } from "../../api/riskApi";
 import RiskHistoryTimeline from "./RiskHistoryTimeline";
 import { RiskPrivilege } from "../../privileges";
@@ -209,6 +217,16 @@ function InfoTile({ label, children }: { label: string; children: ReactNode }): 
 
 function InfoGrid({ children }: { children: ReactNode }): JSX.Element {
   return <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1 }}>{children}</Box>;
+}
+
+function ScoreChip({ label, score }: { label: string; score: RiskScoreInfo }): JSX.Element {
+  return (
+    <Chip
+      label={`${label}: ${score.risk_rating} | ${score.risk_level}`}
+      size="small"
+      sx={{ bgcolor: score.color_code, color: "#fff", fontWeight: 700 }}
+    />
+  );
 }
 
 function TabPanel({ value, index, children }: { value: number; index: number; children: ReactNode }): JSX.Element {
@@ -1008,17 +1026,16 @@ export default function RiskDetailDrawer({
                 <Stack direction="row" gap={1} sx={{ mt: 1.5 }} flexWrap="wrap">
                   <Chip label={statusCfg.label} color={statusCfg.color} size="small" sx={statusCfg.sx} />
                   {(() => {
-                    const current = detail.effective_score ?? detail.gross_score;
-                    return (
-                      current && (
-                        <Chip
-                          label={`${current.risk_level} : Score ${current.risk_rating}`}
-                          size="small"
-                          sx={{ bgcolor: current.color_code, color: "#fff", fontWeight: 700 }}
-                        />
-                      )
-                    );
+                    // Only show a separate Residual chip once a real
+                    // reassessment exists — otherwise it's the gross score
+                    // shown twice, which reads as a bug rather than "nothing
+                    // has changed yet". The Gross chip alone already implies
+                    // that.
+                    const hasReassessment = detail.assessments.some((a) => !a.is_initial);
+                    const residual = detail.effective_score ?? detail.gross_score;
+                    return hasReassessment && residual && <ScoreChip label="Residual Score" score={residual} />;
                   })()}
+                  {detail.gross_score && <ScoreChip label="Gross Score" score={detail.gross_score} />}
                   <Chip
                     label={`Age: ${calcAge(detail.created_at)} days`}
                     size="small"

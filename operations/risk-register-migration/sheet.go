@@ -43,8 +43,16 @@ type Row struct {
 	IdentifiedByType   string   // EMPLOYEE | EXTERNAL_PERSON | TOOL | ""
 	IdentifiedByName   string
 	RiskIdentifiedDate string // YYYY-MM-DD | ""
-	Likelihood         int    // 1..3
-	Impact             int    // 1..3
+	// GrossLikelihood/GrossImpact identify the risk's original, immutable
+	// rating (risk.gross_score_id) — the rating first given when the risk was
+	// raised. ResidualLikelihood/ResidualImpact identify its current standing;
+	// when they differ from Gross, migrateRow writes a synthetic
+	// risk_assessment row so the residual value is reflected the same way a
+	// real reassessment would be (see needsResidualAssessment).
+	GrossLikelihood    int // 1..3
+	GrossImpact        int // 1..3
+	ResidualLikelihood int // 1..3
+	ResidualImpact     int // 1..3
 	ImpactDescription  string
 	ImplementationDate string // YYYY-MM-DD (required — see parseSheet)
 	ReassessmentDate   string // YYYY-MM-DD | ""
@@ -85,7 +93,8 @@ var expectedHeaders = []string{
 	"Year", "Quarter", "Source Register", "Risk Title", "Risk Description",
 	"Security Compliance Reference", "Risk Category", "Risk Identified By",
 	"Select Employee/ Name of External Person/ Tool", "Risk Identified Date",
-	"Risk Assigned To", "Likelihood", "Impact", "Impact Description",
+	"Risk Assigned To", "Gross Likelihood", "Gross Impact",
+	"Residual Likelihood", "Residual Impact", "Impact Description",
 	"Implementation Date", "Reassessment Date", "Assignment Team", "Risk Owner",
 	"Management Approver", "Action Owner", "Action Plan Description",
 	"Action Steps", "Treatment Strategy", "Progress", "Git Issue URL",
@@ -266,15 +275,25 @@ func mapRow(rec []string, idx map[string]int, line int, refs RefData) (Row, []Fi
 	} else {
 		reject("Quarter", err.Error())
 	}
-	if l, err := parseScore(get(rec, idx, "Likelihood")); err == nil {
-		row.Likelihood = l
+	if l, err := parseScore(get(rec, idx, "Gross Likelihood")); err == nil {
+		row.GrossLikelihood = l
 	} else {
-		reject("Likelihood", err.Error())
+		reject("Gross Likelihood", err.Error())
 	}
-	if im, err := parseScore(get(rec, idx, "Impact")); err == nil {
-		row.Impact = im
+	if im, err := parseScore(get(rec, idx, "Gross Impact")); err == nil {
+		row.GrossImpact = im
 	} else {
-		reject("Impact", err.Error())
+		reject("Gross Impact", err.Error())
+	}
+	if l, err := parseScore(get(rec, idx, "Residual Likelihood")); err == nil {
+		row.ResidualLikelihood = l
+	} else {
+		reject("Residual Likelihood", err.Error())
+	}
+	if im, err := parseScore(get(rec, idx, "Residual Impact")); err == nil {
+		row.ResidualImpact = im
+	} else {
+		reject("Residual Impact", err.Error())
 	}
 	if ts, err := mapTreatment(get(rec, idx, "Treatment Strategy")); err == nil {
 		row.TreatmentStrategy = ts

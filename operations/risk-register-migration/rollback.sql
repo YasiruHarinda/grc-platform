@@ -18,6 +18,7 @@ USE grc_platform;
 
 -- ── What would be removed ────────────────────────────────────────────────────
 SELECT 'risk'                    AS table_name, COUNT(*) AS rows_to_delete FROM risk                    WHERE created_by = 'risk-sheet-migration'
+UNION ALL SELECT 'risk_assessment',        COUNT(*) FROM risk_assessment        WHERE created_by = 'risk-sheet-migration'
 UNION ALL SELECT 'risk_escalation',        COUNT(*) FROM risk_escalation        WHERE created_by = 'risk-sheet-migration'
 UNION ALL SELECT 'risk_change_log',        COUNT(*) FROM risk_change_log        WHERE created_by = 'risk-sheet-migration'
 UNION ALL SELECT 'risk_action_step',       COUNT(*) FROM risk_action_step step
@@ -29,6 +30,7 @@ UNION ALL SELECT 'user_role_grant',        COUNT(*) FROM user_role_grant        
 -- ── DELETE (uncomment to run) ───────────────────────────────────────────────
 -- START TRANSACTION;
 --
+-- DELETE FROM risk_assessment  WHERE created_by = 'risk-sheet-migration';
 -- DELETE FROM risk_escalation  WHERE created_by = 'risk-sheet-migration';
 -- DELETE FROM risk_change_log  WHERE created_by = 'risk-sheet-migration';
 --

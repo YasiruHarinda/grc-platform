@@ -64,6 +64,7 @@ type Report struct {
 
 	migratedByBucket       map[string]int
 	grantsWritten          int
+	assessmentsWritten     int
 	suppressingEscalations []int // Migration IDs that got a D8 suppressing escalation
 }
 
@@ -81,6 +82,10 @@ func (r *Report) Migrated(bucket string) {
 func (r *Report) Skipped() { r.skipped++ }
 
 func (r *Report) GrantWritten() { r.grantsWritten++ }
+
+// AssessmentWritten records that a row's residual value differed from its
+// gross and got a synthetic risk_assessment row (needsResidualAssessment).
+func (r *Report) AssessmentWritten() { r.assessmentsWritten++ }
 
 // SuppressingEscalation records that migrationID's risk got the D8 escalation
 // that keeps the nightly job (and its emails) off an already-overdue import.
@@ -210,6 +215,10 @@ func (r *Report) emitNarrative(w io.Writer) {
 
 	if r.grantsWritten > 0 {
 		fmt.Fprintf(w, "grants written: %d\n", r.grantsWritten)
+	}
+
+	if r.assessmentsWritten > 0 {
+		fmt.Fprintf(w, "residual assessments written: %d\n", r.assessmentsWritten)
 	}
 
 	if r.migrated > 0 {

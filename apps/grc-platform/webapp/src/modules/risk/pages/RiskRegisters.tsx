@@ -298,9 +298,9 @@ function FilterBar({
       </FormControl>
 
       <FormControl sx={{ minWidth: 130 }}>
-        <InputLabel>Level</InputLabel>
+        <InputLabel>Residual Level</InputLabel>
         <Select
-          label="Level"
+          label="Residual Level"
           value={filters.level[0] ?? ""}
           onChange={(e) => onChange({ ...filters, level: e.target.value ? [e.target.value as string] : [] })}
         >
@@ -875,9 +875,9 @@ export default function RiskRegisters(): JSX.Element {
                 </TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>
                   <Box sx={{ display: "flex", alignItems: "center" }}>
-                    Level
+                    Residual Level
                     <ColumnFilter
-                      label="Level"
+                      label="Residual Level"
                       options={levelOptions}
                       selected={filters.level}
                       onChange={(v) => setColumnFilter("level", v)}

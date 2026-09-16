@@ -203,6 +203,32 @@ type CreateEscalationRequest struct {
 	CreatedBy string `json:"createdBy"`
 }
 
+// CreateAssessmentRequest is domain.CreateRiskAssessmentRequest — the payload
+// for POST /risks/{riskId}/assessments. Written only when a row's Residual
+// Likelihood/Impact differ from its Gross (needsResidualAssessment); the
+// marker fills AssessedBy/CreatedBy the same way it fills every other actor
+// field this tool writes.
+type CreateAssessmentRequest struct {
+	Likelihood       int    `json:"likelihood"`
+	Impact           int    `json:"impact"`
+	Progress         string `json:"progress"`
+	ReassessmentDate string `json:"reassessmentDate"`
+	AssessedBy       string `json:"assessedBy"`
+	CreatedBy        string `json:"createdBy"`
+}
+
+// Assessment is the trimmed view of domain.RiskAssessment we need back from
+// POST/GET /risks/{riskId}/assessments: enough to detect, on resume, whether
+// this migration already wrote the residual assessment for a risk (ID,
+// AssessedBy), and enough for verify.go to confirm the value it wrote is
+// still the value the CSV asked for (ResidualLikelihood, ResidualImpact).
+type Assessment struct {
+	ID                 int    `json:"id"`
+	AssessedBy         string `json:"assessedBy"`
+	ResidualLikelihood int    `json:"residualLikelihood"`
+	ResidualImpact     int    `json:"residualImpact"`
+}
+
 type CreateUserRequest struct {
 	UUID      string `json:"uuid"`
 	UserType  string `json:"userType"` // INTERNAL
@@ -616,6 +642,26 @@ func (e *EntityClient) ListEscalations(ctx context.Context, riskID int) ([]Escal
 
 func (e *EntityClient) CreateEscalation(ctx context.Context, riskID int, req CreateEscalationRequest) error {
 	return e.do(ctx, http.MethodPost, fmt.Sprintf("/risks/%d/escalations", riskID), req, nil)
+}
+
+// ListAssessments unwraps GET /risks/{riskId}/assessments
+// ({"assessments":[...]} — domain.ListRiskAssessmentsResponse).
+func (e *EntityClient) ListAssessments(ctx context.Context, riskID int) ([]Assessment, error) {
+	var resp struct {
+		Assessments []Assessment `json:"assessments"`
+	}
+	if err := e.do(ctx, http.MethodGet, fmt.Sprintf("/risks/%d/assessments", riskID), nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Assessments, nil
+}
+
+func (e *EntityClient) CreateAssessment(ctx context.Context, riskID int, req CreateAssessmentRequest) (*Assessment, error) {
+	var a Assessment
+	if err := e.do(ctx, http.MethodPost, fmt.Sprintf("/risks/%d/assessments", riskID), req, &a); err != nil {
+		return nil, err
+	}
+	return &a, nil
 }
 
 // GetUserByUUID returns (0, false, nil) on a 404 — the caller then provisions
