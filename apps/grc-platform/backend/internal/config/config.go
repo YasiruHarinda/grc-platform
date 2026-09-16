@@ -557,6 +557,14 @@ func loadIdPs() ([]IdPConfig, error) {
 // otherwise add "" to the accepted set, and a token carrying an empty `aud`
 // would authenticate. Duplicates are dropped so the error above stays about
 // the real collision rather than a repeated value.
+//
+// Kept separate from loadInternalEmailDomains despite the similar shape,
+// because the two disagree on the thing that matters: that one lowercases,
+// since domains are case-insensitive, and an audience MUST NOT be lowercased —
+// an Asgardeo client ID is a case-sensitive opaque identifier, so normalising
+// one would reject every token from that application. Folding both into a
+// shared splitter would leave that difference as a caller-supplied argument
+// that reads like formatting and behaves like an auth control.
 func parseAudiences(raw string) ([]string, error) {
 	parts := strings.Split(raw, ",")
 	seen := make(map[string]struct{}, len(parts))
