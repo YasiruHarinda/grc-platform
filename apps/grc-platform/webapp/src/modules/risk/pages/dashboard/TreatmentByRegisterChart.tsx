@@ -24,10 +24,16 @@ import {
   TREATMENT_ORDER,
   labelColorOn,
   stackedSegmentAccessor,
+  type OnDrillDown,
 } from "./constants";
 
 interface TreatmentByRegisterChartProps {
   data: RegisterTreatmentCount[];
+  onDrillDown?: OnDrillDown;
+  // This chart only carries register names (see RegisterTreatmentCount),
+  // never ids, so the caller resolves the click back to a register id via
+  // dashboard.registers.
+  registerIdByName?: Map<string, number>;
 }
 
 const CHART_HEIGHT = 320;
@@ -36,6 +42,8 @@ const CHART_HEIGHT = 320;
 // Zero counts are left undefined so recharts skips the segment and its label.
 export default function TreatmentByRegisterChart({
   data,
+  onDrillDown,
+  registerIdByName,
 }: TreatmentByRegisterChartProps): JSX.Element {
   if (data.length === 0) {
     return (
@@ -52,6 +60,7 @@ export default function TreatmentByRegisterChart({
     rows.get(d.register_name)![d.treatment_strategy] = d.count;
     present.add(d.treatment_strategy);
   }
+  const rowsArr = [...rows.values()];
 
   const bars = TREATMENT_ORDER.filter((s) => present.has(s)).map((strategy) => ({
     dataKey: strategy,
@@ -66,6 +75,13 @@ export default function TreatmentByRegisterChart({
       valueAccessor: stackedSegmentAccessor,
       formatter: (value: unknown) => (Number(value) > 0 ? Number(value) : ""),
     },
+    onClick: onDrillDown
+      ? (_: unknown, index: number) => {
+          const row = rowsArr[index];
+          if (!row || !row[strategy]) return;
+          onDrillDown({ treatment: strategy, teamId: registerIdByName?.get(row.register as string) });
+        }
+      : undefined,
   }));
 
   return (
@@ -93,7 +109,7 @@ export default function TreatmentByRegisterChart({
       </Box>
       <Box sx={{ flex: 1, minWidth: 0 }}>
         <BarChart
-          data={[...rows.values()]}
+          data={rowsArr}
           xAxisDataKey="register"
           bars={bars}
           height={CHART_HEIGHT}

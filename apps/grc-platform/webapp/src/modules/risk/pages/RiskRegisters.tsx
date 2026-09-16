@@ -104,6 +104,7 @@ import EscalationCommentDialog from "./risk-registers/EscalationCommentDialog";
 import ColumnFilter from "./risk-registers/ColumnFilter";
 import DateRangeFilter from "./risk-registers/DateRangeFilter";
 import {
+  ALL_OPEN_STATUSES,
   APPROVED_ALL_STATUSES,
   OVERDUE_STATUSES,
   PENDING_COMPLIANCE_STATUSES,
@@ -114,6 +115,7 @@ import {
   calcDue,
   formatDate,
 } from "./risk-registers/utils";
+import { LEVEL_LABELS, TREATMENT_LABELS, TREATMENT_ORDER } from "./dashboard/constants";
 
 // ── Tab definitions ────────────────────────────────────────────────────────────
 
@@ -216,6 +218,7 @@ interface Filters {
   level: string[];
   status: string[];
   riskType: string[];
+  treatmentStrategy: string[];
   ownerId: number[];
   submittedFrom: string;
   submittedTo: string;
@@ -230,6 +233,7 @@ const EMPTY_FILTERS: Filters = {
   level: [],
   status: [],
   riskType: [],
+  treatmentStrategy: [],
   ownerId: [],
   submittedFrom: "",
   submittedTo: "",
@@ -311,6 +315,24 @@ function FilterBar({
         </Select>
       </FormControl>
 
+      <FormControl sx={{ minWidth: 170 }}>
+        <InputLabel>Treatment Strategy</InputLabel>
+        <Select
+          label="Treatment Strategy"
+          value={filters.treatmentStrategy[0] ?? ""}
+          onChange={(e) =>
+            onChange({ ...filters, treatmentStrategy: e.target.value ? [e.target.value as string] : [] })
+          }
+        >
+          <MenuItem value="">All Strategies</MenuItem>
+          {TREATMENT_ORDER.map((strategy) => (
+            <MenuItem key={strategy} value={strategy}>
+              {TREATMENT_LABELS[strategy]}
+            </MenuItem>
+          ))}
+        </Select>
+      </FormControl>
+
       {showRiskTypeFilter && (
         <FormControl sx={{ minWidth: 150 }}>
           <InputLabel>Risk Type</InputLabel>
@@ -361,6 +383,11 @@ export default function RiskRegisters(): JSX.Element {
 
   const [activeTab, setActiveTab] = useState<TabKey>("approved");
   const [approvedFilter, setApprovedFilter] = useState<"" | "open" | "closed">("");
+  // Set only via a dashboard chart deep-link for an "open" segment: replaces
+  // the tab bar with a filter-summary bar and widens getStatuses() to every
+  // non-closed/non-cancelled status, because the clicked bar's count spans
+  // every approval stage, not just one tab. See ALL_OPEN_STATUSES.
+  const [allStagesView, setAllStagesView] = useState(false);
   const [risks, setRisks] = useState<RiskListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
@@ -430,6 +457,10 @@ export default function RiskRegisters(): JSX.Element {
   // further (AND), same as every other column filter.
   const getStatuses = useCallback((): string[] => {
     const tabStatuses = (() => {
+      // A dashboard chart's "open" bar counts risks across every approval
+      // stage at once — no single tab's status list matches that population,
+      // so this bypasses the tab partition entirely rather than picking one.
+      if (allStagesView) return ALL_OPEN_STATUSES;
       if (activeTab === "approved") {
         if (approvedFilter === "open") return ["IN_REMEDIATION", "ESCALATED"];
         if (approvedFilter === "closed") return ["CLOSED"];
@@ -445,12 +476,16 @@ export default function RiskRegisters(): JSX.Element {
     if (activeTabDef.openEscalationOnly) return filters.status;
     if (filters.status.length === 0) return tabStatuses;
     return tabStatuses.filter((s) => filters.status.includes(s));
-  }, [activeTab, activeTabDef.statuses, activeTabDef.openEscalationOnly, approvedFilter, filters.status]);
+  }, [activeTab, activeTabDef.statuses, activeTabDef.openEscalationOnly, approvedFilter, filters.status, allStagesView]);
 
   // Full pool of statuses the Status column filter can offer, independent of
   // approvedFilter's own narrowing — so e.g. "Closed" is always selectable
   // even while approvedFilter is currently set to "Open".
-  const statusOptions = activeTab === "approved" ? APPROVED_ALL_STATUSES : activeTabDef.statuses;
+  const statusOptions = allStagesView
+    ? ALL_OPEN_STATUSES
+    : activeTab === "approved"
+      ? APPROVED_ALL_STATUSES
+      : activeTabDef.statuses;
 
   function setColumnFilter<K extends keyof Filters>(key: K, value: Filters[K]) {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -487,7 +522,7 @@ export default function RiskRegisters(): JSX.Element {
   // on a page that doesn't exist for the new result set.
   useEffect(() => {
     setPage(0);
-  }, [activeTab, filters]);
+  }, [activeTab, filters, allStagesView]);
 
   const loadRisks = useCallback(async () => {
     const seq = ++loadSeqRef.current;
@@ -515,6 +550,7 @@ export default function RiskRegisters(): JSX.Element {
         level: filters.level.length ? filters.level : undefined,
         search: filters.search || undefined,
         risk_type: filters.riskType.length ? filters.riskType : undefined,
+        treatment_strategy: filters.treatmentStrategy.length ? filters.treatmentStrategy : undefined,
         owner_id: filters.ownerId.length ? filters.ownerId : undefined,
         submitted_from: filters.submittedFrom || undefined,
         submitted_to: filters.submittedTo || undefined,
@@ -631,6 +667,58 @@ export default function RiskRegisters(): JSX.Element {
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Deep link from a dashboard chart click: level/team/treatment scope the
+  // list to what the clicked bar/slice counted, using the same query params
+  // fetchRisks already accepts. Two shapes:
+  //   - view=all-stages: an "open" bar/slice — its count spans every
+  //     approval stage, so this switches into the cross-tab view rather than
+  //     picking one tab (see allStagesView / ALL_OPEN_STATUSES above).
+  //   - tab=approved&approved=closed: a "closed" bar/slice — CLOSED is a
+  //     single unambiguous status, so the existing Approved tab already
+  //     shows exactly this population.
+  // Applied once, then stripped, same as the riskId effect above.
+  useEffect(() => {
+    const view = searchParams.get("view");
+    const tab = searchParams.get("tab");
+    const approved = searchParams.get("approved");
+    const level = searchParams.get("level");
+    const team = searchParams.get("team");
+    const treatment = searchParams.get("treatment");
+    if (!view && !tab && !approved && !level && !team && !treatment) return;
+
+    setFilters({
+      ...EMPTY_FILTERS,
+      level: level ? [level] : [],
+      teamId: team && Number.isSafeInteger(Number(team)) ? [Number(team)] : [],
+      treatmentStrategy: treatment ? [treatment] : [],
+    });
+    if (view === "all-stages") {
+      setAllStagesView(true);
+    } else {
+      setAllStagesView(false);
+      setActiveTab("approved");
+      setApprovedFilter(approved === "closed" || approved === "open" ? approved : "");
+    }
+
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        ["view", "tab", "approved", "level", "team", "treatment"].forEach((k) => next.delete(k));
+        return next;
+      },
+      { replace: true },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Returns to normal tab browsing from the cross-tab dashboard-filter view.
+  const clearDashboardFilterView = () => {
+    setAllStagesView(false);
+    setFilters(EMPTY_FILTERS);
+    setActiveTab("approved");
+    setApprovedFilter("");
+  };
 
   const runAction = async (fn: () => Promise<void>, successMsg: string) => {
     if (actionInFlight) return;
@@ -810,11 +898,22 @@ export default function RiskRegisters(): JSX.Element {
     setActiveTab(val);
     setFilters(EMPTY_FILTERS);
     setApprovedFilter("");
+    setAllStagesView(false);
   };
 
-  const showStatusCol = activeTab === "approved" || activeTab === "overdue";
-  const showRiskTypeCol = activeTabDef.showRiskType;
+  const showStatusCol = activeTab === "approved" || activeTab === "overdue" || allStagesView;
+  const showRiskTypeCol = activeTabDef.showRiskType || allStagesView;
   const colSpan = 8 + (showStatusCol ? 1 : 0) + (showRiskTypeCol ? 1 : 0);
+
+  // Human-readable summary of the applied dashboard filter, e.g.
+  // "Medium · To be Remediated · Asgardeo".
+  const dashboardFilterSummary = [
+    filters.level[0] && (LEVEL_LABELS[filters.level[0]] ?? filters.level[0]),
+    filters.treatmentStrategy[0] && (TREATMENT_LABELS[filters.treatmentStrategy[0]] ?? filters.treatmentStrategy[0]),
+    filters.teamId[0] !== undefined && (sourceTeams.find((t) => t.id === filters.teamId[0])?.name ?? null),
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <Box sx={{ p: { xs: 2, sm: 3 } }}>
@@ -822,22 +921,47 @@ export default function RiskRegisters(): JSX.Element {
         Risk Registers
       </Typography>
 
-      <Box sx={{ borderBottom: 1, borderColor: "divider", mb: 3 }}>
-        <Tabs value={activeTab} onChange={handleTabChange}>
-          {TABS.map((tab) => (
-            <Tab key={tab.key} label={tab.label} value={tab.key} />
-          ))}
-        </Tabs>
-      </Box>
+      {allStagesView ? (
+        <Paper
+          variant="outlined"
+          sx={{
+            px: 2,
+            py: 1.5,
+            mb: 3,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: 1,
+            ...darkCardSx,
+          }}
+        >
+          <Typography variant="body2">
+            <Search size={14} style={{ verticalAlign: "text-bottom", marginRight: 6 }} />
+            <strong>Showing:</strong> {dashboardFilterSummary || "risks matching the dashboard filter"} · all stages
+          </Typography>
+          <Button size="small" onClick={clearDashboardFilterView}>
+            Clear filter
+          </Button>
+        </Paper>
+      ) : (
+        <Box sx={{ borderBottom: 1, borderColor: "divider", mb: 3 }}>
+          <Tabs value={activeTab} onChange={handleTabChange}>
+            {TABS.map((tab) => (
+              <Tab key={tab.key} label={tab.label} value={tab.key} />
+            ))}
+          </Tabs>
+        </Box>
+      )}
 
       <Paper variant="outlined" sx={{ p: 2, mb: 2, ...darkCardSx }}>
         <FilterBar
           filters={filters}
           teams={sourceTeams}
-          showApprovedFilter={activeTab === "approved"}
+          showApprovedFilter={activeTab === "approved" && !allStagesView}
           approvedFilter={approvedFilter}
           onApprovedFilterChange={setApprovedFilter}
-          showRiskTypeFilter={activeTabDef.showRiskType}
+          showRiskTypeFilter={activeTabDef.showRiskType || allStagesView}
           onChange={setFilters}
           onRefresh={loadRisks}
         />
@@ -1003,7 +1127,7 @@ export default function RiskRegisters(): JSX.Element {
                     </TableCell>
                     {showStatusCol && (
                       <TableCell>
-                        <OutlinedStatusChip status={risk.workflow_status} activeTab={activeTab} />
+                        <OutlinedStatusChip status={risk.workflow_status} activeTab={allStagesView ? undefined : activeTab} />
                       </TableCell>
                     )}
                     {showRiskTypeCol && (
@@ -1102,6 +1226,8 @@ export default function RiskRegisters(): JSX.Element {
           open={assessOpen}
           riskCode={drawerDetail.risk_code}
           riskScores={riskScores}
+          previousScore={drawerDetail.effective_score ?? drawerDetail.gross_score}
+          previousIsInitial={!drawerDetail.assessments.some((a) => !a.is_initial)}
           onClose={() => setAssessOpen(false)}
           onSubmit={handleAssessSubmit}
         />

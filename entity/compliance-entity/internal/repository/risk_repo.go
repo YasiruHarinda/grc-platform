@@ -153,6 +153,14 @@ func (r *riskRepo) SearchRisks(ctx context.Context, req domain.SearchRisksReques
 			args = append(args, t)
 		}
 	}
+	if len(req.TreatmentStrategyKeys) > 0 {
+		ph := strings.Repeat("?,", len(req.TreatmentStrategyKeys))
+		ph = ph[:len(ph)-1]
+		where += " AND r.treatment_strategy IN (" + ph + ")"
+		for _, t := range req.TreatmentStrategyKeys {
+			args = append(args, t)
+		}
+	}
 	if len(req.OwnerIDs) > 0 {
 		ph := strings.Repeat("?,", len(req.OwnerIDs))
 		ph = ph[:len(ph)-1]

@@ -25,6 +25,13 @@ interface RiskScoreGridProps {
   impact: number;
   onChange: (likelihood: number, impact: number) => void;
   error?: string;
+  // The risk's residual score before this assessment — marked on the grid
+  // with a hollow ring (as opposed to the solid ring on the cell being
+  // selected now) so a reassessor can see how far they're moving it without
+  // leaving the grid. Omitted where there's nothing to compare against (e.g.
+  // the Add Risk flow's initial assessment).
+  previousLikelihood?: number;
+  previousImpact?: number;
 }
 
 export default function RiskScoreGrid({
@@ -33,6 +40,8 @@ export default function RiskScoreGrid({
   impact,
   onChange,
   error,
+  previousLikelihood,
+  previousImpact,
 }: RiskScoreGridProps): JSX.Element {
   const findScore = (l: number, i: number) =>
     riskScores.find((s) => s.likelihood === l && s.impact === i);
@@ -96,13 +105,15 @@ export default function RiskScoreGrid({
               {IMPACT_COLS.map((col) => {
                 const entry = findScore(row.value, col.value);
                 const isSelected = likelihood === row.value && impact === col.value;
+                const isPrevious =
+                  previousLikelihood === row.value && previousImpact === col.value && !isSelected;
 
                 return (
                   <Box
                     key={`${row.value}-${col.value}`}
                     component="button"
                     type="button"
-                    aria-label={`Likelihood ${row.label}, Impact ${col.label}${entry ? `, rating ${entry.risk_rating} (${entry.risk_level})` : ""}`}
+                    aria-label={`Likelihood ${row.label}, Impact ${col.label}${entry ? `, rating ${entry.risk_rating} (${entry.risk_level})` : ""}${isPrevious ? ", previous score" : ""}`}
                     aria-pressed={isSelected}
                     onClick={() => onChange(row.value, col.value)}
                     sx={{
@@ -114,7 +125,8 @@ export default function RiskScoreGrid({
                       fontSize: "1rem",
                       cursor: "pointer",
                       border: "none",
-                      outline: "none",
+                      outline: isPrevious ? "2px dashed rgba(0,0,0,0.55)" : "none",
+                      outlineOffset: isPrevious ? "-4px" : undefined,
                       boxShadow: isSelected
                         ? `inset 0 0 0 3px #fff, 0 2px 10px ${entry?.color_code ?? "#aaa"}88`
                         : "none",
@@ -124,6 +136,7 @@ export default function RiskScoreGrid({
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
+                      position: "relative",
                     }}
                   >
                     {entry?.risk_rating}

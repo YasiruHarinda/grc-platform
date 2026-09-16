@@ -18,14 +18,16 @@ import { PieChart } from "@wso2/oxygen-ui-charts-react";
 import { Typography } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
 import type { RiskStatusSummary } from "../../api/riskApi";
-import { CLOSED_COLOR, OPEN_COLOR } from "./constants";
+import { CLOSED_COLOR, OPEN_COLOR, type OnDrillDown } from "./constants";
 
 interface StatusPieChartProps {
   summary: RiskStatusSummary;
+  onDrillDown?: OnDrillDown;
+  registerId?: number;
 }
 
 // Overall risk status distribution: open vs. closed share of all risks.
-export default function StatusPieChart({ summary }: StatusPieChartProps): JSX.Element {
+export default function StatusPieChart({ summary, onDrillDown, registerId }: StatusPieChartProps): JSX.Element {
   if (summary.total === 0) {
     return (
       <Typography variant="body2" color="text.secondary">
@@ -54,6 +56,10 @@ export default function StatusPieChart({ summary }: StatusPieChartProps): JSX.El
           paddingAngle: 2,
           label: ({ percent }: { percent?: number }) =>
             `${((percent ?? 0) * 100).toFixed(1)}%`,
+          onClick: onDrillDown
+            ? (_: unknown, index: number) =>
+                onDrillDown({ closed: data[index]?.name === "Closed", teamId: registerId || undefined })
+            : undefined,
         },
       ]}
       legend={{ show: true, align: "center", verticalAlign: "bottom" }}
