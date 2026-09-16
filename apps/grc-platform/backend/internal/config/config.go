@@ -217,10 +217,21 @@ type AIValidationConfig struct {
 
 // IdPConfig describes one trusted identity provider (Asgardeo organization).
 // Tokens are validated against the matching issuer's JWKS/audience only.
+//
+// Audiences is a set, not a single value, because more than one frontend
+// application can front the same backend — each Asgardeo application mints
+// tokens carrying its own client ID as `aud`, so accepting a second app means
+// accepting a second audience. A token matching ANY entry is accepted
+// (jwt.WithAudience's any-of semantics).
+//
+// It is deliberately a list on ONE IdP rather than a second IdPConfig: the
+// runtime map in middleware.Auth is keyed by issuer, and applications in the
+// same Asgardeo organization share an issuer, so a second entry would silently
+// overwrite the first instead of adding an alternative.
 type IdPConfig struct {
 	Issuer       string
 	JWKSEndpoint string
-	Audience     string
+	Audiences    []string
 }
 
 type AuthConfig struct {
@@ -386,10 +397,14 @@ func Load() (Config, error) {
 	}
 	// Issuer and keys are shared by construction, so `aud` is the only thing
 	// separating a portal token from a webapp user token — a collision merges
-	// the two token families.
+	// the two token families. Checked against every accepted user audience, not
+	// just the first: adding a second frontend application to AUTH_AUDIENCE must
+	// not be able to quietly re-open this hole.
 	for _, idp := range authCfg.IdPs {
-		if portalAudience != "" && portalAudience == idp.Audience {
-			return Config{}, fmt.Errorf("PORTAL_AUTH_AUDIENCE must differ from AUTH_AUDIENCE (%q)", idp.Audience)
+		for _, aud := range idp.Audiences {
+			if portalAudience != "" && portalAudience == aud {
+				return Config{}, fmt.Errorf("PORTAL_AUTH_AUDIENCE must differ from every AUTH_AUDIENCE entry (%q)", aud)
+			}
 		}
 	}
 
@@ -512,8 +527,8 @@ func Load() (Config, error) {
 	}, nil
 }
 
-// loadIdPs builds the trusted-issuer list from the environment — today, just
-// the GRC web app's IdP.
+// loadIdPs builds the trusted-issuer list from the environment — one IdP, whose
+// audience set may name more than one frontend application.
 func loadIdPs() ([]IdPConfig, error) {
 	idp1 := IdPConfig{}
 	var err error
@@ -523,10 +538,50 @@ func loadIdPs() ([]IdPConfig, error) {
 	if idp1.Issuer, err = mustEnv("AUTH_ISSUER"); err != nil {
 		return nil, err
 	}
-	if idp1.Audience, err = mustEnv("AUTH_AUDIENCE"); err != nil {
+	rawAudience, err := mustEnv("AUTH_AUDIENCE")
+	if err != nil {
+		return nil, err
+	}
+	if idp1.Audiences, err = parseAudiences(rawAudience); err != nil {
 		return nil, err
 	}
 	return []IdPConfig{idp1}, nil
+}
+
+// parseAudiences splits AUTH_AUDIENCE on commas. A single value — the common
+// case — parses to a one-element set, so a deployment that never adds a second
+// application is unaffected.
+//
+// An empty element is a startup failure rather than something to skip, for the
+// same reason loadInternalEmailDomains rejects one: a stray comma would
+// otherwise add "" to the accepted set, and a token carrying an empty `aud`
+// would authenticate. Duplicates are dropped so the error above stays about
+// the real collision rather than a repeated value.
+//
+// Kept separate from loadInternalEmailDomains despite the similar shape,
+// because the two disagree on the thing that matters: that one lowercases,
+// since domains are case-insensitive, and an audience MUST NOT be lowercased —
+// an Asgardeo client ID is a case-sensitive opaque identifier, so normalising
+// one would reject every token from that application. Folding both into a
+// shared splitter would leave that difference as a caller-supplied argument
+// that reads like formatting and behaves like an auth control.
+func parseAudiences(raw string) ([]string, error) {
+	parts := strings.Split(raw, ",")
+	seen := make(map[string]struct{}, len(parts))
+	auds := make([]string, 0, len(parts))
+	for _, p := range parts {
+		a := strings.TrimSpace(p)
+		if a == "" {
+			return nil, fmt.Errorf(
+				"AUTH_AUDIENCE contains an empty audience (check for a stray comma): %q", raw)
+		}
+		if _, dup := seen[a]; dup {
+			continue
+		}
+		seen[a] = struct{}{}
+		auds = append(auds, a)
+	}
+	return auds, nil
 }
 
 // loadInternalEmailDomains reads AUTH_INTERNAL_EMAIL_DOMAINS, comma-separated,

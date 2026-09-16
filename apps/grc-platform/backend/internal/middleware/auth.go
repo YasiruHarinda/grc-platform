@@ -475,10 +475,23 @@ func extractUserInfo(tokenStr string, cfg Config, idps map[string]idpRuntime) (*
 		return nil, emailVerificationAbsent, fmt.Errorf("unknown issuer")
 	}
 
+	// Fail closed on an IdP with no audiences. jwt.WithAudience DISABLES the aud
+	// check entirely when handed an empty slice ("Supplying an empty slice will
+	// disable aud checking" — validator.go), so without this a misconfigured IdP
+	// would accept a token minted for any application sharing the issuer. Config
+	// already refuses to boot in that state; this is the second fence, because
+	// the failure mode is silent acceptance rather than a visible error.
+	if len(rt.cfg.Audiences) == 0 {
+		return nil, emailVerificationAbsent, fmt.Errorf("idp %q has no configured audience", probe.Issuer)
+	}
+
 	var c jwtClaims
 	token, err := jwt.ParseWithClaims(tokenStr, &c, rt.keyFunc,
 		jwt.WithIssuer(rt.cfg.Issuer),
-		jwt.WithAudience(rt.cfg.Audience),
+		// Any-of: the token's `aud` must match one configured audience. More
+		// than one frontend application can front this backend, and each mints
+		// tokens carrying its own client ID.
+		jwt.WithAudience(rt.cfg.Audiences...),
 		jwt.WithLeeway(cfg.ClockSkew),
 		jwt.WithExpirationRequired(),
 		jwt.WithValidMethods([]string{"RS256"}),

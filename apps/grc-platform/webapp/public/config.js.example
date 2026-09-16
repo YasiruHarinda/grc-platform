@@ -16,8 +16,10 @@ window.config = {
   // GRC_PLATFORM_MOCK_AUTH: true,
   // GRC_PLATFORM_MOCK_AUTH_TOKEN: "<header>.<payload-with-your-uuid-as-sub>.",
 
-  // CLIENT_ID must equal the backend's AUTH_AUDIENCE; BASE_URL must be the same
-  // Asgardeo org as its AUTH_ISSUER / AUTH_JWKS_ENDPOINT.
+  // CLIENT_ID must be one of the backend's AUTH_AUDIENCE entries (that variable
+  // is a comma-separated list, so more than one application can front the same
+  // backend); BASE_URL must be the same Asgardeo org as its AUTH_ISSUER /
+  // AUTH_JWKS_ENDPOINT.
   GRC_PLATFORM_AUTH_BASE_URL: "https://api.asgardeo.io/t/<your-org>",
   GRC_PLATFORM_AUTH_CLIENT_ID: "<your-client-id>",
 

@@ -18,6 +18,7 @@ package config
 
 import (
 	"net"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -600,5 +601,86 @@ func TestLoadPortalConfigRepeatedClientIDRefusesBoot(t *testing.T) {
 
 	if _, err := Load(); err == nil {
 		t.Fatal("Load() = nil, want error on a PORTAL_CLIENTS entry repeating a client_id with a different team")
+	}
+}
+
+// ── AUTH_AUDIENCE as a set ─────────────────────────────────────────────────────
+
+// A second frontend application fronting this backend mints tokens carrying its
+// own client ID as `aud`. Both client IDs must be accepted, and applications in
+// the same Asgardeo org share an issuer, so the audience list is the only thing
+// that can distinguish them.
+func TestLoadAuthAudienceAcceptsCommaSeparatedList(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	setValidAuthEnv(t)
+	t.Setenv("AUTH_AUDIENCE", "webapp-aud, second-app-aud")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want success", err)
+	}
+	got := cfg.Auth.IdPs[0].Audiences
+	want := []string{"webapp-aud", "second-app-aud"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("Audiences = %v, want %v (surrounding spaces trimmed)", got, want)
+	}
+}
+
+// The single-value case is the one every current deployment is in.
+func TestLoadAuthAudienceSingleValueYieldsOneEntry(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	setValidAuthEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want success", err)
+	}
+	if got := cfg.Auth.IdPs[0].Audiences; !slices.Equal(got, []string{"webapp-aud"}) {
+		t.Fatalf("Audiences = %v, want [webapp-aud]", got)
+	}
+}
+
+// A stray comma must not silently add "" to the accepted set: an empty audience
+// would authenticate a token carrying none. Fail at boot instead.
+func TestLoadAuthAudienceStrayCommaRefusesBoot(t *testing.T) {
+	for _, raw := range []string{"webapp-aud,", ",webapp-aud", "webapp-aud,,other"} {
+		t.Run(raw, func(t *testing.T) {
+			setRequiredNonAuthEnv(t)
+			setValidAuthEnv(t)
+			t.Setenv("AUTH_AUDIENCE", raw)
+
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load() = nil for AUTH_AUDIENCE=%q, want error on the empty entry", raw)
+			}
+		})
+	}
+}
+
+// The portal audience is the ONLY thing separating a machine token from a user
+// token — same issuer, same keys. Adding a second user audience must not be able
+// to re-open that by colliding with it on any entry but the first.
+func TestLoadPortalAudienceCollisionOnSecondEntryRefusesBoot(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	setValidAuthEnv(t)
+	t.Setenv("AUTH_AUDIENCE", "webapp-aud,portal-aud")
+	t.Setenv("PORTAL_AUTH_AUDIENCE", "portal-aud")
+	t.Setenv("PORTAL_CLIENTS", "portal-aud:7")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() = nil, want error when PORTAL_AUTH_AUDIENCE collides with a non-first AUTH_AUDIENCE entry")
+	}
+}
+
+func TestLoadAuthAudienceDeduplicates(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	setValidAuthEnv(t)
+	t.Setenv("AUTH_AUDIENCE", "webapp-aud,webapp-aud")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want success", err)
+	}
+	if got := cfg.Auth.IdPs[0].Audiences; !slices.Equal(got, []string{"webapp-aud"}) {
+		t.Fatalf("Audiences = %v, want [webapp-aud]", got)
 	}
 }

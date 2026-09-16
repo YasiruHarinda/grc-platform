@@ -110,10 +110,10 @@ func unsignedToken(issuer, sub, email string, groups []string) string {
 // There is no group→role map any more: roles are assigned in this platform's
 // database and resolved per request from user_role_grant, so no IdP config
 // participates in authorisation beyond identifying the issuer.
-func idpCfg(issuer, audience string) config.IdPConfig {
+func idpCfg(issuer string, audiences ...string) config.IdPConfig {
 	return config.IdPConfig{
-		Issuer:   issuer,
-		Audience: audience,
+		Issuer:    issuer,
+		Audiences: audiences,
 	}
 }
 
@@ -601,5 +601,84 @@ func TestAuth_NoSubjectClaimIsRejected(t *testing.T) {
 	}
 	if grants.calls != 0 {
 		t.Errorf("grants were loaded %d times for a subject-less token, want 0", grants.calls)
+	}
+}
+
+// ── multiple audiences ─────────────────────────────────────────────────────────
+
+// audienceCfg builds a validator-enabled Config trusting one issuer with the
+// given audience set.
+func audienceCfg(issuer string, audiences ...string) middleware.Config {
+	return middleware.Config{
+		TokenValidatorEnabled: true,
+		IdPs:                  []config.IdPConfig{idpCfg(issuer, audiences...)},
+		TestKeyFuncs:          map[string]jwt.Keyfunc{issuer: testKeyFunc},
+	}
+}
+
+func serveWithToken(cfg middleware.Config, tok string) *httptest.ResponseRecorder {
+	h := middleware.Auth(cfg)(okHandler())
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/risks", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestAuth_MultipleAudiences_AcceptsEither is the point of the audience set:
+// two frontend applications front this backend, each minting tokens carrying
+// its own client ID as `aud`, and both must authenticate. They share an issuer
+// and JWKS (same Asgardeo org), so `aud` is the only thing that differs.
+func TestAuth_MultipleAudiences_AcceptsEither(t *testing.T) {
+	const issuer = "https://idp.example.com"
+	cfg := audienceCfg(issuer, "app-one", "app-two")
+
+	for _, aud := range []string{"app-one", "app-two"} {
+		tok := signedToken(issuer, aud, "uid-1", "user@example.com", nil)
+		if rec := serveWithToken(cfg, tok); rec.Code != http.StatusOK {
+			t.Errorf("aud %q: got %d, want 200", aud, rec.Code)
+		}
+	}
+}
+
+// A single configured audience must behave exactly as before — the deployments
+// that never add a second application are the ones most at risk from this change.
+func TestAuth_SingleAudience_StillAcceptedAndOthersRejected(t *testing.T) {
+	const issuer = "https://idp.example.com"
+	cfg := audienceCfg(issuer, "app-one")
+
+	if rec := serveWithToken(cfg, signedToken(issuer, "app-one", "uid-1", "u@example.com", nil)); rec.Code != http.StatusOK {
+		t.Fatalf("configured audience: got %d, want 200", rec.Code)
+	}
+	if rec := serveWithToken(cfg, signedToken(issuer, "app-two", "uid-1", "u@example.com", nil)); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unconfigured audience: got %d, want 401", rec.Code)
+	}
+}
+
+// Widening the set must not widen it to everything: an application that was
+// never added stays rejected even though it shares the issuer and is signed by
+// the same key.
+func TestAuth_MultipleAudiences_RejectsUnlistedAudience(t *testing.T) {
+	const issuer = "https://idp.example.com"
+	cfg := audienceCfg(issuer, "app-one", "app-two")
+
+	tok := signedToken(issuer, "app-three", "uid-1", "user@example.com", nil)
+	if rec := serveWithToken(cfg, tok); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unlisted audience: got %d, want 401", rec.Code)
+	}
+}
+
+// TestAuth_NoConfiguredAudience_Rejects covers the trap this change introduced.
+// jwt.WithAudience DISABLES aud checking when handed an empty slice, so an IdP
+// with no audiences would authenticate a token minted for ANY application
+// sharing the issuer — silently, with no error anywhere. The single-string form
+// this replaced could not fail this way: it always asserted something.
+func TestAuth_NoConfiguredAudience_Rejects(t *testing.T) {
+	const issuer = "https://idp.example.com"
+	cfg := audienceCfg(issuer) // no audiences at all
+
+	tok := signedToken(issuer, "any-app-at-all", "uid-1", "user@example.com", nil)
+	if rec := serveWithToken(cfg, tok); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("empty audience set must reject, not accept anything: got %d, want 401", rec.Code)
 	}
 }
