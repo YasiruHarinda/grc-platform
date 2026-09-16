@@ -44,7 +44,7 @@ export default function AgingRisksTable({ data }: AgingRisksTableProps): JSX.Ele
             <TableCell sx={{ minWidth: 240 }}>Title</TableCell>
             <TableCell>Register</TableCell>
             <TableCell>Owner</TableCell>
-            <TableCell>Level</TableCell>
+            <TableCell>Residual Level</TableCell>
             <TableCell>Identified</TableCell>
             <TableCell align="right">Age (days)</TableCell>
           </TableRow>

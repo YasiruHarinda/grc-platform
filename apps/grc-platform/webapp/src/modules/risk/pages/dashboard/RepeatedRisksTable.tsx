@@ -51,7 +51,7 @@ export default function RepeatedRisksTable({ data }: RepeatedRisksTableProps): J
             <TableCell>Risk Description</TableCell>
             <TableCell>Source</TableCell>
             <TableCell>Status</TableCell>
-            <TableCell>Risk Level</TableCell>
+            <TableCell>Residual Level</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
