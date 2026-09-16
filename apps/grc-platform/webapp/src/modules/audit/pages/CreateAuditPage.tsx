@@ -120,15 +120,6 @@ let _localIdCounter = 0;
 const nextLocalId = () => String(++_localIdCounter);
 
 
-// that a due date isn't in the past.
-function todayISO(): string {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
 interface PopulationDraft {
   description: string;
   dueDate: string;
@@ -470,12 +461,9 @@ interface EditableControlsTableProps {
   // under the "Copy from Framework" top source — Copy from Previous
   // Audit never pushes, so the caller passes false there.
   showPushColumn: boolean;
-  // Lifts the "due date in the past" warning/min when the audit period has
-  // already ended (a retrospective engagement).
-  allowPastDueDate: boolean;
 }
 
-function EditableControlsTable({ drafts, onChange, users, auditorCandidates, teams, showPushColumn, allowPastDueDate }: EditableControlsTableProps): JSX.Element {
+function EditableControlsTable({ drafts, onChange, users, auditorCandidates, teams, showPushColumn }: EditableControlsTableProps): JSX.Element {
   const [populationDialogId, setPopulationDialogId] = useState<string | null>(null);
   const dialogDraft = drafts.find((d) => d.localId === populationDialogId);
 
@@ -731,23 +719,20 @@ function EditableControlsTable({ drafts, onChange, users, auditorCandidates, tea
                   ))}
                 </Select>
               </TableCell>
-              {/* Due Date — at the end. Must be today or later (never in the
-                  past) for a live audit — `min` blocks it in the native picker,
-                  `error` catches a past date typed/pasted directly. Both are
-                  lifted for a retrospective audit (period already ended). */}
+              {/* Due Date — at the end. This whole page is admin-only
+                  (AuditPrivilege.CreateAudit), so past dates are allowed
+                  (e.g. a retrospective audit, or a control already
+                  effective before onboarding). */}
               <TableCell>
-                <Tooltip title={!allowPastDueDate && d.dueDate && d.dueDate < todayISO() ? "Due Date cannot be in the past" : ""}>
-                  <TextField
-                    value={d.dueDate}
-                    onChange={(e) => update(d.localId, "dueDate", e.target.value)}
-                    type="date"
-                    size="small"
-                    variant="standard"
-                    error={Boolean(!allowPastDueDate && d.dueDate && d.dueDate < todayISO())}
-                    InputLabelProps={{ shrink: true }}
-                    inputProps={{ style: FS, min: allowPastDueDate ? undefined : todayISO() }}
-                  />
-                </Tooltip>
+                <TextField
+                  value={d.dueDate}
+                  onChange={(e) => update(d.localId, "dueDate", e.target.value)}
+                  type="date"
+                  size="small"
+                  variant="standard"
+                  InputLabelProps={{ shrink: true }}
+                  inputProps={{ style: FS }}
+                />
               </TableCell>
               {/* Add to Library: whether this row also writes into the
                   framework catalog. Hidden per-row when pushLocked (catalog
@@ -1775,7 +1760,6 @@ function Step2Controls({
             auditorCandidates={auditorCandidates}
             teams={teams}
             showPushColumn={topSource === "framework"}
-            allowPastDueDate={periodEnd.length > 0 && periodEnd < todayISO()}
           />
         </Box>
       )}
@@ -2014,13 +1998,11 @@ export default function CreateAuditPage(): JSX.Element {
     periodEnd.length > 0 &&
     periodEnd >= periodStart;
 
-  // The "due date not in the past" guard is for live/upcoming audits. A
-  // completed historical period legitimately has every due date in the past —
-  // and blank CSV due dates fall back to that past periodEnd — so the guard is
-  // lifted once periodEnd is before today. Active/future periods are unchanged.
-  const allowPastDueDate = periodEnd.length > 0 && periodEnd < todayISO();
-
   // Step 2 → 3: every draft row must be complete (blank rows are not allowed).
+  // Due dates aren't restricted to today-or-later — this whole page is
+  // gated on AuditPrivilege.CreateAudit (compliance-admin only), and admins
+  // may backdate them (e.g. a retrospective audit, or a control already
+  // effective before onboarding).
   const draftErrors: string[] = drafts
     .flatMap((d) => {
       const errs: string[] = [];
@@ -2029,11 +2011,9 @@ export default function CreateAuditPage(): JSX.Element {
       if (!d.description.trim())         errs.push(`${label}: Description is required`);
       if (!d.evidenceRequirement.trim()) errs.push(`${label}: Evidence Requirement is required`);
       if (!d.dueDate)                    errs.push(`${label}: Due Date is required`);
-      else if (!allowPastDueDate && d.dueDate < todayISO()) errs.push(`${label}: Due Date cannot be in the past`);
       if (d.requirementType === "OE") {
         if (!d.population?.description.trim()) errs.push(`${label}: Population Requirement is required`);
         if (!d.population?.dueDate)            errs.push(`${label}: Population Due Date is required`);
-        else if (!allowPastDueDate && d.population.dueDate < todayISO()) errs.push(`${label}: Population Due Date cannot be in the past`);
       }
       return errs;
     });
