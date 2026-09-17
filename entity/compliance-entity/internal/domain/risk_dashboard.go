@@ -59,6 +59,7 @@ type RiskStatusSummary struct {
 
 // RegisterTreatmentCount is one stacked segment of the treatment-strategy chart.
 type RegisterTreatmentCount struct {
+	RegisterID        int    `json:"registerId"`
 	RegisterName      string `json:"registerName"`
 	TreatmentStrategy string `json:"treatmentStrategy"`
 	Count             int    `json:"count"`

@@ -53,10 +53,6 @@ export default function DashboardView({
   registerId,
   onDrillDown,
 }: DashboardViewProps): JSX.Element {
-  // TreatmentByRegisterChart only carries register names (see
-  // RegisterTreatmentCount), so its clicks are resolved back to an id here.
-  const registerIdByName = new Map(dashboard.registers.map((r) => [r.register_name, r.register_id]));
-
   return (
     <Stack spacing={3}>
       <SummaryCards summary={dashboard.summary} />
@@ -68,11 +64,7 @@ export default function DashboardView({
               <StatusPieChart summary={dashboard.summary} onDrillDown={onDrillDown} registerId={registerId} />
             </ChartCard>
             <ChartCard title="Risk Treatment Strategy on Open Risks">
-              <TreatmentByRegisterChart
-                data={dashboard.treatment_by_register}
-                onDrillDown={onDrillDown}
-                registerIdByName={registerIdByName}
-              />
+              <TreatmentByRegisterChart data={dashboard.treatment_by_register} onDrillDown={onDrillDown} />
             </ChartCard>
           </Box>
 

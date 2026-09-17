@@ -343,6 +343,7 @@ export interface RiskStatusSummary {
 }
 
 export interface RegisterTreatmentCount {
+  register_id: number;
   register_name: string;
   treatment_strategy: string;
   count: number;
