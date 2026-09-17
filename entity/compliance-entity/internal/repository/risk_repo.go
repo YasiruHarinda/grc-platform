@@ -154,12 +154,33 @@ func (r *riskRepo) SearchRisks(ctx context.Context, req domain.SearchRisksReques
 		}
 	}
 	if len(req.TreatmentStrategyKeys) > 0 {
-		ph := strings.Repeat("?,", len(req.TreatmentStrategyKeys))
-		ph = ph[:len(ph)-1]
-		where += " AND r.treatment_strategy IN (" + ph + ")"
+		// treatment_strategy is ENUM('REMEDIATE','ACCEPT','TRANSFER','AVOID')
+		// NULL — "UNSPECIFIED" isn't a stored value, it's how the dashboard
+		// (COALESCE(r.treatment_strategy, 'UNSPECIFIED') in OpenRiskFacts below)
+		// labels a NULL row. Passing "UNSPECIFIED" through to IN(...) directly
+		// would never match those rows, so it's split into its own IS NULL arm.
+		var enumKeys []string
+		wantsUnspecified := false
 		for _, t := range req.TreatmentStrategyKeys {
-			args = append(args, t)
+			if t == "UNSPECIFIED" {
+				wantsUnspecified = true
+				continue
+			}
+			enumKeys = append(enumKeys, t)
 		}
+		var clauses []string
+		if len(enumKeys) > 0 {
+			ph := strings.Repeat("?,", len(enumKeys))
+			ph = ph[:len(ph)-1]
+			clauses = append(clauses, "r.treatment_strategy IN ("+ph+")")
+			for _, t := range enumKeys {
+				args = append(args, t)
+			}
+		}
+		if wantsUnspecified {
+			clauses = append(clauses, "r.treatment_strategy IS NULL")
+		}
+		where += " AND (" + strings.Join(clauses, " OR ") + ")"
 	}
 	if len(req.OwnerIDs) > 0 {
 		ph := strings.Repeat("?,", len(req.OwnerIDs))
