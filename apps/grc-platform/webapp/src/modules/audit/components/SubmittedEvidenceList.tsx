@@ -152,33 +152,12 @@ export default function SubmittedEvidenceList({
 
   // A resubmission creates a new round, and deleting a round's last file leaves
   // an otherwise-empty round behind. Drop rounds with no files so the list shows
-  // one "Submitted …" header per round that actually holds evidence.
-  //
-  // Also drop rounds a reviewer/auditor already rejected (COMPLIANCE_REJECTED/
-  // AUDITOR_REJECTED, set by useReviewEvidence/useValidateEvidence, or by the
-  // admin override cascade into EVIDENCE_NEED_CLARIFICATION) — but only once a
-  // newer round has actually superseded it (index > 0 in `data`, which is
-  // newest first): showing a superseded rejected round alongside a fresh
-  // resubmission would conflate old, no-longer-relevant files with it. While a
-  // rejected round is still the latest one (index 0 — the reject just
-  // happened, or an override just landed, and nothing has been resubmitted
-  // yet), it stays visible here so the team can see, delete, and replace it;
-  // once resubmitted it drops out and remains visible only in the History tab.
-  const REJECTED_STATUSES = new Set(["COMPLIANCE_REJECTED", "AUDITOR_REJECTED"]);
+  // one "Submitted …" header per round that actually holds evidence. Every round
+  // with content stays listed regardless of its status — a rejected round stays
+  // visible alongside the resubmission that superseded it, matching population's
+  // file list, which never drops earlier files either.
   const allRounds = data ?? [];
-  const submissions = allRounds.filter((s, i) => {
-    const hasContent = (s.files?.length ?? 0) > 0 || Boolean(s.attestation);
-    if (!hasContent) return false;
-    // "Superseded" means a newer round actually has content — not just a
-    // lower array index, since a resubmission's files can later be deleted
-    // and leave a newer, empty round in front of this one (see hasContent
-    // above, and the comment block up top).
-    const hasNewerContent = allRounds
-      .slice(0, i)
-      .some((round) => (round.files?.length ?? 0) > 0 || Boolean(round.attestation));
-    if (REJECTED_STATUSES.has(s.status) && hasNewerContent) return false;
-    return true;
-  });
+  const submissions = allRounds.filter((s) => (s.files?.length ?? 0) > 0 || Boolean(s.attestation));
 
   // Only note a resubmission when this call site opted in (rejectionReason
   // passed, meaning control.status is plain EVIDENCE_PENDING) and there is
