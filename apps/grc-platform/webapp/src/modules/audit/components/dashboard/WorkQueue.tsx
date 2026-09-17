@@ -87,9 +87,10 @@ const VALIDATION_STATUSES: ControlStatus[] = [
 const REVIEW_STATUSES: ControlStatus[] = ["EVIDENCE_INTERNAL_REVIEW", "POPULATION_INTERNAL_REVIEW"];
 
 // statusesForTab returns the statuses that can actually appear on a given tab, so
-// the column filters only ever list relevant options. Due Soon and Overdue span
-// every non-terminal status; Action Items mirrors the backend's role-based filter
-// (approximated here from the two privilege flags the frontend already has).
+// the column filters only ever list relevant options. Due Soon, Overdue and All
+// Pending span every non-terminal status; Action Items mirrors the backend's
+// role-based filter (approximated here from the two privilege flags the
+// frontend already has).
 function statusesForTab(tab: WorkQueueTab, canApprove: boolean, canSubmit: boolean): ControlStatus[] {
   switch (tab) {
     case "pending":    return PENDING_STATUSES;
@@ -98,7 +99,7 @@ function statusesForTab(tab: WorkQueueTab, canApprove: boolean, canSubmit: boole
       if (canApprove) return REVIEW_STATUSES;
       if (canSubmit) return PENDING_STATUSES;
       return VALIDATION_STATUSES;
-    default: // due-soon, overdue
+    default: // due-soon, overdue, all-pending
       return FILTERABLE_STATUSES;
   }
 }
@@ -536,6 +537,7 @@ export const QUEUE_TAB_DUE_SOON = 1;
 export const QUEUE_TAB_PENDING = 2;
 export const QUEUE_TAB_VALIDATION = 3;
 export const QUEUE_TAB_OVERDUE = 4;
+export const QUEUE_TAB_ALL_PENDING = 5;
 
 interface WorkQueueProps {
   totalActionItems: number;
@@ -543,6 +545,9 @@ interface WorkQueueProps {
   totalPendingItems: number;
   totalValidationItems: number;
   totalOverdueControls: number;
+  // Count of controls in any non-terminal status, regardless of role/stage —
+  // unlike totalPendingItems/totalValidationItems, which are single stages.
+  totalAllPendingItems: number;
   // canViewAll (AUDIT_VIEW_ALL_AUDITS) sees the full tab set; a submitter without
   // it sees only Pending Submission; an auditor without it only Under Validation.
   canViewAll: boolean;
@@ -564,9 +569,14 @@ interface QueueTabDef {
 
 export default function WorkQueue({
   totalActionItems, totalDueSoonItems, totalPendingItems, totalValidationItems, totalOverdueControls,
+  totalAllPendingItems,
   canViewAll, canApprove, canSubmit, canValidate, queueTitle, tab, onTabChange,
 }: WorkQueueProps): JSX.Element {
   const allTabs: QueueTabDef[] = [
+    // Role-agnostic rollup of every non-terminal status, shown to every role —
+    // unlike Pending Submission/Under Validation, which are single stages.
+    // Listed first: it's the broadest "what's still open" view.
+    { value: QUEUE_TAB_ALL_PENDING, label: `All Pending (${totalAllPendingItems})`, tabKey: "all-pending", emptyText: "Nothing pending across any stage" },
     { value: QUEUE_TAB_AWAITING, label: `${queueTitle} (${totalActionItems})`, tabKey: "action-items", emptyText: "No pending actions" },
     { value: QUEUE_TAB_DUE_SOON, label: `Due Soon (${totalDueSoonItems})`, tabKey: "due-soon", emptyText: "Nothing due in the next 7 days" },
     { value: QUEUE_TAB_PENDING, label: `Pending Submission (${totalPendingItems})`, tabKey: "pending", emptyText: "Nothing pending submission or clarification" },
@@ -580,17 +590,17 @@ export default function WorkQueue({
   // Privilege-driven tab visibility: org-wide readers get everything;
   // narrow roles get the union of tabs their privileges unlock — a reviewer sees
   // Action Items, a submitter Pending Submission, an auditor Under Validation,
-  // and a caller holding more than one privilege sees all of them. Due Soon and
-  // Overdue are just date views over rows the backend has already scoped to the
-  // caller (queueWhere in audit_dashboard_repo.go), so they stay visible
-  // alongside whatever privilege-gated tab the role has — otherwise HeroBand's
-  // Overdue/Awaiting tiles (which jump to these tabs unconditionally) become
-  // dead ends for narrow roles. Each Tab carries an explicit `value` so hidden
-  // tabs don't shift the selected index.
+  // and a caller holding more than one privilege sees all of them. Due Soon,
+  // Overdue and All Pending are just status/date views over rows the backend
+  // has already scoped to the caller (queueWhere in audit_dashboard_repo.go),
+  // so they stay visible alongside whatever privilege-gated tab the role has —
+  // otherwise HeroBand's Overdue/Awaiting tiles (which jump to these tabs
+  // unconditionally) become dead ends for narrow roles. Each Tab carries an
+  // explicit `value` so hidden tabs don't shift the selected index.
   const visibleTabs = canViewAll
     ? allTabs
     : allTabs.filter((t) => {
-        if (t.value === QUEUE_TAB_DUE_SOON || t.value === QUEUE_TAB_OVERDUE) return true;
+        if (t.value === QUEUE_TAB_DUE_SOON || t.value === QUEUE_TAB_OVERDUE || t.value === QUEUE_TAB_ALL_PENDING) return true;
         if (t.value === QUEUE_TAB_AWAITING) return canApprove;
         if (t.value === QUEUE_TAB_PENDING) return canSubmit;
         if (t.value === QUEUE_TAB_VALIDATION) return canValidate;

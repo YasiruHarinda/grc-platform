@@ -106,7 +106,10 @@ type DashboardData struct {
 	DueSoonItems           []ActionItem      `json:"dueSoonItems"`
 	PendingCount           int               `json:"pendingCount"`
 	ValidationCount        int               `json:"validationCount"`
-	OverdueControls        []OverdueControl  `json:"overdueControls"`
+	// AllPendingCount is the count of controls in any non-terminal status,
+	// regardless of role/stage — see WorkQueueTabAllPending.
+	AllPendingCount int              `json:"allPendingCount"`
+	OverdueControls []OverdueControl `json:"overdueControls"`
 }
 
 // WorkQueueTab identifies which sub-list the caller wants.
@@ -118,6 +121,8 @@ const (
 	WorkQueueTabPending     WorkQueueTab = "pending"
 	WorkQueueTabValidation  WorkQueueTab = "validation"
 	WorkQueueTabOverdue     WorkQueueTab = "overdue"
+	// WorkQueueTabAllPending spans every non-terminal status, regardless of role/stage.
+	WorkQueueTabAllPending WorkQueueTab = "all-pending"
 )
 
 // WorkQueuePage is the paginated response for GET /api/v1/audits/work-queue.

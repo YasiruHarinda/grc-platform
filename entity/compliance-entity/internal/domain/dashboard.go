@@ -136,6 +136,10 @@ const (
 	WorkQueueTabPending     WorkQueueTab = "pending"
 	WorkQueueTabValidation  WorkQueueTab = "validation"
 	WorkQueueTabOverdue     WorkQueueTab = "overdue"
+	// WorkQueueTabAllPending spans every non-terminal status (pending submission,
+	// internal review and validation alike) — a role-agnostic "everything still
+	// open, assigned to me" view, unlike Pending/Validation which are single stages.
+	WorkQueueTabAllPending WorkQueueTab = "all-pending"
 )
 
 // WorkQueueRequest is the body of POST /audit/work-queue/search.
@@ -185,5 +189,8 @@ type DashboardData struct {
 	DueSoonItems           []DashboardControlItem `json:"dueSoonItems"`
 	PendingCount           int                    `json:"pendingCount"`
 	ValidationCount        int                    `json:"validationCount"`
-	OverdueControls        []DashboardControlItem `json:"overdueControls"`
+	// AllPendingCount is the count of controls in any non-terminal status,
+	// regardless of role/stage — see WorkQueueTabAllPending.
+	AllPendingCount int                    `json:"allPendingCount"`
+	OverdueControls []DashboardControlItem `json:"overdueControls"`
 }

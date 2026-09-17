@@ -153,6 +153,7 @@ export default function AuditDashboard(): JSX.Element {
   const dueSoonCount = data.dueSoonItems?.length ?? 0;
   const pendingCount = data.pendingCount ?? 0;
   const validationCount = data.validationCount ?? 0;
+  const allPendingCount = data.allPendingCount ?? 0;
 
   const userName =
     (claims?.given_name as string | undefined) ??
@@ -229,6 +230,7 @@ export default function AuditDashboard(): JSX.Element {
             totalPendingItems={pendingCount}
             totalValidationItems={validationCount}
             totalOverdueControls={stats.overdueControls}
+            totalAllPendingItems={allPendingCount}
             canViewAll={canViewAll}
             canApprove={canApprove}
             canSubmit={canSubmit}
