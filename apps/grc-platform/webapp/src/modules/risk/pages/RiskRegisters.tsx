@@ -115,7 +115,7 @@ import {
   calcDue,
   formatDate,
 } from "./risk-registers/utils";
-import { LEVEL_LABELS, TREATMENT_LABELS, TREATMENT_ORDER } from "./dashboard/constants";
+import { LEVEL_LABELS, LEVEL_ORDER, TREATMENT_LABELS, TREATMENT_ORDER } from "./dashboard/constants";
 
 // ── Tab definitions ────────────────────────────────────────────────────────────
 
@@ -687,11 +687,18 @@ export default function RiskRegisters(): JSX.Element {
     const treatment = searchParams.get("treatment");
     if (!view && !tab && !approved && !level && !team && !treatment) return;
 
+    // level/treatment come straight from the URL — a stale bookmark or typo
+    // must not become a filter chip that silently matches nothing; dropping
+    // an unrecognised value lands on the unfiltered list instead.
+    const validLevel = level && (LEVEL_ORDER as readonly string[]).includes(level) ? level : null;
+    const validTreatment =
+      treatment && (TREATMENT_ORDER as readonly string[]).includes(treatment) ? treatment : null;
+
     setFilters({
       ...EMPTY_FILTERS,
-      level: level ? [level] : [],
+      level: validLevel ? [validLevel] : [],
       teamId: team && Number.isSafeInteger(Number(team)) ? [Number(team)] : [],
-      treatmentStrategy: treatment ? [treatment] : [],
+      treatmentStrategy: validTreatment ? [validTreatment] : [],
     });
     if (view === "all-stages") {
       setAllStagesView(true);
