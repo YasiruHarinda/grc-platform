@@ -48,6 +48,7 @@ type RiskStatusSummary struct {
 // RegisterTreatmentCount is one stacked segment of the
 // "Risk Treatment Strategy on Open Risks" chart (x = BU/register).
 type RegisterTreatmentCount struct {
+	RegisterID        int    `json:"register_id"`
 	RegisterName      string `json:"register_name"`
 	TreatmentStrategy string `json:"treatment_strategy"`
 	Count             int    `json:"count"`

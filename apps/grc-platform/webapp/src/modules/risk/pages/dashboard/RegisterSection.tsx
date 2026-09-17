@@ -18,18 +18,19 @@ import { Box, Chip, Paper, Stack, Typography } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
 import type { RegisterAnalytics, RiskScore } from "../../api/riskApi";
 import { darkCardSx } from "../cardStyles";
-import { LEVEL_FALLBACK_COLORS, LEVEL_LABELS, LEVEL_ORDER } from "./constants";
+import { LEVEL_FALLBACK_COLORS, LEVEL_LABELS, LEVEL_ORDER, type OnDrillDown } from "./constants";
 import RegisterStatusChart from "./RegisterStatusChart";
 import RiskHeatmap from "./RiskHeatmap";
 
 interface RegisterSectionProps {
   register: RegisterAnalytics;
   scores: RiskScore[];
+  onDrillDown?: OnDrillDown;
 }
 
 // One per-register dashboard section: residual heatmap on the left, the
 // status × level stacked bar (with its own summary chips) on the right.
-export default function RegisterSection({ register, scores }: RegisterSectionProps): JSX.Element {
+export default function RegisterSection({ register, scores, onDrillDown }: RegisterSectionProps): JSX.Element {
   // Total Risks / High / Medium / Low chips are derived from status_levels
   // (open + closed) rather than a separate backend field, so they always
   // agree with what the chart's bars sum to.
@@ -80,7 +81,11 @@ export default function RegisterSection({ register, scores }: RegisterSectionPro
               );
             })}
           </Stack>
-          <RegisterStatusChart data={register.status_levels} />
+          <RegisterStatusChart
+            data={register.status_levels}
+            onDrillDown={onDrillDown}
+            registerId={register.register_id}
+          />
         </Box>
       </Box>
     </Paper>

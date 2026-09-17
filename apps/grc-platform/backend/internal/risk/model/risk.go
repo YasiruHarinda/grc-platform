@@ -127,17 +127,20 @@ type NextSequenceIDResponse struct {
 // against the other fields (spreadsheet-style column filtering) — an empty
 // slice/string means "no restriction on this field".
 type ListRisksFilter struct {
-	Statuses       []string // workflow_status values to include (empty = all)
-	TeamIDs        []int    // source_register_id values to include (empty = all)
-	Levels         []string // LOW / MEDIUM / HIGH values to include (empty = all)
-	Search         string   // matched against risk_code and risk_title
-	RiskTypes      []string // NEW / UPDATED values to include (empty = all)
-	OwnerIDs       []int    // owner_id values to include (empty = all)
-	SubmittedFrom  string   // created_at >= this date (YYYY-MM-DD); empty = unbounded
-	SubmittedTo    string   // created_at <= this date (YYYY-MM-DD); empty = unbounded
-	DueFrom        string   // implementation_date >= this date (YYYY-MM-DD); empty = unbounded
-	DueTo          string   // implementation_date <= this date (YYYY-MM-DD); empty = unbounded
-	DueOverdueOnly bool     // implementation_date < today, regardless of the range above
+	Statuses  []string // workflow_status values to include (empty = all)
+	TeamIDs   []int    // source_register_id values to include (empty = all)
+	Levels    []string // LOW / MEDIUM / HIGH values to include (empty = all)
+	Search    string   // matched against risk_code and risk_title
+	RiskTypes []string // NEW / UPDATED values to include (empty = all)
+	// TreatmentStrategies filters on treatment_strategy directly — REMEDIATE /
+	// ACCEPT / TRANSFER / AVOID / UNSPECIFIED (empty = all).
+	TreatmentStrategies []string
+	OwnerIDs            []int  // owner_id values to include (empty = all)
+	SubmittedFrom       string // created_at >= this date (YYYY-MM-DD); empty = unbounded
+	SubmittedTo         string // created_at <= this date (YYYY-MM-DD); empty = unbounded
+	DueFrom             string // implementation_date >= this date (YYYY-MM-DD); empty = unbounded
+	DueTo               string // implementation_date <= this date (YYYY-MM-DD); empty = unbounded
+	DueOverdueOnly      bool   // implementation_date < today, regardless of the range above
 	// OpenEscalationOnly restricts to risks carrying an unresolved escalation —
 	// what the Overdue Risks tab filters on. Deliberately not the ESCALATED
 	// status: a commented escalation returns the risk to IN_REMEDIATION while

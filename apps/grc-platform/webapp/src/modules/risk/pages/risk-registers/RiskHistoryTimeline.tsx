@@ -17,7 +17,7 @@
 import { Box, Stack, Typography } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
 import type { HistoryEntry } from "../../api/riskApi";
-import { STATUS_CONFIG, formatDate } from "./utils";
+import { STATUS_CONFIG, fieldLabel, formatDate, readValue } from "./utils";
 
 // Tone drives the dot colour only — the sentence carries the meaning, so a
 // missing tone degrades to neutral rather than hiding the entry.
@@ -38,36 +38,6 @@ function statusLabel(status?: string): string {
   return STATUS_CONFIG[status]?.label ?? status.replace(/_/g, " ").toLowerCase();
 }
 
-// fieldLabel turns a column name into the words the form uses.
-const FIELD_LABELS: Record<string, string> = {
-  risk_title: "title",
-  risk_description: "description",
-  impact_description: "impact description",
-  implementation_date: "implementation date",
-  reassessment_date: "reassessment date",
-  treatment_strategy: "treatment strategy",
-  email_subject: "email subject",
-  git_issue_url: "Git issue URL",
-  action_steps: "action steps",
-  progress: "progress",
-  remarks: "remarks",
-};
-
-function fieldLabel(field: string): string {
-  return FIELD_LABELS[field] ?? field.replace(/_/g, " ");
-}
-
-// Values arrive as raw JSON strings (that is how they are stored), so unwrap a
-// quoted scalar for display and fall back to the raw text if it isn't JSON.
-function readValue(raw: string | null): string {
-  if (!raw) return "";
-  try {
-    const v: unknown = JSON.parse(raw);
-    return typeof v === "string" ? v : JSON.stringify(v);
-  } catch {
-    return raw;
-  }
-}
 
 interface Rendered {
   title: string;

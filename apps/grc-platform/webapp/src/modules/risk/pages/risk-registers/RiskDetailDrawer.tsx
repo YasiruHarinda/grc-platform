@@ -62,7 +62,17 @@ import { deleteRiskEvidence, fetchRiskEvidence, uploadRiskEvidence } from "../..
 import RiskHistoryTimeline from "./RiskHistoryTimeline";
 import { RiskPrivilege } from "../../privileges";
 import { dialogPaperSx } from "../cardStyles";
-import { STATUS_CONFIG, calcAge, calcDue, canViewInline, downloadBlob, formatDate, viewBlob } from "./utils";
+import {
+  STATUS_CONFIG,
+  calcAge,
+  calcDue,
+  canViewInline,
+  downloadBlob,
+  fieldLabel,
+  formatDate,
+  readValue,
+  viewBlob,
+} from "./utils";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
 
@@ -128,6 +138,48 @@ const REJECTION_STAGE_LABELS: Record<string, string> = {
   COMPLETION_OWNER: "Risk Owner (Completion)",
   COMPLETION_MANAGEMENT: "Management (Completion)",
 };
+
+// Statuses where a still-unresolved amendment is worth calling out: the owner
+// reviewing the edit itself, and Management/Compliance reviewing it further
+// down the same chain after the owner has approved it.
+const PENDING_AMENDMENT_VISIBLE_STATUSES = new Set([
+  "PENDING_AMENDMENT",
+  "PENDING_MANAGEMENT_APPROVAL",
+  "PENDING_COMPLIANCE_REVIEW",
+]);
+
+// Finds the field-level changes belonging to the amendment currently under
+// review, purely from the history log — no dedicated backend state exists for
+// this (risk_type stays "UPDATED" forever once any mid-remediation edit ever
+// happens, so it can't tell "current" from "long since approved").
+//
+// history is newest-first. The boundary is the most recent REJECT, or the
+// most recent APPROVE that landed the risk back in IN_REMEDIATION — the one
+// point every approval path (the risk's original submission, or an
+// amendment's) converges on. Everything newer than that boundary with action
+// UPDATE belongs to the amendment now under review; a REJECT resets the
+// window so a superseded edit never bleeds into a later cycle.
+//
+// Gated on the risk having reached IN_REMEDIATION at least once, anywhere in
+// its full history — not just as this scan's break point. Without that
+// guard, a risk still churning through its very first approval (rejected
+// during PENDING_REVISION, edited, resubmitted) would have its scan stop at
+// that REJECT and surface the pre-remediation edit as if it were a
+// post-remediation amendment, which this banner is specifically not about.
+function pendingAmendmentChanges(history: HistoryEntry[]): HistoryEntry[] {
+  const everReachedRemediation = history.some(
+    (e) => e.action === "APPROVE" && e.details?.to === "IN_REMEDIATION",
+  );
+  if (!everReachedRemediation) return [];
+
+  const changes: HistoryEntry[] = [];
+  for (const entry of history) {
+    if (entry.action === "REJECT") break;
+    if (entry.action === "APPROVE" && entry.details?.to === "IN_REMEDIATION") break;
+    if (entry.action === "UPDATE" && entry.field_changed) changes.push(entry);
+  }
+  return changes;
+}
 
 // ── Shared visual building blocks (matching Audit's ControlDrawer.tsx —
 // SectionCard/InfoTile/TabPanel there are file-local, not exported/shared
@@ -935,6 +987,13 @@ export default function RiskDetailDrawer({
 
   const status = detail?.workflow_status ?? "";
   const statusCfg = STATUS_CONFIG[status] ?? { label: status, color: "default" as const };
+
+  // Only worth computing while on a status where it would actually render —
+  // history can be a few hundred entries deep on an old risk.
+  const amendmentChanges = useMemo(
+    () => (PENDING_AMENDMENT_VISIBLE_STATUSES.has(status) ? pendingAmendmentChanges(history) : []),
+    [status, history],
+  );
   const isOverdue = !!detail && calcDue(detail.implementation_date).daysLeft < 0;
 
   // Per-risk identity, mirroring the backend's requireRiskActor gate: holding
@@ -1122,6 +1181,26 @@ export default function RiskDetailDrawer({
                     : "—"}
                 </Typography>
                 {detail.rejection_comment}
+              </Alert>
+            )}
+
+            {amendmentChanges.length > 0 && (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                <Typography variant="caption" fontWeight={700} display="block">
+                  This risk was updated since it was last approved:
+                </Typography>
+                <Stack component="ul" sx={{ m: 0, pl: 2.5 }}>
+                  {amendmentChanges.map((e) => {
+                    const from = readValue(e.old_value);
+                    const to = readValue(e.new_value);
+                    return (
+                      <Typography component="li" variant="caption" key={e.id}>
+                        {fieldLabel(e.field_changed!)}
+                        {(from || to) && `: ${from || "—"} → ${to || "—"}`}
+                      </Typography>
+                    );
+                  })}
+                </Stack>
               </Alert>
             )}
 

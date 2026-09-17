@@ -100,24 +100,41 @@ func (s *riskDashboardService) Summary(ctx context.Context, req domain.RiskDashb
 }
 
 // buildTreatmentByRegister collapses facts into register × treatment counts,
-// preserving the repository's register-name ordering.
+// preserving the repository's register ordering.
+//
+// Keyed on RegisterID, not RegisterName — risk_team.name carries no UNIQUE
+// constraint (only code does; see risk_schema.sql) and nothing validates
+// name uniqueness on creation, so two distinct registers can share a display
+// name. Grouping by name would silently merge their counts into one row with
+// only one ID to drill down into, losing the other register's risks from
+// that click. buildRegisterBlocks below follows the same RegisterID-keyed
+// pattern for the same reason.
 func buildTreatmentByRegister(facts []domain.OpenRiskFact) []domain.RegisterTreatmentCount {
-	type key struct{ register, strategy string }
-	counts := map[key]int{}
+	type key struct {
+		registerID int
+		strategy   string
+	}
+	type row struct {
+		registerName string
+		count        int
+	}
+	rows := map[key]*row{}
 	var order []key
 	for _, f := range facts {
-		k := key{f.RegisterName, f.TreatmentStrategy}
-		if _, seen := counts[k]; !seen {
+		k := key{f.RegisterID, f.TreatmentStrategy}
+		if _, seen := rows[k]; !seen {
+			rows[k] = &row{registerName: f.RegisterName}
 			order = append(order, k)
 		}
-		counts[k] += f.Count
+		rows[k].count += f.Count
 	}
 	out := make([]domain.RegisterTreatmentCount, 0, len(order))
 	for _, k := range order {
 		out = append(out, domain.RegisterTreatmentCount{
-			RegisterName:      k.register,
+			RegisterID:        k.registerID,
+			RegisterName:      rows[k].registerName,
 			TreatmentStrategy: k.strategy,
-			Count:             counts[k],
+			Count:             rows[k].count,
 		})
 	}
 	return out

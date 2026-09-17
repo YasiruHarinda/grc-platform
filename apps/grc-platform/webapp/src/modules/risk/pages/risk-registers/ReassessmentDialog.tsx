@@ -32,7 +32,7 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
-import type { CreateAssessmentPayload, RiskScore } from "../../api/riskApi";
+import type { CreateAssessmentPayload, RiskScore, RiskScoreInfo } from "../../api/riskApi";
 import { dialogPaperSx } from "../cardStyles";
 import RiskScoreGrid from "./RiskScoreGrid";
 
@@ -42,6 +42,14 @@ interface ReassessmentDialogProps {
   open: boolean;
   riskCode: string;
   riskScores: RiskScore[];
+  // The risk's residual score before this assessment — RiskDetail.effective_score,
+  // i.e. the latest reassessment if one exists, else the gross score. Null only
+  // when the caller has no detail loaded yet.
+  previousScore: RiskScoreInfo | null;
+  // True when previousScore is actually the gross score (no reassessment has
+  // ever been recorded) — worded "Initial" rather than "Previous" since it
+  // isn't a residual assessment at all.
+  previousIsInitial: boolean;
   onClose: () => void;
   onSubmit: (payload: CreateAssessmentPayload) => Promise<void>;
 }
@@ -50,6 +58,8 @@ export default function ReassessmentDialog({
   open,
   riskCode,
   riskScores,
+  previousScore,
+  previousIsInitial,
   onClose,
   onSubmit,
 }: ReassessmentDialogProps): JSX.Element {
@@ -127,9 +137,17 @@ export default function ReassessmentDialog({
           {apiError && <Alert severity="error">{apiError}</Alert>}
 
           <Box>
-            <Typography variant="body2" fontWeight={600} sx={{ mb: 1.5 }}>
-              Residual Risk Score <span style={{ color: "red" }}>*</span>
-            </Typography>
+            <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1.5 }} flexWrap="wrap" gap={1}>
+              <Typography variant="body2" fontWeight={600}>
+                Residual Risk Score <span style={{ color: "red" }}>*</span>
+              </Typography>
+              {previousScore && (
+                <Typography variant="caption" color="text.secondary">
+                  {previousIsInitial ? "Initial" : "Previous"}:{" "}
+                  <strong>{previousScore.risk_level}</strong> · Score {previousScore.risk_rating}
+                </Typography>
+              )}
+            </Stack>
             <RiskScoreGrid
               riskScores={riskScores}
               likelihood={likelihood}
@@ -140,6 +158,8 @@ export default function ReassessmentDialog({
                 if (errors.grid) setErrors((prev) => ({ ...prev, grid: "" }));
               }}
               error={errors.grid}
+              previousLikelihood={previousScore?.likelihood}
+              previousImpact={previousScore?.impact}
             />
           </Box>
 

@@ -16,6 +16,20 @@
 
 import { parseDateStr } from "../risk-registers/utils";
 
+// What a dashboard chart click hands up to RiskDashboard to build the
+// Risk Register deep-link query string. `closed` lands on the existing
+// Approved Risks tab (CLOSED is one unambiguous status); everything else
+// switches Risk Register into its cross-tab "all stages" view, because an
+// "open" bar/slice's count spans every approval stage, not one tab — see
+// ALL_OPEN_STATUSES in risk-registers/utils.ts.
+export interface DrillDownFilter {
+  level?: string;
+  teamId?: number;
+  treatment?: string;
+  closed?: boolean;
+}
+export type OnDrillDown = (filter: DrillDownFilter) => void;
+
 // Chart palette for the risk dashboard. Categorical hues are assigned in fixed
 // order (never cycled) and were validated for colorblind-safe adjacent-pair
 // separation. Segment labels stay visible because two hues sit below 3:1

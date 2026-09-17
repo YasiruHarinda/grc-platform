@@ -59,6 +59,7 @@ type entDashboard struct {
 		Overdue int `json:"overdue"`
 	} `json:"summary"`
 	TreatmentByRegister []struct {
+		RegisterID        int    `json:"registerId"`
 		RegisterName      string `json:"registerName"`
 		TreatmentStrategy string `json:"treatmentStrategy"`
 		Count             int    `json:"count"`
@@ -156,7 +157,7 @@ func (r *dashboardRepository) Summary(ctx context.Context, registerID *int, regi
 
 	for _, t := range e.TreatmentByRegister {
 		out.TreatmentByRegister = append(out.TreatmentByRegister, model.RegisterTreatmentCount{
-			RegisterName: t.RegisterName, TreatmentStrategy: t.TreatmentStrategy, Count: t.Count,
+			RegisterID: t.RegisterID, RegisterName: t.RegisterName, TreatmentStrategy: t.TreatmentStrategy, Count: t.Count,
 		})
 	}
 	for _, l := range e.LevelCounts {

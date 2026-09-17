@@ -24,6 +24,7 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
+import { useNavigate } from "react-router";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import {
   fetchDashboard,
@@ -35,6 +36,7 @@ import {
 } from "../api/riskApi";
 import DashboardView from "./dashboard/DashboardView";
 import RegisterFilter from "./analytics/RegisterFilter";
+import type { DrillDownFilter } from "./dashboard/constants";
 
 // Risk dashboard: current organisational risk posture built from a single
 // GET /api/v1/risks/dashboard payload, plus the 3×3 risk_score matrix that
@@ -42,6 +44,7 @@ import RegisterFilter from "./analytics/RegisterFilter";
 // register filter used on the Analytics page.
 export default function RiskDashboard(): JSX.Element {
   const authFetch = useAuthApiClient();
+  const navigate = useNavigate();
   const [teams, setTeams] = useState<RiskTeam[]>([]);
   const [registerId, setRegisterId] = useState(0); // 0 = All Registers
   const [dashboard, setDashboard] = useState<DashboardSummary | null>(null);
@@ -74,6 +77,25 @@ export default function RiskDashboard(): JSX.Element {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Builds the Risk Register deep link for a clicked chart bar/slice — see
+  // RiskRegisters.tsx's dashboard-link effect for how these params are read.
+  const handleDrillDown = useCallback(
+    (filter: DrillDownFilter) => {
+      const qs = new URLSearchParams();
+      if (filter.closed) {
+        qs.set("tab", "approved");
+        qs.set("approved", "closed");
+      } else {
+        qs.set("view", "all-stages");
+      }
+      if (filter.level) qs.set("level", filter.level);
+      if (filter.teamId) qs.set("team", String(filter.teamId));
+      if (filter.treatment) qs.set("treatment", filter.treatment);
+      navigate(`/risk/registers?${qs}`);
+    },
+    [navigate],
+  );
 
   return (
     <Box sx={{ p: 3, display: "flex", flexDirection: "column", gap: 3 }}>
@@ -109,7 +131,13 @@ export default function RiskDashboard(): JSX.Element {
       )}
 
       {!loading && !error && dashboard && (
-        <DashboardView dashboard={dashboard} scores={scores} isAllRegisters={registerId === 0} />
+        <DashboardView
+          dashboard={dashboard}
+          scores={scores}
+          isAllRegisters={registerId === 0}
+          registerId={registerId}
+          onDrillDown={handleDrillDown}
+        />
       )}
     </Box>
   );

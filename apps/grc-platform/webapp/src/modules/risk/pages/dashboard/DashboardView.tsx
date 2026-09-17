@@ -26,7 +26,7 @@ import LevelCountChart from "./LevelCountChart";
 import AverageResidualRiskMatrix from "./AverageResidualRiskMatrix";
 import { meanRating, residualScoreMethodologySentence } from "./residualRiskMath";
 import CertDistributionChart from "./CertDistributionChart";
-import { certListSentence, CLOSED_COLOR } from "./constants";
+import { certListSentence, CLOSED_COLOR, type OnDrillDown } from "./constants";
 import RegisterSection from "./RegisterSection";
 import RepeatedRisksTable from "./RepeatedRisksTable";
 import HighRisksTable from "./HighRisksTable";
@@ -38,6 +38,11 @@ interface DashboardViewProps {
   // make sense comparing across registers (their x-axis or plotted points
   // *are* the register comparison).
   isAllRegisters: boolean;
+  // The register the dashboard itself is scoped to (0 = all registers) —
+  // folded into every chart's drill-down click alongside whatever that chart
+  // itself narrows on (level, treatment, register).
+  registerId: number;
+  onDrillDown: OnDrillDown;
 }
 
 // Pure layout of the risk dashboard; RiskDashboard supplies fetched data.
@@ -45,6 +50,8 @@ export default function DashboardView({
   dashboard,
   scores,
   isAllRegisters,
+  registerId,
+  onDrillDown,
 }: DashboardViewProps): JSX.Element {
   return (
     <Stack spacing={3}>
@@ -54,16 +61,16 @@ export default function DashboardView({
         <>
           <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "5fr 7fr" }, gap: 3 }}>
             <ChartCard title="Overall Risk Status Distribution">
-              <StatusPieChart summary={dashboard.summary} />
+              <StatusPieChart summary={dashboard.summary} onDrillDown={onDrillDown} registerId={registerId} />
             </ChartCard>
             <ChartCard title="Risk Treatment Strategy on Open Risks">
-              <TreatmentByRegisterChart data={dashboard.treatment_by_register} />
+              <TreatmentByRegisterChart data={dashboard.treatment_by_register} onDrillDown={onDrillDown} />
             </ChartCard>
           </Box>
 
           <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, gap: 3 }}>
             <ChartCard title="Count vs. Risk Level (Open Risks)">
-              <LevelCountChart data={dashboard.level_counts} />
+              <LevelCountChart data={dashboard.level_counts} onDrillDown={onDrillDown} registerId={registerId} />
             </ChartCard>
             <ChartCard
               title="Average Residual Risk Score (Open Risks)"
@@ -108,10 +115,10 @@ export default function DashboardView({
       ) : (
         <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, gap: 3 }}>
           <ChartCard title="Overall Risk Status Distribution">
-            <StatusPieChart summary={dashboard.summary} />
+            <StatusPieChart summary={dashboard.summary} onDrillDown={onDrillDown} registerId={registerId} />
           </ChartCard>
           <ChartCard title="Count vs. Risk Level (Open Risks)">
-            <LevelCountChart data={dashboard.level_counts} />
+            <LevelCountChart data={dashboard.level_counts} onDrillDown={onDrillDown} registerId={registerId} />
           </ChartCard>
         </Box>
       )}
@@ -151,7 +158,7 @@ export default function DashboardView({
       )}
 
       {dashboard.registers.map((register) => (
-        <RegisterSection key={register.register_id} register={register} scores={scores} />
+        <RegisterSection key={register.register_id} register={register} scores={scores} onDrillDown={onDrillDown} />
       ))}
 
       {isAllRegisters && (

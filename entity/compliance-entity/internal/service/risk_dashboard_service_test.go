@@ -101,6 +101,26 @@ func TestBuildTreatmentByRegister(t *testing.T) {
 	}
 }
 
+// Two distinct registers may share a display name — risk_team.name carries no
+// UNIQUE constraint (only code does) — so grouping must key on RegisterID,
+// never RegisterName, or one register's count and ID silently swallow the
+// other's.
+func TestBuildTreatmentByRegister_SameNameDifferentID(t *testing.T) {
+	facts := []domain.OpenRiskFact{
+		{RegisterID: 1, RegisterName: "Platform", TreatmentStrategy: "REMEDIATE", Count: 2},
+		{RegisterID: 2, RegisterName: "Platform", TreatmentStrategy: "REMEDIATE", Count: 5},
+	}
+
+	got := buildTreatmentByRegister(facts)
+	want := []domain.RegisterTreatmentCount{
+		{RegisterID: 1, RegisterName: "Platform", TreatmentStrategy: "REMEDIATE", Count: 2},
+		{RegisterID: 2, RegisterName: "Platform", TreatmentStrategy: "REMEDIATE", Count: 5},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("buildTreatmentByRegister() = %+v, want %+v", got, want)
+	}
+}
+
 func TestBuildRegisterBlocks(t *testing.T) {
 	facts := []domain.OpenRiskFact{
 		{RegisterID: 1, RegisterName: "Choreo", Likelihood: 3, Impact: 3, RiskLevel: "HIGH", ColorCode: "#FF0000", TreatmentStrategy: "REMEDIATE", Count: 2},

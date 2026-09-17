@@ -276,6 +276,7 @@ export interface ListRisksParams {
   level?: string[];
   search?: string;
   risk_type?: string[];
+  treatment_strategy?: string[];
   owner_id?: number[];
   submitted_from?: string;
   submitted_to?: string;
@@ -342,6 +343,7 @@ export interface RiskStatusSummary {
 }
 
 export interface RegisterTreatmentCount {
+  register_id: number;
   register_name: string;
   treatment_strategy: string;
   count: number;
@@ -756,6 +758,7 @@ export async function fetchRisks(
   if (params.level?.length) q.set("level", params.level.join(","));
   if (params.search) q.set("search", params.search);
   if (params.risk_type?.length) q.set("risk_type", params.risk_type.join(","));
+  if (params.treatment_strategy?.length) q.set("treatment_strategy", params.treatment_strategy.join(","));
   if (params.owner_id?.length) q.set("owner_id", params.owner_id.join(","));
   if (params.submitted_from) q.set("submitted_from", params.submitted_from);
   if (params.submitted_to) q.set("submitted_to", params.submitted_to);
