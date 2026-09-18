@@ -1359,7 +1359,7 @@ export default function EvidenceList() {
           setGalleryEvidenceId(null);
           setPendingDeleteFileId(null);
         }}
-        maxWidth="md"
+        maxWidth="lg"
         fullWidth
         PaperProps={{ sx: { maxHeight: "90vh" } }}
       >
@@ -1456,7 +1456,11 @@ export default function EvidenceList() {
                       <ChevronLeftIcon size={20} />
                     </IconButton>
 
-                    <Box sx={{ width: "100%", height: { xs: 320, sm: 440 }, display: "flex", alignItems: "center", justifyContent: "center", mx: 6 }}>
+                    {/* A fixed pixel height is what made this screenshot look small on a
+                        laptop, and a bigger fixed number would only be wrong on some other
+                        screen. Sizing off the viewport instead lets it grow with the window;
+                        the Paper's 90vh cap above is what keeps it from ever overflowing. */}
+                    <Box sx={{ width: "100%", height: { xs: 320, sm: "min(62vh, 700px)" }, display: "flex", alignItems: "center", justifyContent: "center", mx: 6 }}>
                       {showImage ? (
                         // No loading="lazy" here, deliberately: this is the
                         // full-size image the user just asked to see, not a
