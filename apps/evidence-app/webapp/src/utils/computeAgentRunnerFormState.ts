@@ -11,7 +11,7 @@ export type AgentRunnerTaskStatus = "queued" | "running" | "completed" | "failed
 export type AgentRunnerPrimaryAction = "queue" | "queuing" | "waitingForRunner" | "runningAgent" | "newTask";
 
 export type ComputeAgentRunnerFormStateArgs = {
-  // Whether the Engineer has clicked "I've logged in" for Step 1.
+  // Whether the Engineer has clicked "I've logged in" for Step 2.
   loginDone: boolean;
   // The current Agent Task's status, or null when there is no task yet
   // (before the first queue, or after New Task has cleared one).

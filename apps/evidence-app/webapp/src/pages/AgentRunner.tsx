@@ -242,7 +242,7 @@ export default function AgentRunner() {
   const [maxActionsPerStep, setMaxActionsPerStep] = useSessionState<number>("maxActionsPerStep", 1);
   const [settingsOpen, setSettingsOpen] = useSessionState<boolean>("settingsOpen", false);
 
-  // Step 1 — manual login
+  // Step 2 — manual login
   const [portalPreset, setPortalPreset] = useSessionState<string>("portalPreset", "Azure Portal");
   const [portalUrl, setPortalUrl] = useSessionState<string>("portalUrl", "https://portal.azure.com");
   const [openingPortal, setOpeningPortal] = useState(false);
@@ -251,7 +251,7 @@ export default function AgentRunner() {
   const [portalError, setPortalError] = useState<string | null>(null);
   const [loginTaskId, setLoginTaskId] = useState<number | null>(null);
 
-  // Task tracking (Step 2 — the real agent run)
+  // Task tracking (Step 3 — the real agent run)
   const [taskId, setTaskId] = useSessionState<number | null>("taskId", null);
   const [taskOut, setTaskOut] = useSessionState<TaskOut | null>("taskOut", null);
   const [queueing, setQueueing] = useState(false);
@@ -637,11 +637,72 @@ export default function AgentRunner() {
         </Typography>
       </Stack>
 
-      {/* ── Step 1 — Open browser & log in manually ───────────────────── */}
+      {/* ── Step 1 — Link to compliance control ──────────────────────────
+          Never faded, never locked: which Control an Engineer is here to
+          collect Evidence for has nothing to do with whether a browser
+          session exists yet, and this is the thing they arrive with in
+          mind. See chala2001/grc-tools#151.
+
+          Reads its editability from the form state function rather than
+          being left plainly unlocked, so "never locked" is a rule the page
+          asks for and gets, not an absence a future edit could fill in by
+          accident. The run panel below reads its own the same way. */}
+      <Paper
+        variant="outlined"
+        sx={{
+          p: { xs: 3, sm: 4 }, mb: 3,
+          opacity: formState.controlLinkEditable ? 1 : 0.55,
+          pointerEvents: formState.controlLinkEditable ? "auto" : "none",
+        }}
+      >
+        <Stack spacing={2.5}>
+          <Stack direction="row" alignItems="center" spacing={1.25} flexWrap="wrap">
+            <Chip label="STEP 1" size="small" color="primary" sx={{ fontWeight: 700, height: 22 }} />
+            <Typography variant="subtitle2" color="text.secondary"
+              sx={{ textTransform: "uppercase", letterSpacing: "0.04em", fontSize: "0.72rem" }}>
+              Link to compliance control
+            </Typography>
+            <Chip label="Optional" size="small" variant="outlined" sx={{ height: 20, fontSize: "0.7rem" }} />
+          </Stack>
+
+          <ProductPicker
+            value={productId}
+            onChange={(id) => { setProductId(id); setFrameworkId(""); setControlId(""); }}
+            includeAll
+            allLabel="Just run, don't save as evidence"
+          />
+          {productId !== "" && (
+            <FrameworkPicker
+              productId={productId}
+              value={frameworkId}
+              onChange={(id) => { setFrameworkId(id); setControlId(""); }}
+              placeholderOption="Select a framework"
+            />
+          )}
+          {frameworkId !== "" && (
+            <ControlPicker
+              frameworkId={frameworkId}
+              controlId={controlId}
+              onControlChange={(id) => setControlId(id)}
+            />
+          )}
+          {controlId !== "" && (
+            <TextField
+              label="Evidence Title (optional)"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Defaults to start of prompt"
+              fullWidth
+            />
+          )}
+        </Stack>
+      </Paper>
+
+      {/* ── Step 2 — Open browser & log in manually ───────────────────── */}
       <Paper variant="outlined" sx={{ p: { xs: 3, sm: 4 }, mb: 3 }}>
         <Stack spacing={2.5}>
           <Stack direction="row" alignItems="center" spacing={1.25}>
-            <Chip label="STEP 1" size="small" color="primary" sx={{ fontWeight: 700, height: 22 }} />
+            <Chip label="STEP 2" size="small" color="primary" sx={{ fontWeight: 700, height: 22 }} />
             <Typography variant="subtitle2" color="text.secondary"
               sx={{ textTransform: "uppercase", letterSpacing: "0.04em", fontSize: "0.72rem" }}>
               Open browser &amp; log in manually
@@ -749,7 +810,7 @@ export default function AgentRunner() {
         </Stack>
       </Paper>
 
-      {/* ── Step 2 — Run the AI agent (locked until login confirmed) ───── */}
+      {/* ── Step 3 — Run the AI agent (locked until login confirmed) ───── */}
       <Paper
         variant="outlined"
         sx={{
@@ -762,53 +823,12 @@ export default function AgentRunner() {
       >
         <Stack spacing={2.5}>
           <Stack direction="row" alignItems="center" spacing={1.25}>
-            <Chip label="STEP 2" size="small" color="primary" sx={{ fontWeight: 700, height: 22 }} />
+            <Chip label="STEP 3" size="small" color="primary" sx={{ fontWeight: 700, height: 22 }} />
             <Typography variant="subtitle2" color="text.secondary"
               sx={{ textTransform: "uppercase", letterSpacing: "0.04em", fontSize: "0.72rem" }}>
               Run the AI agent
             </Typography>
           </Stack>
-
-          <Stack direction="row" alignItems="center" spacing={1.25}>
-            <Typography variant="subtitle2" color="text.secondary"
-              sx={{ textTransform: "uppercase", letterSpacing: "0.04em", fontSize: "0.72rem" }}>
-              Link to compliance control
-            </Typography>
-            <Chip label="Optional" size="small" variant="outlined" sx={{ height: 20, fontSize: "0.7rem" }} />
-          </Stack>
-
-          <ProductPicker
-            value={productId}
-            onChange={(id) => { setProductId(id); setFrameworkId(""); setControlId(""); }}
-            includeAll
-            allLabel="Just run, don't save as evidence"
-          />
-          {productId !== "" && (
-            <FrameworkPicker
-              productId={productId}
-              value={frameworkId}
-              onChange={(id) => { setFrameworkId(id); setControlId(""); }}
-              placeholderOption="Select a framework"
-            />
-          )}
-          {frameworkId !== "" && (
-            <ControlPicker
-              frameworkId={frameworkId}
-              controlId={controlId}
-              onControlChange={(id) => setControlId(id)}
-            />
-          )}
-          {controlId !== "" && (
-            <TextField
-              label="Evidence Title (optional)"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Defaults to start of prompt"
-              fullWidth
-            />
-          )}
-
-          <Divider sx={{ my: 0.5 }} />
 
           <FormControl fullWidth>
             <InputLabel>Task complexity</InputLabel>
@@ -1053,7 +1073,7 @@ export default function AgentRunner() {
 
           <Typography variant="caption" color="text.secondary" sx={{ textAlign: "center" }}>
             {!loginDone
-              ? 'Complete Step 1 and click "I\'ve logged in" above to unlock this form.'
+              ? 'Complete Step 2 and click "I\'ve logged in" above to unlock this form.'
               : formState.primaryAction === "newTask"
                 ? "This run is finished. Start a new task to run again, with your prompt and login session kept."
                 : "The task is added to the queue. Your local runner picks it up and reuses your logged-in browser session."}
@@ -1434,14 +1454,10 @@ function HelpDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
           <Box>
             <Stack direction="row" alignItems="center" spacing={1} mb={1}>
               <Chip label="1" size="small" color="primary" sx={{ fontWeight: 700, minWidth: 26, height: 22 }} />
-              <Typography variant="subtitle1" fontWeight={700}>Open browser &amp; log in manually</Typography>
+              <Typography variant="subtitle1" fontWeight={700}>Link to a compliance control</Typography>
             </Stack>
             <Stack spacing={0.4} sx={{ pl: 4.5 }}>
-              <Typography variant="body2">• Pick a target portal: Azure, AWS, WSO2 Identity Server, or a custom URL</Typography>
-              <Typography variant="body2">• Click <strong>"Open Browser &amp; Login"</strong>. A real Chrome window opens on your runner's machine</Typography>
-              <Typography variant="body2">• Sign in yourself there, including MFA. The agent never sees your password</Typography>
-              <Typography variant="body2">• Click <strong>"I've logged in"</strong> when done. This unlocks Step 2 below</Typography>
-              <Typography variant="body2">• Use <strong>"Browser not opening? Reset session"</strong> if the browser gets stuck</Typography>
+              <Typography variant="body2">• (Optional) Pick a Product → Framework → Control to auto-save evidence</Typography>
             </Stack>
           </Box>
 
@@ -1449,11 +1465,25 @@ function HelpDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
           <Box>
             <Stack direction="row" alignItems="center" spacing={1} mb={1}>
               <Chip label="2" size="small" color="primary" sx={{ fontWeight: 700, minWidth: 26, height: 22 }} />
-              <Typography variant="subtitle1" fontWeight={700}>Fill in the task form</Typography>
+              <Typography variant="subtitle1" fontWeight={700}>Open browser &amp; log in manually</Typography>
             </Stack>
             <Stack spacing={0.4} sx={{ pl: 4.5 }}>
-              <Typography variant="body2">• (Optional) Pick a Product → Framework → Control to auto-save evidence</Typography>
+              <Typography variant="body2">• Pick a target portal: Azure, AWS, WSO2 Identity Server, or a custom URL</Typography>
+              <Typography variant="body2">• Click <strong>"Open Browser &amp; Login"</strong>. A real Chrome window opens on your runner's machine</Typography>
+              <Typography variant="body2">• Sign in yourself there, including MFA. The agent never sees your password</Typography>
+              <Typography variant="body2">• Click <strong>"I've logged in"</strong> when done. This unlocks Step 3 below</Typography>
+              <Typography variant="body2">• Use <strong>"Browser not opening? Reset session"</strong> if the browser gets stuck</Typography>
               <Typography variant="body2">• Set <strong>Environment Hint</strong>, e.g. <em>"AWS region: Mumbai ap-south-1"</em> or <em>"Azure subscription: WSO2-Prod"</em></Typography>
+            </Stack>
+          </Box>
+
+          {/* Step 3 */}
+          <Box>
+            <Stack direction="row" alignItems="center" spacing={1} mb={1}>
+              <Chip label="3" size="small" color="primary" sx={{ fontWeight: 700, minWidth: 26, height: 22 }} />
+              <Typography variant="subtitle1" fontWeight={700}>Fill in the prompt &amp; complexity</Typography>
+            </Stack>
+            <Stack spacing={0.4} sx={{ pl: 4.5 }}>
               <Typography variant="body2">• Choose <strong>Task complexity</strong>: Quick (15 steps) / Standard (25 steps) / Thorough (40 steps)</Typography>
               <Typography variant="body2">• Type your prompt: one line for a single capture, or a numbered list for multiple screenshots in one run</Typography>
               <Typography variant="body2">
@@ -1492,23 +1522,23 @@ function HelpDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
             </Stack>
           </Box>
 
-          {/* Step 3 */}
+          {/* Step 4 */}
           <Box>
             <Stack direction="row" alignItems="center" spacing={1} mb={1}>
-              <Chip label="3" size="small" color="primary" sx={{ fontWeight: 700, minWidth: 26, height: 22 }} />
+              <Chip label="4" size="small" color="primary" sx={{ fontWeight: 700, minWidth: 26, height: 22 }} />
               <Typography variant="subtitle1" fontWeight={700}>Click "Queue Task for Runner"</Typography>
             </Stack>
             <Stack spacing={0.4} sx={{ pl: 4.5 }}>
-              <Typography variant="body2">• Only enabled once you've confirmed login in Step 1</Typography>
+              <Typography variant="body2">• Only enabled once you've confirmed login in Step 2</Typography>
               <Typography variant="body2">• Your local runner picks it up and reuses the browser session you just logged into</Typography>
               <Typography variant="body2">• Progress streams live to this page in real-time, no page refresh needed</Typography>
             </Stack>
           </Box>
 
-          {/* Step 4 */}
+          {/* Step 5 */}
           <Box>
             <Stack direction="row" alignItems="center" spacing={1} mb={1}>
-              <Chip label="4" size="small" color="primary" sx={{ fontWeight: 700, minWidth: 26, height: 22 }} />
+              <Chip label="5" size="small" color="primary" sx={{ fontWeight: 700, minWidth: 26, height: 22 }} />
               <Typography variant="subtitle1" fontWeight={700}>Watch the live timeline</Typography>
             </Stack>
             <Stack spacing={0.4} sx={{ pl: 4.5 }}>
@@ -1534,7 +1564,7 @@ function HelpDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
               <Typography variant="body2">★ Use <strong>Agent Vision ON</strong> only if the agent struggles with a visually complex page. It's slower</Typography>
               <Typography variant="body2">★ Start with <strong>Careful (1 action)</strong> speed for new tasks; switch to Balanced once it works reliably</Typography>
               <Typography variant="body2">★ Use a numbered list in the prompt to capture multiple pages in a single run. Each gets its own evidence record</Typography>
-              <Typography variant="body2">★ You log in yourself in Step 1. The agent reuses that session and never sees your password</Typography>
+              <Typography variant="body2">★ You log in yourself in Step 2. The agent reuses that session and never sees your password</Typography>
             </Stack>
           </Box>
 
