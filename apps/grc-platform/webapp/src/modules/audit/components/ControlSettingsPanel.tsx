@@ -67,15 +67,6 @@ import type {
 } from "@modules/audit/types/audit";
 import type { AuditUser } from "@modules/audit/types/user";
 
-// Local YYYY-MM-DD for today, so a due date can't be set in the past.
-function todayISO(): string {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
 // ── Control form state (used for both Add and Edit dialogs) ──────────────────
 
 interface ControlFormState {
@@ -197,22 +188,12 @@ function ControlFormDialog({
     setForm((prev) => ({ ...prev, [key]: val }));
 
   const isOE = form.requirementType === "OE";
-  // A due date can't be moved into the past — but editing a control that's
-  // already overdue must not be blocked as long as its due date is left
-  // untouched (only a newly-picked date is checked against today). An empty
-  // field is caught separately by isValid below (via "required"), not here —
-  // otherwise the past-date message would show before the user has typed
-  // anything.
-  const dueDateInPast =
-    form.dueDate.length > 0 &&
-    form.dueDate < todayISO() &&
-    !(editMode && form.dueDate === initialValues.dueDate);
-  const dueDateValid = form.dueDate.length > 0 && !dueDateInPast;
-  const populationDueDateInPast =
-    form.populationDueDate.length > 0 &&
-    form.populationDueDate < todayISO() &&
-    !(editMode && form.populationDueDate === initialValues.populationDueDate);
-  const populationDueDateValid = form.populationDueDate.length > 0 && !populationDueDateInPast;
+  // This dialog is only reachable via the "Add Control"/edit actions, both
+  // gated on AuditPrivilege.ManageControls (compliance-admin only) — so due
+  // dates here aren't restricted to today-or-later; admins may backdate them
+  // (e.g. to reflect a control that was already effective before onboarding).
+  const dueDateValid = form.dueDate.length > 0;
+  const populationDueDateValid = form.populationDueDate.length > 0;
   const isValid =
     form.controlNumber.trim().length > 0 &&
     form.description.trim().length > 0 &&
@@ -353,9 +334,6 @@ function ControlFormDialog({
             onChange={(e) => set("dueDate", e.target.value)}
             size="small"
             InputLabelProps={{ shrink: true }}
-            inputProps={{ min: todayISO() }}
-            error={dueDateInPast}
-            helperText={dueDateInPast ? "Due Date cannot be in the past" : " "}
           />
 
           <TextField
@@ -398,9 +376,6 @@ function ControlFormDialog({
                 size="small"
                 InputLabelProps={{ shrink: true }}
                 fullWidth
-                inputProps={{ min: todayISO() }}
-                error={populationDueDateInPast}
-                helperText={populationDueDateInPast ? "Population Due Date cannot be in the past" : " "}
               />
 
               <TextField

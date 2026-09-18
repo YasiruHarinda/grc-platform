@@ -55,6 +55,7 @@ import {
   XCircle,
 } from "@wso2/oxygen-ui-icons-react";
 import { useEffect, useRef, useState, type JSX } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import ControlStatusChip from "@modules/audit/components/ControlStatusChip";
 import UserAvatar from "@modules/audit/components/UserAvatar";
 import { formatAuditDate } from "@modules/audit/utils/format";
@@ -72,6 +73,7 @@ import { useSubmitSample } from "@modules/audit/api/useSubmitSample";
 import { useRequestSampleTime } from "@modules/audit/api/useRequestSampleTime";
 import { useValidateEvidence } from "@modules/audit/api/useValidateEvidence";
 import { useReviewEvidence } from "@modules/audit/api/useReviewEvidence";
+import { evidenceQueryKey, type EvidenceSubmission } from "@modules/audit/api/useGetEvidence";
 import { useCurrentUserId } from "@modules/audit/hooks/useCurrentUserId";
 import { useOverrideControlStatus } from "@modules/audit/api/useOverrideControlStatus";
 import { isAssignedAuditor } from "@modules/audit/utils/auditor";
@@ -1514,9 +1516,16 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
   const validateEvidence = useValidateEvidence();
   const reviewEvidence = useReviewEvidence();
   const overrideStatus = useOverrideControlStatus();
+  const queryClient = useQueryClient();
 
   const [tab, setTab] = useState(0);
   const [localStatus, setLocalStatus] = useState<{ id: number; status: ControlStatus } | null>(null);
+  // A round stays editable during internal review, so files can arrive after
+  // the reviewer opened this drawer with no push to refresh it — Approve/
+  // Reject refetch first and block on a mismatch (see handleEvidenceDecision).
+  const [evidenceChangedWarning, setEvidenceChangedWarning] = useState(false);
+  const [isCheckingEvidence, setIsCheckingEvidence] = useState(false);
+  const [evidenceRefreshError, setEvidenceRefreshError] = useState<string | null>(null);
   const [overrideTarget, setOverrideTarget] = useState<ControlStatus | null>(null);
 
   // Reset to the Overview tab whenever a different control is opened, so the
@@ -1525,6 +1534,8 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setTab(0);
+    setEvidenceChangedWarning(false);
+    setEvidenceRefreshError(null);
   }, [control?.id]);
 
   // Clear any pending override dialog target and mutation state whenever the
@@ -1551,6 +1562,41 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
   // value a moment later.
   function applyServerStatus(c: AuditControl, newStatus: ControlStatus) {
     setLocalStatus({ id: c.id, status: newStatus });
+  }
+
+  // Refetches evidence before deciding; blocks instead of deciding blind if
+  // the file set changed since the reviewer's copy.
+  async function handleEvidenceDecision(c: AuditControl, decision: "APPROVE" | "REJECT") {
+    const key = evidenceQueryKey(c.auditId, c.id);
+    const latestFileIds = (subs: EvidenceSubmission[] | undefined) =>
+      (subs?.[0]?.files ?? []).map((f) => f.id).sort((a, b) => a - b).join(",");
+    const before = latestFileIds(queryClient.getQueryData<EvidenceSubmission[]>(key));
+    setIsCheckingEvidence(true);
+    try {
+      // Re-runs the queryFn already registered by SubmittedEvidenceList's
+      // mounted useGetEvidence for this control, rather than duplicating it.
+      // throwOnError: React Query swallows refetch failures by default, which
+      // would leave the stale cache in place and let the comparison below
+      // read as "unchanged" — decide on that silently-stale data instead of
+      // blocking.
+      await queryClient.refetchQueries({ queryKey: key, exact: true }, { throwOnError: true });
+    } catch {
+      setEvidenceRefreshError("Could not refresh evidence — try again before deciding.");
+      return;
+    } finally {
+      setIsCheckingEvidence(false);
+    }
+    setEvidenceRefreshError(null);
+    const fresh = queryClient.getQueryData<EvidenceSubmission[]>(key);
+    if (latestFileIds(fresh) !== before) {
+      setEvidenceChangedWarning(true);
+      return;
+    }
+    setEvidenceChangedWarning(false);
+    reviewEvidence.mutate(
+      { auditId: c.auditId, controlId: c.id, decision },
+      { onSuccess: (data) => applyServerStatus(c, data.status as ControlStatus) },
+    );
   }
 
   function handleConfirmOverride() {
@@ -1858,29 +1904,41 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
                 <Button
                   variant="contained"
                   disableElevation
-                  disabled={reviewEvidence.isPending}
-                  startIcon={reviewEvidence.isPending ? <CircularProgress size={15} color="inherit" /> : <CheckCircle2 size={15} />}
-                  onClick={() => reviewEvidence.mutate(
-                    { auditId: control.auditId, controlId: control.id, decision: "APPROVE" },
-                    { onSuccess: (data) => applyServerStatus(control, data.status as ControlStatus) },
-                  )}
+                  disabled={reviewEvidence.isPending || isCheckingEvidence}
+                  startIcon={reviewEvidence.isPending || isCheckingEvidence ? <CircularProgress size={15} color="inherit" /> : <CheckCircle2 size={15} />}
+                  onClick={() => void handleEvidenceDecision(control, "APPROVE")}
                   sx={{ textTransform: "none", fontWeight: 600, bgcolor: "#b45309", color: "#fff", "&:hover": { bgcolor: "#92400e" } }}
                 >
                   Approve
                 </Button>
                 <Button
                   variant="outlined"
-                  disabled={reviewEvidence.isPending}
+                  disabled={reviewEvidence.isPending || isCheckingEvidence}
                   startIcon={<XCircle size={15} />}
-                  onClick={() => reviewEvidence.mutate(
-                    { auditId: control.auditId, controlId: control.id, decision: "REJECT" },
-                    { onSuccess: (data) => applyServerStatus(control, data.status as ControlStatus) },
-                  )}
+                  onClick={() => void handleEvidenceDecision(control, "REJECT")}
                   sx={{ textTransform: "none", fontWeight: 600, color: "#dc2626", borderColor: "#dc2626", "&:hover": { borderColor: "#b91c1c", bgcolor: "rgba(220,38,38,0.04)" } }}
                 >
                   Reject
                 </Button>
               </Box>
+              {evidenceChangedWarning && (
+                <Alert
+                  severity="warning"
+                  sx={{ mt: 1, fontSize: "0.8rem" }}
+                  onClose={() => setEvidenceChangedWarning(false)}
+                >
+                  New file was added since this review opened - check the files above before deciding again.
+                </Alert>
+              )}
+              {evidenceRefreshError && (
+                <Alert
+                  severity="error"
+                  sx={{ mt: 1, fontSize: "0.8rem" }}
+                  onClose={() => setEvidenceRefreshError(null)}
+                >
+                  {evidenceRefreshError}
+                </Alert>
+              )}
               {reviewEvidence.isError && (
                 <Alert severity="error" sx={{ mt: 1, fontSize: "0.8rem" }}>{(reviewEvidence.error as Error).message}</Alert>
               )}

@@ -193,6 +193,10 @@ func (r *dashboardRepo) Get(ctx context.Context, req domain.AuditDashboardReques
 	if err != nil {
 		return nil, err
 	}
+	allPendingCount, err := r.queryStatusCount(ctx, baseWhere, args, allPendingStatusFilter)
+	if err != nil {
+		return nil, err
+	}
 	totalActionItems, err := r.queryActionItemsCount(ctx, req.WorkQueueClass, queueWhere, queueArgs)
 	if err != nil {
 		return nil, err
@@ -220,6 +224,7 @@ func (r *dashboardRepo) Get(ctx context.Context, req domain.AuditDashboardReques
 		DueSoonItems:           dueSoonItems,
 		PendingCount:           pendingCount,
 		ValidationCount:        validationCount,
+		AllPendingCount:        allPendingCount,
 		OverdueControls:        overdueControls,
 	}, nil
 }
@@ -321,11 +326,16 @@ const pendingStatusFilter = "c.status IN ('EVIDENCE_PENDING','POPULATION_PENDING
 // submitted and is now with the external auditor for validation/sampling.
 const validationStatusFilter = "c.status IN ('EVIDENCE_UNDER_VALIDATION','POPULATION_UNDER_VALIDATION','POPULATION_COMPLETE','AWAITING_SAMPLE')"
 
+// allPendingStatusFilter matches every control that isn't COMPLETE — the union
+// of pending submission, internal review and validation stages. Backs the
+// role-agnostic "All Pending" tab (WorkQueueTabAllPending).
+const allPendingStatusFilter = "c.status != 'COMPLETE'"
+
 // queryStatusCount returns the count of in-scope controls matching statusFilter.
-// Backs the Pending and Under Validation work-queue tab badges, which — unlike
-// Action Items — show the fixed status set to every role rather than a
-// role-specific subset. The rows themselves are fetched separately, per tab,
-// from the paginated work-queue endpoint, so only the count is needed here.
+// Backs the Pending, Under Validation and All Pending work-queue tab badges,
+// which — unlike Action Items — show the fixed status set to every role rather
+// than a role-specific subset. The rows themselves are fetched separately, per
+// tab, from the paginated work-queue endpoint, so only the count is needed here.
 func (r *dashboardRepo) queryStatusCount(ctx context.Context, baseWhere string, scopeArgs []any, statusFilter string) (int, error) {
 	q := fmt.Sprintf(`
 		SELECT COUNT(*) FROM audit_control c JOIN audit a ON a.id = c.audit_id
@@ -488,12 +498,15 @@ func (r *dashboardRepo) GetWorkQueuePage(ctx context.Context, req domain.WorkQue
 		pageArgs := append(append(args, filterArgs...), limit, offset)
 		items, err = r.scanControlItems(ctx, q, pageArgs)
 
-	case domain.WorkQueueTabPending, domain.WorkQueueTabValidation:
-		// Both are fixed status-set lists shown to every role the same way
+	case domain.WorkQueueTabPending, domain.WorkQueueTabValidation, domain.WorkQueueTabAllPending:
+		// All three are fixed status-set lists shown to every role the same way
 		// (unlike Action Items, which is role-scoped) — only the status set differs.
 		statusFilter := pendingStatusFilter
-		if req.Tab == domain.WorkQueueTabValidation {
+		switch req.Tab {
+		case domain.WorkQueueTabValidation:
 			statusFilter = validationStatusFilter
+		case domain.WorkQueueTabAllPending:
+			statusFilter = allPendingStatusFilter
 		}
 		statusWhere := fmt.Sprintf(`%s AND %s%s`, baseWhere, statusFilter, filterSQL)                               // #nosec G201
 		cq := fmt.Sprintf(`SELECT COUNT(*) FROM audit_control c JOIN audit a ON a.id = c.audit_id %s`, statusWhere) // #nosec G201

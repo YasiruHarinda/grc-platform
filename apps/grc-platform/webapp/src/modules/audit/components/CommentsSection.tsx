@@ -58,6 +58,7 @@ export default function CommentsSection({
   const currentUserId = useCurrentUserId();
   const { can } = useAuditPrivileges();
   const isAdmin = can(AuditPrivilege.ManageControls);
+  const canMarkInternal = can(AuditPrivilege.ViewInternalComments);
 
   const [text, setText] = useState("");
   const [internal, setInternal] = useState(false);
@@ -170,12 +171,16 @@ export default function CommentsSection({
             sx={{ mb: 1 }}
           />
           <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1, flexWrap: "wrap" }}>
-            <Tooltip title="Only compliance/internal staff will see this comment — hidden from the external auditor.">
-              <FormControlLabel
-                control={<Checkbox size="small" checked={internal} onChange={(e) => setInternal(e.target.checked)} />}
-                label={<Typography variant="body2">Internal only</Typography>}
-              />
-            </Tooltip>
+            {canMarkInternal ? (
+              <Tooltip title="Only compliance/internal staff will see this comment — hidden from the external auditor.">
+                <FormControlLabel
+                  control={<Checkbox size="small" checked={internal} onChange={(e) => setInternal(e.target.checked)} />}
+                  label={<Typography variant="body2">Internal only</Typography>}
+                />
+              </Tooltip>
+            ) : (
+              <Box />
+            )}
             <Button
               variant="contained"
               disableElevation

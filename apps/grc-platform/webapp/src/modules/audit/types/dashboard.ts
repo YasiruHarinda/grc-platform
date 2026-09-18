@@ -93,5 +93,7 @@ export interface DashboardData {
   pendingCount: number;
   /** Count of controls with evidence/population submitted and awaiting auditor validation/sampling. */
   validationCount: number;
+  /** Count of controls in any non-terminal status, regardless of role/stage. */
+  allPendingCount: number;
   overdueControls: OverdueControl[];
 }

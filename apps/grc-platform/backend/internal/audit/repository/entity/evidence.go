@@ -49,16 +49,17 @@ type entEvidence struct {
 
 // entFile mirrors the entity's AuditEvidenceFile JSON.
 type entFile struct {
-	ID         int       `json:"id"`
-	EvidenceID *int      `json:"evidenceId"`
-	FileName   string    `json:"fileName"`
-	FilePath   string    `json:"filePath"`
-	FileType   *string   `json:"fileType"`
-	FileSize   *int64    `json:"fileSize"`
-	CreatedBy  *string   `json:"createdBy"`
-	CreatedOn  time.Time `json:"createdOn"`
-	AuditorID  *int      `json:"auditorId"`
-	TeamID     *int      `json:"teamId"`
+	ID                int       `json:"id"`
+	EvidenceID        *int      `json:"evidenceId"`
+	FileName          string    `json:"fileName"`
+	FilePath          string    `json:"filePath"`
+	FileType          *string   `json:"fileType"`
+	FileSize          *int64    `json:"fileSize"`
+	CreatedBy         *string   `json:"createdBy"`
+	CreatedByUserType *string   `json:"createdByUserType"`
+	CreatedOn         time.Time `json:"createdOn"`
+	AuditorID         *int      `json:"auditorId"`
+	TeamID            *int      `json:"teamId"`
 }
 
 func (f entFile) toModel() *model.AuditEvidenceFile {
@@ -77,6 +78,9 @@ func (f entFile) toModel() *model.AuditEvidenceFile {
 	}
 	if f.CreatedBy != nil {
 		m.CreatedBy = *f.CreatedBy
+	}
+	if f.CreatedByUserType != nil {
+		m.CreatedByUserType = *f.CreatedByUserType
 	}
 	return m
 }
@@ -149,12 +153,12 @@ func (r *evidenceRepo) DeleteEvidence(ctx context.Context, evidenceID int) error
 	return r.c.Delete(ctx, fmt.Sprintf("/evidence/%d", evidenceID))
 }
 
-func (r *evidenceRepo) EvidenceAuditorID(ctx context.Context, evidenceID int) (auditorID *int, teamID *int, err error) {
+func (r *evidenceRepo) EvidenceAuditorID(ctx context.Context, evidenceID int) (auditorID *int, teamID *int, status string, err error) {
 	var ev entEvidence
 	if err := r.c.Get(ctx, fmt.Sprintf("/evidence/%d", evidenceID), &ev); err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
-	return ev.AuditorID, ev.TeamID, nil
+	return ev.AuditorID, ev.TeamID, ev.Status, nil
 }
 
 func (r *evidenceRepo) GetFileByID(ctx context.Context, fileID int) (*model.AuditEvidenceFile, error) {

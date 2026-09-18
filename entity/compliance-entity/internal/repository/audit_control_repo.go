@@ -63,9 +63,12 @@ type ControlRepository interface {
 }
 
 // evidenceActionableStatuses lists the control statuses for which the owner
-// may still submit (population or evidence).
+// may still submit (population or evidence). EVIDENCE_INTERNAL_REVIEW is
+// included so the owner can still use addEvidenceFiles ("Add Files") while
+// the round awaits the reviewer's decision — mirrored on the population side
+// by teamEditablePopulationStatuses' SUBMITTED entry.
 const evidenceActionableStatuses = `'POPULATION_PENDING','POPULATION_NEED_CLARIFICATION',
-		'EVIDENCE_PENDING','EVIDENCE_NEED_CLARIFICATION','SUBMITTED_SAMPLE'`
+		'EVIDENCE_PENDING','EVIDENCE_NEED_CLARIFICATION','SUBMITTED_SAMPLE','EVIDENCE_INTERNAL_REVIEW'`
 
 type controlRepo struct{ db *sql.DB }
 
