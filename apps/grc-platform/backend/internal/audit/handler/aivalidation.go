@@ -49,7 +49,7 @@ func (h *aiValidationHandler) listValidations(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	auditorID, evidenceTeamID, _, err := h.evidenceSvc.EvidenceAuditorID(ctx, evidenceID)
+	auditorID, evidenceTeamID, status, err := h.evidenceSvc.EvidenceAuditorID(ctx, evidenceID)
 	if err != nil {
 		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
 		return
@@ -63,7 +63,8 @@ func (h *aiValidationHandler) listValidations(w http.ResponseWriter, r *http.Req
 		!auth.HasPrivilegeIn(ctx, privilege.ReviewEvidence, teamID) &&
 		!auth.HasPrivilegeIn(ctx, privilege.ViewAllAudits, teamID) {
 		actor := auth.FromContext(ctx)
-		if auditorID == nil || *auditorID != actor.UserID {
+		// External auditors don't get rejected rounds — see requireEvidenceFileAccess.
+		if auditorID == nil || *auditorID != actor.UserID || model.IsRejectedEvidenceStatus(status) {
 			response.WriteError(w, http.StatusForbidden, response.ErrMsgForbidden)
 			return
 		}
