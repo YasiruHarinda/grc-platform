@@ -49,7 +49,7 @@ func (h *aiValidationHandler) listValidations(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	auditorID, evidenceTeamID, err := h.evidenceSvc.EvidenceAuditorID(ctx, evidenceID)
+	auditorID, evidenceTeamID, _, err := h.evidenceSvc.EvidenceAuditorID(ctx, evidenceID)
 	if err != nil {
 		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
 		return

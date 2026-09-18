@@ -62,6 +62,14 @@ type AuditEvidence struct {
 	CreatedAt     time.Time `json:"createdAt"`
 }
 
+// IsRejectedEvidenceStatus reports whether an evidence round was rejected
+// (by compliance or the assigned auditor). Rejected rounds stay on record but
+// are internal-audience only — see internalEvidenceViewer in the evidence
+// handler.
+func IsRejectedEvidenceStatus(status string) bool {
+	return status == "COMPLIANCE_REJECTED" || status == "AUDITOR_REJECTED"
+}
+
 // UploadLinkResponse is returned by GET .../evidence/upload-link.
 // It gives the agent the folder path to use as a prefix when requesting
 // per-file upload URLs and when calling the submit endpoint.

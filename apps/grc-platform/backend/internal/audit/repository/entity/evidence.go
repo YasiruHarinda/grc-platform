@@ -149,12 +149,12 @@ func (r *evidenceRepo) DeleteEvidence(ctx context.Context, evidenceID int) error
 	return r.c.Delete(ctx, fmt.Sprintf("/evidence/%d", evidenceID))
 }
 
-func (r *evidenceRepo) EvidenceAuditorID(ctx context.Context, evidenceID int) (auditorID *int, teamID *int, err error) {
+func (r *evidenceRepo) EvidenceAuditorID(ctx context.Context, evidenceID int) (auditorID *int, teamID *int, status string, err error) {
 	var ev entEvidence
 	if err := r.c.Get(ctx, fmt.Sprintf("/evidence/%d", evidenceID), &ev); err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
-	return ev.AuditorID, ev.TeamID, nil
+	return ev.AuditorID, ev.TeamID, ev.Status, nil
 }
 
 func (r *evidenceRepo) GetFileByID(ctx context.Context, fileID int) (*model.AuditEvidenceFile, error) {

@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Alert, Box, Button, CircularProgress, IconButton, Skeleton, Typography } from "@wso2/oxygen-ui";
+import { Alert, Box, Button, Chip, CircularProgress, IconButton, Skeleton, Typography } from "@wso2/oxygen-ui";
 import { Download, ExternalLink, FileText, RotateCcw, Trash2 } from "@wso2/oxygen-ui-icons-react";
 import { useState, type JSX } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -33,6 +33,23 @@ function sizeLabel(bytes: number | null): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+// Round status (distinct from the control's status) — tells a rejected round
+// apart from the resubmission that replaced it.
+const ROUND_STATUS_LABELS: Record<string, string> = {
+  SUBMITTED:           "Submitted",
+  COMPLIANCE_APPROVED: "Approved (Internal)",
+  COMPLIANCE_REJECTED: "Rejected (Internal)",
+  APPROVED:            "Approved",
+  AUDITOR_REJECTED:    "Rejected (Auditor)",
+};
+const ROUND_STATUS_COLORS: Record<string, string> = {
+  SUBMITTED:           "#6366F1", // indigo — awaiting review
+  COMPLIANCE_APPROVED:  "#10B981", // emerald
+  COMPLIANCE_REJECTED:  "#EF4444", // red
+  APPROVED:             "#10B981", // emerald
+  AUDITOR_REJECTED:     "#EF4444", // red
+};
 
 /**
  * Lists the files a team submitted for a control so they can be viewed/downloaded.
@@ -198,9 +215,26 @@ export default function SubmittedEvidenceList({
       )}
       {submissions.map((sub) => (
         <Box key={sub.id} sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
-          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
-            Submitted {formatTimestamp(sub.createdAt)}{(sub.createdByName || sub.createdBy) ? ` · ${sub.createdByName || sub.createdBy}` : ""}
-          </Typography>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+              Submitted {formatTimestamp(sub.createdAt)}{(sub.createdByName || sub.createdBy) ? ` · ${sub.createdByName || sub.createdBy}` : ""}
+            </Typography>
+            {ROUND_STATUS_LABELS[sub.status] && (
+              <Chip
+                label={ROUND_STATUS_LABELS[sub.status]}
+                size="small"
+                variant="outlined"
+                sx={{
+                  height: 18,
+                  fontSize: "0.65rem",
+                  fontWeight: 600,
+                  color: ROUND_STATUS_COLORS[sub.status],
+                  borderColor: ROUND_STATUS_COLORS[sub.status],
+                  "& .MuiChip-label": { px: 0.75 },
+                }}
+              />
+            )}
+          </Box>
           {(sub.files?.length ?? 0) === 0 && sub.attestation && (
             <Box
               sx={{ display: "flex", alignItems: "flex-start", gap: 1, px: 1.25, py: 0.85, borderRadius: 1, border: "1px solid", borderColor: "divider", bgcolor: "action.hover" }}

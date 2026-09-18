@@ -508,7 +508,8 @@ func (h *evidenceHandler) withdrawEvidence(w http.ResponseWriter, r *http.Reques
 	// Resource-level check: the caller must own the latest submission round.
 	// ManageControls holders (compliance admin) can withdraw any submission.
 	if !auth.HasPrivilege(r.Context(), privilege.ManageControls) {
-		evidence, err := h.svc.List(r.Context(), auditID, controlID)
+		// Unfiltered — this checks round[0] ownership, not visibility.
+		evidence, err := h.svc.List(r.Context(), auditID, controlID, true)
 		if err != nil {
 			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 			return
@@ -533,8 +534,8 @@ func (h *evidenceHandler) withdrawEvidence(w http.ResponseWriter, r *http.Reques
 // approve advances it to auditor validation; reject sends the team back to
 // EVIDENCE_PENDING to resubmit. Either way, the reviewed round's own status is
 // recorded (COMPLIANCE_APPROVED/COMPLIANCE_REJECTED) — mirrors reviewPopulation
-// — so a later resubmission's round is never conflated with this one in the
-// live evidence view (see SubmittedEvidenceList, which hides rejected rounds).
+// — so a resubmission's round is never conflated with this one (kept visible
+// but labeled, see SubmittedEvidenceList).
 func (h *evidenceHandler) reviewEvidence(w http.ResponseWriter, r *http.Request) {
 	h.decideRound(w, r, decideRoundParams{
 		preGate: func(w http.ResponseWriter, r *http.Request) bool {
@@ -788,18 +789,13 @@ func (h *evidenceHandler) reconcileAfterDelete(ctx context.Context, auditID, con
 // GET /api/v1/audits/{id}/controls/{controlId}/evidence/files/{fileId}/download.
 // It proxies the file bytes from the Compliance Entity (which reads them from
 // Azure) so the browser never contacts Azure directly.
-// requireEvidenceFileAccess authorizes downloadEvidenceFile with the same rule
-// as canViewEvidence, but resolved from a file id instead of a control —
-// FileAuditorID returns the owning control's team alongside the auditor id.
-// ManageControls, SubmitEvidence, ReviewEvidence, and ViewAllAudits bypass —
-// checked against that team (HasPrivilegeIn), since all four can be granted
-// scoped to a single team (module=AUDIT) and the unscoped HasPrivilege would
-// let such a grant download every other team's files too. Anyone else (e.g.
-// an external auditor holding only ValidateEvidence) must be the
-// id-matched auditor of the file's owning control.
+// requireEvidenceFileAccess mirrors canViewEvidence but resolved from a file
+// id. Internal privilege holders bypass; anyone else must be the file's
+// assigned auditor AND the file's round must not be rejected (external
+// auditors don't get rejected rounds — see internalEvidenceViewer).
 func (h *evidenceHandler) requireEvidenceFileAccess(w http.ResponseWriter, r *http.Request, fileID int) bool {
 	ctx := r.Context()
-	auditorID, fileTeamID, err := h.svc.FileAuditorID(ctx, fileID)
+	auditorID, fileTeamID, evidenceID, err := h.svc.FileAuditorID(ctx, fileID)
 	if err != nil {
 		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
 		return false
@@ -816,6 +812,17 @@ func (h *evidenceHandler) requireEvidenceFileAccess(w http.ResponseWriter, r *ht
 	}
 	actor := auth.FromContext(ctx)
 	if auditorID == nil || *auditorID != actor.UserID {
+		response.WriteError(w, http.StatusForbidden, response.ErrMsgForbidden)
+		return false
+	}
+	// External-only path (no internal privilege) — the extra round-status
+	// lookup only happens here, not for every download.
+	_, _, status, err := h.svc.EvidenceAuditorID(ctx, evidenceID)
+	if err != nil {
+		response.MapServiceError(ctx, w, err, response.ErrMsgInternal)
+		return false
+	}
+	if model.IsRejectedEvidenceStatus(status) {
 		response.WriteError(w, http.StatusForbidden, response.ErrMsgForbidden)
 		return false
 	}
@@ -849,26 +856,30 @@ func (h *evidenceHandler) downloadEvidenceFile(w http.ResponseWriter, r *http.Re
 	_, _ = w.Write(data) // #nosec G705 -- file served with nosniff + attachment disposition, browser won't execute it inline
 }
 
-// canViewEvidence allows: the team (SubmitEvidence), an internal reviewer
-// (ReviewEvidence), an org-wide reader (ViewAllAudits), ManageControls, or the
-// control's assigned auditor (by user id, e.g. ValidateEvidence holders). Each
-// privilege is checked against control's own team (HasPrivilegeIn), since all
-// four can be granted scoped to a single team (module=AUDIT) — the unscoped
-// HasPrivilege would let a team-scoped grant view every other team's evidence
-// too.
-func canViewEvidence(r *http.Request, control *model.AuditControl) bool {
+// internalEvidenceViewer reports whether the caller holds an internal-audience
+// privilege for control's team: ManageControls, SubmitEvidence, ReviewEvidence,
+// or ViewAllAudits (checked via HasPrivilegeIn since all four can be
+// team-scoped). This is also the internal/external line for rejected-round
+// visibility — see listEvidence and requireEvidenceFileAccess.
+func internalEvidenceViewer(r *http.Request, control *model.AuditControl) bool {
 	ctx := r.Context()
 	teamID := 0
 	if control.TeamID != nil {
 		teamID = *control.TeamID
 	}
-	if auth.HasPrivilegeIn(ctx, privilege.ManageControls, teamID) ||
+	return auth.HasPrivilegeIn(ctx, privilege.ManageControls, teamID) ||
 		auth.HasPrivilegeIn(ctx, privilege.SubmitEvidence, teamID) ||
 		auth.HasPrivilegeIn(ctx, privilege.ReviewEvidence, teamID) ||
-		auth.HasPrivilegeIn(ctx, privilege.ViewAllAudits, teamID) {
+		auth.HasPrivilegeIn(ctx, privilege.ViewAllAudits, teamID)
+}
+
+// canViewEvidence allows: any internalEvidenceViewer, or the control's
+// assigned auditor (by user id, e.g. ValidateEvidence holders).
+func canViewEvidence(r *http.Request, control *model.AuditControl) bool {
+	if internalEvidenceViewer(r, control) {
 		return true
 	}
-	actor := auth.FromContext(ctx)
+	actor := auth.FromContext(r.Context())
 	return control.AuditorID != nil && *control.AuditorID == actor.UserID
 }
 
@@ -897,7 +908,9 @@ func (h *evidenceHandler) listEvidence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	evidence, err := h.svc.List(r.Context(), auditID, controlID)
+	// External auditors get rejected rounds stripped — see internalEvidenceViewer.
+	includeRejected := internalEvidenceViewer(r, control)
+	evidence, err := h.svc.List(r.Context(), auditID, controlID, includeRejected)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return

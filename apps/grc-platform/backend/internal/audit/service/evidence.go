@@ -93,8 +93,10 @@ type EvidenceService interface {
 	// caller should fall back to Submit for a fresh round in that case).
 	AddFiles(ctx context.Context, auditID, controlID int, files []model.EvidenceFileRef, actor string) (*model.AuditEvidence, error)
 
-	// List returns all evidence submissions for a control, newest first.
-	List(ctx context.Context, auditID, controlID int) ([]*model.AuditEvidence, error)
+	// List returns evidence submissions for a control, newest first.
+	// includeRejected=false drops rejected rounds (external auditors only
+	// ever see the current round — see model.IsRejectedEvidenceStatus).
+	List(ctx context.Context, auditID, controlID int, includeRejected bool) ([]*model.AuditEvidence, error)
 
 	// LatestRound returns a control's most recently submitted evidence round —
 	// used to record a reviewer's decision against the round they actually looked
@@ -111,19 +113,16 @@ type EvidenceService interface {
 	// Entity) plus its name and content type, by file ID.
 	DownloadFile(ctx context.Context, fileID int) (data []byte, fileName, contentType string, err error)
 
-	// FileAuditorID returns the user.id of the auditor assigned to fileID's
-	// owning control (nil if none) and that control's team id (nil if none),
-	// for the assigned-auditor and team-scoped download gates — the download
-	// route only carries a file id, not a control id, so this is how
-	// downloadEvidenceFile resolves assignment/team without one.
-	FileAuditorID(ctx context.Context, fileID int) (auditorID *int, teamID *int, err error)
+	// FileAuditorID returns fileID's owning control's auditor id, team id, and
+	// evidence (round) id (for the download route, which only carries a file
+	// id). The round id lets a caller that needs round status too — the
+	// external-auditor path in requireEvidenceFileAccess — fetch it via
+	// EvidenceAuditorID without re-fetching the file.
+	FileAuditorID(ctx context.Context, fileID int) (auditorID *int, teamID *int, evidenceID int, err error)
 
-	// EvidenceAuditorID returns the user.id of the auditor assigned to
-	// evidenceID's owning control (nil if none) and that control's team id
-	// (nil if none) — the same assignment/team resolution as FileAuditorID,
-	// but keyed by an evidence (round) id for routes that carry only that
-	// (e.g. GET /evidence/{evidenceId}/ai-validations).
-	EvidenceAuditorID(ctx context.Context, evidenceID int) (auditorID *int, teamID *int, err error)
+	// EvidenceAuditorID is FileAuditorID keyed by round id instead of file id
+	// (e.g. GET /evidence/{evidenceId}/ai-validations), plus the round status.
+	EvidenceAuditorID(ctx context.Context, evidenceID int) (auditorID *int, teamID *int, status string, err error)
 
 	// DeleteFile removes a single evidence file from the submission. The caller
 	// must be the file's creator or hold ManageControls (isAdmin=true). The blob
@@ -427,7 +426,7 @@ func (s *evidenceService) AddFiles(ctx context.Context, auditID, controlID int, 
 	return round, nil
 }
 
-func (s *evidenceService) List(ctx context.Context, auditID, controlID int) ([]*model.AuditEvidence, error) {
+func (s *evidenceService) List(ctx context.Context, auditID, controlID int, includeRejected bool) ([]*model.AuditEvidence, error) {
 	evidence, err := s.repo.ListByControl(ctx, auditID, controlID)
 	if err != nil {
 		return nil, err
@@ -444,7 +443,16 @@ func (s *evidenceService) List(ctx context.Context, auditID, controlID int) ([]*
 			f.ReadURL = &downloadURL
 		}
 	}
-	return evidence, nil
+	if includeRejected {
+		return evidence, nil
+	}
+	visible := make([]*model.AuditEvidence, 0, len(evidence))
+	for _, e := range evidence {
+		if !model.IsRejectedEvidenceStatus(e.Status) {
+			visible = append(visible, e)
+		}
+	}
+	return visible, nil
 }
 
 // DownloadFile fetches one evidence file's bytes (proxied via the Compliance
@@ -479,15 +487,15 @@ func (s *evidenceService) DownloadFile(ctx context.Context, fileID int) (data []
 	return data, f.FileName, ct, nil
 }
 
-func (s *evidenceService) FileAuditorID(ctx context.Context, fileID int) (auditorID *int, teamID *int, err error) {
+func (s *evidenceService) FileAuditorID(ctx context.Context, fileID int) (auditorID *int, teamID *int, evidenceID int, err error) {
 	f, err := s.repo.GetFileByID(ctx, fileID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
 	}
-	return f.AuditorID, f.TeamID, nil
+	return f.AuditorID, f.TeamID, f.EvidenceID, nil
 }
 
-func (s *evidenceService) EvidenceAuditorID(ctx context.Context, evidenceID int) (auditorID *int, teamID *int, err error) {
+func (s *evidenceService) EvidenceAuditorID(ctx context.Context, evidenceID int) (auditorID *int, teamID *int, status string, err error) {
 	return s.repo.EvidenceAuditorID(ctx, evidenceID)
 }
 
