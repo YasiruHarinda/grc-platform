@@ -16,7 +16,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { EvidenceFile, EvidenceSubmission } from "@modules/audit/api/useGetEvidence";
-import { groupIntoBatches } from "./evidenceBatches";
+import { groupFilesIntoBatches, groupIntoBatches } from "./evidenceBatches";
 
 let nextId = 1;
 
@@ -109,5 +109,20 @@ describe("groupIntoBatches", () => {
   it("returns no batches for a fileless round", () => {
     expect(groupIntoBatches(round([]))).toEqual([]);
     expect(groupIntoBatches({ ...round([]), files: null })).toEqual([]);
+  });
+});
+
+describe("groupFilesIntoBatches", () => {
+  it("groups population files uploaded together under one header", () => {
+    const batches = groupFilesIntoBatches(
+      [
+        file("2026-09-01T10:00:00.300Z"),
+        file("2026-09-01T10:00:00.100Z"),
+        file("2026-09-01T10:00:00.200Z"),
+      ],
+      7,
+    );
+    expect(batches).toHaveLength(1);
+    expect(batches[0].files).toHaveLength(3);
   });
 });
