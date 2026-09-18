@@ -119,6 +119,15 @@ const SELECT_MENU_PROPS = {
 let _localIdCounter = 0;
 const nextLocalId = () => String(++_localIdCounter);
 
+// Flags a due date that lands in the past for a live/upcoming audit — a
+// likely typo or CSV fallback mistake (see `allowPastDueDate` below).
+function todayISO(): string {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
 
 interface PopulationDraft {
   description: string;
@@ -331,10 +340,15 @@ interface PopulationDialogProps {
   users: AuditUser[];
   auditorCandidates: AuditUser[];
   teams: AuditTeam[];
+  // Lifts the "due date in the past" warning when the audit period has
+  // already ended (a retrospective engagement) — past dates are expected
+  // there. Live/upcoming audits still get the warning (not a hard block —
+  // this page is admin-only and backdating may be intentional).
+  allowPastDueDate: boolean;
 }
 
 function PopulationDialog({
-  open, controlDraft, onClose, onChangePopulation, onChangeAuditor, users, auditorCandidates, teams,
+  open, controlDraft, onClose, onChangePopulation, onChangeAuditor, users, auditorCandidates, teams, allowPastDueDate,
 }: PopulationDialogProps): JSX.Element {
   const pop = controlDraft.population ?? blankPopulation();
   const paperProps = DROPDOWN_PAPER_PROPS;
@@ -365,16 +379,19 @@ function PopulationDialog({
         />
 
         {/* Due date */}
-        <TextField
-          label="Population Due Date"
-          required
-          type="date"
-          fullWidth
-          value={pop.dueDate}
-          onChange={(e) => onChangePopulation({ ...pop, dueDate: e.target.value })}
-          InputLabelProps={{ shrink: true }}
-          helperText="When population must be submitted"
-        />
+        <Tooltip title={!allowPastDueDate && pop.dueDate && pop.dueDate < todayISO() ? "This date is in the past — double-check before continuing" : ""}>
+          <TextField
+            label="Population Due Date"
+            required
+            type="date"
+            fullWidth
+            value={pop.dueDate}
+            onChange={(e) => onChangePopulation({ ...pop, dueDate: e.target.value })}
+            InputLabelProps={{ shrink: true }}
+            error={Boolean(!allowPastDueDate && pop.dueDate && pop.dueDate < todayISO())}
+            helperText="When population must be submitted"
+          />
+        </Tooltip>
 
         {/* Comments — separate row so the textarea has full width */}
         <TextField
@@ -461,9 +478,12 @@ interface EditableControlsTableProps {
   // under the "Copy from Framework" top source — Copy from Previous
   // Audit never pushes, so the caller passes false there.
   showPushColumn: boolean;
+  // Lifts the "due date in the past" warning when the audit period has
+  // already ended (a retrospective engagement).
+  allowPastDueDate: boolean;
 }
 
-function EditableControlsTable({ drafts, onChange, users, auditorCandidates, teams, showPushColumn }: EditableControlsTableProps): JSX.Element {
+function EditableControlsTable({ drafts, onChange, users, auditorCandidates, teams, showPushColumn, allowPastDueDate }: EditableControlsTableProps): JSX.Element {
   const [populationDialogId, setPopulationDialogId] = useState<string | null>(null);
   const dialogDraft = drafts.find((d) => d.localId === populationDialogId);
 
@@ -720,19 +740,24 @@ function EditableControlsTable({ drafts, onChange, users, auditorCandidates, tea
                 </Select>
               </TableCell>
               {/* Due Date — at the end. This whole page is admin-only
-                  (AuditPrivilege.CreateAudit), so past dates are allowed
-                  (e.g. a retrospective audit, or a control already
-                  effective before onboarding). */}
+                  (AuditPrivilege.CreateAudit), so past dates aren't
+                  hard-blocked (e.g. a retrospective audit, or a control
+                  already effective before onboarding) — but a past date on
+                  a live/upcoming audit is still flagged, since it's more
+                  often a typo or CSV fallback than an intentional backdate. */}
               <TableCell>
-                <TextField
-                  value={d.dueDate}
-                  onChange={(e) => update(d.localId, "dueDate", e.target.value)}
-                  type="date"
-                  size="small"
-                  variant="standard"
-                  InputLabelProps={{ shrink: true }}
-                  inputProps={{ style: FS }}
-                />
+                <Tooltip title={!allowPastDueDate && d.dueDate && d.dueDate < todayISO() ? "This date is in the past — double-check before continuing" : ""}>
+                  <TextField
+                    value={d.dueDate}
+                    onChange={(e) => update(d.localId, "dueDate", e.target.value)}
+                    type="date"
+                    size="small"
+                    variant="standard"
+                    error={Boolean(!allowPastDueDate && d.dueDate && d.dueDate < todayISO())}
+                    InputLabelProps={{ shrink: true }}
+                    inputProps={{ style: FS }}
+                  />
+                </Tooltip>
               </TableCell>
               {/* Add to Library: whether this row also writes into the
                   framework catalog. Hidden per-row when pushLocked (catalog
@@ -778,6 +803,7 @@ function EditableControlsTable({ drafts, onChange, users, auditorCandidates, tea
       <PopulationDialog
         open={Boolean(populationDialogId)}
         controlDraft={dialogDraft}
+        allowPastDueDate={allowPastDueDate}
         onClose={() => setPopulationDialogId(null)}
         onChangePopulation={(p) => {
           // Auto-fill the control's owner/team from the population as a default.
@@ -1760,6 +1786,7 @@ function Step2Controls({
             auditorCandidates={auditorCandidates}
             teams={teams}
             showPushColumn={topSource === "framework"}
+            allowPastDueDate={periodEnd.length > 0 && periodEnd < todayISO()}
           />
         </Box>
       )}
@@ -1999,10 +2026,13 @@ export default function CreateAuditPage(): JSX.Element {
     periodEnd >= periodStart;
 
   // Step 2 → 3: every draft row must be complete (blank rows are not allowed).
-  // Due dates aren't restricted to today-or-later — this whole page is
+  // A due date in the past isn't a hard error here — this whole page is
   // gated on AuditPrivilege.CreateAudit (compliance-admin only), and admins
-  // may backdate them (e.g. a retrospective audit, or a control already
-  // effective before onboarding).
+  // may deliberately backdate (e.g. a retrospective audit, or a control
+  // already effective before onboarding). It's still flagged inline on the
+  // field itself (via `allowPastDueDate` in EditableControlsTable /
+  // PopulationDialog) so a typo or CSV fallback date doesn't slip through
+  // unnoticed on a live/upcoming audit.
   const draftErrors: string[] = drafts
     .flatMap((d) => {
       const errs: string[] = [];
