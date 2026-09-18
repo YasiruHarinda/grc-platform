@@ -754,8 +754,8 @@ export default function AgentRunner() {
         variant="outlined"
         sx={{
           p: { xs: 3, sm: 4 }, mb: 3,
-          opacity: loginDone ? 1 : 0.55,
-          pointerEvents: loginDone ? "auto" : "none",
+          opacity: formState.runSectionEditable ? 1 : 0.55,
+          pointerEvents: formState.runSectionEditable ? "auto" : "none",
         }}
         component="form"
         onSubmit={handleQueue}

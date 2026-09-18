@@ -230,4 +230,72 @@ describe("computeAgentRunnerFormState", () => {
     expect(state.primaryAction).toBe("newTask");
     expect(state.primaryActionEnabled).toBe(true);
   });
+
+  test("signed out with nothing typed — the Control panel is unlocked but the run panel is not", () => {
+    const state = computeAgentRunnerFormState({
+      loginDone: false,
+      taskStatus: null,
+      queueing: false,
+      promptEmpty: true,
+      unacknowledgedChangingSteps: false,
+    });
+
+    expect(state.controlLinkEditable).toBe(true);
+    expect(state.runSectionEditable).toBe(false);
+  });
+
+  test("signed out with a prompt typed — the Control panel stays unlocked but the Queue button is still refused", () => {
+    const state = computeAgentRunnerFormState({
+      loginDone: false,
+      taskStatus: null,
+      queueing: false,
+      promptEmpty: false,
+      unacknowledgedChangingSteps: false,
+    });
+
+    expect(state.controlLinkEditable).toBe(true);
+    expect(state.runSectionEditable).toBe(false);
+    expect(state.primaryActionEnabled).toBe(false);
+  });
+
+  test("logged in with no Agent Task — both panels are unlocked", () => {
+    const state = computeAgentRunnerFormState({
+      loginDone: true,
+      taskStatus: null,
+      queueing: false,
+      promptEmpty: false,
+      unacknowledgedChangingSteps: false,
+    });
+
+    expect(state.controlLinkEditable).toBe(true);
+    expect(state.runSectionEditable).toBe(true);
+  });
+
+  test("logged in with an Agent Task queued or running — the run in progress does not re-lock either panel", () => {
+    for (const status of ["queued", "running"] as const) {
+      const state = computeAgentRunnerFormState({
+        loginDone: true,
+        taskStatus: status,
+        queueing: false,
+        promptEmpty: false,
+        unacknowledgedChangingSteps: false,
+      });
+
+      expect(state.controlLinkEditable).toBe(true);
+      expect(state.runSectionEditable).toBe(true);
+    }
+  });
+
+  test("logged in with an Agent Task finished — both panels stay unlocked even though the prompt itself has locked", () => {
+    const state = computeAgentRunnerFormState({
+      loginDone: true,
+      taskStatus: "completed",
+      queueing: false,
+      promptEmpty: false,
+      unacknowledgedChangingSteps: false,
+    });
+
+    expect(state.controlLinkEditable).toBe(true);
+    expect(state.runSectionEditable).toBe(true);
+  });
 });

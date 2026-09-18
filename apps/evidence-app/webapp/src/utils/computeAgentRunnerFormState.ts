@@ -29,6 +29,22 @@ export type ComputeAgentRunnerFormStateArgs = {
 };
 
 export type AgentRunnerFormState = {
+  // Whether the Control link picker (Product, Framework, Control, Evidence
+  // Title) accepts input. Always true — the picker is about which Control
+  // the Engineer is here for, and that has nothing to do with whether a
+  // browser session exists yet. Named as a constant rather than left out of
+  // this type, so "the Control panel is never locked" is a decision this
+  // function states and a test can assert, not a fact someone has to notice
+  // by its absence. See chala2001/grc-tools#150.
+  controlLinkEditable: boolean;
+  // Whether the run panel (prompt, complexity, Advanced settings, Queue)
+  // accepts input. Mirrors loginDone directly: nothing can run without a
+  // logged in browser session, so the whole panel stays faded and
+  // unclickable until login is confirmed. This used to be tested inline in
+  // AgentRunner.tsx's markup; moved here so the page has one place to read
+  // "what's locked" from instead of re-deriving it against loginDone
+  // itself. See chala2001/grc-tools#150.
+  runSectionEditable: boolean;
   // Whether the prompt field accepts typing. False once a task has finished
   // — there is nothing left to queue against, so the box says so rather than
   // accepting text it can't submit. True the rest of the time, including
@@ -103,6 +119,8 @@ export function computeAgentRunnerFormState({
     : loginDone && !promptEmpty && !queueing && !isRunning && !unacknowledgedChangingSteps;
 
   return {
+    controlLinkEditable: true,
+    runSectionEditable: loginDone,
     promptEditable: !isDone,
     advancedSettingsEditable: !isRunning && !isDone,
     primaryAction,
