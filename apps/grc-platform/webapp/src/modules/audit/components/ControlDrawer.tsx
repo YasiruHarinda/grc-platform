@@ -1535,6 +1535,7 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setTab(0);
     setEvidenceChangedWarning(false);
+    setEvidenceRefreshError(null);
   }, [control?.id]);
 
   // Clear any pending override dialog target and mutation state whenever the
