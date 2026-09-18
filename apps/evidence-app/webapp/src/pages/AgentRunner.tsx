@@ -1072,7 +1072,7 @@ export default function AgentRunner() {
           </Button>
 
           <Typography variant="caption" color="text.secondary" sx={{ textAlign: "center" }}>
-            {!loginDone
+            {!formState.runSectionEditable
               ? 'Complete Step 2 and click "I\'ve logged in" above to unlock this form.'
               : formState.primaryAction === "newTask"
                 ? "This run is finished. Start a new task to run again, with your prompt and login session kept."
