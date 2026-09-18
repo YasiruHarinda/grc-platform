@@ -16,9 +16,10 @@
 
 import { Alert, Box, Button, Chip, CircularProgress, IconButton, Skeleton, Typography } from "@wso2/oxygen-ui";
 import { Download, ExternalLink, FileText, RotateCcw, Trash2 } from "@wso2/oxygen-ui-icons-react";
-import { useState, type JSX } from "react";
+import { Fragment, useState, type JSX } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useGetEvidence, evidenceQueryKey } from "@modules/audit/api/useGetEvidence";
+import { useGetEvidence, evidenceQueryKey, type EvidenceFile } from "@modules/audit/api/useGetEvidence";
+import { groupIntoBatches } from "@modules/audit/utils/evidenceBatches";
 import { controlsQueryKey } from "@modules/audit/api/useGetControls";
 import { aiValidationQueryKey } from "@modules/audit/api/useGetAIValidation";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
@@ -50,6 +51,38 @@ const ROUND_STATUS_COLORS: Record<string, string> = {
   APPROVED:             "#10B981", // emerald
   AUDITOR_REJECTED:     "#EF4444", // red
 };
+
+/**
+ * One "<label> <when> · <who>" line above a group of files, with the round's
+ * status chip. The chip repeats on every batch header in a round because the
+ * status covers the whole round: a round only accepts more files while it is
+ * SUBMITTED, so anything added later was already there when it was decided,
+ * and a reader looking at the later group needs to see that verdict too.
+ */
+function renderHeader(label: string, at: string, byName: string, status: string, spaced = false): JSX.Element {
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, ...(spaced ? { mt: 0.25 } : {}) }}>
+      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+        {label} {formatTimestamp(at)}{byName ? ` · ${byName}` : ""}
+      </Typography>
+      {ROUND_STATUS_LABELS[status] && (
+        <Chip
+          label={ROUND_STATUS_LABELS[status]}
+          size="small"
+          variant="outlined"
+          sx={{
+            height: 18,
+            fontSize: "0.65rem",
+            fontWeight: 600,
+            color: ROUND_STATUS_COLORS[status],
+            borderColor: ROUND_STATUS_COLORS[status],
+            "& .MuiChip-label": { px: 0.75 },
+          }}
+        />
+      )}
+    </Box>
+  );
+}
 
 /**
  * Lists the files a team submitted for a control so they can be viewed/downloaded.
@@ -201,6 +234,59 @@ export default function SubmittedEvidenceList({
     );
   }
 
+  // One row per file, shared by every batch in every round.
+  function renderFile(f: EvidenceFile, evidenceId: number): JSX.Element {
+    return (
+      <Box
+        key={f.id}
+        sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.25, py: 0.85, borderRadius: 1, border: "1px solid", borderColor: "divider", bgcolor: "action.hover" }}
+      >
+        <FileText size={15} />
+        <Typography variant="body2" sx={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {f.fileName}
+        </Typography>
+        {f.fileSize !== null && (
+          <Typography variant="caption" color="text.secondary">{sizeLabel(f.fileSize)}</Typography>
+        )}
+        {f.readUrl ? (
+          <>
+            <Button
+              size="small"
+              onClick={() => { void handleView(f.readUrl as string, f.fileName); }}
+              startIcon={<ExternalLink size={13} />}
+              sx={{ textTransform: "none", minWidth: 0 }}
+            >
+              View
+            </Button>
+            <IconButton
+              size="small"
+              aria-label={`Download ${f.fileName}`}
+              onClick={() => { void handleDownload(f.readUrl as string, f.fileName); }}
+              sx={{ p: 0.5 }}
+            >
+              <Download size={14} />
+            </IconButton>
+          </>
+        ) : (
+          <Typography variant="caption" color="text.disabled">unavailable</Typography>
+        )}
+        {canDelete && (
+          <IconButton
+            size="small"
+            aria-label={`Remove ${f.fileName}`}
+            disabled={deletingId !== null}
+            onClick={() => { void handleDelete(f.id, evidenceId); }}
+            sx={{ p: 0.5, color: "error.main", "&:hover": { bgcolor: "rgba(220,38,38,0.06)" } }}
+          >
+            {deletingId === f.id
+              ? <CircularProgress size={13} color="inherit" />
+              : <Trash2 size={14} />}
+          </IconButton>
+        )}
+      </Box>
+    );
+  }
+
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
       {resubmissionNote}
@@ -213,28 +299,15 @@ export default function SubmittedEvidenceList({
           {downloadError ?? deleteError}
         </Alert>
       )}
-      {submissions.map((sub) => (
+      {submissions.map((sub) => {
+        // The round header names the original submission only; each later
+        // "Add Files" action gets its own header with its own uploader and time.
+        const batches = groupIntoBatches(sub);
+        const [firstBatch, ...laterBatches] = batches;
+        const submitter = firstBatch?.byName || sub.createdByName || sub.createdBy || "";
+        return (
         <Box key={sub.id} sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
-            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
-              Submitted {formatTimestamp(sub.createdAt)}{(sub.createdByName || sub.createdBy) ? ` · ${sub.createdByName || sub.createdBy}` : ""}
-            </Typography>
-            {ROUND_STATUS_LABELS[sub.status] && (
-              <Chip
-                label={ROUND_STATUS_LABELS[sub.status]}
-                size="small"
-                variant="outlined"
-                sx={{
-                  height: 18,
-                  fontSize: "0.65rem",
-                  fontWeight: 600,
-                  color: ROUND_STATUS_COLORS[sub.status],
-                  borderColor: ROUND_STATUS_COLORS[sub.status],
-                  "& .MuiChip-label": { px: 0.75 },
-                }}
-              />
-            )}
-          </Box>
+          {renderHeader("Submitted", firstBatch?.at ?? sub.createdAt, submitter, sub.status)}
           {(sub.files?.length ?? 0) === 0 && sub.attestation && (
             <Box
               sx={{ display: "flex", alignItems: "flex-start", gap: 1, px: 1.25, py: 0.85, borderRadius: 1, border: "1px solid", borderColor: "divider", bgcolor: "action.hover" }}
@@ -261,57 +334,16 @@ export default function SubmittedEvidenceList({
               )}
             </Box>
           )}
-          {(sub.files ?? []).map((f) => (
-            <Box
-              key={f.id}
-              sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.25, py: 0.85, borderRadius: 1, border: "1px solid", borderColor: "divider", bgcolor: "action.hover" }}
-            >
-              <FileText size={15} />
-              <Typography variant="body2" sx={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {f.fileName}
-              </Typography>
-              {f.fileSize !== null && (
-                <Typography variant="caption" color="text.secondary">{sizeLabel(f.fileSize)}</Typography>
-              )}
-              {f.readUrl ? (
-                <>
-                  <Button
-                    size="small"
-                    onClick={() => { void handleView(f.readUrl as string, f.fileName); }}
-                    startIcon={<ExternalLink size={13} />}
-                    sx={{ textTransform: "none", minWidth: 0 }}
-                  >
-                    View
-                  </Button>
-                  <IconButton
-                    size="small"
-                    aria-label={`Download ${f.fileName}`}
-                    onClick={() => { void handleDownload(f.readUrl as string, f.fileName); }}
-                    sx={{ p: 0.5 }}
-                  >
-                    <Download size={14} />
-                  </IconButton>
-                </>
-              ) : (
-                <Typography variant="caption" color="text.disabled">unavailable</Typography>
-              )}
-              {canDelete && (
-                <IconButton
-                  size="small"
-                  aria-label={`Remove ${f.fileName}`}
-                  disabled={deletingId !== null}
-                  onClick={() => { void handleDelete(f.id, sub.id); }}
-                  sx={{ p: 0.5, color: "error.main", "&:hover": { bgcolor: "rgba(220,38,38,0.06)" } }}
-                >
-                  {deletingId === f.id
-                    ? <CircularProgress size={13} color="inherit" />
-                    : <Trash2 size={14} />}
-                </IconButton>
-              )}
-            </Box>
+          {firstBatch?.files.map((f) => renderFile(f, sub.id))}
+          {laterBatches.map((b) => (
+            <Fragment key={b.key}>
+              {renderHeader("Added", b.at, b.byName, sub.status, true)}
+              {b.files.map((f) => renderFile(f, sub.id))}
+            </Fragment>
           ))}
         </Box>
-      ))}
+        );
+      })}
     </Box>
   );
 }

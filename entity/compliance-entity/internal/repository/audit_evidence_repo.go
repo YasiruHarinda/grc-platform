@@ -275,9 +275,15 @@ func (r *evidenceRepo) getEvidenceFileByID(ctx context.Context, fileID int) (*do
 }
 
 func (r *evidenceRepo) ListEvidenceFiles(ctx context.Context, evidenceID int) (*domain.ListEvidenceFilesResponse, error) {
+	// created_by (with the `user` join for its user_type) is selected here
+	// because "Add Files" appends to an open round: the round's own submitter
+	// no longer names everyone who put a file in it.
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, evidence_id, population_id, file_kind, file_name, file_path, file_type, file_size, created_at "+
-			"FROM audit_evidence_file WHERE evidence_id = ? ORDER BY created_at DESC",
+		"SELECT f.id, f.evidence_id, f.population_id, f.file_kind, f.file_name, f.file_path, "+
+			"f.file_type, f.file_size, f.created_by, u_creator.user_type AS creator_user_type, f.created_at "+
+			"FROM audit_evidence_file f "+
+			"LEFT JOIN `user` u_creator ON u_creator.uuid = f.created_by "+
+			"WHERE f.evidence_id = ? ORDER BY f.created_at DESC",
 		evidenceID)
 	if err != nil {
 		return nil, fmt.Errorf("evidence_file.List: %w", err)
@@ -288,10 +294,16 @@ func (r *evidenceRepo) ListEvidenceFiles(ctx context.Context, evidenceID int) (*
 	for rows.Next() {
 		var f domain.AuditEvidenceFile
 		var evID, popID sql.NullInt64
-		var fileKind, fileType sql.NullString
+		var fileKind, fileType, createdBy, createdByUserType sql.NullString
 		var fileSize sql.NullInt64
-		if err := rows.Scan(&f.ID, &evID, &popID, &fileKind, &f.FileName, &f.FilePath, &fileType, &fileSize, &f.CreatedOn); err != nil {
+		if err := rows.Scan(&f.ID, &evID, &popID, &fileKind, &f.FileName, &f.FilePath, &fileType, &fileSize, &createdBy, &createdByUserType, &f.CreatedOn); err != nil {
 			return nil, fmt.Errorf("evidence_file.List scan: %w", err)
+		}
+		if createdBy.Valid {
+			f.CreatedBy = &createdBy.String
+		}
+		if createdByUserType.Valid {
+			f.CreatedByUserType = &createdByUserType.String
 		}
 		if evID.Valid {
 			v := int(evID.Int64)

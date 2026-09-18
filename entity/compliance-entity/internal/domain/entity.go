@@ -963,10 +963,11 @@ type AuditEvidenceFile struct {
 	FileType     *string   `json:"fileType"`
 	FileSize     *int64    `json:"fileSize"`
 	// CreatedBy is the raw uuid of whoever uploaded this file — the submitting
-	// team member for a POPULATION file, the auditor for a SAMPLE one. Only
-	// populated by the population file reads (ListPopulationFiles /
-	// GetPopulationFileByID), which is where the GRC Backend needs it to name
-	// the uploader; the evidence file reads leave it nil.
+	// team member for a POPULATION or evidence file, the auditor for a SAMPLE
+	// one. Populated by the file list reads (ListPopulationFiles /
+	// ListEvidenceFiles) and GetPopulationFileByID, which is where the GRC
+	// Backend needs it to name the uploader; GetEvidenceFileByID (download
+	// authorization only) leaves it nil.
 	CreatedBy *string `json:"createdBy"`
 	// CreatedByUserType is CreatedBy's user.user_type (INTERNAL | EXTERNAL), nil
 	// when the uuid has no `user` row (never registered, or since deleted). Lets

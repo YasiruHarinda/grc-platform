@@ -26,8 +26,18 @@ type AuditEvidenceFile struct {
 	FilePath   string    `json:"filePath"`
 	FileType   *string   `json:"fileType"`
 	FileSize   *int64    `json:"fileSize"`
-	CreatedBy  string    `json:"createdBy"`
-	CreatedAt  time.Time `json:"createdAt"`
+	// CreatedBy is the raw uuid of whoever uploaded this file. It is not
+	// always the round's CreatedBy: "Add Files" appends to an open round, so a
+	// round can hold files from several people and several moments.
+	CreatedBy string `json:"createdBy"`
+	// CreatedByName is CreatedBy resolved through the identity directory, for
+	// display — see AuditTrailEntry.CreatedByName. CreatedBy stays the raw uuid.
+	CreatedByName string `json:"createdByName"`
+	// CreatedByUserType is CreatedBy's user.user_type (INTERNAL | EXTERNAL),
+	// which routes the uuid to the right identity org when resolving
+	// CreatedByName. Omitted from JSON: it exists only to pick the lookup org.
+	CreatedByUserType string    `json:"-"`
+	CreatedAt         time.Time `json:"createdAt"`
 	// ReadURL is the backend proxy download URL
 	// (GET /api/v1/audits/{id}/controls/{controlId}/evidence/files/{fileId}/download).
 	// Computed at list time (not persisted); nil if the file has no DB id.

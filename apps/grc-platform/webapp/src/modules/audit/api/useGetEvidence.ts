@@ -25,7 +25,11 @@ export interface EvidenceFile {
   fileType: string | null;
   fileSize: number | null;
   readUrl: string | null; // short-lived read SAS URL for viewing/downloading
+  // Who uploaded this file, and when. Not necessarily the round's submitter:
+  // "Add Files" appends to an open round, so a round can hold files from
+  // several people and several moments — see SubmittedEvidenceList.
   createdBy: string;
+  createdByName: string;
   createdAt: string;
 }
 

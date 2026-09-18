@@ -49,16 +49,17 @@ type entEvidence struct {
 
 // entFile mirrors the entity's AuditEvidenceFile JSON.
 type entFile struct {
-	ID         int       `json:"id"`
-	EvidenceID *int      `json:"evidenceId"`
-	FileName   string    `json:"fileName"`
-	FilePath   string    `json:"filePath"`
-	FileType   *string   `json:"fileType"`
-	FileSize   *int64    `json:"fileSize"`
-	CreatedBy  *string   `json:"createdBy"`
-	CreatedOn  time.Time `json:"createdOn"`
-	AuditorID  *int      `json:"auditorId"`
-	TeamID     *int      `json:"teamId"`
+	ID                int       `json:"id"`
+	EvidenceID        *int      `json:"evidenceId"`
+	FileName          string    `json:"fileName"`
+	FilePath          string    `json:"filePath"`
+	FileType          *string   `json:"fileType"`
+	FileSize          *int64    `json:"fileSize"`
+	CreatedBy         *string   `json:"createdBy"`
+	CreatedByUserType *string   `json:"createdByUserType"`
+	CreatedOn         time.Time `json:"createdOn"`
+	AuditorID         *int      `json:"auditorId"`
+	TeamID            *int      `json:"teamId"`
 }
 
 func (f entFile) toModel() *model.AuditEvidenceFile {
@@ -77,6 +78,9 @@ func (f entFile) toModel() *model.AuditEvidenceFile {
 	}
 	if f.CreatedBy != nil {
 		m.CreatedBy = *f.CreatedBy
+	}
+	if f.CreatedByUserType != nil {
+		m.CreatedByUserType = *f.CreatedByUserType
 	}
 	return m
 }

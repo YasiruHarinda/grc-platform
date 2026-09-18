@@ -214,6 +214,42 @@ func (h *evidenceHandler) resolveEvidenceSubmitters(ctx context.Context, evidenc
 	}
 }
 
+// resolveEvidenceFileUploaders batch-resolves each file's CreatedByName across
+// every round, routed to the right identity org via CreatedByUserType (same
+// batched, typed pattern as resolvePopulationUploaders). A round's own
+// CreatedByName no longer covers its files: "Add Files" appends to an open
+// round, so the view groups files by who uploaded them and when.
+func (h *evidenceHandler) resolveEvidenceFileUploaders(ctx context.Context, evidence []*model.AuditEvidence) {
+	uuidTypes := make(map[string]string)
+	for _, e := range evidence {
+		for _, f := range e.Files {
+			if f.CreatedBy != "" {
+				uuidTypes[f.CreatedBy] = f.CreatedByUserType
+			}
+		}
+	}
+	if len(uuidTypes) == 0 {
+		return
+	}
+	people := h.directory.LookupAllTyped(ctx, uuidTypes)
+	for _, e := range evidence {
+		for _, f := range e.Files {
+			if f.CreatedBy == "" {
+				continue
+			}
+			p, ok := people[f.CreatedBy]
+			switch {
+			case ok && strings.TrimSpace(p.DisplayName) != "":
+				f.CreatedByName = strings.TrimSpace(p.DisplayName)
+			case ok && p.Email != "":
+				f.CreatedByName = p.Email
+			default:
+				f.CreatedByName = f.CreatedBy
+			}
+		}
+	}
+}
+
 // requireAssignment enforces resource-level authorization for the web-app evidence
 // routes: the caller must be assigned to controlID for an actionable
 // status (else 403), and the route's audit id must equal the server-derived audit
@@ -919,5 +955,6 @@ func (h *evidenceHandler) listEvidence(w http.ResponseWriter, r *http.Request) {
 		evidence = []*model.AuditEvidence{}
 	}
 	h.resolveEvidenceSubmitters(r.Context(), evidence)
+	h.resolveEvidenceFileUploaders(r.Context(), evidence)
 	response.WriteJSONValue(w, http.StatusOK, evidence)
 }
