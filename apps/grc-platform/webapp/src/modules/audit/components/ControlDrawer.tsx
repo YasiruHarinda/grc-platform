@@ -1525,6 +1525,7 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
   // Reject refetch first and block on a mismatch (see handleEvidenceDecision).
   const [evidenceChangedWarning, setEvidenceChangedWarning] = useState(false);
   const [isCheckingEvidence, setIsCheckingEvidence] = useState(false);
+  const [evidenceRefreshError, setEvidenceRefreshError] = useState<string | null>(null);
   const [overrideTarget, setOverrideTarget] = useState<ControlStatus | null>(null);
 
   // Reset to the Overview tab whenever a different control is opened, so the
@@ -1573,10 +1574,18 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
     try {
       // Re-runs the queryFn already registered by SubmittedEvidenceList's
       // mounted useGetEvidence for this control, rather than duplicating it.
-      await queryClient.refetchQueries({ queryKey: key, exact: true });
+      // throwOnError: React Query swallows refetch failures by default, which
+      // would leave the stale cache in place and let the comparison below
+      // read as "unchanged" — decide on that silently-stale data instead of
+      // blocking.
+      await queryClient.refetchQueries({ queryKey: key, exact: true }, { throwOnError: true });
+    } catch {
+      setEvidenceRefreshError("Could not refresh evidence — try again before deciding.");
+      return;
     } finally {
       setIsCheckingEvidence(false);
     }
+    setEvidenceRefreshError(null);
     const fresh = queryClient.getQueryData<EvidenceSubmission[]>(key);
     if (latestFileIds(fresh) !== before) {
       setEvidenceChangedWarning(true);
@@ -1918,6 +1927,15 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
                   onClose={() => setEvidenceChangedWarning(false)}
                 >
                   New file was added since this review opened - check the files above before deciding again.
+                </Alert>
+              )}
+              {evidenceRefreshError && (
+                <Alert
+                  severity="error"
+                  sx={{ mt: 1, fontSize: "0.8rem" }}
+                  onClose={() => setEvidenceRefreshError(null)}
+                >
+                  {evidenceRefreshError}
                 </Alert>
               )}
               {reviewEvidence.isError && (
