@@ -82,6 +82,9 @@ export default function EvidenceUploadBox({
   const [dragOver, setDragOver] = useState(false);
   const [attestation, setAttestation] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  // dragenter/dragleave also fire when the cursor crosses child elements, so
+  // count them or the highlight flickers once file rows live inside the box.
+  const dragDepth = useRef(0);
   const submitEvidence = useSubmitEvidence();
   const addEvidenceFiles = useAddEvidenceFiles();
   const submitPopulation = useSubmitPopulation();
@@ -149,55 +152,85 @@ export default function EvidenceUploadBox({
         onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }}
       />
 
+      {/* The container is only the drop target; browsing is the inner prompt's
+          job, so the file rows and their remove buttons can sit inside it
+          without nesting interactive elements. */}
       <Box
-        role="button"
-        tabIndex={busy ? -1 : 0}
-        aria-label="Upload files — click or press Enter to browse"
-        onClick={() => !busy && inputRef.current?.click()}
-        onKeyDown={(e) => { if (!busy && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); inputRef.current?.click(); } }}
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => { e.preventDefault(); setDragOver(false); if (!busy) addFiles(e.dataTransfer.files); }}
+        onDragEnter={(e) => { e.preventDefault(); dragDepth.current += 1; if (!busy) setDragOver(true); }}
+        onDragOver={(e) => e.preventDefault()}
+        onDragLeave={() => { dragDepth.current = Math.max(0, dragDepth.current - 1); if (dragDepth.current === 0) setDragOver(false); }}
+        onDrop={(e) => { e.preventDefault(); dragDepth.current = 0; setDragOver(false); if (!busy) addFiles(e.dataTransfer.files); }}
         sx={(theme) => ({
           border: "2px dashed",
           borderColor: dragOver ? "primary.main" : theme.palette.mode === "dark" ? "rgba(255,255,255,0.15)" : "#d1d5db",
           bgcolor: dragOver ? "action.hover" : "transparent",
           borderRadius: 2,
-          p: 3,
+          mb: 1.5,
+          overflow: "hidden",
+          // Same height as the empty state so adding a file doesn't shrink the
+          // drop target; it only grows once the rows need more room.
           display: "flex",
           flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 1,
-          cursor: busy ? "default" : "pointer",
-          textAlign: "center",
-          mb: 1.5,
-          "&:hover": { borderColor: "primary.main", bgcolor: "action.hover" },
+          minHeight: 150,
+          "&:hover": busy ? undefined : { borderColor: "primary.main" },
         })}
       >
-        <Box sx={{ width: 44, height: 44, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", color: "text.secondary" }}>
-          <Upload size={20} />
-        </Box>
-        <Typography variant="body2" fontWeight={600}>Drop files here or click to browse</Typography>
-        <Typography variant="caption" color="text.secondary">{hint}</Typography>
-      </Box>
+        {files.length > 0 && (
+          <Box sx={{ display: "flex", flexDirection: "column", flexShrink: 0, gap: 0.5, p: 1, maxHeight: 220, overflowY: "auto" }}>
+            {files.map((f, i) => (
+              <Box key={f.name + f.size + i} sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.25, py: 0.75, borderRadius: 1, bgcolor: "action.hover" }}>
+                <FileUp size={14} />
+                <Typography variant="caption" sx={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {f.name}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">{(f.size / 1024).toFixed(0)} KB</Typography>
+                <IconButton size="small" aria-label={`Remove ${f.name}`} disabled={busy} onClick={() => removeFile(i)} sx={{ p: 0.25 }}>
+                  <X size={13} />
+                </IconButton>
+              </Box>
+            ))}
+          </Box>
+        )}
 
-      {files.length > 0 && (
-        <Box sx={{ mb: 1.5, display: "flex", flexDirection: "column", gap: 0.5 }}>
-          {files.map((f, i) => (
-            <Box key={f.name + f.size + i} sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.25, py: 0.75, borderRadius: 1, bgcolor: "action.hover" }}>
-              <FileUp size={14} />
-              <Typography variant="caption" sx={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {f.name}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">{(f.size / 1024).toFixed(0)} KB</Typography>
-              <IconButton size="small" aria-label={`Remove ${f.name}`} disabled={busy} onClick={(e) => { e.stopPropagation(); removeFile(i); }} sx={{ p: 0.25 }}>
-                <X size={13} />
-              </IconButton>
-            </Box>
-          ))}
+        <Box
+          role="button"
+          tabIndex={busy ? -1 : 0}
+          aria-label={files.length > 0 ? "Add more files — click or press Enter to browse" : "Upload files — click or press Enter to browse"}
+          onClick={() => !busy && inputRef.current?.click()}
+          onKeyDown={(e) => { if (!busy && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); inputRef.current?.click(); } }}
+          sx={{
+            flex: 1,
+            display: "flex",
+            flexDirection: files.length > 0 ? "row" : "column",
+            alignItems: "center",
+            justifyContent: "center",
+            flexWrap: "wrap",
+            gap: 1,
+            p: files.length > 0 ? 1.25 : 3,
+            borderTop: files.length > 0 ? "1px dashed" : "none",
+            borderColor: "divider",
+            cursor: busy ? "default" : "pointer",
+            textAlign: "center",
+            "&:hover": busy ? undefined : { bgcolor: "action.hover" },
+          }}
+        >
+          {files.length > 0 ? (
+            <>
+              <Upload size={14} />
+              <Typography variant="body2" fontWeight={600}>Add more files</Typography>
+              <Typography variant="caption" color="text.secondary">{hint}</Typography>
+            </>
+          ) : (
+            <>
+              <Box sx={{ width: 44, height: 44, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", color: "text.secondary" }}>
+                <Upload size={20} />
+              </Box>
+              <Typography variant="body2" fontWeight={600}>Drop files here or click to browse</Typography>
+              <Typography variant="caption" color="text.secondary">{hint}</Typography>
+            </>
+          )}
         </Box>
-      )}
+      </Box>
 
       {sizeError && (
         <Alert severity="warning" onClose={() => setSizeError(null)} sx={{ mb: 1.5, fontSize: "0.8rem" }}>
