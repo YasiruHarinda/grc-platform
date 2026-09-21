@@ -19,6 +19,7 @@ import type { JSX } from "react";
 import { useNavigate } from "react-router";
 import type { BlockerReason, ScopeRollup } from "@modules/audit/types/framework";
 import { DUE_OVERDUE, DUE_SOON } from "@modules/audit/components/dashboard/dueDate";
+import { auditPaths } from "@modules/audit/paths";
 
 const REASON_LABELS: Record<BlockerReason, string> = {
   overdue: "Overdue",
@@ -66,11 +67,11 @@ export default function BlockerList({ scope, showAuditLabel }: BlockerListProps)
             key={blocker.controlId}
             role="button"
             tabIndex={0}
-            onClick={() => void navigate(`/audit/audits/${blocker.auditId}?control=${blocker.controlId}`)}
+            onClick={() => void navigate(auditPaths.detail(blocker.auditId, blocker.controlId))}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
-                void navigate(`/audit/audits/${blocker.auditId}?control=${blocker.controlId}`);
+                void navigate(auditPaths.detail(blocker.auditId, blocker.controlId));
               }
             }}
             sx={{

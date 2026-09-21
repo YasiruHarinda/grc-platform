@@ -18,6 +18,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { extractErrorMessage } from "@modules/audit/api/apiError";
+import type { RoundStatus } from "@modules/audit/types/audit";
 
 export interface EvidenceFile {
   id: number;
@@ -36,7 +37,7 @@ export interface EvidenceFile {
 export interface EvidenceSubmission {
   id: number;
   controlId: number;
-  status: string;
+  status: RoundStatus;
   folderPath: string | null;
   files: EvidenceFile[] | null; // null when a submission round has no files
   // Written justification for a round with no files (fileless completion).

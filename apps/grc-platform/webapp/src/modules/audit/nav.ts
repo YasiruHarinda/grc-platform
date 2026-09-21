@@ -17,6 +17,7 @@
 import { ClipboardList, LayoutDashboard, ShieldCheck } from "@wso2/oxygen-ui-icons-react";
 import type { NavSection } from "@components/side-nav-bar/types";
 import { AuditPrivilege } from "./privileges";
+import { auditPaths } from "./paths";
 
 // Audit Hub sidebar section. Owned by the Audit module — add Audit nav items
 // here without touching the shared SideBar component.
@@ -33,14 +34,14 @@ export const auditNav: NavSection = {
     {
       id: "audit-dashboard",
       label: "Dashboard",
-      path: "/audit/dashboard",
+      path: auditPaths.dashboard,
       icon: LayoutDashboard,
       requiredPrivilege: AuditPrivilege.ViewAudits,
     },
     {
       id: "audit-audits",
       label: "Audits",
-      path: "/audit/audits",
+      path: auditPaths.list(),
       icon: ClipboardList,
       requiredPrivilege: AuditPrivilege.ViewAudits,
     },

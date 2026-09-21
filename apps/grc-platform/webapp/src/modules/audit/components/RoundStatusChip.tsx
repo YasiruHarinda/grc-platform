@@ -16,39 +16,30 @@
 
 import { Chip } from "@wso2/oxygen-ui";
 import type { JSX } from "react";
+import type { RoundStatus } from "@modules/audit/types/audit";
+import { ROUND_STATUS_COLORS, ROUND_STATUS_LABELS } from "@modules/audit/utils/controlStatus";
 
-// Round status (distinct from the control's status) — tells a rejected round
-// apart from the resubmission that replaced it. Shared by evidence and
-// population, which use the same round statuses.
-const ROUND_STATUS_LABELS: Record<string, string> = {
-  SUBMITTED:           "Submitted",
-  COMPLIANCE_APPROVED: "Approved (Internal)",
-  COMPLIANCE_REJECTED: "Rejected (Internal)",
-  APPROVED:            "Approved",
-  AUDITOR_REJECTED:    "Rejected (Auditor)",
-};
-const ROUND_STATUS_COLORS: Record<string, string> = {
-  SUBMITTED:           "#6366F1", // indigo — awaiting review
-  COMPLIANCE_APPROVED:  "#10B981", // emerald
-  COMPLIANCE_REJECTED:  "#EF4444", // red
-  APPROVED:             "#10B981", // emerald
-  AUDITOR_REJECTED:     "#EF4444", // red
-};
-
-/** Chip for a round's own status; renders nothing for a status with no label (e.g. PENDING). */
+/**
+ * Chip for a round's own status — tells a rejected round apart from the
+ * resubmission that replaced it. Shared by evidence and population, which use
+ * the same round statuses. Renders nothing for PENDING (nothing submitted yet)
+ * or for a status this build doesn't know, rather than an empty chip.
+ */
 export default function RoundStatusChip({ status }: { status: string }): JSX.Element | null {
-  if (!ROUND_STATUS_LABELS[status]) return null;
+  if (status === "PENDING") return null;
+  const label = ROUND_STATUS_LABELS[status as RoundStatus];
+  if (!label) return null;
   return (
     <Chip
-      label={ROUND_STATUS_LABELS[status]}
+      label={label}
       size="small"
       variant="outlined"
       sx={{
         height: 18,
         fontSize: "0.65rem",
         fontWeight: 600,
-        color: ROUND_STATUS_COLORS[status],
-        borderColor: ROUND_STATUS_COLORS[status],
+        color: ROUND_STATUS_COLORS[status as RoundStatus],
+        borderColor: ROUND_STATUS_COLORS[status as RoundStatus],
         "& .MuiChip-label": { px: 0.75 },
       }}
     />

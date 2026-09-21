@@ -21,6 +21,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useGetEvidence, evidenceQueryKey, type EvidenceFile } from "@modules/audit/api/useGetEvidence";
 import { groupIntoBatches } from "@modules/audit/utils/evidenceBatches";
 import RoundStatusChip from "@modules/audit/components/RoundStatusChip";
+import type { RoundStatus } from "@modules/audit/types/audit";
 import { controlsQueryKey } from "@modules/audit/api/useGetControls";
 import { aiValidationQueryKey } from "@modules/audit/api/useGetAIValidation";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
@@ -43,7 +44,7 @@ function sizeLabel(bytes: number | null): string {
  * SUBMITTED, so anything added later was already there when it was decided,
  * and a reader looking at the later group needs to see that verdict too.
  */
-function renderHeader(label: string, at: string, byName: string, status: string, spaced = false): JSX.Element {
+function renderHeader(label: string, at: string, byName: string, status: RoundStatus, spaced = false): JSX.Element {
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, ...(spaced ? { mt: 0.25 } : {}) }}>
       <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>

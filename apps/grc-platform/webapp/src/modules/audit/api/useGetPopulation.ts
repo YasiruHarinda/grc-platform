@@ -18,6 +18,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
 import { BACKEND_BASE_URL } from "@config/apiConfig";
 import { extractErrorMessage } from "@modules/audit/api/apiError";
+import type { RoundStatus } from "@modules/audit/types/audit";
 
 export interface PopulationFile {
   id: number;
@@ -39,7 +40,7 @@ export interface PopulationFile {
 export interface PopulationRound {
   id: number;
   controlId: number;
-  status: "PENDING" | "SUBMITTED" | "COMPLIANCE_APPROVED" | "COMPLIANCE_REJECTED" | "APPROVED" | "AUDITOR_REJECTED";
+  status: RoundStatus;
   referenceNumber: number | null;
   description: string | null;
   dueDate: string | null;
