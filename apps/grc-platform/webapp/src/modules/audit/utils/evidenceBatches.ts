@@ -62,12 +62,13 @@ export function groupFilesIntoBatches<T extends BatchableFile>(
   const batches: FileBatch<T>[] = [];
   for (const f of files) {
     const last = batches[batches.length - 1];
-    const prev = last?.files[last.files.length - 1];
-    if (last && prev && prev.createdBy === f.createdBy) {
-      const prevT = timeOf(prev.createdAt);
+    if (last && last.files[0].createdBy === f.createdBy) {
+      const startT = timeOf(last.at);
       const t = timeOf(f.createdAt);
+      // Measured from the batch's first file, not the previous one, so a slow
+      // trickle of files can't chain into a single long batch.
       // Unparseable timestamps can't split a batch — fall back to the uploader.
-      const gap = prevT !== null && t !== null ? t - prevT : 0;
+      const gap = startT !== null && t !== null ? t - startT : 0;
       if (gap <= BATCH_GAP_MS) {
         last.files.push(f);
         continue;

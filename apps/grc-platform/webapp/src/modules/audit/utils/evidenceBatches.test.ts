@@ -79,6 +79,20 @@ describe("groupIntoBatches", () => {
     expect(batches).toHaveLength(2);
   });
 
+  it("does not chain files spaced inside the gap into one long batch", () => {
+    // Each file is 10s after the previous, but the third is 20s after the first.
+    const batches = groupIntoBatches(
+      round([
+        file("2026-09-01T10:00:00Z"),
+        file("2026-09-01T10:00:10Z"),
+        file("2026-09-01T10:00:20Z"),
+      ]),
+    );
+    expect(batches).toHaveLength(2);
+    expect(batches[0].files).toHaveLength(2);
+    expect(batches[1].at).toBe("2026-09-01T10:00:20Z");
+  });
+
   it("splits on a different uploader even within the gap", () => {
     const batches = groupIntoBatches(
       round([
