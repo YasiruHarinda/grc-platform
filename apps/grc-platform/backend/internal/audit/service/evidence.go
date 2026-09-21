@@ -125,15 +125,19 @@ type EvidenceService interface {
 	EvidenceAuditorID(ctx context.Context, evidenceID int) (auditorID *int, teamID *int, status string, err error)
 
 	// DeleteFile removes a single evidence file from the submission. The caller
-	// must be the file's creator or hold ManageControls (isAdmin=true). The blob
-	// in Azure is not deleted — only the DB record is removed.
-	DeleteFile(ctx context.Context, fileID int, actor string, isAdmin bool) error
+	// must be the file's creator or hold ManageControls (isAdmin=true), and the
+	// file must belong to the control's latest round — earlier rounds are
+	// read-only (409), even for an admin. A file outside this control's rounds
+	// is reported as not found. The blob in Azure is not deleted — only the DB
+	// record is removed.
+	DeleteFile(ctx context.Context, auditID, controlID, fileID int, actor string, isAdmin bool) error
 
 	// DeleteRound removes a whole fileless (attestation-only) evidence round —
 	// the "Completed without files" case, which has no per-file delete to fall
 	// back on (rounds holding files go through DeleteFile instead, one file at
 	// a time). The caller must be the round's creator or hold ManageControls
-	// (isAdmin=true).
+	// (isAdmin=true), and the round must be the control's latest — earlier
+	// rounds are read-only (409).
 	DeleteRound(ctx context.Context, auditID, controlID, evidenceID int, actor string, isAdmin bool) error
 
 	// DiscardRound deletes a round unconditionally, skipping DeleteRound's
@@ -499,7 +503,31 @@ func (s *evidenceService) EvidenceAuditorID(ctx context.Context, evidenceID int)
 	return s.repo.EvidenceAuditorID(ctx, evidenceID)
 }
 
-func (s *evidenceService) DeleteFile(ctx context.Context, fileID int, actor string, isAdmin bool) error {
+// latestEvidenceRoundID returns the control's newest round: the highest id,
+// since rounds are numbered in creation order. Taken over every round — empty
+// ones included — so emptying the latest round does not promote a rejected
+// earlier one to "latest". Returns 0 when there are no rounds.
+func latestEvidenceRoundID(rounds []*model.AuditEvidence) int {
+	latest := 0
+	for _, r := range rounds {
+		if r.ID > latest {
+			latest = r.ID
+		}
+	}
+	return latest
+}
+
+// errEvidenceRoundReadOnly is the 409 for changing a round that a newer one
+// has superseded: it was already reviewed (possibly rejected), so its evidence
+// stays on record as it was. Mirrors the read-only older rounds in the UI.
+func errEvidenceRoundReadOnly() error {
+	return &apierror.Error{
+		StatusCode: http.StatusConflict,
+		Body:       "only the latest evidence round can be changed; earlier rounds are read-only",
+	}
+}
+
+func (s *evidenceService) DeleteFile(ctx context.Context, auditID, controlID, fileID int, actor string, isAdmin bool) error {
 	f, err := s.repo.GetFileByID(ctx, fileID)
 	if err != nil {
 		return err
@@ -507,8 +535,27 @@ func (s *evidenceService) DeleteFile(ctx context.Context, fileID int, actor stri
 	if f == nil {
 		return &apierror.Error{StatusCode: http.StatusNotFound, Body: "file not found"}
 	}
+	rounds, err := s.repo.ListByControl(ctx, auditID, controlID)
+	if err != nil {
+		return err
+	}
+	inControl := false
+	for _, r := range rounds {
+		if r.ID == f.EvidenceID {
+			inControl = true
+			break
+		}
+	}
+	// The route names the control, so a file from another control's round is
+	// not found here rather than deletable through this control's URL.
+	if !inControl {
+		return &apierror.Error{StatusCode: http.StatusNotFound, Body: "file not found"}
+	}
 	if !isAdmin && f.CreatedBy != actor {
 		return &apierror.Error{StatusCode: http.StatusForbidden, Body: "forbidden"}
+	}
+	if f.EvidenceID != latestEvidenceRoundID(rounds) {
+		return errEvidenceRoundReadOnly()
 	}
 	return s.repo.DeleteFile(ctx, fileID)
 }
@@ -533,6 +580,9 @@ func (s *evidenceService) DeleteRound(ctx context.Context, auditID, controlID, e
 	}
 	if !isAdmin && round.CreatedBy != actor {
 		return &apierror.Error{StatusCode: http.StatusForbidden, Body: "forbidden"}
+	}
+	if evidenceID != latestEvidenceRoundID(rounds) {
+		return errEvidenceRoundReadOnly()
 	}
 	return s.repo.DeleteEvidence(ctx, evidenceID)
 }

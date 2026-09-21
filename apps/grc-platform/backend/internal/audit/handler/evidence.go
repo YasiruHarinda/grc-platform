@@ -713,7 +713,7 @@ func (h *evidenceHandler) deleteControlEvidenceFile(w http.ResponseWriter, r *ht
 	if h.requireEditableEvidenceControl(w, r, auditID, controlID) == nil {
 		return
 	}
-	if !h.deleteFile(w, r, fileID) {
+	if !h.deleteFile(w, r, auditID, controlID, fileID) {
 		return
 	}
 
@@ -772,10 +772,10 @@ func (h *evidenceHandler) deleteEvidenceRound(w http.ResponseWriter, r *http.Req
 
 // deleteFile performs the authorization-checked delete shared by both delete
 // routes. It writes the error response and returns false on failure.
-func (h *evidenceHandler) deleteFile(w http.ResponseWriter, r *http.Request, fileID int) bool {
+func (h *evidenceHandler) deleteFile(w http.ResponseWriter, r *http.Request, auditID, controlID, fileID int) bool {
 	actor := auth.FromContext(r.Context()).Subject
 	isAdmin := auth.HasPrivilege(r.Context(), privilege.ManageControls)
-	if err := h.svc.DeleteFile(r.Context(), fileID, actor, isAdmin); err != nil {
+	if err := h.svc.DeleteFile(r.Context(), auditID, controlID, fileID, actor, isAdmin); err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return false
 	}
