@@ -207,6 +207,8 @@ export function parseDateOnly(s: string | null | undefined): Date | null {
 
 /**
  * Formats a local Date as a "YYYY-MM-DD" string for API payloads.
+ * Uses local calendar parts (the date the user picked); for "today" as the
+ * backend sees it, use todayUtcDateOnlyString instead.
  *
  * @param d - Date to format, or null/undefined.
  * @returns {string | undefined} Date-only string, or undefined when d is null/undefined.
@@ -219,3 +221,14 @@ export function toDateOnlyString(d: Date | null | undefined): string | undefined
   return `${y}-${m}-${day}`;
 }
 
+/**
+ * Returns today's UTC calendar date as "YYYY-MM-DD".
+ * UTC, not local: the backend DB connection is UTC-pinned, so server-side
+ * "today" (Work Queue buckets, dueInfo) is the UTC date. Comparing against the
+ * local date would disagree with it near UTC midnight.
+ *
+ * @returns {string} Current UTC date-only string.
+ */
+export function todayUtcDateOnlyString(): string {
+  return new Date().toISOString().slice(0, 10);
+}

@@ -14,8 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { describe, expect, it } from "vitest";
-import { parseDateOnly, toDateOnlyString } from "./dateTime";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { parseDateOnly, toDateOnlyString, todayUtcDateOnlyString } from "./dateTime";
 
 describe("parseDateOnly", () => {
   it("returns null for empty input", () => {
@@ -90,5 +90,22 @@ describe("toDateOnlyString", () => {
 
   it("formats a local Date as YYYY-MM-DD", () => {
     expect(toDateOnlyString(new Date(2026, 0, 5))).toBe("2026-01-05");
+  });
+});
+
+describe("todayUtcDateOnlyString", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("returns the UTC calendar date, not the local one", () => {
+    vi.useFakeTimers();
+    // 23:30 on Jun 30 in UTC-5 is already Jul 1 in UTC.
+    vi.setSystemTime(new Date("2026-07-01T04:30:00Z"));
+    expect(todayUtcDateOnlyString()).toBe("2026-07-01");
+  });
+
+  it("zero-pads month and day", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-05T12:00:00Z"));
+    expect(todayUtcDateOnlyString()).toBe("2026-01-05");
   });
 });
