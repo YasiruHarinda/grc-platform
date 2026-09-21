@@ -209,6 +209,10 @@ type EvidenceRepository interface {
 type PopulationRepository interface {
 	// AddFile records one uploaded population blob against a population round.
 	AddFile(ctx context.Context, populationID int, fileKind, fileName, filePath string, fileType *string, fileSize *int64, createdBy string) error
+	// CreateRound starts a new PENDING round for the control with the same
+	// requirement details (owner, team, reference, description, due date,
+	// comments) as from — used when the team resubmits after a rejection.
+	CreateRound(ctx context.Context, auditID, controlID int, from *model.AuditPopulation, createdBy string) (*model.AuditPopulation, error)
 	// UpdateStatus advances the population round's status (e.g. → SUBMITTED).
 	UpdateStatus(ctx context.Context, populationID int, status, updatedBy string) error
 	// UpdateStatusWithAttestation is UpdateStatus plus a written note standing

@@ -51,17 +51,28 @@ export interface PopulationRound {
   updatedAt: string;
 }
 
+// A round before the current one, with the team's files on it. A rejected
+// round is followed by a new one when the team resubmits, so the rejected one
+// stays here as history (and is left out entirely for an external auditor).
+export interface EarlierPopulationRound {
+  round: PopulationRound;
+  populationFiles: PopulationFile[];
+}
+
 export interface PopulationView {
   round: PopulationRound;
   populationFiles: PopulationFile[];
   sampleFiles: PopulationFile[];
   sampleReference: string | null;
+  // Optional only so a response from a backend that predates round history
+  // still parses; see populationRounds.
+  earlierRounds?: EarlierPopulationRound[];
 }
 
 export const populationQueryKey = (auditId: number, controlId: number) =>
   ["audit", "population", auditId, controlId] as const;
 
-/** Fetches the control's current population round: its files (split population/sample) and the auditor's sample note. */
+/** Fetches the control's current population round (its files split population/sample, and the auditor's sample note) plus the rounds before it. */
 export function useGetPopulation(auditId: number, controlId: number, enabled: boolean) {
   const authFetch = useAuthApiClient();
 

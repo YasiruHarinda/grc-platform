@@ -14,12 +14,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Alert, Box, Button, Chip, CircularProgress, IconButton, Skeleton, Typography } from "@wso2/oxygen-ui";
+import { Alert, Box, Button, CircularProgress, IconButton, Skeleton, Typography } from "@wso2/oxygen-ui";
 import { Download, ExternalLink, FileText, RotateCcw, Trash2 } from "@wso2/oxygen-ui-icons-react";
 import { Fragment, useState, type JSX } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useGetEvidence, evidenceQueryKey, type EvidenceFile } from "@modules/audit/api/useGetEvidence";
 import { groupIntoBatches } from "@modules/audit/utils/evidenceBatches";
+import RoundStatusChip from "@modules/audit/components/RoundStatusChip";
 import { controlsQueryKey } from "@modules/audit/api/useGetControls";
 import { aiValidationQueryKey } from "@modules/audit/api/useGetAIValidation";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
@@ -35,23 +36,6 @@ function sizeLabel(bytes: number | null): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// Round status (distinct from the control's status) — tells a rejected round
-// apart from the resubmission that replaced it.
-const ROUND_STATUS_LABELS: Record<string, string> = {
-  SUBMITTED:           "Submitted",
-  COMPLIANCE_APPROVED: "Approved (Internal)",
-  COMPLIANCE_REJECTED: "Rejected (Internal)",
-  APPROVED:            "Approved",
-  AUDITOR_REJECTED:    "Rejected (Auditor)",
-};
-const ROUND_STATUS_COLORS: Record<string, string> = {
-  SUBMITTED:           "#6366F1", // indigo — awaiting review
-  COMPLIANCE_APPROVED:  "#10B981", // emerald
-  COMPLIANCE_REJECTED:  "#EF4444", // red
-  APPROVED:             "#10B981", // emerald
-  AUDITOR_REJECTED:     "#EF4444", // red
-};
-
 /**
  * One "<label> <when> · <who>" line above a group of files, with the round's
  * status chip. The chip repeats on every batch header in a round because the
@@ -65,21 +49,7 @@ function renderHeader(label: string, at: string, byName: string, status: string,
       <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
         {label} {formatTimestamp(at)}{byName ? ` · ${byName}` : ""}
       </Typography>
-      {ROUND_STATUS_LABELS[status] && (
-        <Chip
-          label={ROUND_STATUS_LABELS[status]}
-          size="small"
-          variant="outlined"
-          sx={{
-            height: 18,
-            fontSize: "0.65rem",
-            fontWeight: 600,
-            color: ROUND_STATUS_COLORS[status],
-            borderColor: ROUND_STATUS_COLORS[status],
-            "& .MuiChip-label": { px: 0.75 },
-          }}
-        />
-      )}
+      <RoundStatusChip status={status} />
     </Box>
   );
 }

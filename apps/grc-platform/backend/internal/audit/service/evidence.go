@@ -37,8 +37,8 @@ type EvidenceService interface {
 	GetUploadLink(ctx context.Context, auditID, controlID int) (*model.UploadLinkResponse, error)
 
 	// PopulationUploadLink returns the control's population folder path — flat,
-	// shared by every submission for the control's whole lifecycle (a control
-	// normally has exactly one population round; resubmissions reuse it).
+	// shared by every round of the control, so each submit records only the
+	// blobs no earlier round has (see PopulationService.SubmitPopulation).
 	PopulationUploadLink(ctx context.Context, auditID, controlID int) (*model.UploadLinkResponse, error)
 
 	// SampleUploadLink returns the auditor's sample-upload folder — a "sample/"

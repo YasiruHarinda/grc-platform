@@ -20,9 +20,8 @@ package model
 import "time"
 
 // AuditPopulation represents one audit_population row (a population round) for
-// an OE control. A control normally has exactly one round for its whole
-// lifecycle — both internal-review and auditor rejections reuse the same round
-// rather than starting a new one.
+// an OE control. A resubmission after a rejection starts a new round, the same
+// way evidence does, so the rejected round stays on record with its own status.
 type AuditPopulation struct {
 	ID              int     `json:"id"`
 	ControlID       int     `json:"controlId"`
@@ -80,14 +79,29 @@ type PopulationFile struct {
 	AuditorID *int `json:"-"`
 }
 
-// PopulationView is the response for GET .../population: the control's current
-// round plus its files split by kind, and the auditor's sample note (which lives
-// on audit_control, not the population row).
-type PopulationView struct {
+// IsRejectedPopulationStatus reports whether a population round was rejected
+// (by compliance or the assigned auditor). Rejected rounds stay on record but
+// are internal-audience only, like evidence — see IsRejectedEvidenceStatus.
+func IsRejectedPopulationStatus(status string) bool {
+	return status == "COMPLIANCE_REJECTED" || status == "AUDITOR_REJECTED"
+}
+
+// PopulationRoundView is an earlier population round with its team-submitted files.
+type PopulationRoundView struct {
 	Round           *AuditPopulation  `json:"round"`
 	PopulationFiles []*PopulationFile `json:"populationFiles"`
-	SampleFiles     []*PopulationFile `json:"sampleFiles"`
-	SampleReference *string           `json:"sampleReference"`
+}
+
+// PopulationView is the response for GET .../population: the control's current
+// round plus its files split by kind, the rounds before it (oldest first, with
+// rejected ones left out for external auditors), and the auditor's sample note
+// (which lives on audit_control, not the population row).
+type PopulationView struct {
+	Round           *AuditPopulation       `json:"round"`
+	PopulationFiles []*PopulationFile      `json:"populationFiles"`
+	SampleFiles     []*PopulationFile      `json:"sampleFiles"`
+	SampleReference *string                `json:"sampleReference"`
+	EarlierRounds   []*PopulationRoundView `json:"earlierRounds"`
 }
 
 // PopulationSubmitResult is returned by the Evidence Portal population submit

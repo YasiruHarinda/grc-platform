@@ -95,21 +95,21 @@ func (r *controlRepo) GetEvidenceAssignment(ctx context.Context, userID int, con
 	return auditID, nil
 }
 
-// FindActivePopulation returns the active population round for an OE control:
-// PENDING (first submission), SUBMITTED (still under internal review — the team
-// can keep adding files up until the reviewer decides, same as
-// teamEditablePopulationStatuses on the backend), COMPLIANCE_REJECTED (internal
-// review sent it back), or AUDITOR_REJECTED (auditor sent it back) — all four are
-// states from which the population state machine allows a transition straight
-// back to SUBMITTED on the same round (see allowedPopulationTransitions in
-// audit_population_service.go; SUBMITTED -> SUBMITTED is the no-op case).
+// FindActivePopulation returns the control's latest population round when it is
+// still open to the team: PENDING (first submission), SUBMITTED (still under
+// internal review — the team can keep adding files up until the reviewer
+// decides, same as teamEditablePopulationStatuses on the backend), or one of
+// the two rejected states (the backend starts a new round from a rejected one on
+// resubmit). Only the latest round is considered, so an earlier rejected round
+// is never picked once a later one has moved on (e.g. to APPROVED).
 // Not found (no active population / DESIGN control) → sql.ErrNoRows.
 func (r *controlRepo) FindActivePopulation(ctx context.Context, controlID int) (int, error) {
 	var populationID int
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id FROM audit_population
-		WHERE control_id = ? AND status IN ('PENDING','SUBMITTED','COMPLIANCE_REJECTED','AUDITOR_REJECTED')
-		ORDER BY id DESC LIMIT 1`, controlID).Scan(&populationID)
+		WHERE id = (SELECT MAX(id) FROM audit_population WHERE control_id = ?)
+		  AND status IN ('PENDING','SUBMITTED','COMPLIANCE_REJECTED','AUDITOR_REJECTED')`,
+		controlID).Scan(&populationID)
 	if err != nil {
 		return 0, err
 	}

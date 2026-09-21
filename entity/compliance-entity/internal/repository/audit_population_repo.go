@@ -54,12 +54,12 @@ func (r *populationRepo) CreatePopulation(ctx context.Context, auditID, controlI
 	}
 	res, err := r.db.ExecContext(ctx,
 		`INSERT INTO audit_population
-		 (control_id, owner_id, team_id, reference_number, description, due_date, status, created_by, updated_by)
-		 VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
+		 (control_id, owner_id, team_id, reference_number, description, due_date, comments, status, created_by, updated_by)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
 		controlID,
 		nullableInt(req.OwnerID), nullableInt(req.TeamID),
 		req.ReferenceNumber, nullableString(req.Description),
-		req.DueDate,
+		req.DueDate, nullableString(req.Comments),
 		req.CreatedBy, req.CreatedBy)
 	if err != nil {
 		return nil, fmt.Errorf("population.Create: %w", err)
