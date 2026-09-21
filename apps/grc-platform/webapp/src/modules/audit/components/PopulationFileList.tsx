@@ -101,8 +101,8 @@ export default function PopulationFileList({
   }
 
   const canRemove = canDelete && auditId !== undefined && controlId !== undefined;
-  // Newest upload first, like the evidence list; files inside a group keep upload order.
-  const batches = groupFilesIntoBatches(files, files[0].populationId).reverse();
+  // Oldest upload first, like the files inside an evidence round.
+  const batches = groupFilesIntoBatches(files, files[0].populationId);
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
