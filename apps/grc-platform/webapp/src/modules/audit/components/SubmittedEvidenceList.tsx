@@ -179,6 +179,14 @@ export default function SubmittedEvidenceList({
   const allRounds = data ?? [];
   const submissions = allRounds.filter((s) => (s.files?.length ?? 0) > 0 || Boolean(s.attestation));
 
+  // Earlier rounds stay listed for the record but read-only: a superseded round
+  // was already reviewed (possibly rejected), so its files aren't the
+  // submitter's to remove. The API returns rounds newest first; the newest is
+  // taken from every round, not just those with content, so emptying the
+  // latest round doesn't make the rejected one before it deletable.
+  const latestRoundId = allRounds[0]?.id;
+  const canRemoveFrom = (roundId: number) => canDelete && roundId === latestRoundId;
+
   // Only note a resubmission when this call site opted in (rejectionReason
   // passed, meaning control.status is plain EVIDENCE_PENDING) and there is
   // something to resubmit — either a reason was given, or a prior round's
@@ -240,7 +248,7 @@ export default function SubmittedEvidenceList({
         ) : (
           <Typography variant="caption" color="text.disabled">unavailable</Typography>
         )}
-        {canDelete && (
+        {canRemoveFrom(evidenceId) && (
           <IconButton
             size="small"
             aria-label={`Remove ${f.fileName}`}
@@ -289,7 +297,7 @@ export default function SubmittedEvidenceList({
                 </Typography>
                 <Typography variant="body2" sx={{ lineHeight: 1.6 }}>{sub.attestation}</Typography>
               </Box>
-              {canDelete && (
+              {canRemoveFrom(sub.id) && (
                 <IconButton
                   size="small"
                   aria-label="Remove submission"
