@@ -1063,6 +1063,11 @@ type CreatePopulationRequest struct {
 	DueDate         *string `json:"dueDate"`
 	Comments        *string `json:"comments"`
 	CreatedBy       string  `json:"createdBy"`
+	// PreviousRoundID, when set, makes the insert a compare-and-set: it only
+	// succeeds while this is still the latest round for the control, so two
+	// concurrent resubmissions of the same rejected round can't both create a
+	// replacement (see PopulationRepository.CreatePopulation).
+	PreviousRoundID *int `json:"previousRoundId"`
 }
 
 // UpdatePopulationRequest is the payload for PATCH /populations/{populationId}.

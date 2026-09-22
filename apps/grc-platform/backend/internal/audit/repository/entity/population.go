@@ -54,6 +54,10 @@ func (r *populationRepo) CreateRound(ctx context.Context, auditID, controlID int
 		"dueDate":         from.DueDate,
 		"comments":        from.Comments,
 		"createdBy":       createdBy,
+		// Compare-and-set: the insert only succeeds while from.ID is still the
+		// latest round, so two concurrent resubmissions of the same rejected
+		// round can't both create a replacement.
+		"previousRoundId": from.ID,
 	}
 	var created entPopulationRound
 	if err := r.c.Post(ctx, fmt.Sprintf("/audits/%d/controls/%d/populations", auditID, controlID), body, &created); err != nil {
