@@ -324,10 +324,19 @@ func (r *populationRepo) ListPopulationFiles(ctx context.Context, populationID i
 }
 
 func (r *populationRepo) DeletePopulationFile(ctx context.Context, fileID int) error {
-	// Scope to population files only: audit_evidence_file is shared with evidence,
-	// so require population_id IS NOT NULL to prevent this route deleting an evidence file.
+	// Join audit_population (scoping to population files: audit_evidence_file is
+	// shared with evidence, so a row with no matching population never matches)
+	// and require no newer round exists for the same control, so a round that
+	// gets superseded between the handler's LatestRound check and this delete
+	// can't have its files removed by a request that raced the resubmission.
 	result, err := r.db.ExecContext(ctx,
-		"DELETE FROM audit_evidence_file WHERE id = ? AND population_id IS NOT NULL", fileID)
+		`DELETE aef FROM audit_evidence_file aef
+		 JOIN audit_population p ON p.id = aef.population_id
+		 WHERE aef.id = ?
+		   AND NOT EXISTS (
+		     SELECT 1 FROM audit_population p2
+		     WHERE p2.control_id = p.control_id AND p2.id > p.id
+		   )`, fileID)
 	if err != nil {
 		return fmt.Errorf("population_file.Delete(%d): %w", fileID, err)
 	}
