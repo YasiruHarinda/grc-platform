@@ -296,15 +296,17 @@ func (s *populationService) SubmitSample(ctx context.Context, auditID, controlID
 	if err != nil {
 		return 0, err
 	}
-	recorded, _, err := s.recordedPaths(ctx, rounds, "SAMPLE", populationID)
+	recorded, onCurrent, err := s.recordedPaths(ctx, rounds, "SAMPLE", populationID)
 	if err != nil {
 		return 0, err
 	}
-	if err := s.addBlobsAsFiles(ctx, populationID, "SAMPLE", unrecordedBlobs(blobs, recorded), submittedBy); err != nil {
+	newBlobs := unrecordedBlobs(blobs, recorded)
+	if err := s.addBlobsAsFiles(ctx, populationID, "SAMPLE", newBlobs, submittedBy); err != nil {
 		return 0, err
 	}
-	// Report the folder's total sample file count (existing + newly added), not
-	// just what this call inserted — the caller uses it to validate "at least
-	// one file or a note", which should hold for an edit that only added a note.
-	return len(blobs), nil
+	// Report the current round's total sample file count (existing + newly
+	// added), not the folder-wide count, which can include blobs recorded on a
+	// superseded round — the caller uses it to validate "at least one file or a
+	// note", which should hold for an edit that only added a note.
+	return onCurrent + len(newBlobs), nil
 }

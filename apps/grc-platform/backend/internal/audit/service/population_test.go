@@ -261,7 +261,25 @@ func TestSubmitSampleSkipsBlobsRecordedOnEarlierRounds(t *testing.T) {
 	if len(files) != 1 || files[0].FilePath != sampleFolder+"new-sample.csv" {
 		t.Errorf("round 2 sample files = %+v, want only the new blob", files)
 	}
-	if count != 2 {
-		t.Errorf("count = %d, want the folder's total of 2", count)
+	if count != 1 {
+		t.Errorf("count = %d, want round 2's total of 1 (the earlier round's file excluded)", count)
+	}
+}
+
+func TestSubmitSampleCountExcludesEarlierRoundFiles(t *testing.T) {
+	const sampleFolder = popFolder + "sample/"
+	repo := newFakePopulationRepo(
+		&model.AuditPopulation{ID: 1, Status: "AUDITOR_REJECTED"},
+		&model.AuditPopulation{ID: 2, Status: "APPROVED"},
+	)
+	repo.addFile(1, "SAMPLE", sampleFolder+"old-sample.csv")
+	svc := NewPopulationService(repo, blobStorage(t, sampleFolder+"old-sample.csv"))
+
+	count, err := svc.SubmitSample(context.Background(), 2, 7, 2, sampleFolder, "auditor")
+	if err != nil {
+		t.Fatalf("SubmitSample: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("count = %d, want 0 since every folder blob belongs to an earlier round", count)
 	}
 }
