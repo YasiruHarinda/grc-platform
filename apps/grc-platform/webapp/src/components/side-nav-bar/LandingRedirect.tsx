@@ -25,9 +25,8 @@ import { SECTIONS } from "./sections";
 
 // Renders at "/". Sends the user to the first nav item they can actually see —
 // which is no longer always the Audit dashboard now that whole sections hide
-// from users who lack their privileges. When nothing is visible (no module
-// privilege and not an Action Owner on any risk), shows NoAccessPage instead of
-// bouncing them into a 403.
+// from users who lack their privileges. When nothing is visible (no Audit Hub
+// privilege), shows NoAccessPage instead of bouncing them into a 403.
 //
 // Blocks on a spinner until every privilege resolver has settled, so the user
 // sees one clean transition rather than a redirect that corrects itself.

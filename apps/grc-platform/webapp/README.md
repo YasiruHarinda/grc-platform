@@ -1,11 +1,12 @@
 # GRC Platform Webapp
 
-The GRC Platform Webapp is the React single-page application for a governance, risk, and compliance platform. It hosts two modules behind a shared
-shell:
+The GRC Platform Webapp is the React single-page application for a governance, risk, and compliance platform. It hosts the **Audit Hub** — run
+SOC 2 / HIPAA / ISO 27001 audits: controls, evidence collection,
+population/sample workflows, and review.
 
-- **Audit Hub** — run SOC 2 / HIPAA / ISO 27001 audits: controls, evidence
-  collection, population/sample workflows, and review.
-- **Risk Hub** — risk register and assessment workflows.
+The **Risk Hub** and **Admin Console** are served from One WSO2
+(`/security/risk`, `/security/admin`), not from this app. This app stays
+because external auditors, who can't use One WSO2, work in the Audit Hub here.
 
 The app authenticates users through **Asgardeo** (or WSO2 Identity Server) and
 talks to the GRC Platform **Go backend** over REST. Access is role-gated.
@@ -19,7 +20,6 @@ talks to the GRC Platform **Go backend** over REST. Access is role-gated.
 | Data fetching | [TanStack Query 5](https://tanstack.com/query/latest) |
 | Routing | [React Router 7](https://reactrouter.com/) |
 | Authentication | [@asgardeo/react](https://github.com/asgardeo/asgardeo-auth-react-sdk) (with `@asgardeo/browser` and `@asgardeo/react-router`) |
-| Forms | [react-hook-form](https://react-hook-form.com/) |
 | Session | [react-idle-timer](https://idletimer.dev/) (idle-timeout session guard) |
 
 ## Prerequisites
@@ -194,8 +194,7 @@ webapp/
 │   ├── hooks/               # Shared hooks (logger, auth API client, responsive)
 │   ├── layouts/             # App shell, auth guard, error layout
 │   ├── modules/             # Feature modules
-│   │   ├── audit/           # Audit Hub — pages, routes.tsx, nav.ts
-│   │   └── risk/            # Risk Hub — pages, routes.tsx, nav.ts
+│   │   └── audit/           # Audit Hub — pages, routes.tsx, nav.ts
 │   ├── providers/           # Cross-cutting providers (idle-timeout session guard)
 │   ├── utils/               # Shared utilities
 │   ├── App.tsx              # Routes
@@ -215,33 +214,31 @@ spread (see the registration pattern below).
 | Module | Base path | Purpose |
 |--------|-----------|---------|
 | `audit` | `/audit` | Audit Hub — controls, evidence, audit workflows |
-| `risk` | `/risk` | Risk Hub — risk register and assessments |
 
 Each module owns these files/folders:
 
 ```
-src/modules/audit/                    src/modules/risk/
-├── routes.tsx   → auditRoutes        ├── routes.tsx   → riskRoutes
-├── nav.ts       → auditNav           ├── nav.ts       → riskNav
-├── privileges.ts → AuditPrivilege    ├── privileges.ts → RiskPrivilege
-├── api/                              ├── api/
-├── hooks/                            ├── hooks/
-├── components/                       ├── components/
-│   └── AuditPrivilegeGuard.tsx       │   └── PrivilegeGuard.tsx
-└── pages/...                         └── pages/...
-            ↓ imported & spread by ↓
-App.tsx:      <Route>{auditRoutes}{riskRoutes}</Route>
-SideBar.tsx:  SECTIONS = [auditNav, riskNav]   (maps over them)
+src/modules/audit/
+├── routes.tsx    → auditRoutes
+├── nav.ts        → auditNav
+├── privileges.ts → AuditPrivilege
+├── api/
+├── hooks/
+├── components/
+│   └── AuditPrivilegeGuard.tsx
+└── pages/...
+      ↓ imported & spread by ↓
+App.tsx:      <Route>{auditRoutes}</Route>
+SideBar.tsx:  SECTIONS = [auditNav]   (maps over them)
 ```
 
 `privileges.ts` values must match `privilege_name` in the backend's privilege
 table exactly. Routes and nav items are gated by privilege using each
-module's privilege-guard component (`AuditPrivilegeGuard.tsx` /
-`PrivilegeGuard.tsx`), which reads the current user's privileges and
+module's privilege-guard component (`AuditPrivilegeGuard.tsx`), which reads the current user's privileges and
 redirects/hides when the required one is missing.
 
-This **registration pattern** keeps the Audit and Risk owners working in separate
-files so they don't cause merge conflicts.
+This **registration pattern** keeps each module's work in its own files, so
+adding a module doesn't mean editing another module's code.
 
 **To add a page** (e.g. an Audit controls list):
 
@@ -250,15 +247,13 @@ files so they don't cause merge conflicts.
 3. Add its sidebar item in `src/modules/audit/nav.ts`.
 
 You never edit `App.tsx` or `SideBar.tsx` for normal page work — they just import
-and spread each module's `routes` / `nav`. The Risk owner does the same in their
-own files.
+and spread each module's `routes` / `nav`.
 
 **Ownership / conflict map:**
 
 | File | Edited by | Conflict risk |
 |------|-----------|---------------|
 | `modules/audit/{routes,nav}` + `pages/**` | Audit owner only | none |
-| `modules/risk/{routes,nav}` + `pages/**` | Risk owner only | none |
 | `App.tsx`, `SideBar.tsx` | only when adding a whole new module | near-zero |
 
 ## Import Aliases

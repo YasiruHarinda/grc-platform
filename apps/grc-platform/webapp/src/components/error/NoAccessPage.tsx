@@ -19,17 +19,17 @@ import ErrorPage from "./ErrorPage";
 import illustration from "@assets/error/error-403.svg";
 
 // Shown by LandingRedirect when the signed-in user can see no module at all —
-// no Risk/Audit/Admin privilege and not an Action Owner on any risk. This is a
-// legitimate early state for a brand-new employee, not a failure, so the copy
-// is informational rather than an error.
+// no Audit Hub privilege. Risk Hub and the Admin Console live in One WSO2, so
+// a risk-only user lands here too: the copy points them there first rather
+// than telling them to request access they already have.
 export default function NoAccessPage(): JSX.Element {
   return (
     <ErrorPage
       illustration={illustration}
       illustrationAlt="no module access illustration"
       description={
-        "Your account doesn't have access to any module yet.\n" +
-        "Contact a platform administrator to get a role assigned."
+        "Risk Hub and the Admin Console are available in One WSO2.\n" +
+        "If you expected to see the Audit Hub here, contact a platform administrator."
       }
     />
   );
