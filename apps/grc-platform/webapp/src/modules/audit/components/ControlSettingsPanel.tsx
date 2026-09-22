@@ -519,7 +519,7 @@ export default function ControlSettingsPanel({
   const canManage = can(AuditPrivilege.ManageControls);
 
   const { data: controlsData, isLoading: controlsLoading } = useGetControls(auditId);
-  const { data: audit } = useGetAudit(auditId);
+  const { data: audit, isLoading: auditLoading } = useGetAudit(auditId);
   const { data: users = [] } = useGetUsers();
   const { data: auditorCandidates = [] } = useGetAuditorCandidates();
   const { data: teams = [] } = useGetTeams();
@@ -537,8 +537,10 @@ export default function ControlSettingsPanel({
   const controls = controlsData?.items ?? [];
   // A retrospective audit (period already over) is expected to have past due dates.
   // Until the audit loads we can't tell, so don't warn yet rather than flash a
-  // past-date hint on a retrospective audit.
-  const allowPastDueDate = audit === undefined || audit.periodEnd < todayUtcDateOnlyString();
+  // past-date hint on a retrospective audit. If the load fails, audit stays
+  // undefined but isn't "retrospective" - keep warnings on rather than suppress forever.
+  const allowPastDueDate =
+    auditLoading || (audit !== undefined && audit.periodEnd < todayUtcDateOnlyString());
 
   function handleAdd(form: ControlFormState) {
     setMutationError(null);
