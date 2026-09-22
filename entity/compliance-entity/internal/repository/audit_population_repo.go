@@ -410,7 +410,16 @@ func (r *populationRepo) DeletePopulationFile(ctx context.Context, fileID int) e
 	}
 	n, _ := result.RowsAffected()
 	if n == 0 {
-		return &apierror.NotFoundError{Msg: fmt.Sprintf("population file %d not found", fileID)}
+		var exists int
+		err := r.db.QueryRowContext(ctx,
+			"SELECT 1 FROM audit_evidence_file WHERE id = ? AND population_id IS NOT NULL", fileID).Scan(&exists)
+		if errors.Is(err, sql.ErrNoRows) {
+			return &apierror.NotFoundError{Msg: fmt.Sprintf("population file %d not found", fileID)}
+		}
+		if err != nil {
+			return fmt.Errorf("population_file.Delete(%d): checking existence: %w", fileID, err)
+		}
+		return &apierror.ConflictError{Msg: "only the latest population round can be changed; earlier rounds are read-only"}
 	}
 	return nil
 }

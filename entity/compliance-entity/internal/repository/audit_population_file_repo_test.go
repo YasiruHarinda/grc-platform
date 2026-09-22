@@ -47,13 +47,41 @@ func TestDeletePopulationFile_Success(t *testing.T) {
 // TestDeletePopulationFile_SupersededRound covers the race the NOT EXISTS
 // guard exists for: a resubmission created a newer round for the file's
 // control between the handler's latest-round check and this delete, so no row
-// matches and the query must report not-found rather than delete the file.
+// matches and the follow-up existence probe finds the file still there —
+// superseded, not missing, so the caller gets a 409 (mirrors
+// TestDeleteEvidenceFile_SupersededRound).
 func TestDeletePopulationFile_SupersededRound(t *testing.T) {
 	repo, mock := newControlRepoMock(t)
 
 	mock.ExpectExec(re("DELETE aef FROM audit_evidence_file aef")).
 		WithArgs(5).
 		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(re("SELECT 1 FROM audit_evidence_file WHERE id = ? AND population_id IS NOT NULL")).
+		WithArgs(5).
+		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+
+	err := (&populationRepo{db: repo.db}).DeletePopulationFile(context.Background(), 5)
+	var conflict *apierror.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("err = %v, want a ConflictError", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
+	}
+}
+
+// TestDeletePopulationFile_NotFound covers the file never having existed at
+// all: the delete matches nothing and the existence probe finds nothing
+// either, so the caller gets a 404 (mirrors TestDeleteEvidenceFile_NotFound).
+func TestDeletePopulationFile_NotFound(t *testing.T) {
+	repo, mock := newControlRepoMock(t)
+
+	mock.ExpectExec(re("DELETE aef FROM audit_evidence_file aef")).
+		WithArgs(5).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(re("SELECT 1 FROM audit_evidence_file WHERE id = ? AND population_id IS NOT NULL")).
+		WithArgs(5).
+		WillReturnRows(sqlmock.NewRows([]string{"1"}))
 
 	err := (&populationRepo{db: repo.db}).DeletePopulationFile(context.Background(), 5)
 	var notFound *apierror.NotFoundError
