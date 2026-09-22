@@ -1546,13 +1546,16 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
   const [evidenceChangedWarning, setEvidenceChangedWarning] = useState(false);
   const [isCheckingEvidence, setIsCheckingEvidence] = useState(false);
   const [evidenceRefreshError, setEvidenceRefreshError] = useState<string | null>(null);
+  // Id of the control currently open, so an async decision started on one
+  // control can tell the drawer has since moved to another.
+  const openControlIdRef = useRef<number | null>(null);
   const [overrideTarget, setOverrideTarget] = useState<ControlStatus | null>(null);
 
   // Reset to the Overview tab whenever a different control is opened, so the
   // drawer doesn't retain the previous control's active tab. Syncing tab state to
   // the opened control is a legitimate effect here.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    openControlIdRef.current = control?.id ?? null;
     setTab(0);
     setEvidenceChangedWarning(false);
     setEvidenceRefreshError(null);
@@ -1601,11 +1604,16 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
       // blocking.
       await queryClient.refetchQueries({ queryKey: key, exact: true }, { throwOnError: true });
     } catch {
-      setEvidenceRefreshError("Could not refresh evidence — try again before deciding.");
+      if (openControlIdRef.current === c.id) {
+        setEvidenceRefreshError("Could not refresh evidence — try again before deciding.");
+      }
       return;
     } finally {
       setIsCheckingEvidence(false);
     }
+    // The drawer moved to another control while the refetch was in flight:
+    // this decision is for a control the reviewer is no longer looking at.
+    if (openControlIdRef.current !== c.id) return;
     setEvidenceRefreshError(null);
     const fresh = queryClient.getQueryData<EvidenceSubmission[]>(key);
     if (latestFileIds(fresh) !== before) {

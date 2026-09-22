@@ -536,7 +536,9 @@ export default function ControlSettingsPanel({
 
   const controls = controlsData?.items ?? [];
   // A retrospective audit (period already over) is expected to have past due dates.
-  const allowPastDueDate = audit !== undefined && audit.periodEnd < todayUtcDateOnlyString();
+  // Until the audit loads we can't tell, so don't warn yet rather than flash a
+  // past-date hint on a retrospective audit.
+  const allowPastDueDate = audit === undefined || audit.periodEnd < todayUtcDateOnlyString();
 
   function handleAdd(form: ControlFormState) {
     setMutationError(null);
