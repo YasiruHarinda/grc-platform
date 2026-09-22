@@ -25,12 +25,20 @@ import type { EvidenceFile, EvidenceSubmission } from "@modules/audit/api/useGet
 // per-submission detail this grouping exists to show.
 const BATCH_GAP_MS = 15_000;
 
+/** The fields batching needs — shared by evidence and population/sample files. */
+interface BatchableFile {
+  id: number;
+  createdBy: string;
+  createdByName: string;
+  createdAt: string;
+}
+
 /** One upload action within a round: who added these files, and when. */
-export interface FileBatch {
+export interface FileBatch<T extends BatchableFile = BatchableFile> {
   key: string;
   at: string;
   byName: string;
-  files: EvidenceFile[];
+  files: T[];
 }
 
 function timeOf(iso: string): number | null {
@@ -42,32 +50,40 @@ function timeOf(iso: string): number | null {
  * Splits a round's files into the upload actions that produced them, oldest
  * first — a round stays open through internal review, so "Add Files" keeps
  * appending to it and the round's own submitter/timestamp stops describing
- * everything inside it.
+ * everything inside it. `keyPrefix` namespaces the batch keys (the round id).
  */
-export function groupIntoBatches(sub: EvidenceSubmission): FileBatch[] {
-  const files = [...(sub.files ?? [])].sort(
+export function groupFilesIntoBatches<T extends BatchableFile>(
+  input: T[],
+  keyPrefix: string | number,
+): FileBatch<T>[] {
+  const files = [...input].sort(
     (a, b) => (timeOf(a.createdAt) ?? 0) - (timeOf(b.createdAt) ?? 0),
   );
-  const batches: FileBatch[] = [];
+  const batches: FileBatch<T>[] = [];
   for (const f of files) {
     const last = batches[batches.length - 1];
-    const prev = last?.files[last.files.length - 1];
-    if (last && prev && prev.createdBy === f.createdBy) {
-      const prevT = timeOf(prev.createdAt);
+    if (last && last.files[0].createdBy === f.createdBy) {
+      const startT = timeOf(last.at);
       const t = timeOf(f.createdAt);
+      // Measured from the batch's first file, not the previous one, so a slow
+      // trickle of files can't chain into a single long batch.
       // Unparseable timestamps can't split a batch — fall back to the uploader.
-      const gap = prevT !== null && t !== null ? t - prevT : 0;
+      const gap = startT !== null && t !== null ? t - startT : 0;
       if (gap <= BATCH_GAP_MS) {
         last.files.push(f);
         continue;
       }
     }
     batches.push({
-      key: `${sub.id}-${f.id}`,
+      key: `${keyPrefix}-${f.id}`,
       at: f.createdAt,
       byName: f.createdByName || f.createdBy,
       files: [f],
     });
   }
   return batches;
+}
+
+export function groupIntoBatches(sub: EvidenceSubmission): FileBatch<EvidenceFile>[] {
+  return groupFilesIntoBatches(sub.files ?? [], sub.id);
 }

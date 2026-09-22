@@ -83,6 +83,7 @@ import type {
   RequirementType,
 } from "@modules/audit/types/audit";
 import type { AuditUser } from "@modules/audit/types/user";
+import { todayUtcDateOnlyString } from "@utils/dateTime";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -118,16 +119,6 @@ const SELECT_MENU_PROPS = {
 
 let _localIdCounter = 0;
 const nextLocalId = () => String(++_localIdCounter);
-
-// Flags a due date that lands in the past for a live/upcoming audit — a
-// likely typo or CSV fallback mistake (see `allowPastDueDate` below).
-function todayISO(): string {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
 
 interface PopulationDraft {
   description: string;
@@ -379,7 +370,7 @@ function PopulationDialog({
         />
 
         {/* Due date */}
-        <Tooltip title={!allowPastDueDate && pop.dueDate && pop.dueDate < todayISO() ? "This date is in the past — double-check before continuing" : ""}>
+        <Tooltip title={!allowPastDueDate && pop.dueDate && pop.dueDate < todayUtcDateOnlyString() ? "This date is in the past — double-check before continuing" : ""}>
           <TextField
             label="Population Due Date"
             required
@@ -388,7 +379,7 @@ function PopulationDialog({
             value={pop.dueDate}
             onChange={(e) => onChangePopulation({ ...pop, dueDate: e.target.value })}
             InputLabelProps={{ shrink: true }}
-            error={Boolean(!allowPastDueDate && pop.dueDate && pop.dueDate < todayISO())}
+            error={Boolean(!allowPastDueDate && pop.dueDate && pop.dueDate < todayUtcDateOnlyString())}
             helperText="When population must be submitted"
           />
         </Tooltip>
@@ -746,14 +737,14 @@ function EditableControlsTable({ drafts, onChange, users, auditorCandidates, tea
                   a live/upcoming audit is still flagged, since it's more
                   often a typo or CSV fallback than an intentional backdate. */}
               <TableCell>
-                <Tooltip title={!allowPastDueDate && d.dueDate && d.dueDate < todayISO() ? "This date is in the past — double-check before continuing" : ""}>
+                <Tooltip title={!allowPastDueDate && d.dueDate && d.dueDate < todayUtcDateOnlyString() ? "This date is in the past — double-check before continuing" : ""}>
                   <TextField
                     value={d.dueDate}
                     onChange={(e) => update(d.localId, "dueDate", e.target.value)}
                     type="date"
                     size="small"
                     variant="standard"
-                    error={Boolean(!allowPastDueDate && d.dueDate && d.dueDate < todayISO())}
+                    error={Boolean(!allowPastDueDate && d.dueDate && d.dueDate < todayUtcDateOnlyString())}
                     InputLabelProps={{ shrink: true }}
                     inputProps={{ style: FS }}
                   />
@@ -1786,7 +1777,7 @@ function Step2Controls({
             auditorCandidates={auditorCandidates}
             teams={teams}
             showPushColumn={topSource === "framework"}
-            allowPastDueDate={periodEnd.length > 0 && periodEnd < todayISO()}
+            allowPastDueDate={periodEnd.length > 0 && periodEnd < todayUtcDateOnlyString()}
           />
         </Box>
       )}
