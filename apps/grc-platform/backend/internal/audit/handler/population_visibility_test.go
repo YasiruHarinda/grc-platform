@@ -198,10 +198,17 @@ func TestExternalAuditorListHidesRejectedCurrentRound(t *testing.T) {
 	if view.Round.Attestation != nil {
 		t.Errorf("attestation = %q, want it stripped", *view.Round.Attestation)
 	}
+	// The status literal is the same leak as the attestation/files: without
+	// masking it too, an external auditor still reads AUDITOR_REJECTED /
+	// COMPLIANCE_REJECTED off the round and learns of the internal rejection.
+	if view.Round.Status != "PENDING" {
+		t.Errorf("status = %q, want it masked to PENDING like the attestation and files", view.Round.Status)
+	}
 	if len(view.SampleFiles) != 1 {
 		t.Errorf("sampleFiles = %d, want the auditor's own sample kept", len(view.SampleFiles))
 	}
-	if strings.Contains(rec.Body.String(), "population-in-round-1") || strings.Contains(rec.Body.String(), "note-on-rejected-round-1") {
+	if strings.Contains(rec.Body.String(), "population-in-round-1") || strings.Contains(rec.Body.String(), "note-on-rejected-round-1") ||
+		strings.Contains(rec.Body.String(), "AUDITOR_REJECTED") || strings.Contains(rec.Body.String(), "COMPLIANCE_REJECTED") {
 		t.Errorf("response leaks the rejected round:\n%s", rec.Body.String())
 	}
 }

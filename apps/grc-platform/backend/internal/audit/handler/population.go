@@ -303,6 +303,10 @@ func (h *evidenceHandler) listPopulation(w http.ResponseWriter, r *http.Request)
 	if hideCurrent {
 		masked := *round
 		masked.Attestation = nil
+		// Status stays masked too, alongside the attestation and files below —
+		// otherwise an external auditor reads COMPLIANCE_REJECTED/AUDITOR_REJECTED
+		// off the round itself and learns of the internal rejection anyway.
+		masked.Status = "PENDING"
 		view.Round = &masked
 	}
 	for _, f := range files {
