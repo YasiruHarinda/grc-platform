@@ -164,7 +164,7 @@ func (h *evidenceHandler) submitSample(w http.ResponseWriter, r *http.Request) {
 
 	user := auth.FromContext(r.Context())
 	actor := user.Subject
-	fileCount, err := h.popSvc.SubmitSample(r.Context(), round.ID, req.FolderPath, actor)
+	fileCount, err := h.popSvc.SubmitSample(r.Context(), auditID, controlID, round.ID, req.FolderPath, actor)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return

@@ -83,6 +83,7 @@ import type {
   RequirementType,
 } from "@modules/audit/types/audit";
 import type { AuditUser } from "@modules/audit/types/user";
+import { auditPaths } from "@modules/audit/paths";
 import { todayUtcDateOnlyString } from "@utils/dateTime";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -2067,7 +2068,7 @@ export default function CreateAuditPage(): JSX.Element {
         });
       }
 
-      void navigate(`/audit/audits/${auditId}`);
+      void navigate(auditPaths.detail(auditId));
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "Failed to create audit. Please try again.");
     }
@@ -2080,7 +2081,7 @@ export default function CreateAuditPage(): JSX.Element {
       {/* Back */}
       <Button
         startIcon={<ChevronLeft size={16} />}
-        onClick={() => void navigate("/audit/audits")}
+        onClick={() => void navigate(auditPaths.list())}
         sx={{ mb: 2, textTransform: "none", color: "text.secondary", pl: 0 }}
       >
         Audits
@@ -2185,7 +2186,7 @@ export default function CreateAuditPage(): JSX.Element {
         <Button
           variant="outlined"
           onClick={() => {
-            if (step === 0) { void navigate("/audit/audits"); return; }
+            if (step === 0) { void navigate(auditPaths.list()); return; }
             setStep2Attempted(false);
             setStep(step - 1);
           }}

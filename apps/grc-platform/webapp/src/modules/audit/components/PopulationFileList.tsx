@@ -24,6 +24,7 @@ import { useDeletePopulationFile } from "@modules/audit/api/useDeletePopulationF
 import { downloadBlob, viewOrDownloadBlob } from "@modules/audit/utils/fileView";
 import { formatTimestamp } from "@modules/audit/utils/format";
 import { groupFilesIntoBatches } from "@modules/audit/utils/evidenceBatches";
+import RoundStatusChip from "@modules/audit/components/RoundStatusChip";
 
 function sizeLabel(bytes: number | null): string {
   if (bytes === null) return "";
@@ -42,6 +43,10 @@ function sizeLabel(bytes: number | null): string {
  * files, "Selected" for the auditor's sample). Files from one upload action
  * (same uploader, rows written together) share a single header, grouped the
  * same way as evidence since no submission id is persisted.
+ *
+ * `roundStatus` puts the round's status chip on every header, like the
+ * evidence list — the status covers the whole round, so a later batch in a
+ * round needs to show its verdict too.
  */
 export default function PopulationFileList({
   files,
@@ -50,6 +55,7 @@ export default function PopulationFileList({
   controlId,
   canDelete = false,
   attributionLabel = "Submitted",
+  roundStatus,
 }: {
   files: PopulationFile[];
   emptyText: string;
@@ -57,6 +63,7 @@ export default function PopulationFileList({
   controlId?: number;
   canDelete?: boolean;
   attributionLabel?: string;
+  roundStatus?: string;
 }): JSX.Element {
   const authFetch = useAuthApiClient();
   const [downloadError, setDownloadError] = useState<string | null>(null);
@@ -117,10 +124,13 @@ export default function PopulationFileList({
       )}
       {batches.map((batch) => (
         <Box key={batch.key} sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
-          {batch.byName && (
-            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
-              {attributionLabel} {formatTimestamp(batch.at)} · {batch.byName}
-            </Typography>
+          {(batch.byName || roundStatus) && (
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+                {attributionLabel} {formatTimestamp(batch.at)}{batch.byName ? ` · ${batch.byName}` : ""}
+              </Typography>
+              {roundStatus && <RoundStatusChip status={roundStatus} />}
+            </Box>
           )}
           {batch.files.map((f) => (
             <Box

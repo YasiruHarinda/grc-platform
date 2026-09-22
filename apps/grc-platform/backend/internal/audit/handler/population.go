@@ -119,8 +119,9 @@ func (h *evidenceHandler) uploadPopulation(w http.ResponseWriter, r *http.Reques
 // submitPopulation handles
 // POST /api/v1/audits/{id}/controls/{controlId}/population/submit.
 //
-// Records every blob at folderPath as a POPULATION file on the active round and
-// advances the control to POPULATION_INTERNAL_REVIEW.
+// Records the blobs at folderPath that no round has recorded yet as POPULATION
+// files (on a new round if the active one was rejected) and advances the control
+// to POPULATION_INTERNAL_REVIEW.
 func (h *evidenceHandler) submitPopulation(w http.ResponseWriter, r *http.Request) {
 	if !auth.RequirePrivilege(r.Context(), w, privilege.SubmitEvidence) {
 		return
@@ -155,7 +156,7 @@ func (h *evidenceHandler) submitPopulation(w http.ResponseWriter, r *http.Reques
 	user := auth.FromContext(r.Context())
 	actor := user.Subject
 
-	result, err := h.popSvc.SubmitPopulation(r.Context(), controlID, populationID, req.FolderPath, req.Attestation, actor)
+	result, err := h.popSvc.SubmitPopulation(r.Context(), auditID, controlID, populationID, req.FolderPath, req.Attestation, actor)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
@@ -244,10 +245,12 @@ func withReadURLs(auditID, controlID int, files []*model.PopulationFile) []*mode
 
 // listPopulation handles GET /api/v1/audits/{id}/controls/{controlId}/population.
 //
-// Returns the control's current population round plus its files split into
-// population[] (team-submitted) and sample[] (auditor-selected), and the
-// auditor's sample note. A control normally has exactly one round for its whole
-// lifecycle, so "current" and "latest" are the same.
+// Returns the control's current (latest) population round plus its files split
+// into population[] (team-submitted) and sample[] (auditor-selected), the
+// auditor's sample note, and the rounds before it with their population files.
+// Rejected rounds stay on record but are internal-audience only, like evidence
+// (see internalEvidenceViewer): an external auditor gets them stripped, and the
+// current round's own files and note too while it is rejected.
 func (h *evidenceHandler) listPopulation(w http.ResponseWriter, r *http.Request) {
 	auditID, ok := parseIntParam(w, r, "id")
 	if !ok {
@@ -271,11 +274,18 @@ func (h *evidenceHandler) listPopulation(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	round, err := h.popSvc.LatestRound(r.Context(), auditID, controlID)
+	rounds, err := h.popSvc.ListRounds(r.Context(), auditID, controlID)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 		return
 	}
+	if len(rounds) == 0 {
+		response.WriteError(w, http.StatusNotFound, "no population round found for this control")
+		return
+	}
+	round := rounds[len(rounds)-1]
+	includeRejected := internalEvidenceViewer(r, control)
+
 	files, err := h.popSvc.ListFiles(r.Context(), round.ID)
 	if err != nil {
 		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
@@ -287,19 +297,56 @@ func (h *evidenceHandler) listPopulation(w http.ResponseWriter, r *http.Request)
 		PopulationFiles: []*model.PopulationFile{},
 		SampleFiles:     []*model.PopulationFile{},
 		SampleReference: control.SampleReference,
+		EarlierRounds:   []*model.PopulationRoundView{},
+	}
+	hideCurrent := !includeRejected && model.IsRejectedPopulationStatus(round.Status)
+	if hideCurrent {
+		masked := *round
+		masked.Attestation = nil
+		// Status stays masked too, alongside the attestation and files below —
+		// otherwise an external auditor reads COMPLIANCE_REJECTED/AUDITOR_REJECTED
+		// off the round itself and learns of the internal rejection anyway.
+		masked.Status = "PENDING"
+		view.Round = &masked
 	}
 	for _, f := range files {
-		if strings.EqualFold(f.FileKind, "SAMPLE") {
+		switch {
+		case strings.EqualFold(f.FileKind, "SAMPLE"):
 			view.SampleFiles = append(view.SampleFiles, f)
-		} else {
+		case !hideCurrent:
 			view.PopulationFiles = append(view.PopulationFiles, f)
 		}
 	}
+	for _, earlier := range rounds[:len(rounds)-1] {
+		if !includeRejected && model.IsRejectedPopulationStatus(earlier.Status) {
+			continue
+		}
+		earlierFiles, err := h.popSvc.ListFiles(r.Context(), earlier.ID)
+		if err != nil {
+			response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+			return
+		}
+		rv := &model.PopulationRoundView{Round: earlier, PopulationFiles: []*model.PopulationFile{}}
+		for _, f := range earlierFiles {
+			// An earlier round's sample files belong to a population that was
+			// since replaced, so only the team's files are listed.
+			if !strings.EqualFold(f.FileKind, "SAMPLE") {
+				rv.PopulationFiles = append(rv.PopulationFiles, f)
+			}
+		}
+		view.EarlierRounds = append(view.EarlierRounds, rv)
+	}
+
+	// One resolve over every slice, so a person who uploaded in more than one
+	// place is looked up once.
+	all := append(append([]*model.PopulationFile{}, view.PopulationFiles...), view.SampleFiles...)
 	withReadURLs(auditID, controlID, view.PopulationFiles)
 	withReadURLs(auditID, controlID, view.SampleFiles)
-	// One resolve over both slices, so a person who uploaded both a population
-	// and a sample file is looked up once.
-	h.resolvePopulationUploaders(r.Context(), append(append([]*model.PopulationFile{}, view.PopulationFiles...), view.SampleFiles...))
+	for _, rv := range view.EarlierRounds {
+		withReadURLs(auditID, controlID, rv.PopulationFiles)
+		all = append(all, rv.PopulationFiles...)
+	}
+	h.resolvePopulationUploaders(r.Context(), all)
 
 	response.WriteJSONValue(w, http.StatusOK, view)
 }
@@ -341,6 +388,11 @@ func (h *evidenceHandler) downloadPopulationFile(w http.ResponseWriter, r *http.
 			response.WriteError(w, http.StatusForbidden, response.ErrMsgForbidden)
 			return
 		}
+		// External-only path — a rejected round's team files are off limits
+		// (see listPopulation). SAMPLE files are the auditor's own upload.
+		if !strings.EqualFold(f.FileKind, "SAMPLE") && !h.externalMayReadRoundFile(w, r, f) {
+			return
+		}
 	}
 	data, fileName, contentType, err := h.popSvc.DownloadFile(r.Context(), fileID)
 	if err != nil {
@@ -359,6 +411,36 @@ func (h *evidenceHandler) downloadPopulationFile(w http.ResponseWriter, r *http.
 	w.Header().Set("Content-Disposition", disposition)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data) // #nosec G705 -- file served with nosniff + attachment disposition, browser won't execute it inline
+}
+
+// externalMayReadRoundFile reports whether an external auditor may read f, a
+// POPULATION-kind file: its round must belong to the route's control and not be
+// rejected. Writes the 403/error response and returns false otherwise, failing
+// closed when the round can't be matched to the route's control.
+func (h *evidenceHandler) externalMayReadRoundFile(w http.ResponseWriter, r *http.Request, f *model.PopulationFile) bool {
+	auditID, ok := parseIntParam(w, r, "id")
+	if !ok {
+		return false
+	}
+	controlID, ok := parseIntParam(w, r, "controlId")
+	if !ok {
+		return false
+	}
+	rounds, err := h.popSvc.ListRounds(r.Context(), auditID, controlID)
+	if err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return false
+	}
+	for _, round := range rounds {
+		if round.ID == f.PopulationID {
+			if model.IsRejectedPopulationStatus(round.Status) {
+				break
+			}
+			return true
+		}
+	}
+	response.WriteError(w, http.StatusForbidden, response.ErrMsgForbidden)
+	return false
 }
 
 // teamEditablePopulationStatuses are the round states from which the team may
@@ -465,7 +547,11 @@ func (h *evidenceHandler) deletePopulationFile(w http.ResponseWriter, r *http.Re
 				response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
 				return
 			}
-			if round.ID != file.PopulationID || !teamEditablePopulationStatuses[round.Status] {
+			if round.ID != file.PopulationID {
+				response.WriteError(w, http.StatusConflict, "files from an earlier submission can't be changed")
+				return
+			}
+			if !teamEditablePopulationStatuses[round.Status] {
 				response.WriteError(w, http.StatusConflict, "population files can only be edited before or after being sent back for changes")
 				return
 			}
@@ -482,14 +568,14 @@ func (h *evidenceHandler) deletePopulationFile(w http.ResponseWriter, r *http.Re
 // deletePopulationAttestation handles
 // DELETE /api/v1/audits/{id}/controls/{controlId}/population/attestation.
 //
-// Blanks the team's population-submission note (the "Completed without
+// Blanks the current round's population-submission note (the "Completed without
 // files"/alongside-files attestation shown on the persistent Population
 // Submission card) without touching the round's files or status — the same
 // team-editable gate as deletePopulationFile's POPULATION-kind branch, since
 // this note is written by the same submitPopulation call. Unlike evidence's
 // fileless rounds (deleteEvidenceRound), a population round is never deleted
-// outright — a control has exactly one for its whole lifecycle — so there is
-// no whole-round-delete counterpart here, only this narrower field clear.
+// outright, so there is no whole-round-delete counterpart here, only this
+// narrower field clear.
 func (h *evidenceHandler) deletePopulationAttestation(w http.ResponseWriter, r *http.Request) {
 	auditID, ok := parseIntParam(w, r, "id")
 	if !ok {
@@ -536,8 +622,8 @@ func (h *evidenceHandler) deletePopulationAttestation(w http.ResponseWriter, r *
 // POST /api/v1/audits/{id}/controls/{controlId}/population/review.
 //
 // Internal reviewer decision on a submitted population: approve advances it to
-// auditor validation; reject sends it back to the team on the same round
-// (both rejection paths reuse the round).
+// auditor validation; reject sends it back to the team, and their resubmission
+// starts a new round (see PopulationService.SubmitPopulation).
 func (h *evidenceHandler) reviewPopulation(w http.ResponseWriter, r *http.Request) {
 	h.decideRound(w, r, decideRoundParams{
 		preGate: func(w http.ResponseWriter, r *http.Request) bool {
@@ -569,8 +655,8 @@ func (h *evidenceHandler) reviewPopulation(w http.ResponseWriter, r *http.Reques
 // POST /api/v1/audits/{id}/controls/{controlId}/population/validate.
 //
 // The assigned auditor's decision on a population that passed internal review:
-// approve moves it to the sample phase; reject sends it back to the team on the
-// same round.
+// approve moves it to the sample phase; reject sends it back to the team, and
+// their resubmission starts a new round.
 func (h *evidenceHandler) validatePopulation(w http.ResponseWriter, r *http.Request) {
 	h.decideRound(w, r, decideRoundParams{
 		postGate:          assignedAuditorGate(privilege.ValidateEvidence),

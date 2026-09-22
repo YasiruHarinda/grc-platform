@@ -1164,7 +1164,7 @@ paths:
       tags:
       - Audit Evidence
       summary: Delete a file from an evidence submission
-      description: Reconciles the control back to EVIDENCE_PENDING when the last file is removed.
+      description: Reconciles the control back to EVIDENCE_PENDING when the last file is removed. Only files in the control's latest evidence round can be removed; earlier rounds are read-only (409).
       operationId: deleteAuditControlEvidenceFile
       parameters:
       - $ref: '#/components/parameters/AuditId'
@@ -1185,6 +1185,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/audits/{id}/controls/{controlId}/evidence:
@@ -1218,7 +1220,7 @@ paths:
       tags:
       - Audit Evidence
       summary: Delete a fileless evidence round
-      description: Removes a whole attestation-only evidence round. Caller must hold SubmitEvidence or ManageControls; control status is reconciled afterward.
+      description: Removes a whole attestation-only evidence round. Caller must hold SubmitEvidence or ManageControls; control status is reconciled afterward. Only the control's latest round can be removed; earlier rounds are read-only (409).
       operationId: deleteEvidenceRound
       parameters:
       - $ref: '#/components/parameters/AuditId'
@@ -4681,6 +4683,21 @@ components:
         sampleReference:
           type: string
           nullable: true
+        earlierRounds:
+          type: array
+          description: Rounds before the current one (oldest first), each with its team-submitted files. Rejected rounds are left out for an external auditor.
+          items:
+            $ref: '#/components/schemas/PopulationRoundView'
+    PopulationRoundView:
+      type: object
+      description: An earlier population round with its team-submitted files.
+      properties:
+        round:
+          $ref: '#/components/schemas/AuditPopulation'
+        populationFiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/PopulationFile'
     PopulationSubmitResult:
       type: object
       properties:

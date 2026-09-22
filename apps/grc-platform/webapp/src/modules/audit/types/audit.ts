@@ -34,6 +34,17 @@ export type ControlStatus =
   | "EVIDENCE_NEED_CLARIFICATION"  // Both — auditor rejected, team must resubmit
   | "COMPLETE";                    // Both — auditor approved, control closed
 
+// Status of one submission round (a population or evidence round), distinct
+// from the control's own status. Mirrors the audit_population.status ENUM;
+// evidence rounds use the same values minus PENDING (nothing submitted yet).
+export type RoundStatus =
+  | "PENDING"
+  | "SUBMITTED"
+  | "COMPLIANCE_APPROVED"
+  | "COMPLIANCE_REJECTED"
+  | "APPROVED"
+  | "AUDITOR_REJECTED";
+
 export type RequirementType = "DESIGN" | "OE";
 export type ControlType = "CONFIG" | "NON_CONFIG";
 export type ControlScope = "COMMON" | "PRODUCT_SPECIFIC";

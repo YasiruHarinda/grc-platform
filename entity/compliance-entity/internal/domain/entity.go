@@ -1047,9 +1047,8 @@ type AuditPopulation struct {
 	Comments        *string `json:"comments"`
 	// Attestation is a written note standing in for population files (a round
 	// submitted with no files, or with a note alongside them). Nil otherwise.
-	// Unlike AuditEvidence.Attestation (set once at Create — evidence starts a
-	// fresh round per submission), population reuses one round for its whole
-	// lifecycle, so this is set via UpdatePopulationRequest instead.
+	// Set via UpdatePopulationRequest (not at Create): a round is created
+	// PENDING and only gets its note when it is submitted.
 	Attestation *string   `json:"attestation"`
 	CreatedOn   time.Time `json:"createdOn"`
 	UpdatedOn   time.Time `json:"updatedOn"`
@@ -1062,7 +1061,13 @@ type CreatePopulationRequest struct {
 	ReferenceNumber *int    `json:"referenceNumber"`
 	Description     *string `json:"description"`
 	DueDate         *string `json:"dueDate"`
+	Comments        *string `json:"comments"`
 	CreatedBy       string  `json:"createdBy"`
+	// PreviousRoundID, when set, makes the insert a compare-and-set: it only
+	// succeeds while this is still the latest round for the control, so two
+	// concurrent resubmissions of the same rejected round can't both create a
+	// replacement (see PopulationRepository.CreatePopulation).
+	PreviousRoundID *int `json:"previousRoundId"`
 }
 
 // UpdatePopulationRequest is the payload for PATCH /populations/{populationId}.

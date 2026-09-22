@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import type { ControlStatus } from "@modules/audit/types/audit";
+import type { ControlStatus, RoundStatus } from "@modules/audit/types/audit";
 
 export const CONTROL_STATUS_LABELS: Record<ControlStatus, string> = {
   POPULATION_PENDING:            "Population Pending",
@@ -29,6 +29,27 @@ export const CONTROL_STATUS_LABELS: Record<ControlStatus, string> = {
   EVIDENCE_UNDER_VALIDATION:     "Evidence Under Validation",
   EVIDENCE_NEED_CLARIFICATION:   "Evidence Need Clarification",
   COMPLETE:                      "Complete",
+};
+
+// Round status (distinct from the control's status) — tells a rejected round
+// apart from the resubmission that replaced it. Typed against RoundStatus so a
+// new status is a compile error here, not a chip that silently never renders.
+export const ROUND_STATUS_LABELS: Record<RoundStatus, string> = {
+  PENDING:             "Pending",
+  SUBMITTED:           "Submitted",
+  COMPLIANCE_APPROVED: "Approved (Internal)",
+  COMPLIANCE_REJECTED: "Rejected (Internal)",
+  APPROVED:            "Approved",
+  AUDITOR_REJECTED:    "Rejected (Auditor)",
+};
+
+export const ROUND_STATUS_COLORS: Record<RoundStatus, string> = {
+  PENDING:             "#94A3B8", // slate   — nothing submitted yet
+  SUBMITTED:           "#6366F1", // indigo  — awaiting review
+  COMPLIANCE_APPROVED: "#10B981", // emerald
+  COMPLIANCE_REJECTED: "#EF4444", // red
+  APPROVED:            "#10B981", // emerald
+  AUDITOR_REJECTED:    "#EF4444", // red
 };
 
 // ── 4-phase rollup for the dashboard donut ───────────────────────────────────

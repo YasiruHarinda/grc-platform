@@ -45,6 +45,27 @@ func (r *populationRepo) AddFile(ctx context.Context, populationID int, fileKind
 	return r.c.Post(ctx, fmt.Sprintf("/populations/%d/files", populationID), body, nil)
 }
 
+func (r *populationRepo) CreateRound(ctx context.Context, auditID, controlID int, from *model.AuditPopulation, createdBy string) (*model.AuditPopulation, error) {
+	body := map[string]any{
+		"ownerId":         from.OwnerID,
+		"teamId":          from.TeamID,
+		"referenceNumber": from.ReferenceNumber,
+		"description":     from.Description,
+		"dueDate":         from.DueDate,
+		"comments":        from.Comments,
+		"createdBy":       createdBy,
+		// Compare-and-set: the insert only succeeds while from.ID is still the
+		// latest round, so two concurrent resubmissions of the same rejected
+		// round can't both create a replacement.
+		"previousRoundId": from.ID,
+	}
+	var created entPopulationRound
+	if err := r.c.Post(ctx, fmt.Sprintf("/audits/%d/controls/%d/populations", auditID, controlID), body, &created); err != nil {
+		return nil, err
+	}
+	return created.toModel(), nil
+}
+
 func (r *populationRepo) UpdateStatus(ctx context.Context, populationID int, status, updatedBy string) error {
 	body := map[string]any{"status": status, "updatedBy": updatedBy}
 	return r.c.Patch(ctx, fmt.Sprintf("/populations/%d", populationID), body, nil)

@@ -14,12 +14,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Alert, Box, Button, Chip, CircularProgress, IconButton, Skeleton, Typography } from "@wso2/oxygen-ui";
+import { Alert, Box, Button, CircularProgress, IconButton, Skeleton, Typography } from "@wso2/oxygen-ui";
 import { Download, ExternalLink, FileText, RotateCcw, Trash2 } from "@wso2/oxygen-ui-icons-react";
 import { Fragment, useState, type JSX } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useGetEvidence, evidenceQueryKey, type EvidenceFile } from "@modules/audit/api/useGetEvidence";
 import { groupIntoBatches } from "@modules/audit/utils/evidenceBatches";
+import RoundStatusChip from "@modules/audit/components/RoundStatusChip";
+import type { RoundStatus } from "@modules/audit/types/audit";
 import { controlsQueryKey } from "@modules/audit/api/useGetControls";
 import { aiValidationQueryKey } from "@modules/audit/api/useGetAIValidation";
 import { useAuthApiClient } from "@hooks/useAuthApiClient";
@@ -35,23 +37,6 @@ function sizeLabel(bytes: number | null): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// Round status (distinct from the control's status) — tells a rejected round
-// apart from the resubmission that replaced it.
-const ROUND_STATUS_LABELS: Record<string, string> = {
-  SUBMITTED:           "Submitted",
-  COMPLIANCE_APPROVED: "Approved (Internal)",
-  COMPLIANCE_REJECTED: "Rejected (Internal)",
-  APPROVED:            "Approved",
-  AUDITOR_REJECTED:    "Rejected (Auditor)",
-};
-const ROUND_STATUS_COLORS: Record<string, string> = {
-  SUBMITTED:           "#6366F1", // indigo — awaiting review
-  COMPLIANCE_APPROVED:  "#10B981", // emerald
-  COMPLIANCE_REJECTED:  "#EF4444", // red
-  APPROVED:             "#10B981", // emerald
-  AUDITOR_REJECTED:     "#EF4444", // red
-};
-
 /**
  * One "<label> <when> · <who>" line above a group of files, with the round's
  * status chip. The chip repeats on every batch header in a round because the
@@ -59,27 +44,13 @@ const ROUND_STATUS_COLORS: Record<string, string> = {
  * SUBMITTED, so anything added later was already there when it was decided,
  * and a reader looking at the later group needs to see that verdict too.
  */
-function renderHeader(label: string, at: string, byName: string, status: string, spaced = false): JSX.Element {
+function renderHeader(label: string, at: string, byName: string, status: RoundStatus, spaced = false): JSX.Element {
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, ...(spaced ? { mt: 0.25 } : {}) }}>
       <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
         {label} {formatTimestamp(at)}{byName ? ` · ${byName}` : ""}
       </Typography>
-      {ROUND_STATUS_LABELS[status] && (
-        <Chip
-          label={ROUND_STATUS_LABELS[status]}
-          size="small"
-          variant="outlined"
-          sx={{
-            height: 18,
-            fontSize: "0.65rem",
-            fontWeight: 600,
-            color: ROUND_STATUS_COLORS[status],
-            borderColor: ROUND_STATUS_COLORS[status],
-            "& .MuiChip-label": { px: 0.75 },
-          }}
-        />
-      )}
+      <RoundStatusChip status={status} />
     </Box>
   );
 }
@@ -209,6 +180,14 @@ export default function SubmittedEvidenceList({
   const allRounds = data ?? [];
   const submissions = allRounds.filter((s) => (s.files?.length ?? 0) > 0 || Boolean(s.attestation));
 
+  // Earlier rounds stay listed for the record but read-only: a superseded round
+  // was already reviewed (possibly rejected), so its files aren't the
+  // submitter's to remove. The API returns rounds newest first; the newest is
+  // taken from every round, not just those with content, so emptying the
+  // latest round doesn't make the rejected one before it deletable.
+  const latestRoundId = allRounds[0]?.id;
+  const canRemoveFrom = (roundId: number) => canDelete && roundId === latestRoundId;
+
   // Only note a resubmission when this call site opted in (rejectionReason
   // passed, meaning control.status is plain EVIDENCE_PENDING) and there is
   // something to resubmit — either a reason was given, or a prior round's
@@ -270,7 +249,7 @@ export default function SubmittedEvidenceList({
         ) : (
           <Typography variant="caption" color="text.disabled">unavailable</Typography>
         )}
-        {canDelete && (
+        {canRemoveFrom(evidenceId) && (
           <IconButton
             size="small"
             aria-label={`Remove ${f.fileName}`}
@@ -319,7 +298,7 @@ export default function SubmittedEvidenceList({
                 </Typography>
                 <Typography variant="body2" sx={{ lineHeight: 1.6 }}>{sub.attestation}</Typography>
               </Box>
-              {canDelete && (
+              {canRemoveFrom(sub.id) && (
                 <IconButton
                   size="small"
                   aria-label="Remove submission"

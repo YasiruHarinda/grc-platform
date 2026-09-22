@@ -65,6 +65,8 @@ import ControlHistoryTimeline from "@modules/audit/components/ControlHistoryTime
 import CommentsSection from "@modules/audit/components/CommentsSection";
 import AIValidationCard from "@modules/audit/components/AIValidationCard";
 import PopulationFileList from "@modules/audit/components/PopulationFileList";
+import RoundStatusChip from "@modules/audit/components/RoundStatusChip";
+import { populationRounds, type PopulationRoundEntry } from "@modules/audit/utils/populationRounds";
 import { useGetPopulation } from "@modules/audit/api/useGetPopulation";
 import { useDeletePopulationAttestation } from "@modules/audit/api/useDeletePopulationAttestation";
 import { usePopulationReview } from "@modules/audit/api/usePopulationReview";
@@ -501,21 +503,29 @@ function AttestationNote({
   attestation,
   filesEmpty,
   canDelete,
+  status,
 }: {
   auditId: number;
   controlId: number;
   attestation: string;
   filesEmpty: boolean;
   canDelete: boolean;
+  // The round's status chip — only for a fileless round, whose note is the
+  // only place its verdict can show (a round with files has it on the file
+  // headers).
+  status?: string;
 }): JSX.Element {
   const deleteAttestation = useDeletePopulationAttestation();
   return (
     <Box sx={{ display: "flex", alignItems: "flex-start", gap: 1, px: 1.25, py: 0.85, borderRadius: 1, border: "1px solid", borderColor: "divider", bgcolor: "action.hover" }}>
       <FileText size={15} style={{ flexShrink: 0, marginTop: 2 }} />
       <Box sx={{ flex: 1 }}>
-        <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, display: "block" }}>
-          {filesEmpty ? "Completed without files." : "Note"}
-        </Typography>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+            {filesEmpty ? "Completed without files." : "Note"}
+          </Typography>
+          {status && <RoundStatusChip status={status} />}
+        </Box>
         <Typography variant="body2" sx={{ lineHeight: 1.6 }}>{attestation}</Typography>
         {deleteAttestation.isError && (
           <Typography variant="caption" color="error" sx={{ display: "block", mt: 0.5 }}>
@@ -538,10 +548,59 @@ function AttestationNote({
   );
 }
 
-// SubmittedPopulationFiles renders the round's already-recorded POPULATION-kind
-// files (with a remove button) inline — no card of its own — so it lives
-// inside the same Submit/Resubmit Population card as the upload box, the same
-// way SubmittedEvidenceList sits inside DesignEvidenceSection's Evidence
+// PopulationRoundsList renders every population round that holds files or a
+// note, newest first, each with its own status chip — a rejected round stays
+// visible next to the resubmission that replaced it, the way SubmittedEvidenceList
+// lists evidence rounds. Only the current round can be edited: an earlier one
+// is history, so its remove buttons are never shown.
+function PopulationRoundsList({
+  auditId,
+  controlId,
+  rounds,
+  canDelete,
+  emptyText,
+}: {
+  auditId: number;
+  controlId: number;
+  rounds: PopulationRoundEntry[];
+  canDelete: boolean;
+  emptyText: string;
+}): JSX.Element {
+  if (rounds.length === 0) {
+    return <Typography variant="body2" color="text.secondary">{emptyText}</Typography>;
+  }
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      {[...rounds].reverse().map(({ round, files, isCurrent }) => (
+        <Box key={round.id} sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+          {round.attestation && (
+            <AttestationNote
+              auditId={auditId}
+              controlId={controlId}
+              attestation={round.attestation}
+              filesEmpty={files.length === 0}
+              canDelete={canDelete && isCurrent}
+              status={files.length === 0 ? round.status : undefined}
+            />
+          )}
+          <PopulationFileList
+            files={files}
+            emptyText=""
+            auditId={auditId}
+            controlId={controlId}
+            canDelete={canDelete && isCurrent}
+            roundStatus={round.status}
+          />
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
+// SubmittedPopulationFiles renders the population rounds already on record
+// (with a remove button on the current one) inline — no card of its own — so it
+// lives inside the same Submit/Resubmit Population card as the upload box, the
+// same way SubmittedEvidenceList sits inside DesignEvidenceSection's Evidence
 // Submission card. Always renders something (even "no files yet") instead of
 // disappearing, so the resubmit card doesn't jump around depending on whether
 // a round has files on record.
@@ -564,8 +623,7 @@ function SubmittedPopulationFiles({
   canDelete: boolean;
 }): JSX.Element {
   const population = useGetPopulation(auditId, controlId, true);
-  const files = population.data?.populationFiles ?? [];
-  const attestation = population.data?.round.attestation ?? null;
+  const rounds = populationRounds(population.data);
 
   if (population.isLoading) {
     return <Skeleton variant="rounded" height={44} />;
@@ -582,7 +640,7 @@ function SubmittedPopulationFiles({
     );
   }
 
-  const showResubmissionNote = rejectionReason !== undefined && (files.length > 0 || Boolean(rejectionReason));
+  const showResubmissionNote = rejectionReason !== undefined && (rounds.length > 0 || Boolean(rejectionReason));
   const resubmissionNote = showResubmissionNote && (
     <Box sx={{ display: "flex", alignItems: "flex-start", gap: 0.75 }}>
       <RotateCcw size={13} color="#b45309" style={{ flexShrink: 0, marginTop: 2 }} />
@@ -591,38 +649,17 @@ function SubmittedPopulationFiles({
       </Typography>
     </Box>
   );
-  // A round submitted with a note instead of (or alongside) files — same
-  // "Completed without files" treatment as SubmittedEvidenceList's fileless
-  // rounds, just for the one persistent population round instead of a list.
-  const attestationNote = attestation && (
-    <AttestationNote
-      auditId={auditId}
-      controlId={controlId}
-      attestation={attestation}
-      filesEmpty={files.length === 0}
-      canDelete={canDelete}
-    />
-  );
-
-  if (files.length === 0) {
-    return (
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-        {resubmissionNote}
-        {attestationNote}
-        {!attestation && (
-          <Typography variant="body2" color="text.secondary">
-            No population files on record yet.
-          </Typography>
-        )}
-      </Box>
-    );
-  }
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
       {resubmissionNote}
-      {attestationNote}
-      <PopulationFileList files={files} emptyText="" auditId={auditId} controlId={controlId} canDelete={canDelete} />
+      <PopulationRoundsList
+        auditId={auditId}
+        controlId={controlId}
+        rounds={rounds}
+        canDelete={canDelete}
+        emptyText="No population files on record yet."
+      />
     </Box>
   );
 }
@@ -978,8 +1015,7 @@ function PopulationSubmissionCard({
   onStatusChange: (s: ControlStatus) => void;
 }): JSX.Element {
   const population = useGetPopulation(auditId, controlId, true);
-  const attestation = population.data?.round.attestation ?? null;
-  const files = population.data?.populationFiles ?? [];
+  const rounds = populationRounds(population.data);
   return (
     <SectionCard icon={<FileUp size={16} />} iconBg="transparent" title="Population Submission">
       {population.isLoading ? (
@@ -993,29 +1029,13 @@ function PopulationSubmissionCard({
           {(population.error as Error)?.message ?? "Failed to load the submitted population."}
         </Alert>
       ) : (
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-          {/* A round submitted with a note instead of (or alongside) files —
-              same "Completed without files" treatment as
-              SubmittedEvidenceList's fileless rounds. */}
-          {attestation && (
-            <AttestationNote
-              auditId={auditId}
-              controlId={controlId}
-              attestation={attestation}
-              filesEmpty={files.length === 0}
-              canDelete={canDelete}
-            />
-          )}
-          {(files.length > 0 || !attestation) && (
-            <PopulationFileList
-              files={files}
-              emptyText="No population files submitted yet."
-              auditId={auditId}
-              controlId={controlId}
-              canDelete={canDelete}
-            />
-          )}
-        </Box>
+        <PopulationRoundsList
+          auditId={auditId}
+          controlId={controlId}
+          rounds={rounds}
+          canDelete={canDelete}
+          emptyText="No population files submitted yet."
+        />
       )}
       {editable && (
         <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
@@ -1526,13 +1546,16 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
   const [evidenceChangedWarning, setEvidenceChangedWarning] = useState(false);
   const [isCheckingEvidence, setIsCheckingEvidence] = useState(false);
   const [evidenceRefreshError, setEvidenceRefreshError] = useState<string | null>(null);
+  // Id of the control currently open, so an async decision started on one
+  // control can tell the drawer has since moved to another.
+  const openControlIdRef = useRef<number | null>(null);
   const [overrideTarget, setOverrideTarget] = useState<ControlStatus | null>(null);
 
   // Reset to the Overview tab whenever a different control is opened, so the
   // drawer doesn't retain the previous control's active tab. Syncing tab state to
   // the opened control is a legitimate effect here.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    openControlIdRef.current = control?.id ?? null;
     setTab(0);
     setEvidenceChangedWarning(false);
     setEvidenceRefreshError(null);
@@ -1581,11 +1604,16 @@ export default function ControlDrawer({ control, open, onClose }: ControlDrawerP
       // blocking.
       await queryClient.refetchQueries({ queryKey: key, exact: true }, { throwOnError: true });
     } catch {
-      setEvidenceRefreshError("Could not refresh evidence — try again before deciding.");
+      if (openControlIdRef.current === c.id) {
+        setEvidenceRefreshError("Could not refresh evidence — try again before deciding.");
+      }
       return;
     } finally {
       setIsCheckingEvidence(false);
     }
+    // The drawer moved to another control while the refetch was in flight:
+    // this decision is for a control the reviewer is no longer looking at.
+    if (openControlIdRef.current !== c.id) return;
     setEvidenceRefreshError(null);
     const fresh = queryClient.getQueryData<EvidenceSubmission[]>(key);
     if (latestFileIds(fresh) !== before) {

@@ -45,6 +45,9 @@ type populationRepo struct{ db *sql.DB }
 func NewPopulationRepository(db *sql.DB) PopulationRepository { return &populationRepo{db: db} }
 
 func (r *populationRepo) CreatePopulation(ctx context.Context, auditID, controlID int, req domain.CreatePopulationRequest) (*domain.AuditPopulation, error) {
+	if req.PreviousRoundID != nil {
+		return r.createReplacementRound(ctx, auditID, controlID, *req.PreviousRoundID, req)
+	}
 	var exists int
 	if err := r.db.QueryRowContext(ctx,
 		"SELECT 1 FROM audit_control WHERE id = ? AND audit_id = ?", controlID, auditID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
@@ -54,17 +57,82 @@ func (r *populationRepo) CreatePopulation(ctx context.Context, auditID, controlI
 	}
 	res, err := r.db.ExecContext(ctx,
 		`INSERT INTO audit_population
-		 (control_id, owner_id, team_id, reference_number, description, due_date, status, created_by, updated_by)
-		 VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
+		 (control_id, owner_id, team_id, reference_number, description, due_date, comments, status, created_by, updated_by)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
 		controlID,
 		nullableInt(req.OwnerID), nullableInt(req.TeamID),
 		req.ReferenceNumber, nullableString(req.Description),
-		req.DueDate,
+		req.DueDate, nullableString(req.Comments),
 		req.CreatedBy, req.CreatedBy)
 	if err != nil {
 		return nil, fmt.Errorf("population.Create: %w", err)
 	}
 	id, _ := res.LastInsertId()
+	return r.GetPopulationByID(ctx, int(id))
+}
+
+// createReplacementRound inserts a new round for a resubmission, but only
+// while previousRoundID is still the latest round for the control. It locks
+// every existing round for the control (FOR UPDATE on the control_id index
+// also gap-locks the range past the highest id, per InnoDB next-key locking),
+// so a second concurrent resubmission of the same rejected round blocks here
+// and, once unblocked, sees the first request's new round and is rejected
+// instead of also inserting one — preventing two SUBMITTED replacement rounds
+// (and the duplicate blob rows that would follow) for one resubmission.
+func (r *populationRepo) createReplacementRound(ctx context.Context, auditID, controlID, previousRoundID int, req domain.CreatePopulationRequest) (*domain.AuditPopulation, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("population.CreateReplacement begin: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var exists int
+	if err := tx.QueryRowContext(ctx,
+		"SELECT 1 FROM audit_control WHERE id = ? AND audit_id = ?", controlID, auditID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
+		return nil, &apierror.NotFoundError{Msg: fmt.Sprintf("control %d not found in audit %d", controlID, auditID)}
+	} else if err != nil {
+		return nil, fmt.Errorf("population.CreateReplacement parent check: %w", err)
+	}
+
+	rows, err := tx.QueryContext(ctx, "SELECT id FROM audit_population WHERE control_id = ? FOR UPDATE", controlID)
+	if err != nil {
+		return nil, fmt.Errorf("population.CreateReplacement(%d) lock: %w", controlID, err)
+	}
+	latestID := 0
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("population.CreateReplacement(%d) scan: %w", controlID, err)
+		}
+		if id > latestID {
+			latestID = id
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("population.CreateReplacement(%d) rows: %w", controlID, err)
+	}
+	if latestID != previousRoundID {
+		return nil, &apierror.ConflictError{Msg: "population was already resubmitted, please retry"}
+	}
+
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO audit_population
+		 (control_id, owner_id, team_id, reference_number, description, due_date, comments, status, created_by, updated_by)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
+		controlID,
+		nullableInt(req.OwnerID), nullableInt(req.TeamID),
+		req.ReferenceNumber, nullableString(req.Description),
+		req.DueDate, nullableString(req.Comments),
+		req.CreatedBy, req.CreatedBy)
+	if err != nil {
+		return nil, fmt.Errorf("population.CreateReplacement: %w", err)
+	}
+	id, _ := res.LastInsertId()
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("population.CreateReplacement commit: %w", err)
+	}
 	return r.GetPopulationByID(ctx, int(id))
 }
 
@@ -324,16 +392,34 @@ func (r *populationRepo) ListPopulationFiles(ctx context.Context, populationID i
 }
 
 func (r *populationRepo) DeletePopulationFile(ctx context.Context, fileID int) error {
-	// Scope to population files only: audit_evidence_file is shared with evidence,
-	// so require population_id IS NOT NULL to prevent this route deleting an evidence file.
+	// Join audit_population (scoping to population files: audit_evidence_file is
+	// shared with evidence, so a row with no matching population never matches)
+	// and require no newer round exists for the same control, so a round that
+	// gets superseded between the handler's LatestRound check and this delete
+	// can't have its files removed by a request that raced the resubmission.
 	result, err := r.db.ExecContext(ctx,
-		"DELETE FROM audit_evidence_file WHERE id = ? AND population_id IS NOT NULL", fileID)
+		`DELETE aef FROM audit_evidence_file aef
+		 JOIN audit_population p ON p.id = aef.population_id
+		 WHERE aef.id = ?
+		   AND NOT EXISTS (
+		     SELECT 1 FROM audit_population p2
+		     WHERE p2.control_id = p.control_id AND p2.id > p.id
+		   )`, fileID)
 	if err != nil {
 		return fmt.Errorf("population_file.Delete(%d): %w", fileID, err)
 	}
 	n, _ := result.RowsAffected()
 	if n == 0 {
-		return &apierror.NotFoundError{Msg: fmt.Sprintf("population file %d not found", fileID)}
+		var exists int
+		err := r.db.QueryRowContext(ctx,
+			"SELECT 1 FROM audit_evidence_file WHERE id = ? AND population_id IS NOT NULL", fileID).Scan(&exists)
+		if errors.Is(err, sql.ErrNoRows) {
+			return &apierror.NotFoundError{Msg: fmt.Sprintf("population file %d not found", fileID)}
+		}
+		if err != nil {
+			return fmt.Errorf("population_file.Delete(%d): checking existence: %w", fileID, err)
+		}
+		return &apierror.ConflictError{Msg: "only the latest population round can be changed; earlier rounds are read-only"}
 	}
 	return nil
 }

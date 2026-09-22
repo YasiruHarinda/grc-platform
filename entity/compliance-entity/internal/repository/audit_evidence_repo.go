@@ -330,29 +330,69 @@ func (r *evidenceRepo) ListEvidenceFiles(ctx context.Context, evidenceID int) (*
 	return &domain.ListEvidenceFilesResponse{Files: files}, nil
 }
 
+// DeleteEvidence removes round evidenceID, but only while it is still the
+// latest round for its control (self-joined via a LEFT JOIN, since a
+// correlated subquery on audit_evidence can't reference the very table being
+// deleted from). This closes the race where a caller's own latest-round check
+// and this delete straddle a resubmission that creates a newer round.
 func (r *evidenceRepo) DeleteEvidence(ctx context.Context, evidenceID int) error {
-	result, err := r.db.ExecContext(ctx, "DELETE FROM audit_evidence WHERE id = ?", evidenceID)
+	result, err := r.db.ExecContext(ctx,
+		`DELETE e1 FROM audit_evidence e1
+		 LEFT JOIN audit_evidence e2 ON e2.control_id = e1.control_id AND e2.id > e1.id
+		 WHERE e1.id = ? AND e2.id IS NULL`, evidenceID)
 	if err != nil {
 		return fmt.Errorf("evidence.Delete(%d): %w", evidenceID, err)
 	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
-		return &apierror.NotFoundError{Msg: fmt.Sprintf("evidence %d not found", evidenceID)}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return r.notFoundOrSupersededEvidence(ctx, evidenceID)
 	}
 	return nil
 }
 
+// DeleteEvidenceFile removes fileID, but only while its round is still the
+// latest for its control (see DeleteEvidence).
 func (r *evidenceRepo) DeleteEvidenceFile(ctx context.Context, fileID int) error {
 	// Scope to evidence files only: audit_evidence_file is shared with populations,
-	// so require evidence_id IS NOT NULL to prevent this route deleting a population file.
+	// so joining to audit_evidence excludes a population file (nothing to join to).
 	result, err := r.db.ExecContext(ctx,
-		"DELETE FROM audit_evidence_file WHERE id = ? AND evidence_id IS NOT NULL", fileID)
+		`DELETE aef FROM audit_evidence_file aef
+		 JOIN audit_evidence e ON e.id = aef.evidence_id
+		 WHERE aef.id = ?
+		   AND NOT EXISTS (
+		     SELECT 1 FROM audit_evidence e2
+		     WHERE e2.control_id = e.control_id AND e2.id > e.id
+		   )`, fileID)
 	if err != nil {
 		return fmt.Errorf("evidence_file.Delete(%d): %w", fileID, err)
 	}
 	n, _ := result.RowsAffected()
 	if n == 0 {
-		return &apierror.NotFoundError{Msg: fmt.Sprintf("evidence file %d not found", fileID)}
+		var exists int
+		err := r.db.QueryRowContext(ctx,
+			"SELECT 1 FROM audit_evidence_file WHERE id = ? AND evidence_id IS NOT NULL", fileID).Scan(&exists)
+		if errors.Is(err, sql.ErrNoRows) {
+			return &apierror.NotFoundError{Msg: fmt.Sprintf("evidence file %d not found", fileID)}
+		}
+		if err != nil {
+			return fmt.Errorf("evidence_file.Delete(%d): checking existence: %w", fileID, err)
+		}
+		return &apierror.ConflictError{Msg: "only the latest evidence round can be changed; earlier rounds are read-only"}
 	}
 	return nil
+}
+
+// notFoundOrSupersededEvidence distinguishes, after a conditional delete
+// matched no rows, whether evidenceID never existed (404) or exists but is no
+// longer the latest round for its control (409) — the same follow-up check
+// UpdateEvidence uses for its optimistic-concurrency predicate.
+func (r *evidenceRepo) notFoundOrSupersededEvidence(ctx context.Context, evidenceID int) error {
+	var exists int
+	err := r.db.QueryRowContext(ctx, "SELECT 1 FROM audit_evidence WHERE id = ?", evidenceID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return &apierror.NotFoundError{Msg: fmt.Sprintf("evidence %d not found", evidenceID)}
+	}
+	if err != nil {
+		return fmt.Errorf("evidence.Delete(%d): checking existence: %w", evidenceID, err)
+	}
+	return &apierror.ConflictError{Msg: "only the latest evidence round can be changed; earlier rounds are read-only"}
 }
