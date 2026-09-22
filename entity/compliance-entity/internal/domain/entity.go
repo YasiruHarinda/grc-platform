@@ -624,7 +624,12 @@ type SearchRisksRequest struct {
 	// row displays.
 	RiskLevelKeys []string `json:"riskLevelKeys"` // LOW | MEDIUM | HIGH
 	RiskTypeKeys  []string `json:"riskTypeKeys"`  // NEW | UPDATED
-	OwnerIDs      []int    `json:"ownerIds"`
+	// TreatmentStrategyKeys filters on risk.treatment_strategy directly —
+	// REMEDIATE | ACCEPT | TRANSFER | AVOID | UNSPECIFIED. Unlike RiskLevelKeys
+	// this isn't derived from a join: treatment strategy is a plain column on
+	// the risk itself, set once at creation/edit time.
+	TreatmentStrategyKeys []string `json:"treatmentStrategyKeys"`
+	OwnerIDs              []int    `json:"ownerIds"`
 	// ActionOwnerID restricts to risks with at least one risk_action_plan row
 	// (STANDARD or MANAGEMENT) whose action_owner_id matches — how the Action
 	// Owner's risk list is scoped to only what they're assigned to.

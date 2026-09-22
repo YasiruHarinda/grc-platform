@@ -322,6 +322,7 @@ func (d *Deps) riskVisibleToCaller(ctx context.Context, riskID int) (bool, error
 //   - level:            comma-separated LOW | MEDIUM | HIGH values
 //   - search:           matched against risk_code and risk_title
 //   - risk_type:        comma-separated NEW | UPDATED values
+//   - treatment_strategy: comma-separated REMEDIATE | ACCEPT | TRANSFER | AVOID | UNSPECIFIED values
 //   - owner_id:          comma-separated owner user IDs
 //   - submitted_from/to: created_at date range (YYYY-MM-DD, inclusive)
 //   - due_from/to:       implementation_date range (YYYY-MM-DD, inclusive)
@@ -347,6 +348,7 @@ func (d *Deps) handleListRisks(w http.ResponseWriter, r *http.Request) {
 	filter.Levels = splitCSV(q.Get("level"))
 	filter.Search = q.Get("search")
 	filter.RiskTypes = splitCSV(q.Get("risk_type"))
+	filter.TreatmentStrategies = splitCSV(q.Get("treatment_strategy"))
 	filter.OwnerIDs = splitCSVInts(q.Get("owner_id"))
 	filter.SubmittedFrom = q.Get("submitted_from")
 	filter.SubmittedTo = q.Get("submitted_to")

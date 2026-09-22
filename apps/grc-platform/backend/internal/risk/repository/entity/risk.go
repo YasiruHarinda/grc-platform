@@ -122,6 +122,7 @@ func (r *riskRepository) List(ctx context.Context, filter model.ListRisksFilter)
 		"sourceRegisterIds":      filter.TeamIDs,
 		"riskLevelKeys":          filter.Levels,
 		"riskTypeKeys":           filter.RiskTypes,
+		"treatmentStrategyKeys":  filter.TreatmentStrategies,
 		"ownerIds":               filter.OwnerIDs,
 		"submittedFrom":          filter.SubmittedFrom,
 		"submittedTo":            filter.SubmittedTo,
