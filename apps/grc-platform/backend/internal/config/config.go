@@ -196,9 +196,14 @@ type EmailConfig struct {
 	ServiceURL      string
 	FromAddress     string
 	FrontendBaseURL string
-	ClientID        string
-	ClientSecret    string
-	TokenURL        string
+	// OneWSO2WebappURL is One WSO2's public origin (ONE_WSO2_WEBAPP_URL). The
+	// Risk Hub UI lives there now, not in this repo's webapp, so every risk
+	// email link is built from it. FrontendBaseURL still serves audit links,
+	// because external auditors stay on the grc-platform webapp.
+	OneWSO2WebappURL string
+	ClientID         string
+	ClientSecret     string
+	TokenURL         string
 	// Enabled is the master switch (EMAIL_NOTIFICATIONS_ENABLED). When false,
 	// emailer.Client short-circuits every send to a no-op before any token
 	// fetch or HTTP call — no module sends any email. Upstream work
@@ -436,6 +441,12 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	// Required regardless of the email switch too, so a deployment missing it
+	// fails at startup instead of sending risk links that 404.
+	oneWSO2WebappURL, err := mustEnv("ONE_WSO2_WEBAPP_URL")
+	if err != nil {
+		return Config{}, err
+	}
 
 	// EMAIL_NOTIFICATIONS_ENABLED=false relaxes the five email-service vars
 	// from required to optional: a disabled emailer.Client never reads them,
@@ -513,13 +524,14 @@ func Load() (Config, error) {
 			AgentAPIKey:  os.Getenv("AI_AGENT_API_KEY"),
 		},
 		Email: EmailConfig{
-			ServiceURL:      emailServiceURL,
-			FromAddress:     emailFromAddress,
-			FrontendBaseURL: frontendBaseURL,
-			ClientID:        emailClientID,
-			ClientSecret:    emailClientSecret,
-			TokenURL:        emailTokenURL,
-			Enabled:         emailEnabled,
+			ServiceURL:       emailServiceURL,
+			FromAddress:      emailFromAddress,
+			FrontendBaseURL:  frontendBaseURL,
+			OneWSO2WebappURL: NormalizeBaseURL(oneWSO2WebappURL),
+			ClientID:         emailClientID,
+			ClientSecret:     emailClientSecret,
+			TokenURL:         emailTokenURL,
+			Enabled:          emailEnabled,
 		},
 		LeadEscalationEmailsEnabled: leadEscalationEmailsEnabled(),
 		SchedulerEnabled:            schedulerEnabled(),

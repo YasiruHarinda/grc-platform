@@ -32,6 +32,12 @@ import (
 	userentity "github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/user/entity"
 )
 
+// oneWSO2SecurityPath is where One WSO2 mounts the GRC pages. Risk pages are
+// served there, not by this repo's webapp, so risk email links are built from
+// ONE_WSO2_WEBAPP_URL plus this path. Kept in code so that var stays a bare
+// origin like FRONTEND_BASE_URL.
+const oneWSO2SecurityPath = "/security"
+
 // buildRiskDeps wires the full Risk Hub dependency graph:
 // repositories → services → handler Deps struct.
 //
@@ -81,7 +87,7 @@ func buildRiskDeps(
 		Grants:               grantRepo,
 		Directory:            dirSvc,
 		Email:                emailer.New(emailCfg.ServiceURL, emailCfg.FromAddress, emailCfg.TokenURL, emailCfg.ClientID, emailCfg.ClientSecret, emailCfg.Enabled),
-		FrontendBaseURL:      emailCfg.FrontendBaseURL,
+		FrontendBaseURL:      emailCfg.OneWSO2WebappURL + oneWSO2SecurityPath,
 		LeadEscalationEmails: leadEscalationEmails,
 		ActivityLog:          activityLog,
 	}

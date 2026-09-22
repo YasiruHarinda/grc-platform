@@ -38,6 +38,7 @@ func setRequiredNonAuthEnv(t *testing.T) {
 		"EMAIL_SERVICE_URL":          "http://localhost:8092",
 		"EMAIL_FROM_ADDRESS":         "noreply@example.com",
 		"FRONTEND_BASE_URL":          "http://localhost:3000",
+		"ONE_WSO2_WEBAPP_URL":        "http://localhost:3001",
 		"EMAIL_CLIENT_ID":            "id",
 		"EMAIL_CLIENT_SECRET":        "secret",
 		"EMAIL_TOKEN_URL":            "http://localhost:8092/token",
@@ -216,6 +217,7 @@ func TestLoadEmailVarsRequiredUnlessDisabled(t *testing.T) {
 		for _, k := range []string{
 			"COMPLIANCE_ENTITY_BASE_URL", "HR_ENTITY_GRAPHQL_URL", "HR_ENTITY_TOKEN_URL",
 			"HR_ENTITY_CLIENT_ID", "HR_ENTITY_CLIENT_SECRET", "FRONTEND_BASE_URL",
+			"ONE_WSO2_WEBAPP_URL",
 		} {
 			t.Setenv(k, "x")
 		}
@@ -231,6 +233,7 @@ func TestLoadEmailVarsRequiredUnlessDisabled(t *testing.T) {
 		for _, k := range []string{
 			"COMPLIANCE_ENTITY_BASE_URL", "HR_ENTITY_GRAPHQL_URL", "HR_ENTITY_TOKEN_URL",
 			"HR_ENTITY_CLIENT_ID", "HR_ENTITY_CLIENT_SECRET", "FRONTEND_BASE_URL",
+			"ONE_WSO2_WEBAPP_URL",
 		} {
 			t.Setenv(k, "x")
 		}
@@ -247,6 +250,32 @@ func TestLoadEmailVarsRequiredUnlessDisabled(t *testing.T) {
 // SCHEDULER_ENABLED is an operational kill-switch, so — like the lead
 // escalation flag — only the two exact spellings may override the built-in
 // default; a typo must leave it alone rather than silently stop every sweep.
+// ONE_WSO2_WEBAPP_URL builds every risk email link, so a deployment missing it
+// must fail at startup rather than boot and send links nowhere.
+func TestLoadRequiresOneWSO2WebappURL(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	setValidAuthEnv(t)
+	t.Setenv("ONE_WSO2_WEBAPP_URL", "")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() with ONE_WSO2_WEBAPP_URL unset = nil error, want failure")
+	}
+}
+
+func TestLoadNormalisesOneWSO2WebappURL(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	setValidAuthEnv(t)
+	t.Setenv("ONE_WSO2_WEBAPP_URL", " https://one.example.com/ ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want success", err)
+	}
+	if got, want := cfg.Email.OneWSO2WebappURL, "https://one.example.com"; got != want {
+		t.Errorf("cfg.Email.OneWSO2WebappURL = %q, want %q", got, want)
+	}
+}
+
 func TestSchedulerEnabledOverride(t *testing.T) {
 	tests := []struct {
 		name string
