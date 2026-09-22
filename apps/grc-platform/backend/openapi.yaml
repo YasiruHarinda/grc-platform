@@ -4683,6 +4683,21 @@ components:
         sampleReference:
           type: string
           nullable: true
+        earlierRounds:
+          type: array
+          description: Rounds before the current one (oldest first), each with its team-submitted files. Rejected rounds are left out for an external auditor.
+          items:
+            $ref: '#/components/schemas/PopulationRoundView'
+    PopulationRoundView:
+      type: object
+      description: An earlier population round with its team-submitted files.
+      properties:
+        round:
+          $ref: '#/components/schemas/AuditPopulation'
+        populationFiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/PopulationFile'
     PopulationSubmitResult:
       type: object
       properties:
