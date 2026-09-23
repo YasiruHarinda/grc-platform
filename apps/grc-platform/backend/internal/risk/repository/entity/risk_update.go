@@ -236,6 +236,15 @@ func (r *riskRepository) UpdateAssignees(ctx context.Context, id int, req model.
 			Body:       "this risk's assignees can no longer be corrected",
 		}
 	}
+	// The entity only ever updates the STANDARD plan's owner, and silently
+	// updates nothing when there is no plan — refuse rather than report a
+	// change that never happened.
+	if req.ActionOwnerID != nil && current.ActionPlan == nil {
+		return &apierror.Error{
+			StatusCode: http.StatusConflict,
+			Body:       "this risk has no action plan to set an Action Owner on",
+		}
+	}
 
 	body := map[string]any{
 		"updatedBy":      updatedBy,
@@ -297,7 +306,11 @@ func assigneeChangeLog(current *model.RiskDetail, req model.UpdateAssigneesReque
 	add("owner_id", &current.OwnerID, req.OwnerID)
 	add("management_approver_id", &current.ManagementApproverID, req.ManagementApproverID)
 	add("assignment_team_id", &current.AssignmentTeamID, req.AssignmentTeamID)
-	add("action_owner_id", currentActionOwner, req.ActionOwnerID)
+	// Without a plan the entity writes no Action Owner, so there is no change
+	// to record.
+	if current.ActionPlan != nil {
+		add("action_owner_id", currentActionOwner, req.ActionOwnerID)
+	}
 	return entries
 }
 

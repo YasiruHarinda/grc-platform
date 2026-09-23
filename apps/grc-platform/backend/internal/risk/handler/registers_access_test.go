@@ -93,6 +93,11 @@ type fakeRiskSvc struct {
 	page       *model.RiskListPage
 	byID       map[int]*model.RiskDetail
 	lastFilter model.ListRisksFilter
+
+	// UpdateAssignees records what reached the service, and answers assigneesErr.
+	assigneesCalls int
+	lastAssignees  model.UpdateAssigneesRequest
+	assigneesErr   error
 }
 
 func (f *fakeRiskSvc) List(_ context.Context, filter model.ListRisksFilter) (*model.RiskListPage, error) {
@@ -114,8 +119,10 @@ func (f *fakeRiskSvc) NextSequenceID(context.Context, int) (int, error) { return
 func (f *fakeRiskSvc) Update(context.Context, int, model.UpdateRiskRequest, string) error {
 	return nil
 }
-func (f *fakeRiskSvc) UpdateAssignees(context.Context, int, model.UpdateAssigneesRequest, string) error {
-	return nil
+func (f *fakeRiskSvc) UpdateAssignees(_ context.Context, _ int, req model.UpdateAssigneesRequest, _ string) error {
+	f.assigneesCalls++
+	f.lastAssignees = req
+	return f.assigneesErr
 }
 func (f *fakeRiskSvc) OwnerApprove(context.Context, int, string) error { return nil }
 func (f *fakeRiskSvc) ManagementApprove(context.Context, int, string, *int, bool) error {

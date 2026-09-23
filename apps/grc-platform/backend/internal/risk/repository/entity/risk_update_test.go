@@ -37,6 +37,7 @@ type fakeRiskEntity struct {
 	status    string
 	createdBy string
 	createdOn time.Time
+	noPlan    bool           // serve the risk without a STANDARD action plan
 	patch     map[string]any // nil until a PATCH arrives
 }
 
@@ -45,7 +46,7 @@ func (f *fakeRiskEntity) serve(t *testing.T) *riskRepository {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/risks/7/detail":
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			detail := map[string]any{
 				"id":                   7,
 				"riskTitle":            "Title",
 				"riskDescription":      "Description",
@@ -58,8 +59,11 @@ func (f *fakeRiskEntity) serve(t *testing.T) *riskRepository {
 				"assignmentTeamId":     3,
 				"sourceRegisterId":     2,
 				"emailSubject":         "Subject",
-				"actionPlan":           map[string]any{"id": 5, "actionOwnerId": 13, "status": "COMPLETED", "planType": "STANDARD"},
-			})
+			}
+			if !f.noPlan {
+				detail["actionPlan"] = map[string]any{"id": 5, "actionOwnerId": 13, "status": "COMPLETED", "planType": "STANDARD"}
+			}
+			_ = json.NewEncoder(w).Encode(detail)
 		case r.Method == http.MethodPatch && r.URL.Path == "/risks/7":
 			if err := json.NewDecoder(r.Body).Decode(&f.patch); err != nil {
 				t.Errorf("decode patch body: %v", err)
@@ -216,6 +220,32 @@ func TestUpdateLogsAssigneeChanges(t *testing.T) {
 	}
 	if err := f.serve(t).Update(context.Background(), 7, req, "editor-uuid"); err != nil {
 		t.Fatalf("Update: %v", err)
+	}
+	if got := strings.Join(changedFields(t, f.patch), ","); got != "owner_id" {
+		t.Errorf("changeLog fields = %s, want owner_id", got)
+	}
+}
+
+// With no STANDARD plan the entity would silently write no Action Owner, so
+// the correction is refused instead of recording a change that never happened.
+func TestUpdateAssigneesActionOwnerWithoutPlanIsRejected(t *testing.T) {
+	f := &fakeRiskEntity{status: model.StatusInRemediation, createdBy: model.MigrationMarker, createdOn: time.Now().Add(-time.Hour), noPlan: true}
+	err := f.serve(t).UpdateAssignees(context.Background(), 7, model.UpdateAssigneesRequest{ActionOwnerID: intPtr(23)}, "editor-uuid")
+
+	var apiErr *apierror.Error
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusConflict {
+		t.Fatalf("err = %v, want a 409", err)
+	}
+	if f.patch != nil {
+		t.Errorf("PATCH was sent: %v", f.patch)
+	}
+}
+
+// The other four fields still correct fine on a plan-less risk.
+func TestUpdateAssigneesWithoutPlanStillAppliesOtherFields(t *testing.T) {
+	f := &fakeRiskEntity{status: model.StatusInRemediation, createdBy: model.MigrationMarker, createdOn: time.Now().Add(-time.Hour), noPlan: true}
+	if err := f.serve(t).UpdateAssignees(context.Background(), 7, model.UpdateAssigneesRequest{OwnerID: intPtr(21)}, "editor-uuid"); err != nil {
+		t.Fatalf("UpdateAssignees: %v", err)
 	}
 	if got := strings.Join(changedFields(t, f.patch), ","); got != "owner_id" {
 		t.Errorf("changeLog fields = %s, want owner_id", got)

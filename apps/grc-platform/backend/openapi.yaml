@@ -2669,7 +2669,7 @@ paths:
       tags:
       - Risks
       summary: Correct a migrated risk's assignees
-      description: Changes the people and assignment team of a risk created by the migration tool, in any workflow status including CLOSED, while its assignees_editable_until is set (14 days from creation). Allowed for the risk's assigner or a compliance admin holding RISK_UPDATE in the source register. Never moves the workflow and sends no email; each changed field is written to the risk's history. 409 once the window has closed or for a risk not created by the migration tool.
+      description: Changes the people and assignment team of a risk created by the migration tool, in any workflow status including CLOSED, while its assignees_editable_until is set (14 days from creation). Allowed for the risk's assigner or a compliance admin holding RISK_UPDATE in the source register. Never moves the workflow and sends no email; each changed field is written to the risk's history. 409 once the window has closed, for a risk not created by the migration tool, or when action_owner_id is sent for a risk with no action plan.
       operationId: updateRiskAssignees
       parameters:
       - $ref: '#/components/parameters/RiskId'
