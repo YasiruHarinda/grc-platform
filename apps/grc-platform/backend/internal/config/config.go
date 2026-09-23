@@ -18,6 +18,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -196,9 +197,14 @@ type EmailConfig struct {
 	ServiceURL      string
 	FromAddress     string
 	FrontendBaseURL string
-	ClientID        string
-	ClientSecret    string
-	TokenURL        string
+	// OneWSO2WebappURL is One WSO2's public origin (ONE_WSO2_WEBAPP_URL). The
+	// Risk Hub UI lives there now, not in this repo's webapp, so every risk
+	// email link is built from it. FrontendBaseURL still serves audit links,
+	// because external auditors stay on the grc-platform webapp.
+	OneWSO2WebappURL string
+	ClientID         string
+	ClientSecret     string
+	TokenURL         string
 	// Enabled is the master switch (EMAIL_NOTIFICATIONS_ENABLED). When false,
 	// emailer.Client short-circuits every send to a no-op before any token
 	// fetch or HTTP call — no module sends any email. Upstream work
@@ -432,7 +438,24 @@ func Load() (Config, error) {
 
 	// FRONTEND_BASE_URL stays required regardless of the email switch — it is
 	// also the CORS-allowed origin (see CORSAllowedOrigin below).
-	frontendBaseURL, err := mustEnv("FRONTEND_BASE_URL")
+	frontendBaseURLRaw, err := mustEnv("FRONTEND_BASE_URL")
+	if err != nil {
+		return Config{}, err
+	}
+	// Same origin check as ONE_WSO2_WEBAPP_URL below, and this one matters more:
+	// an Access-Control-Allow-Origin carrying a trailing slash matches no
+	// browser Origin at all, since an Origin header never has one.
+	frontendBaseURL, err := mustOrigin("FRONTEND_BASE_URL", frontendBaseURLRaw)
+	if err != nil {
+		return Config{}, err
+	}
+	// Required regardless of the email switch too, so a deployment missing it
+	// fails at startup instead of sending risk links that 404.
+	oneWSO2WebappURL, err := mustEnv("ONE_WSO2_WEBAPP_URL")
+	if err != nil {
+		return Config{}, err
+	}
+	oneWSO2WebappOrigin, err := mustOrigin("ONE_WSO2_WEBAPP_URL", oneWSO2WebappURL)
 	if err != nil {
 		return Config{}, err
 	}
@@ -513,13 +536,14 @@ func Load() (Config, error) {
 			AgentAPIKey:  os.Getenv("AI_AGENT_API_KEY"),
 		},
 		Email: EmailConfig{
-			ServiceURL:      emailServiceURL,
-			FromAddress:     emailFromAddress,
-			FrontendBaseURL: frontendBaseURL,
-			ClientID:        emailClientID,
-			ClientSecret:    emailClientSecret,
-			TokenURL:        emailTokenURL,
-			Enabled:         emailEnabled,
+			ServiceURL:       emailServiceURL,
+			FromAddress:      emailFromAddress,
+			FrontendBaseURL:  frontendBaseURL,
+			OneWSO2WebappURL: oneWSO2WebappOrigin,
+			ClientID:         emailClientID,
+			ClientSecret:     emailClientSecret,
+			TokenURL:         emailTokenURL,
+			Enabled:          emailEnabled,
 		},
 		LeadEscalationEmailsEnabled: leadEscalationEmailsEnabled(),
 		SchedulerEnabled:            schedulerEnabled(),
@@ -641,6 +665,29 @@ func listenAddr(port string) string {
 // the value to both SCIMTokenURL and scim.NewClient.
 func NormalizeBaseURL(u string) string {
 	return strings.TrimSuffix(strings.TrimSpace(u), "/")
+}
+
+// mustOrigin normalizes raw and insists it is a bare origin — scheme, host and
+// nothing else. Two mistakes it turns into a startup failure instead of broken
+// email links, neither of which mustEnv catches on its own:
+//
+//   - whitespace only, which normalizes to "" and makes every link relative
+//     ("/security/risk/registers?riskId=1") and so dead in a mail client;
+//   - an origin that already carries the path the caller appends
+//     (".../security"), which doubles it into a 404.
+func mustOrigin(key, raw string) (string, error) {
+	origin := NormalizeBaseURL(raw)
+	u, err := url.Parse(origin)
+	if err != nil {
+		return "", fmt.Errorf("%s is not a valid URL: %w", key, err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", fmt.Errorf("%s must be an absolute http(s) origin, got %q", key, raw)
+	}
+	if u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("%s must be an origin with no path, query or fragment, got %q", key, raw)
+	}
+	return origin, nil
 }
 
 // SCIMTokenURL builds one Asgardeo org's OAuth2 token endpoint:

@@ -26,8 +26,8 @@ export interface NavItem {
 }
 
 // A collapsible module section in the sidebar (e.g. Audit Hub).
-// Each module owns its own NavSection in modules/<module>/nav.ts so that
-// the Audit and Risk owners never edit the same file.
+// Each module owns its own NavSection in modules/<module>/nav.ts, so adding a
+// module never means editing another module's file.
 export interface NavSection {
   id: string; // module id, e.g. "audit"
   label: string; // section heading, e.g. "Audit Hub"
@@ -40,15 +40,8 @@ export interface NavSection {
   // by their own requiredPrivilege, so a caller holding just one of these
   // still sees the section — with only the item(s) they're entitled to.
   //
-  // All three hubs set this now. The rule is the same everywhere: a hidden
-  // tab beats one that only 403s on click, and a section with zero reachable
-  // items is just noise in the nav. The list is the union of every route
-  // privilege the section's items gate on.
-  //
-  // Risk Hub's list includes RISK_VIEW_RISKS, which an Action Owner holding
-  // no risk role gets as a synthetic privilege from useRiskPrivileges (see
-  // its GET /api/v1/risks/me/involvement call) — so being named on a risk
-  // keeps the Risk Hub section and its Registers tab visible for them, and
-  // nothing else.
+  // The rule: a hidden tab beats one that only 403s on click, and a section
+  // with zero reachable items is just noise in the nav. The list is the union
+  // of every route privilege the section's items gate on.
   hideSectionWithoutPrivilege?: string[];
 }

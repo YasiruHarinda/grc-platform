@@ -14,9 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { useAdminPrivileges } from "@modules/admin/hooks/useAdminPrivileges";
 import { useAuditPrivileges } from "@modules/audit/hooks/useAuditPrivileges";
-import { useRiskPrivileges } from "@modules/risk/hooks/useRiskPrivileges";
 import type { SectionPrivResolver } from "./resolveVisibleNav";
 
 // Assembles the section id → privilege-resolver map that resolveVisibleNav
@@ -27,13 +25,9 @@ import type { SectionPrivResolver } from "./resolveVisibleNav";
 // module's section into the nav means adding its resolver here once, and adding
 // its NavSection to sections.ts.
 export function useSectionPrivileges(): Record<string, SectionPrivResolver> {
-  const { can: canRisk, loading: riskLoading } = useRiskPrivileges();
-  const { can: canAdmin, loading: adminLoading } = useAdminPrivileges();
   const { can: canAudit, loading: auditLoading } = useAuditPrivileges();
 
   return {
-    risk: { can: canRisk, loading: riskLoading },
-    admin: { can: canAdmin, loading: adminLoading },
     audit: { can: canAudit, loading: auditLoading },
   };
 }
