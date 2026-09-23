@@ -18,9 +18,7 @@ import { type JSX } from "react";
 import { Route, Routes } from "react-router";
 import AuthGuard from "@layouts/AuthGuard";
 import LandingRedirect from "@components/side-nav-bar/LandingRedirect";
-import { adminRoutes } from "@modules/admin/routes";
 import { auditRoutes } from "@modules/audit/routes";
-import { riskRoutes } from "@modules/risk/routes";
 import Error401Page from "@components/error/Error401Page";
 import Error403Page from "@components/error/Error403Page";
 import Error404Page from "@components/error/Error404Page";
@@ -64,16 +62,15 @@ export default function App(): JSX.Element {
               />
 
               {/* Authenticated routes. Each module registers its own routes in
-                  modules/<module>/routes.tsx, so the Audit and Risk owners never
-                  edit this file together (avoids merge conflicts). */}
+                  modules/<module>/routes.tsx. Risk Hub and the Admin Console
+                  live in One WSO2 (/security/risk, /security/admin), not here;
+                  this app serves the Audit Hub only. */}
               <Route element={<AuthGuard />}>
                 {/* Root lands on the first module the user can actually see
                     (LandingRedirect), or a no-access page when there is none. */}
                 <Route path="/" element={<LandingRedirect />} />
 
                 {auditRoutes}
-                {riskRoutes}
-                {adminRoutes}
               </Route>
 
               {/* Fallback */}

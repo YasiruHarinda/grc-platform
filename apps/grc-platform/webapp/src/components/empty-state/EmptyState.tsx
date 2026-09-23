@@ -31,8 +31,8 @@ interface EmptyStateProps {
 }
 
 /**
- * Shared placeholder shown when a list/table has no data. Props-driven so both
- * the Audit and Risk modules reuse it with their own text/icon/action.
+ * Shared placeholder shown when a list/table has no data. Props-driven so any
+ * module can reuse it with its own text/icon/action.
  *
  * @param {EmptyStateProps} props - Content for the empty state.
  * @returns {JSX.Element} The empty state.

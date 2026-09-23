@@ -51,8 +51,8 @@ export interface ResolvedNav {
 //     with all its items — the pre-privilege default.
 //   - A section that ends up with no visible items is dropped entirely. The
 //     section gate is an any-of list that need not line up with the items'
-//     requiredPrivilege (e.g. Risk Hub gates on VIEW_ALL_RISKS, which no tab
-//     carries); without this a gate-only privilege would render a bare header.
+//     requiredPrivilege; without this a gate-only privilege would render a
+//     bare header.
 export function resolveVisibleNav(
   sections: NavSection[],
   sectionPrivs: Record<string, SectionPrivResolver | undefined>,

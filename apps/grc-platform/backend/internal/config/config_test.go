@@ -38,6 +38,7 @@ func setRequiredNonAuthEnv(t *testing.T) {
 		"EMAIL_SERVICE_URL":          "http://localhost:8092",
 		"EMAIL_FROM_ADDRESS":         "noreply@example.com",
 		"FRONTEND_BASE_URL":          "http://localhost:3000",
+		"ONE_WSO2_WEBAPP_URL":        "http://localhost:3001",
 		"EMAIL_CLIENT_ID":            "id",
 		"EMAIL_CLIENT_SECRET":        "secret",
 		"EMAIL_TOKEN_URL":            "http://localhost:8092/token",
@@ -215,10 +216,13 @@ func TestLoadEmailVarsRequiredUnlessDisabled(t *testing.T) {
 		t.Setenv("EMAIL_NOTIFICATIONS_ENABLED", "true") // explicit, not ambient
 		for _, k := range []string{
 			"COMPLIANCE_ENTITY_BASE_URL", "HR_ENTITY_GRAPHQL_URL", "HR_ENTITY_TOKEN_URL",
-			"HR_ENTITY_CLIENT_ID", "HR_ENTITY_CLIENT_SECRET", "FRONTEND_BASE_URL",
+			"HR_ENTITY_CLIENT_ID", "HR_ENTITY_CLIENT_SECRET",
 		} {
 			t.Setenv(k, "x")
 		}
+		// Not "x" like the rest: Load insists both of these are real origins.
+		t.Setenv("FRONTEND_BASE_URL", "https://grc.example.com")
+		t.Setenv("ONE_WSO2_WEBAPP_URL", "https://one.example.com")
 		if _, err := Load(); err == nil {
 			t.Fatal("Load() with EMAIL_* unset and notifications enabled = nil error, want failure")
 		}
@@ -230,10 +234,13 @@ func TestLoadEmailVarsRequiredUnlessDisabled(t *testing.T) {
 		t.Setenv("EMAIL_NOTIFICATIONS_ENABLED", "false")
 		for _, k := range []string{
 			"COMPLIANCE_ENTITY_BASE_URL", "HR_ENTITY_GRAPHQL_URL", "HR_ENTITY_TOKEN_URL",
-			"HR_ENTITY_CLIENT_ID", "HR_ENTITY_CLIENT_SECRET", "FRONTEND_BASE_URL",
+			"HR_ENTITY_CLIENT_ID", "HR_ENTITY_CLIENT_SECRET",
 		} {
 			t.Setenv(k, "x")
 		}
+		// Not "x" like the rest: Load insists both of these are real origins.
+		t.Setenv("FRONTEND_BASE_URL", "https://grc.example.com")
+		t.Setenv("ONE_WSO2_WEBAPP_URL", "https://one.example.com")
 		cfg, err := Load()
 		if err != nil {
 			t.Fatalf("Load() with EMAIL_* unset and notifications disabled = %v, want success", err)
@@ -247,6 +254,96 @@ func TestLoadEmailVarsRequiredUnlessDisabled(t *testing.T) {
 // SCHEDULER_ENABLED is an operational kill-switch, so — like the lead
 // escalation flag — only the two exact spellings may override the built-in
 // default; a typo must leave it alone rather than silently stop every sweep.
+// ONE_WSO2_WEBAPP_URL builds every risk email link, so a deployment missing it
+// must fail at startup rather than boot and send links nowhere.
+func TestLoadRequiresOneWSO2WebappURL(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	setValidAuthEnv(t)
+	t.Setenv("ONE_WSO2_WEBAPP_URL", "")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() with ONE_WSO2_WEBAPP_URL unset = nil error, want failure")
+	}
+}
+
+// ONE_WSO2_WEBAPP_URL must be a bare origin. mustEnv alone accepts whitespace
+// (which normalizes to "", making every risk link relative and dead in a mail
+// client) and accepts an origin that already carries /security (which doubles
+// the path into a 404), so Load rejects both rather than sending bad links.
+func TestLoadRejectsNonOriginOneWSO2WebappURL(t *testing.T) {
+	for _, tt := range []struct{ name, value string }{
+		{"whitespace only", "   "},
+		{"already carries the /security path", "https://one.example.com/security"},
+		{"any other path", "https://one.example.com/foo"},
+		{"no scheme", "one.example.com"},
+		{"scheme only", "https://"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			setRequiredNonAuthEnv(t)
+			setValidAuthEnv(t)
+			t.Setenv("ONE_WSO2_WEBAPP_URL", tt.value)
+
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load() with ONE_WSO2_WEBAPP_URL=%q = nil error, want failure", tt.value)
+			}
+		})
+	}
+}
+
+// FRONTEND_BASE_URL is both the audit email base and the CORS-allowed origin,
+// so it gets the same origin check. A trailing slash here would produce an
+// Access-Control-Allow-Origin that matches no browser Origin at all.
+func TestLoadRejectsNonOriginFrontendBaseURL(t *testing.T) {
+	for _, tt := range []struct{ name, value string }{
+		{"whitespace only", "   "},
+		{"carries a path", "https://grc.example.com/grc"},
+		{"no scheme", "grc.example.com"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			setRequiredNonAuthEnv(t)
+			setValidAuthEnv(t)
+			t.Setenv("FRONTEND_BASE_URL", tt.value)
+
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load() with FRONTEND_BASE_URL=%q = nil error, want failure", tt.value)
+			}
+		})
+	}
+}
+
+// A trailing slash is cleaned rather than rejected: it is the common
+// deployment typo, and the trimmed value is unambiguous.
+func TestLoadNormalisesFrontendBaseURL(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	setValidAuthEnv(t)
+	t.Setenv("FRONTEND_BASE_URL", " https://grc.example.com/ ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want success", err)
+	}
+	if got, want := cfg.CORSAllowedOrigin, "https://grc.example.com"; got != want {
+		t.Errorf("cfg.CORSAllowedOrigin = %q, want %q", got, want)
+	}
+	if got, want := cfg.Email.FrontendBaseURL, "https://grc.example.com"; got != want {
+		t.Errorf("cfg.Email.FrontendBaseURL = %q, want %q", got, want)
+	}
+}
+
+func TestLoadNormalisesOneWSO2WebappURL(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	setValidAuthEnv(t)
+	t.Setenv("ONE_WSO2_WEBAPP_URL", " https://one.example.com/ ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want success", err)
+	}
+	if got, want := cfg.Email.OneWSO2WebappURL, "https://one.example.com"; got != want {
+		t.Errorf("cfg.Email.OneWSO2WebappURL = %q, want %q", got, want)
+	}
+}
+
 func TestSchedulerEnabledOverride(t *testing.T) {
 	tests := []struct {
 		name string

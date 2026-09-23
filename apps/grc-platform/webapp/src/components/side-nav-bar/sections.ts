@@ -14,9 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { adminNav } from "@modules/admin/nav";
 import { auditNav } from "@modules/audit/nav";
-import { riskNav } from "@modules/risk/nav";
 import type { NavSection } from "./types";
 
 // Every module registers its own NavSection (modules/<module>/nav.ts). To add a
@@ -24,4 +22,4 @@ import type { NavSection } from "./types";
 //
 // Order matters: it is the sidebar's top-to-bottom order, and the order
 // LandingRedirect walks to pick the first tab a user can actually see.
-export const SECTIONS: NavSection[] = [auditNav, riskNav, adminNav];
+export const SECTIONS: NavSection[] = [auditNav];
