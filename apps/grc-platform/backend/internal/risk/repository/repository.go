@@ -37,6 +37,9 @@ type RiskRepository interface {
 	GetWorkflowStatus(ctx context.Context, id int) (string, error)
 	Create(ctx context.Context, req model.CreateRiskRequest, createdBy string) (*model.CreateRiskResponse, error)
 	Update(ctx context.Context, id int, req model.UpdateRiskRequest, updatedBy string) error
+	// UpdateAssignees applies an assignee correction to a migrated risk inside
+	// its correction window, in any status; 409 once the window has closed.
+	UpdateAssignees(ctx context.Context, id int, req model.UpdateAssigneesRequest, updatedBy string) error
 	// TransitionStatus atomically moves a risk from fromStatus to toStatus using a
 	// conditional UPDATE (WHERE workflow_status = fromStatus). Returns 409 when 0 rows
 	// are affected, meaning another request already changed the status concurrently.

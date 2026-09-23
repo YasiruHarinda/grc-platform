@@ -332,8 +332,8 @@ const AssigneeCorrectionWindow = 14 * 24 * time.Hour
 // AssigneeCorrectionDeadline returns when a risk's assignee correction window
 // closes, or nil when the risk was not created by the migration tool or the
 // window has already closed at now. It is the only implementation of the
-// rule: RiskDetail.AssigneesEditableUntil and the CLOSED-risk exception on
-// update both come from it.
+// rule: RiskDetail.AssigneesEditableUntil and the 409 on
+// PATCH /risks/{id}/assignees both come from it.
 func AssigneeCorrectionDeadline(createdBy string, createdOn, now time.Time) *time.Time {
 	if createdBy != MigrationMarker {
 		return nil
@@ -395,6 +395,17 @@ type UpdateRiskRequest struct {
 	// Full-edit only (editable before risk owner approval)
 	ReassessmentDate string `json:"reassessment_date,omitempty"`
 	GrossScoreID     *int   `json:"gross_score_id,omitempty"`
+}
+
+// UpdateAssigneesRequest is the payload for PATCH /api/v1/risks/{id}/assignees,
+// the assignee correction on a migrated risk (see AssigneeCorrectionDeadline).
+// A nil field is left as it is.
+type UpdateAssigneesRequest struct {
+	AssignerID           *int `json:"assigner_id,omitempty"`
+	OwnerID              *int `json:"owner_id,omitempty"`
+	ManagementApproverID *int `json:"management_approver_id,omitempty"`
+	AssignmentTeamID     *int `json:"assignment_team_id,omitempty"`
+	ActionOwnerID        *int `json:"action_owner_id,omitempty"`
 }
 
 // UpdateActionStepRequest is one step inside UpdateRiskRequest.ActionSteps.

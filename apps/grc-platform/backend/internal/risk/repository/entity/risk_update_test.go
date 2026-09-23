@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,13 +77,10 @@ func (f *fakeRiskEntity) serve(t *testing.T) *riskRepository {
 
 func intPtr(v int) *int { return &v }
 
-// correction is what the Update Assignees dialog sends: the five fields plus
-// the echoed required fields.
-func correction() model.UpdateRiskRequest {
-	return model.UpdateRiskRequest{
-		RiskTitle:            "Title",
-		RiskDescription:      "Description",
-		EmailSubject:         "Subject",
+// correction is what the Update Assignees dialog sends: two unchanged fields
+// and three real changes.
+func correction() model.UpdateAssigneesRequest {
+	return model.UpdateAssigneesRequest{
 		AssignerID:           intPtr(10), // unchanged
 		OwnerID:              intPtr(21),
 		ManagementApproverID: intPtr(12), // unchanged
@@ -133,57 +131,40 @@ func TestGetByIDAssigneesEditableUntil(t *testing.T) {
 	}
 }
 
-func TestUpdateClosedMigratedRiskInsideWindowAppliesOnlyAssignees(t *testing.T) {
-	f := &fakeRiskEntity{status: model.StatusClosed, createdBy: model.MigrationMarker, createdOn: time.Now().Add(-time.Hour)}
-	repo := f.serve(t)
+func TestUpdateAssigneesInsideWindowSendsOnlyAssignees(t *testing.T) {
+	for _, status := range []string{model.StatusClosed, model.StatusInRemediation, model.StatusEscalated} {
+		t.Run(status, func(t *testing.T) {
+			f := &fakeRiskEntity{status: status, createdBy: model.MigrationMarker, createdOn: time.Now().Add(-time.Hour)}
+			if err := f.serve(t).UpdateAssignees(context.Background(), 7, correction(), "editor-uuid"); err != nil {
+				t.Fatalf("UpdateAssignees: %v", err)
+			}
+			if f.patch == nil {
+				t.Fatal("no PATCH sent")
+			}
 
-	req := correction()
-	// Everything outside the five fields must be dropped on a closed risk.
-	req.RiskTitle = "Rewritten title"
-	req.ImplementationDate = "2027-01-01"
-	req.Remarks = "should not land"
-
-	if err := repo.Update(context.Background(), 7, req, "editor-uuid"); err != nil {
-		t.Fatalf("Update: %v", err)
-	}
-	if f.patch == nil {
-		t.Fatal("no PATCH sent")
-	}
-
-	var keys []string
-	for k := range f.patch {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	want := []string{"actionPlan", "assignerId", "assignmentTeamId", "changeLog", "expectedStatus", "managementApproverId", "ownerId", "updatedBy"}
-	if len(keys) != len(want) {
-		t.Fatalf("PATCH keys = %v, want %v", keys, want)
-	}
-	for i := range want {
-		if keys[i] != want[i] {
-			t.Fatalf("PATCH keys = %v, want %v", keys, want)
-		}
-	}
-	if f.patch["expectedStatus"] != model.StatusClosed {
-		t.Errorf("expectedStatus = %v, want CLOSED", f.patch["expectedStatus"])
-	}
-	if plan := f.patch["actionPlan"].(map[string]any); len(plan) != 1 || plan["actionOwnerId"] != float64(23) {
-		t.Errorf("actionPlan = %v, want only actionOwnerId 23", plan)
-	}
-
-	gotFields := changedFields(t, f.patch)
-	wantFields := []string{"action_owner_id", "assignment_team_id", "owner_id"}
-	if len(gotFields) != len(wantFields) {
-		t.Fatalf("changeLog fields = %v, want %v", gotFields, wantFields)
-	}
-	for i := range wantFields {
-		if gotFields[i] != wantFields[i] {
-			t.Fatalf("changeLog fields = %v, want %v", gotFields, wantFields)
-		}
+			var keys []string
+			for k := range f.patch {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			want := []string{"actionPlan", "assignerId", "assignmentTeamId", "changeLog", "expectedStatus", "managementApproverId", "ownerId", "updatedBy"}
+			if strings.Join(keys, ",") != strings.Join(want, ",") {
+				t.Fatalf("PATCH keys = %v, want %v", keys, want)
+			}
+			if f.patch["expectedStatus"] != status {
+				t.Errorf("expectedStatus = %v, want %s", f.patch["expectedStatus"], status)
+			}
+			if plan := f.patch["actionPlan"].(map[string]any); len(plan) != 1 || plan["actionOwnerId"] != float64(23) {
+				t.Errorf("actionPlan = %v, want only actionOwnerId 23", plan)
+			}
+			if got, want := strings.Join(changedFields(t, f.patch), ","), "action_owner_id,assignment_team_id,owner_id"; got != want {
+				t.Errorf("changeLog fields = %s, want %s", got, want)
+			}
+		})
 	}
 }
 
-func TestUpdateClosedRiskOutsideWindowIsRejected(t *testing.T) {
+func TestUpdateAssigneesOutsideWindowIsRejected(t *testing.T) {
 	tests := []struct {
 		name      string
 		createdBy string
@@ -194,8 +175,8 @@ func TestUpdateClosedRiskOutsideWindowIsRejected(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			f := &fakeRiskEntity{status: model.StatusClosed, createdBy: tc.createdBy, createdOn: tc.createdOn}
-			err := f.serve(t).Update(context.Background(), 7, correction(), "editor-uuid")
+			f := &fakeRiskEntity{status: model.StatusInRemediation, createdBy: tc.createdBy, createdOn: tc.createdOn}
+			err := f.serve(t).UpdateAssignees(context.Background(), 7, correction(), "editor-uuid")
 
 			var apiErr *apierror.Error
 			if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusConflict {
@@ -208,25 +189,35 @@ func TestUpdateClosedRiskOutsideWindowIsRejected(t *testing.T) {
 	}
 }
 
-func TestUpdateOpenRiskLogsAssigneeChangesWithoutReapproval(t *testing.T) {
-	f := &fakeRiskEntity{status: model.StatusInRemediation, createdBy: model.MigrationMarker, createdOn: time.Now().Add(-time.Hour)}
-	if err := f.serve(t).Update(context.Background(), 7, correction(), "editor-uuid"); err != nil {
+// A normal edit still cannot touch a CLOSED risk, even a migrated one inside
+// its window — the correction goes through UpdateAssignees only.
+func TestUpdateClosedMigratedRiskIsStillRejected(t *testing.T) {
+	f := &fakeRiskEntity{status: model.StatusClosed, createdBy: model.MigrationMarker, createdOn: time.Now().Add(-time.Hour)}
+	err := f.serve(t).Update(context.Background(), 7, model.UpdateRiskRequest{RiskTitle: "Title", RiskDescription: "Description", EmailSubject: "Subject"}, "editor-uuid")
+
+	var apiErr *apierror.Error
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusConflict {
+		t.Fatalf("err = %v, want a 409", err)
+	}
+	if f.patch != nil {
+		t.Errorf("PATCH was sent: %v", f.patch)
+	}
+}
+
+// A normal edit that changes people now leaves a history entry for each.
+func TestUpdateLogsAssigneeChanges(t *testing.T) {
+	f := &fakeRiskEntity{status: model.StatusPendingOwnerApproval, createdBy: "3f1c9a2e-user-uuid", createdOn: time.Now()}
+	req := model.UpdateRiskRequest{
+		RiskTitle:       "Title",
+		RiskDescription: "Description",
+		EmailSubject:    "Subject",
+		OwnerID:         intPtr(21),
+		AssignerID:      intPtr(10), // unchanged
+	}
+	if err := f.serve(t).Update(context.Background(), 7, req, "editor-uuid"); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	if _, ok := f.patch["workflowStatus"]; ok {
-		t.Errorf("assignee correction moved the workflow: %v", f.patch["workflowStatus"])
-	}
-	if f.patch["expectedStatus"] != model.StatusInRemediation {
-		t.Errorf("expectedStatus = %v, want IN_REMEDIATION", f.patch["expectedStatus"])
-	}
-	got := changedFields(t, f.patch)
-	want := []string{"action_owner_id", "assignment_team_id", "owner_id"}
-	if len(got) != len(want) {
-		t.Fatalf("changeLog fields = %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("changeLog fields = %v, want %v", got, want)
-		}
+	if got := strings.Join(changedFields(t, f.patch), ","); got != "owner_id" {
+		t.Errorf("changeLog fields = %s, want owner_id", got)
 	}
 }

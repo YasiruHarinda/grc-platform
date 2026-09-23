@@ -168,6 +168,7 @@ func RegisterRoutes(mux routeguard.Router, deps Deps) {
 	mux.HandleFunc("POST /api/v1/risks", d.handleCreateRisk)
 	mux.HandleFunc("GET /api/v1/risks/{id}", d.handleGetRisk)
 	mux.HandleFunc("PUT /api/v1/risks/{id}", d.handleUpdateRisk)
+	mux.HandleFunc("PATCH /api/v1/risks/{id}/assignees", d.handleUpdateAssignees)
 
 	// Workflow transitions
 	mux.HandleFunc("POST /api/v1/risks/{id}/owner-approve", d.handleOwnerApproveRisk)

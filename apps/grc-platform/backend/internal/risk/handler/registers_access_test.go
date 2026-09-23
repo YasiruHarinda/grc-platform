@@ -114,6 +114,9 @@ func (f *fakeRiskSvc) NextSequenceID(context.Context, int) (int, error) { return
 func (f *fakeRiskSvc) Update(context.Context, int, model.UpdateRiskRequest, string) error {
 	return nil
 }
+func (f *fakeRiskSvc) UpdateAssignees(context.Context, int, model.UpdateAssigneesRequest, string) error {
+	return nil
+}
 func (f *fakeRiskSvc) OwnerApprove(context.Context, int, string) error { return nil }
 func (f *fakeRiskSvc) ManagementApprove(context.Context, int, string, *int, bool) error {
 	return nil

@@ -45,12 +45,6 @@ func (r *riskRepository) Update(ctx context.Context, id int, req model.UpdateRis
 	}
 
 	if current.WorkflowStatus == model.StatusClosed {
-		// A migrated risk inside its assignee correction window is the one
-		// exception, and even then only its people and assignment team move —
-		// the rest of a closed risk's record stays as it was closed.
-		if current.AssigneesEditableUntil != nil {
-			return r.updateClosedAssignees(ctx, id, current, req, updatedBy)
-		}
 		return &apierror.Error{
 			StatusCode: http.StatusConflict,
 			Body:       "risk is closed and can no longer be edited",
@@ -118,7 +112,13 @@ func (r *riskRepository) Update(ctx context.Context, id int, req model.UpdateRis
 	logChange("remarks", derefOr(current.Remarks), req.Remarks)
 	logChange("git_issue_url", derefOr(current.GitIssueURL), req.GitIssueURL)
 	logChange("reassessment_date", derefOr(current.ReassessmentDate), req.ReassessmentDate)
-	changeLog = append(changeLog, assigneeChangeLog(current, req)...)
+	changeLog = append(changeLog, assigneeChangeLog(current, model.UpdateAssigneesRequest{
+		AssignerID:           req.AssignerID,
+		OwnerID:              req.OwnerID,
+		ManagementApproverID: req.ManagementApproverID,
+		AssignmentTeamID:     req.AssignmentTeamID,
+		ActionOwnerID:        req.ActionOwnerID,
+	})...)
 
 	stepsChanged := actionStepsChanged(current, req)
 	if stepsChanged {
@@ -220,15 +220,26 @@ func (r *riskRepository) Update(ctx context.Context, id int, req model.UpdateRis
 	return nil
 }
 
-// updateClosedAssignees applies an assignee correction to a CLOSED migrated
-// risk: only the five people/team fields are sent, and everything else in req
-// is ignored. There is no workflowStatus in the body, so the entity performs no
-// transition check, and expectedStatus keeps the write from landing on a risk
-// that stopped being CLOSED in the meantime.
-func (r *riskRepository) updateClosedAssignees(ctx context.Context, id int, current *model.RiskDetail, req model.UpdateRiskRequest, updatedBy string) error {
+// UpdateAssignees applies an assignee correction to a migrated risk inside its
+// correction window, in any status including CLOSED. Only the five people/team
+// fields are sent. There is no workflowStatus in the body, so the entity
+// performs no transition check and the workflow never moves; expectedStatus
+// keeps the write from landing on a risk whose status changed in between.
+func (r *riskRepository) UpdateAssignees(ctx context.Context, id int, req model.UpdateAssigneesRequest, updatedBy string) error {
+	current, err := r.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if current.AssigneesEditableUntil == nil {
+		return &apierror.Error{
+			StatusCode: http.StatusConflict,
+			Body:       "this risk's assignees can no longer be corrected",
+		}
+	}
+
 	body := map[string]any{
 		"updatedBy":      updatedBy,
-		"expectedStatus": model.StatusClosed,
+		"expectedStatus": current.WorkflowStatus,
 	}
 	if req.AssignerID != nil {
 		body["assignerId"] = *req.AssignerID
@@ -250,7 +261,7 @@ func (r *riskRepository) updateClosedAssignees(ctx context.Context, id int, curr
 	}
 
 	if err := r.c.Patch(ctx, fmt.Sprintf("/risks/%d", id), body, nil); err != nil {
-		return fmt.Errorf("update assignees of closed risk %d: %w", id, err)
+		return fmt.Errorf("update assignees of risk %d: %w", id, err)
 	}
 	return nil
 }
@@ -258,7 +269,7 @@ func (r *riskRepository) updateClosedAssignees(ctx context.Context, id int, curr
 // assigneeChangeLog records a history entry for each of the five people/team
 // fields req actually changes. The values are internal ids, which mean nothing
 // to a reader, so the timeline shows these by field name only.
-func assigneeChangeLog(current *model.RiskDetail, req model.UpdateRiskRequest) []map[string]any {
+func assigneeChangeLog(current *model.RiskDetail, req model.UpdateAssigneesRequest) []map[string]any {
 	var currentActionOwner *int
 	if current.ActionPlan != nil {
 		currentActionOwner = current.ActionPlan.ActionOwnerID

@@ -2635,7 +2635,7 @@ paths:
       tags:
       - Risks
       summary: Update a risk
-      description: Changing implementation_date, email_subject, or action_steps on an IN_REMEDIATION risk moves it to PENDING_AMENDMENT. All other fields are free-edit. A CLOSED risk returns 409, except a migrated risk whose assignees_editable_until is still set; for that risk only assigner_id, owner_id, management_approver_id, assignment_team_id and action_owner_id are applied, and every other field is ignored.
+      description: Changing implementation_date, email_subject, or action_steps on an IN_REMEDIATION risk moves it to PENDING_AMENDMENT. All other fields are free-edit.
       operationId: updateRisk
       parameters:
       - $ref: '#/components/parameters/RiskId'
@@ -2662,6 +2662,36 @@ paths:
           $ref: '#/components/responses/PayloadTooLarge'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}/assignees:
+    patch:
+      tags:
+      - Risks
+      summary: Correct a migrated risk's assignees
+      description: Changes the people and assignment team of a risk created by the migration tool, in any workflow status including CLOSED, while its assignees_editable_until is set (14 days from creation). Allowed for the risk's assigner or a compliance admin holding RISK_UPDATE in the source register. Never moves the workflow and sends no email; each changed field is written to the risk's history. 409 once the window has closed or for a risk not created by the migration tool.
+      operationId: updateRiskAssignees
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAssigneesRequest'
+      responses:
+        '204':
+          description: Assignees updated
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/risks/{id}/owner-approve:
@@ -5490,6 +5520,20 @@ components:
           nullable: true
         description:
           type: string
+    UpdateAssigneesRequest:
+      type: object
+      description: At least one field is required. An omitted field is left unchanged.
+      properties:
+        assigner_id:
+          type: integer
+        owner_id:
+          type: integer
+        management_approver_id:
+          type: integer
+        assignment_team_id:
+          type: integer
+        action_owner_id:
+          type: integer
     UpdateRiskRequest:
       type: object
       required:
