@@ -438,7 +438,14 @@ func Load() (Config, error) {
 
 	// FRONTEND_BASE_URL stays required regardless of the email switch — it is
 	// also the CORS-allowed origin (see CORSAllowedOrigin below).
-	frontendBaseURL, err := mustEnv("FRONTEND_BASE_URL")
+	frontendBaseURLRaw, err := mustEnv("FRONTEND_BASE_URL")
+	if err != nil {
+		return Config{}, err
+	}
+	// Same origin check as ONE_WSO2_WEBAPP_URL below, and this one matters more:
+	// an Access-Control-Allow-Origin carrying a trailing slash matches no
+	// browser Origin at all, since an Origin header never has one.
+	frontendBaseURL, err := mustOrigin("FRONTEND_BASE_URL", frontendBaseURLRaw)
 	if err != nil {
 		return Config{}, err
 	}

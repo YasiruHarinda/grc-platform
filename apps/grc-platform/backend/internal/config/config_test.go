@@ -216,11 +216,12 @@ func TestLoadEmailVarsRequiredUnlessDisabled(t *testing.T) {
 		t.Setenv("EMAIL_NOTIFICATIONS_ENABLED", "true") // explicit, not ambient
 		for _, k := range []string{
 			"COMPLIANCE_ENTITY_BASE_URL", "HR_ENTITY_GRAPHQL_URL", "HR_ENTITY_TOKEN_URL",
-			"HR_ENTITY_CLIENT_ID", "HR_ENTITY_CLIENT_SECRET", "FRONTEND_BASE_URL",
+			"HR_ENTITY_CLIENT_ID", "HR_ENTITY_CLIENT_SECRET",
 		} {
 			t.Setenv(k, "x")
 		}
-		// Not "x" like the rest: Load insists this one is a real origin.
+		// Not "x" like the rest: Load insists both of these are real origins.
+		t.Setenv("FRONTEND_BASE_URL", "https://grc.example.com")
 		t.Setenv("ONE_WSO2_WEBAPP_URL", "https://one.example.com")
 		if _, err := Load(); err == nil {
 			t.Fatal("Load() with EMAIL_* unset and notifications enabled = nil error, want failure")
@@ -233,11 +234,12 @@ func TestLoadEmailVarsRequiredUnlessDisabled(t *testing.T) {
 		t.Setenv("EMAIL_NOTIFICATIONS_ENABLED", "false")
 		for _, k := range []string{
 			"COMPLIANCE_ENTITY_BASE_URL", "HR_ENTITY_GRAPHQL_URL", "HR_ENTITY_TOKEN_URL",
-			"HR_ENTITY_CLIENT_ID", "HR_ENTITY_CLIENT_SECRET", "FRONTEND_BASE_URL",
+			"HR_ENTITY_CLIENT_ID", "HR_ENTITY_CLIENT_SECRET",
 		} {
 			t.Setenv(k, "x")
 		}
-		// Not "x" like the rest: Load insists this one is a real origin.
+		// Not "x" like the rest: Load insists both of these are real origins.
+		t.Setenv("FRONTEND_BASE_URL", "https://grc.example.com")
 		t.Setenv("ONE_WSO2_WEBAPP_URL", "https://one.example.com")
 		cfg, err := Load()
 		if err != nil {
@@ -285,6 +287,46 @@ func TestLoadRejectsNonOriginOneWSO2WebappURL(t *testing.T) {
 				t.Fatalf("Load() with ONE_WSO2_WEBAPP_URL=%q = nil error, want failure", tt.value)
 			}
 		})
+	}
+}
+
+// FRONTEND_BASE_URL is both the audit email base and the CORS-allowed origin,
+// so it gets the same origin check. A trailing slash here would produce an
+// Access-Control-Allow-Origin that matches no browser Origin at all.
+func TestLoadRejectsNonOriginFrontendBaseURL(t *testing.T) {
+	for _, tt := range []struct{ name, value string }{
+		{"whitespace only", "   "},
+		{"carries a path", "https://grc.example.com/grc"},
+		{"no scheme", "grc.example.com"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			setRequiredNonAuthEnv(t)
+			setValidAuthEnv(t)
+			t.Setenv("FRONTEND_BASE_URL", tt.value)
+
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load() with FRONTEND_BASE_URL=%q = nil error, want failure", tt.value)
+			}
+		})
+	}
+}
+
+// A trailing slash is cleaned rather than rejected: it is the common
+// deployment typo, and the trimmed value is unambiguous.
+func TestLoadNormalisesFrontendBaseURL(t *testing.T) {
+	setRequiredNonAuthEnv(t)
+	setValidAuthEnv(t)
+	t.Setenv("FRONTEND_BASE_URL", " https://grc.example.com/ ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want success", err)
+	}
+	if got, want := cfg.CORSAllowedOrigin, "https://grc.example.com"; got != want {
+		t.Errorf("cfg.CORSAllowedOrigin = %q, want %q", got, want)
+	}
+	if got, want := cfg.Email.FrontendBaseURL, "https://grc.example.com"; got != want {
+		t.Errorf("cfg.Email.FrontendBaseURL = %q, want %q", got, want)
 	}
 }
 
