@@ -272,6 +272,10 @@ func (r *riskRepository) GetByID(ctx context.Context, id int) (*model.RiskDetail
 		RiskCategories:         []model.RiskCategory{},
 		Assessments:            []model.RiskAssessment{},
 	}
+	if deadline := model.AssigneeCorrectionDeadline(e.CreatedBy, e.CreatedOn, time.Now()); deadline != nil {
+		s := deadline.UTC().Format(time.RFC3339)
+		d.AssigneesEditableUntil = &s
+	}
 
 	for _, ref := range e.ComplianceReferences {
 		d.ComplianceReferences = append(d.ComplianceReferences, model.ComplianceReference{

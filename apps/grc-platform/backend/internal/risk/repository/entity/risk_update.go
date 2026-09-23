@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/apierror"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
@@ -44,6 +45,12 @@ func (r *riskRepository) Update(ctx context.Context, id int, req model.UpdateRis
 	}
 
 	if current.WorkflowStatus == model.StatusClosed {
+		// A migrated risk inside its assignee correction window is the one
+		// exception, and even then only its people and assignment team move —
+		// the rest of a closed risk's record stays as it was closed.
+		if current.AssigneesEditableUntil != nil {
+			return r.updateClosedAssignees(ctx, id, current, req, updatedBy)
+		}
 		return &apierror.Error{
 			StatusCode: http.StatusConflict,
 			Body:       "risk is closed and can no longer be edited",
@@ -111,6 +118,7 @@ func (r *riskRepository) Update(ctx context.Context, id int, req model.UpdateRis
 	logChange("remarks", derefOr(current.Remarks), req.Remarks)
 	logChange("git_issue_url", derefOr(current.GitIssueURL), req.GitIssueURL)
 	logChange("reassessment_date", derefOr(current.ReassessmentDate), req.ReassessmentDate)
+	changeLog = append(changeLog, assigneeChangeLog(current, req)...)
 
 	stepsChanged := actionStepsChanged(current, req)
 	if stepsChanged {
@@ -210,6 +218,76 @@ func (r *riskRepository) Update(ctx context.Context, id int, req model.UpdateRis
 		return fmt.Errorf("update risk %d: %w", id, err)
 	}
 	return nil
+}
+
+// updateClosedAssignees applies an assignee correction to a CLOSED migrated
+// risk: only the five people/team fields are sent, and everything else in req
+// is ignored. There is no workflowStatus in the body, so the entity performs no
+// transition check, and expectedStatus keeps the write from landing on a risk
+// that stopped being CLOSED in the meantime.
+func (r *riskRepository) updateClosedAssignees(ctx context.Context, id int, current *model.RiskDetail, req model.UpdateRiskRequest, updatedBy string) error {
+	body := map[string]any{
+		"updatedBy":      updatedBy,
+		"expectedStatus": model.StatusClosed,
+	}
+	if req.AssignerID != nil {
+		body["assignerId"] = *req.AssignerID
+	}
+	if req.OwnerID != nil {
+		body["ownerId"] = *req.OwnerID
+	}
+	if req.ManagementApproverID != nil {
+		body["managementApproverId"] = *req.ManagementApproverID
+	}
+	if req.AssignmentTeamID != nil {
+		body["assignmentTeamId"] = *req.AssignmentTeamID
+	}
+	if req.ActionOwnerID != nil {
+		body["actionPlan"] = map[string]any{"actionOwnerId": *req.ActionOwnerID}
+	}
+	if changeLog := assigneeChangeLog(current, req); len(changeLog) > 0 {
+		body["changeLog"] = changeLog
+	}
+
+	if err := r.c.Patch(ctx, fmt.Sprintf("/risks/%d", id), body, nil); err != nil {
+		return fmt.Errorf("update assignees of closed risk %d: %w", id, err)
+	}
+	return nil
+}
+
+// assigneeChangeLog records a history entry for each of the five people/team
+// fields req actually changes. The values are internal ids, which mean nothing
+// to a reader, so the timeline shows these by field name only.
+func assigneeChangeLog(current *model.RiskDetail, req model.UpdateRiskRequest) []map[string]any {
+	var currentActionOwner *int
+	if current.ActionPlan != nil {
+		currentActionOwner = current.ActionPlan.ActionOwnerID
+	}
+
+	var entries []map[string]any
+	add := func(field string, oldVal *int, newVal *int) {
+		if newVal == nil || (oldVal != nil && *oldVal == *newVal) {
+			return
+		}
+		oldStr := ""
+		if oldVal != nil {
+			oldStr = strconv.Itoa(*oldVal)
+		}
+		oldJSON, _ := json.Marshal(oldStr)
+		newJSON, _ := json.Marshal(strconv.Itoa(*newVal))
+		entries = append(entries, map[string]any{
+			"action":       "UPDATE",
+			"fieldChanged": field,
+			"oldValue":     string(oldJSON),
+			"newValue":     string(newJSON),
+		})
+	}
+	add("assigner_id", &current.AssignerID, req.AssignerID)
+	add("owner_id", &current.OwnerID, req.OwnerID)
+	add("management_approver_id", &current.ManagementApproverID, req.ManagementApproverID)
+	add("assignment_team_id", &current.AssignmentTeamID, req.AssignmentTeamID)
+	add("action_owner_id", currentActionOwner, req.ActionOwnerID)
+	return entries
 }
 
 // actionStepsChanged reports whether the incoming steps differ from what the

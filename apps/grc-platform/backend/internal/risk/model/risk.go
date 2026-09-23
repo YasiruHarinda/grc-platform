@@ -260,6 +260,13 @@ type RiskDetail struct {
 	CreatedAt              string  `json:"created_at"`
 	UpdatedAt              string  `json:"updated_at"`
 
+	// AssigneesEditableUntil is when this risk's assignee correction window
+	// closes (RFC3339), or nil when it is not a migrated risk or the window
+	// has already closed. See AssigneeCorrectionDeadline. The client shows
+	// Update Assignees only while this is set, and never works the rule out
+	// itself.
+	AssigneesEditableUntil *string `json:"assignees_editable_until"`
+
 	// Resolved display names
 	SourceRegisterName     string  `json:"source_register_name"`
 	AssignmentTeamName     string  `json:"assignment_team_name"`
@@ -308,6 +315,34 @@ type RiskDetail struct {
 	// Never populated on list responses — only on a single risk — because it is
 	// meaningless without a specific register in hand.
 	EffectivePrivileges []string `json:"effective_privileges"`
+}
+
+// MigrationMarker is the created_by the risk register migration tool
+// (operations/risk-register-migration) writes on every risk it creates. It is
+// how a migrated risk is recognised; no user's created_by can collide with it,
+// since those are user uuids.
+const MigrationMarker = "risk-sheet-migration"
+
+// AssigneeCorrectionWindow is how long after creation a migrated risk's
+// people and assignment team stay correctable in any status, including
+// CLOSED. Deliberately hard-coded: see RISK_MODULE_DESIGN.md §7, Assignee
+// correction rule.
+const AssigneeCorrectionWindow = 14 * 24 * time.Hour
+
+// AssigneeCorrectionDeadline returns when a risk's assignee correction window
+// closes, or nil when the risk was not created by the migration tool or the
+// window has already closed at now. It is the only implementation of the
+// rule: RiskDetail.AssigneesEditableUntil and the CLOSED-risk exception on
+// update both come from it.
+func AssigneeCorrectionDeadline(createdBy string, createdOn, now time.Time) *time.Time {
+	if createdBy != MigrationMarker {
+		return nil
+	}
+	deadline := createdOn.Add(AssigneeCorrectionWindow)
+	if !now.Before(deadline) {
+		return nil
+	}
+	return &deadline
 }
 
 // ActionPlanDetail is ActionPlan with its steps embedded, used inside RiskDetail.

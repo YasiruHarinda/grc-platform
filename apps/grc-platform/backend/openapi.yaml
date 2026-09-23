@@ -2635,7 +2635,7 @@ paths:
       tags:
       - Risks
       summary: Update a risk
-      description: Changing implementation_date, email_subject, or action_steps on an IN_REMEDIATION risk moves it to PENDING_AMENDMENT. All other fields are free-edit.
+      description: Changing implementation_date, email_subject, or action_steps on an IN_REMEDIATION risk moves it to PENDING_AMENDMENT. All other fields are free-edit. A CLOSED risk returns 409, except a migrated risk whose assignees_editable_until is still set; for that risk only assigner_id, owner_id, management_approver_id, assignment_team_id and action_owner_id are applied, and every other field is ignored.
       operationId: updateRisk
       parameters:
       - $ref: '#/components/parameters/RiskId'
@@ -5438,6 +5438,11 @@ components:
         updated_at:
           type: string
           format: date-time
+        assignees_editable_until:
+          type: string
+          format: date-time
+          nullable: true
+          description: When a migrated risk's 14-day assignee correction window closes. Null when the risk was not created by the migration tool or the window has closed.
         source_register_name:
           type: string
         assignment_team_name:
