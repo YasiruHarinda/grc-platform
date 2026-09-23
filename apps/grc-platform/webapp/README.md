@@ -229,7 +229,8 @@ src/modules/audit/
 └── pages/...
       ↓ imported & spread by ↓
 App.tsx:      <Route>{auditRoutes}</Route>
-SideBar.tsx:  SECTIONS = [auditNav]   (maps over them)
+sections.ts:  SECTIONS = [auditNav]   (the nav registry SideBar and
+                                      LandingRedirect both render from)
 ```
 
 `privileges.ts` values must match `privilege_name` in the backend's privilege
@@ -246,15 +247,18 @@ adding a module doesn't mean editing another module's code.
 2. Register its route in `src/modules/audit/routes.tsx`.
 3. Add its sidebar item in `src/modules/audit/nav.ts`.
 
-You never edit `App.tsx` or `SideBar.tsx` for normal page work — they just import
-and spread each module's `routes` / `nav`.
+You never edit `App.tsx` or `components/side-nav-bar/` for normal page work —
+they just import and spread each module's `routes` / `nav`. Adding a whole new
+module means registering it in three shared files: its routes in `App.tsx`, its
+`NavSection` in `sections.ts`, and its privilege resolver in
+`useSectionPrivileges.ts`.
 
 **Ownership / conflict map:**
 
 | File | Edited by | Conflict risk |
 |------|-----------|---------------|
 | `modules/audit/{routes,nav}` + `pages/**` | Audit owner only | none |
-| `App.tsx`, `SideBar.tsx` | only when adding a whole new module | near-zero |
+| `App.tsx`, `side-nav-bar/{sections,useSectionPrivileges}.ts` | only when adding a whole new module | near-zero |
 
 ## Import Aliases
 
