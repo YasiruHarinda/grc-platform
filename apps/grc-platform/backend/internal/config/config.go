@@ -18,6 +18,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -447,6 +448,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	oneWSO2WebappOrigin, err := mustOrigin("ONE_WSO2_WEBAPP_URL", oneWSO2WebappURL)
+	if err != nil {
+		return Config{}, err
+	}
 
 	// EMAIL_NOTIFICATIONS_ENABLED=false relaxes the five email-service vars
 	// from required to optional: a disabled emailer.Client never reads them,
@@ -527,7 +532,7 @@ func Load() (Config, error) {
 			ServiceURL:       emailServiceURL,
 			FromAddress:      emailFromAddress,
 			FrontendBaseURL:  frontendBaseURL,
-			OneWSO2WebappURL: NormalizeBaseURL(oneWSO2WebappURL),
+			OneWSO2WebappURL: oneWSO2WebappOrigin,
 			ClientID:         emailClientID,
 			ClientSecret:     emailClientSecret,
 			TokenURL:         emailTokenURL,
@@ -653,6 +658,29 @@ func listenAddr(port string) string {
 // the value to both SCIMTokenURL and scim.NewClient.
 func NormalizeBaseURL(u string) string {
 	return strings.TrimSuffix(strings.TrimSpace(u), "/")
+}
+
+// mustOrigin normalizes raw and insists it is a bare origin — scheme, host and
+// nothing else. Two mistakes it turns into a startup failure instead of broken
+// email links, neither of which mustEnv catches on its own:
+//
+//   - whitespace only, which normalizes to "" and makes every link relative
+//     ("/security/risk/registers?riskId=1") and so dead in a mail client;
+//   - an origin that already carries the path the caller appends
+//     (".../security"), which doubles it into a 404.
+func mustOrigin(key, raw string) (string, error) {
+	origin := NormalizeBaseURL(raw)
+	u, err := url.Parse(origin)
+	if err != nil {
+		return "", fmt.Errorf("%s is not a valid URL: %w", key, err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", fmt.Errorf("%s must be an absolute http(s) origin, got %q", key, raw)
+	}
+	if u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("%s must be an origin with no path, query or fragment, got %q", key, raw)
+	}
+	return origin, nil
 }
 
 // SCIMTokenURL builds one Asgardeo org's OAuth2 token endpoint:
