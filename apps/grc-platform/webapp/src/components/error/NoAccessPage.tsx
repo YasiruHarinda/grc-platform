@@ -16,21 +16,44 @@
 
 import { type JSX } from "react";
 import ErrorPage from "./ErrorPage";
+import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
 import illustration from "@assets/error/error-403.svg";
 
+// Domain that marks a signed-in user as internal, for COPY ONLY — it picks one
+// sentence below and never gates access. The backend is the authority on who
+// is internal (callerGuard in middleware/caller.go, configured by
+// AUTH_INTERNAL_EMAIL_DOMAINS) and trusts nothing from here. If the two ever
+// disagree, the cost is one surplus or missing line of text.
+const INTERNAL_EMAIL_DOMAIN = "wso2.com";
+
 // Shown by LandingRedirect when the signed-in user can see no module at all —
-// no Audit Hub privilege. Risk Hub and the Admin Console live in One WSO2, so
-// a risk-only user lands here too: the copy points them there first rather
-// than telling them to request access they already have.
+// no Audit Hub privilege. Two very different people land here:
+//
+//   - an internal user, who may be looking for Risk Hub or the Admin Console.
+//     Both live in One WSO2 now, so say so.
+//   - an external auditor, mid-onboarding or with a grant revoked once their
+//     audit closed. They cannot sign into One WSO2 at all, so sending them
+//     there would be a dead end.
+//
+// So the One WSO2 line is internal-only, while the actionable "contact an
+// administrator" line comes first and everyone sees it. The line stays hidden
+// while the claims load, which fails safe: an external auditor never sees it,
+// and an internal user sees it appear a moment later.
 export default function NoAccessPage(): JSX.Element {
+  const claims = useIdTokenClaims();
+  const email = typeof claims?.email === "string" ? claims.email : "";
+  const isInternal = email.toLowerCase().endsWith(`@${INTERNAL_EMAIL_DOMAIN}`);
+
+  const description =
+    "Your account doesn't have access to the Audit Hub yet.\n" +
+    "Contact a platform administrator to get a role assigned." +
+    (isInternal ? "\n\nRisk Hub and the Admin Console are in One WSO2." : "");
+
   return (
     <ErrorPage
       illustration={illustration}
       illustrationAlt="no module access illustration"
-      description={
-        "Risk Hub and the Admin Console are available in One WSO2.\n" +
-        "If you expected to see the Audit Hub here, contact a platform administrator."
-      }
+      description={description}
     />
   );
 }
