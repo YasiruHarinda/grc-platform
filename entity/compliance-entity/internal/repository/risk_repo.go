@@ -623,13 +623,19 @@ func (r *riskRepo) UpdateRisk(ctx context.Context, id int, req domain.UpdateRisk
 		}
 	}
 
+	// The risk's own plan is its first STANDARD one, the plan created with the
+	// risk. Plans the assigner adds later are STANDARD too, so without the
+	// ORDER BY ... LIMIT 1 this would overwrite the owner and description of
+	// every plan on the risk. detailActionPlan and applyActionSteps pick the
+	// same plan the same way, so what is shown is what gets written.
 	if req.ActionPlan != nil {
 		if _, err = tx.ExecContext(ctx, `
 			UPDATE risk_action_plan SET
 				description = COALESCE(?, description),
 				action_owner_id = COALESCE(?, action_owner_id),
 				updated_by = ?, updated_at = NOW()
-			WHERE risk_id = ? AND plan_type = 'STANDARD'`,
+			WHERE risk_id = ? AND plan_type = 'STANDARD'
+			ORDER BY id LIMIT 1`,
 			req.ActionPlan.Description, nullableInt(req.ActionPlan.ActionOwnerID),
 			req.UpdatedBy, id); err != nil {
 			return nil, fmt.Errorf("risk.Update action plan: %w", err)
@@ -669,7 +675,7 @@ func (r *riskRepo) UpdateRisk(ctx context.Context, id int, req domain.UpdateRisk
 func (r *riskRepo) applyActionSteps(ctx context.Context, tx *sql.Tx, riskID int, req domain.UpdateRiskRequest) error {
 	var planID int
 	err := tx.QueryRowContext(ctx,
-		"SELECT id FROM risk_action_plan WHERE risk_id = ? AND plan_type = 'STANDARD' LIMIT 1",
+		"SELECT id FROM risk_action_plan WHERE risk_id = ? AND plan_type = 'STANDARD' ORDER BY id LIMIT 1",
 		riskID).Scan(&planID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return &apierror.NotFoundError{Msg: fmt.Sprintf("risk %d has no standard action plan", riskID)}
@@ -968,7 +974,7 @@ func (r *riskRepo) detailActionPlan(ctx context.Context, id int) (*domain.RiskAc
 	var ap domain.RiskActionPlanDetail
 	err := r.db.QueryRowContext(ctx,
 		`SELECT id, risk_id, action_owner_id, description, status, plan_type
-		 FROM risk_action_plan WHERE risk_id = ? AND plan_type = 'STANDARD' LIMIT 1`, id).
+		 FROM risk_action_plan WHERE risk_id = ? AND plan_type = 'STANDARD' ORDER BY id LIMIT 1`, id).
 		Scan(&ap.ID, &ap.RiskID, &ap.ActionOwnerID, &ap.Description, &ap.Status, &ap.PlanType)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil // a risk without a standard plan is legitimate, not an error

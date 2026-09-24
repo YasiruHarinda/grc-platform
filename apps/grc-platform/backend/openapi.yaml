@@ -2664,6 +2664,36 @@ paths:
           $ref: '#/components/responses/UnprocessableEntity'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/risks/{id}/assignees:
+    patch:
+      tags:
+      - Risks
+      summary: Correct a migrated risk's assignees
+      description: Changes the people and assignment team of a risk created by the migration tool, in any workflow status including CLOSED, while its assignees_editable_until is set (14 days from creation). Allowed for the risk's assigner or a compliance admin holding RISK_UPDATE in the source register. Never moves the workflow and sends no email; each changed field is written to the risk's history. 409 once the window has closed, for a risk not created by the migration tool, or when action_owner_id is sent for a risk with no action plan.
+      operationId: updateRiskAssignees
+      parameters:
+      - $ref: '#/components/parameters/RiskId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAssigneesRequest'
+      responses:
+        '204':
+          description: Assignees updated
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /api/v1/risks/{id}/owner-approve:
     post:
       tags:
@@ -5438,6 +5468,11 @@ components:
         updated_at:
           type: string
           format: date-time
+        assignees_editable_until:
+          type: string
+          format: date-time
+          nullable: true
+          description: When a migrated risk's 14-day assignee correction window closes. Null when the risk was not created by the migration tool or the window has closed.
         source_register_name:
           type: string
         assignment_team_name:
@@ -5485,6 +5520,20 @@ components:
           nullable: true
         description:
           type: string
+    UpdateAssigneesRequest:
+      type: object
+      description: At least one field is required. An omitted field is left unchanged.
+      properties:
+        assigner_id:
+          type: integer
+        owner_id:
+          type: integer
+        management_approver_id:
+          type: integer
+        assignment_team_id:
+          type: integer
+        action_owner_id:
+          type: integer
     UpdateRiskRequest:
       type: object
       required:

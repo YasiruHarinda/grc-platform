@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/apierror"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/risk/model"
@@ -111,6 +112,13 @@ func (r *riskRepository) Update(ctx context.Context, id int, req model.UpdateRis
 	logChange("remarks", derefOr(current.Remarks), req.Remarks)
 	logChange("git_issue_url", derefOr(current.GitIssueURL), req.GitIssueURL)
 	logChange("reassessment_date", derefOr(current.ReassessmentDate), req.ReassessmentDate)
+	changeLog = append(changeLog, assigneeChangeLog(current, model.UpdateAssigneesRequest{
+		AssignerID:           req.AssignerID,
+		OwnerID:              req.OwnerID,
+		ManagementApproverID: req.ManagementApproverID,
+		AssignmentTeamID:     req.AssignmentTeamID,
+		ActionOwnerID:        req.ActionOwnerID,
+	})...)
 
 	stepsChanged := actionStepsChanged(current, req)
 	if stepsChanged {
@@ -210,6 +218,109 @@ func (r *riskRepository) Update(ctx context.Context, id int, req model.UpdateRis
 		return fmt.Errorf("update risk %d: %w", id, err)
 	}
 	return nil
+}
+
+// UpdateAssignees applies an assignee correction to a migrated risk inside its
+// correction window, in any status including CLOSED. Only the five people/team
+// fields are sent. There is no workflowStatus in the body, so the entity
+// performs no transition check and the workflow never moves; expectedStatus
+// keeps the write from landing on a risk whose status changed in between.
+func (r *riskRepository) UpdateAssignees(ctx context.Context, id int, req model.UpdateAssigneesRequest, updatedBy string) error {
+	current, err := r.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	// Two different reasons for the same 409, told apart so the message says
+	// what actually happened: a risk the migration tool never created has no
+	// correction window at all, while a migrated one's has run out.
+	if current.CreatedBy != model.MigrationMarker {
+		return &apierror.Error{
+			StatusCode: http.StatusConflict,
+			Body:       "only risks created by the risk register migration can have their assignees corrected",
+		}
+	}
+	if current.AssigneesEditableUntil == nil {
+		return &apierror.Error{
+			StatusCode: http.StatusConflict,
+			Body:       "this risk's 14-day assignee correction window has closed",
+		}
+	}
+	// The entity only ever updates the STANDARD plan's owner, and silently
+	// updates nothing when there is no plan — refuse rather than report a
+	// change that never happened.
+	if req.ActionOwnerID != nil && current.ActionPlan == nil {
+		return &apierror.Error{
+			StatusCode: http.StatusConflict,
+			Body:       "this risk has no action plan to set an Action Owner on",
+		}
+	}
+
+	body := map[string]any{
+		"updatedBy":      updatedBy,
+		"expectedStatus": current.WorkflowStatus,
+	}
+	if req.AssignerID != nil {
+		body["assignerId"] = *req.AssignerID
+	}
+	if req.OwnerID != nil {
+		body["ownerId"] = *req.OwnerID
+	}
+	if req.ManagementApproverID != nil {
+		body["managementApproverId"] = *req.ManagementApproverID
+	}
+	if req.AssignmentTeamID != nil {
+		body["assignmentTeamId"] = *req.AssignmentTeamID
+	}
+	if req.ActionOwnerID != nil {
+		body["actionPlan"] = map[string]any{"actionOwnerId": *req.ActionOwnerID}
+	}
+	if changeLog := assigneeChangeLog(current, req); len(changeLog) > 0 {
+		body["changeLog"] = changeLog
+	}
+
+	if err := r.c.Patch(ctx, fmt.Sprintf("/risks/%d", id), body, nil); err != nil {
+		return fmt.Errorf("update assignees of risk %d: %w", id, err)
+	}
+	return nil
+}
+
+// assigneeChangeLog records a history entry for each of the five people/team
+// fields req actually changes. The values are internal ids, which mean nothing
+// to a reader, so the timeline shows these by field name only.
+func assigneeChangeLog(current *model.RiskDetail, req model.UpdateAssigneesRequest) []map[string]any {
+	var currentActionOwner *int
+	if current.ActionPlan != nil {
+		currentActionOwner = current.ActionPlan.ActionOwnerID
+	}
+
+	var entries []map[string]any
+	add := func(field string, oldVal *int, newVal *int) {
+		if newVal == nil || (oldVal != nil && *oldVal == *newVal) {
+			return
+		}
+		oldStr := ""
+		if oldVal != nil {
+			oldStr = strconv.Itoa(*oldVal)
+		}
+		oldJSON, _ := json.Marshal(oldStr)
+		newJSON, _ := json.Marshal(strconv.Itoa(*newVal))
+		entries = append(entries, map[string]any{
+			"action":       "UPDATE",
+			"fieldChanged": field,
+			"oldValue":     string(oldJSON),
+			"newValue":     string(newJSON),
+		})
+	}
+	add("assigner_id", &current.AssignerID, req.AssignerID)
+	add("owner_id", &current.OwnerID, req.OwnerID)
+	add("management_approver_id", &current.ManagementApproverID, req.ManagementApproverID)
+	add("assignment_team_id", &current.AssignmentTeamID, req.AssignmentTeamID)
+	// Without a plan the entity writes no Action Owner, so there is no change
+	// to record.
+	if current.ActionPlan != nil {
+		add("action_owner_id", currentActionOwner, req.ActionOwnerID)
+	}
+	return entries
 }
 
 // actionStepsChanged reports whether the incoming steps differ from what the

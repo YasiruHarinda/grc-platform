@@ -266,11 +266,16 @@ func (r *riskRepository) GetByID(ctx context.Context, id int) (*model.RiskDetail
 		AssignerUUID:           e.AssignerUUID,
 		ManagementApproverUUID: e.ManagementApproverUUID,
 		ComplianceApproverUUID: e.ComplianceApproverUUID,
+		CreatedBy:              e.CreatedBy,
 		GrossScore:             e.GrossScore.toModel(),
 		EffectiveScore:         e.EffectiveScore.toModel(),
 		ComplianceReferences:   []model.ComplianceReference{},
 		RiskCategories:         []model.RiskCategory{},
 		Assessments:            []model.RiskAssessment{},
+	}
+	if deadline := model.AssigneeCorrectionDeadline(e.CreatedBy, e.CreatedOn, time.Now()); deadline != nil {
+		s := deadline.UTC().Format(time.RFC3339)
+		d.AssigneesEditableUntil = &s
 	}
 
 	for _, ref := range e.ComplianceReferences {

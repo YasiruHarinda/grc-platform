@@ -37,6 +37,7 @@ type RiskService interface {
 	Create(ctx context.Context, req model.CreateRiskRequest, createdBy string) (*model.CreateRiskResponse, error)
 	NextSequenceID(ctx context.Context, sourceRegisterID int) (int, error)
 	Update(ctx context.Context, id int, req model.UpdateRiskRequest, updatedBy string) error
+	UpdateAssignees(ctx context.Context, id int, req model.UpdateAssigneesRequest, updatedBy string) error
 
 	// Workflow transitions — each validates the current status before advancing.
 	OwnerApprove(ctx context.Context, id int, byUserEmail string) error
@@ -86,6 +87,13 @@ func (s *riskService) NextSequenceID(ctx context.Context, sourceRegisterID int) 
 // the risk to PENDING_AMENDMENT in the same transaction.
 func (s *riskService) Update(ctx context.Context, id int, req model.UpdateRiskRequest, updatedBy string) error {
 	return s.repo.Update(ctx, id, req, updatedBy)
+}
+
+// UpdateAssignees corrects a migrated risk's people and assignment team. It
+// never moves the workflow, so there is nothing to decide here beyond what the
+// repository already enforces.
+func (s *riskService) UpdateAssignees(ctx context.Context, id int, req model.UpdateAssigneesRequest, updatedBy string) error {
+	return s.repo.UpdateAssignees(ctx, id, req, updatedBy)
 }
 
 // OwnerApprove handles three situations:

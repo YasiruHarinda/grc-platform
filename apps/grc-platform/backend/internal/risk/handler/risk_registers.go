@@ -575,6 +575,63 @@ func (d *Deps) handleUpdateRisk(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleUpdateAssignees serves PATCH /api/v1/risks/{id}/assignees: the
+// assignee correction on a migrated risk (RISK_MODULE_DESIGN.md §7, Assignee
+// correction rule). Same caller gate as editing — the risk's assigner, or a
+// compliance admin — but it touches only the five people/team fields, works in
+// any status, never forces re-approval and sends no email. Outside the risk's
+// correction window the repository answers 409.
+func (d *Deps) handleUpdateAssignees(w http.ResponseWriter, r *http.Request) {
+	by, ok := requireCallerUUID(w, r)
+	if !ok {
+		return
+	}
+	id, ok := parseRiskID(w, r)
+	if !ok {
+		return
+	}
+	if !d.requireRiskAssigner(w, r, id, privilege.UpdateRisk) {
+		return
+	}
+
+	var req model.UpdateAssigneesRequest
+	if err := response.DecodeJSON(w, r, &req); err != nil {
+		return
+	}
+
+	fields := []struct {
+		name string
+		id   *int
+	}{
+		{"assigner_id", req.AssignerID},
+		{"owner_id", req.OwnerID},
+		{"management_approver_id", req.ManagementApproverID},
+		{"assignment_team_id", req.AssignmentTeamID},
+		{"action_owner_id", req.ActionOwnerID},
+	}
+	anySet := false
+	for _, f := range fields {
+		if f.id == nil {
+			continue
+		}
+		if *f.id <= 0 {
+			response.WriteError(w, http.StatusBadRequest, f.name+" must be a positive id")
+			return
+		}
+		anySet = true
+	}
+	if !anySet {
+		response.WriteError(w, http.StatusBadRequest, "at least one of assigner_id, owner_id, management_approver_id, assignment_team_id or action_owner_id is required")
+		return
+	}
+
+	if err := d.Risk.UpdateAssignees(r.Context(), id, req, by); err != nil {
+		response.MapServiceError(r.Context(), w, err, response.ErrMsgInternal)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // handleOwnerApproveRisk serves POST /api/v1/risks/{id}/owner-approve.
 // Handles PENDING_RISK_OWNER_APPROVAL, PENDING_AMENDMENT, and PENDING_OWNER_COMPLETION_APPROVAL.
 //
