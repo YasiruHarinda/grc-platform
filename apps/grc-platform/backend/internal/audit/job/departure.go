@@ -24,6 +24,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directory"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/directorysync"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/applink"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
@@ -50,36 +51,36 @@ type userGetter interface {
 // digest that tells them. Its three methods are wired into a directorysync.Hub
 // in cmd/server.
 type DepartureHub struct {
-	audits          auditLister
-	controls        controlLister
-	users           userGetter
-	grants          grant.Repository
-	directory       *directory.Service
-	email           *emailer.Client
-	frontendBaseURL string
+	audits    auditLister
+	controls  controlLister
+	users     userGetter
+	grants    grant.Repository
+	directory *directory.Service
+	email     *emailer.Client
+	links     applink.Links
 }
 
 // DepartureDeps is DepartureHub's construction args.
 type DepartureDeps struct {
-	Audits          auditLister
-	Controls        controlLister
-	Users           userGetter
-	Grants          grant.Repository
-	Directory       *directory.Service
-	Email           *emailer.Client
-	FrontendBaseURL string
+	Audits    auditLister
+	Controls  controlLister
+	Users     userGetter
+	Grants    grant.Repository
+	Directory *directory.Service
+	Email     *emailer.Client
+	Links     applink.Links
 }
 
 // NewDepartureHub constructs a DepartureHub.
 func NewDepartureHub(d DepartureDeps) *DepartureHub {
 	return &DepartureHub{
-		audits:          d.Audits,
-		controls:        d.Controls,
-		users:           d.Users,
-		grants:          d.Grants,
-		directory:       d.Directory,
-		email:           d.Email,
-		frontendBaseURL: d.FrontendBaseURL,
+		audits:    d.Audits,
+		controls:  d.Controls,
+		users:     d.Users,
+		grants:    d.Grants,
+		directory: d.Directory,
+		email:     d.Email,
+		links:     d.Links,
 	}
 }
 
@@ -123,7 +124,7 @@ func (h *DepartureHub) Assignments(ctx context.Context, userIDs []int) (map[int]
 			Parent:     auditNames[auditID],
 			Role:       role,
 			Standing:   dueDate,
-			DetailURL:  h.controlDetailURL(auditID, controlID),
+			DetailURL:  applink.ControlPath(auditID, controlID),
 		})
 	}
 
@@ -136,12 +137,6 @@ func (h *DepartureHub) Assignments(ctx context.Context, userIDs []int) (map[int]
 		add(c.PopulationOwnerID, rolePopulationOwner, derefString(c.PopulationDueDate), c.ControlNumber, c.Description, c.AuditID, c.ID)
 	}
 	return out, nil
-}
-
-// controlDetailURL deep-links straight to one control's drawer via the
-// ?control= query param the audit detail page reads on load.
-func (h *DepartureHub) controlDetailURL(auditID, controlID int) string {
-	return fmt.Sprintf("%s/audit/audits/%d?control=%d", h.frontendBaseURL, auditID, controlID)
 }
 
 // Recipients holds AUDIT_MANAGE_CONTROLS and MANAGE_USERS together, GLOBAL only,
@@ -164,12 +159,14 @@ func (h *DepartureHub) Notify(ctx context.Context, adminUserID int, departures [
 	if len(departures) == 0 {
 		return nil
 	}
+	var recipientType string
 	email, err := directorysync.DeliverableEmail(ctx, adminUserID,
 		func(ctx context.Context, id int) (*directorysync.Recipient, error) {
 			u, err := h.users.GetByID(ctx, id)
 			if err != nil || u == nil {
 				return nil, err
 			}
+			recipientType = u.UserType
 			return &directorysync.Recipient{UUID: u.UUID, UserType: u.UserType, Status: u.Status}, nil
 		},
 		func(ctx context.Context, uuid, userType string) (string, bool) {
@@ -201,11 +198,12 @@ func (h *DepartureHub) Notify(ctx context.Context, adminUserID int, departures [
 
 	// Spans audits, so each row names its own and the header names none.
 	info := emailer.AuditEventInfo{
-		DetailURL: h.frontendBaseURL + "/audit/dashboard",
+		DetailURL: applink.DashboardPath,
 		Groups:    groups,
 		ShowAudit: true,
 		ShowRole:  true,
 	}
+	info = h.links.ResolveInfo(recipientType, info)
 	if err := h.email.SendAuditEvent(ctx, emailer.AuditEventDepartureDigest, email, info); err != nil {
 		slog.WarnContext(ctx, "audit departure digest: send failed", "adminId", adminUserID, "err", err)
 		return fmt.Errorf("send: %w", err)

@@ -23,6 +23,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/service"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/applink"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
@@ -224,9 +225,9 @@ func (b *recipientBatch) add(recipientID, controlID int, item emailer.AuditEvent
 func (h *controlHandler) sendBatched(ctx context.Context, ev emailer.AuditEvent, auditID int, auditName, actor string, batch *recipientBatch) {
 	actorLabel := h.notify.describeActor(ctx, actor)
 	for recipientID, items := range batch.items {
-		detailURL := h.notify.detailURL(auditID)
+		detailURL := applink.AuditPath(auditID)
 		if controlID, ok := singleControlID(batch.controlIDs[recipientID]); ok {
-			detailURL = h.notify.controlDetailURL(auditID, controlID)
+			detailURL = applink.ControlPath(auditID, controlID)
 		}
 		info := emailer.AuditEventInfo{
 			AuditName: auditName,

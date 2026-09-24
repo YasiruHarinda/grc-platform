@@ -47,13 +47,13 @@ func buildDirectorySyncJob(
 	emailEnabled bool,
 ) *directorysync.Job {
 	auditDep := auditjob.NewDepartureHub(auditjob.DepartureDeps{
-		Audits:          auditDeps.Audit,
-		Controls:        auditDeps.Control,
-		Users:           auditDeps.Users,
-		Grants:          auditDeps.Grants,
-		Directory:       auditDeps.Directory,
-		Email:           auditDeps.Email,
-		FrontendBaseURL: auditDeps.FrontendBaseURL,
+		Audits:    auditDeps.Audit,
+		Controls:  auditDeps.Control,
+		Users:     auditDeps.Users,
+		Grants:    auditDeps.Grants,
+		Directory: auditDeps.Directory,
+		Email:     auditDeps.Email,
+		Links:     auditDeps.Links,
 	})
 	riskDep := riskjob.NewDepartureHub(riskjob.DepartureDeps{
 		Risks:           riskDeps.Risk,

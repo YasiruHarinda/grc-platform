@@ -27,6 +27,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/routeguard"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/adminactivity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/aiagent"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/applink"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/grant"
 )
@@ -72,9 +73,9 @@ type Deps struct {
 	// (internal/risk/handler/candidates.go); nil in local dev (no privilege
 	// store configured), in which case admin notifications are skipped.
 	Grants grant.Repository
-	// FrontendBaseURL builds the "View in Audit Hub" link inside notification
-	// emails.
-	FrontendBaseURL string
+	// Links builds the "View in Audit Hub" links inside notification emails:
+	// One WSO2 for internal recipients, the grc-platform webapp for external.
+	Links applink.Links
 	// HR resolves an overdue item owner's lead (their line manager) for the
 	// overdue lead escalation. Nil when LEAD_ESCALATION_EMAILS_ENABLED is
 	// false, in which case no lead is ever resolved — same nil-when-disabled
