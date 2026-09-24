@@ -279,6 +279,9 @@ type RiskDetail struct {
 	AssignerUUID           string `json:"-"`
 	ManagementApproverUUID string `json:"-"`
 	ComplianceApproverUUID string `json:"-"`
+	// CreatedBy is who created the risk — MigrationMarker for a migrated one.
+	// Server-side only: the client reads AssigneesEditableUntil instead.
+	CreatedBy string `json:"-"`
 
 	// Gross score (from risk_score join) — the original rating assigned at
 	// creation, immutable once a risk owner has approved the risk. Used by

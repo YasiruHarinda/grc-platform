@@ -230,10 +230,19 @@ func (r *riskRepository) UpdateAssignees(ctx context.Context, id int, req model.
 	if err != nil {
 		return err
 	}
+	// Two different reasons for the same 409, told apart so the message says
+	// what actually happened: a risk the migration tool never created has no
+	// correction window at all, while a migrated one's has run out.
+	if current.CreatedBy != model.MigrationMarker {
+		return &apierror.Error{
+			StatusCode: http.StatusConflict,
+			Body:       "only risks created by the risk register migration can have their assignees corrected",
+		}
+	}
 	if current.AssigneesEditableUntil == nil {
 		return &apierror.Error{
 			StatusCode: http.StatusConflict,
-			Body:       "this risk's assignees can no longer be corrected",
+			Body:       "this risk's 14-day assignee correction window has closed",
 		}
 	}
 	// The entity only ever updates the STANDARD plan's owner, and silently

@@ -266,6 +266,7 @@ func (r *riskRepository) GetByID(ctx context.Context, id int) (*model.RiskDetail
 		AssignerUUID:           e.AssignerUUID,
 		ManagementApproverUUID: e.ManagementApproverUUID,
 		ComplianceApproverUUID: e.ComplianceApproverUUID,
+		CreatedBy:              e.CreatedBy,
 		GrossScore:             e.GrossScore.toModel(),
 		EffectiveScore:         e.EffectiveScore.toModel(),
 		ComplianceReferences:   []model.ComplianceReference{},

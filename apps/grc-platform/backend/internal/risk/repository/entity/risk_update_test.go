@@ -173,9 +173,10 @@ func TestUpdateAssigneesOutsideWindowIsRejected(t *testing.T) {
 		name      string
 		createdBy string
 		createdOn time.Time
+		wantBody  string
 	}{
-		{"migrated, window closed", model.MigrationMarker, time.Now().Add(-15 * 24 * time.Hour)},
-		{"created by a user", "3f1c9a2e-user-uuid", time.Now().Add(-time.Hour)},
+		{"migrated, window closed", model.MigrationMarker, time.Now().Add(-15 * 24 * time.Hour), "window has closed"},
+		{"created by a user", "3f1c9a2e-user-uuid", time.Now().Add(-time.Hour), "only risks created by the risk register migration"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -185,6 +186,10 @@ func TestUpdateAssigneesOutsideWindowIsRejected(t *testing.T) {
 			var apiErr *apierror.Error
 			if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusConflict {
 				t.Fatalf("err = %v, want a 409", err)
+			}
+			// The two causes must read differently, not share one message.
+			if !strings.Contains(apiErr.Body, tc.wantBody) {
+				t.Errorf("409 body = %q, want it to mention %q", apiErr.Body, tc.wantBody)
 			}
 			if f.patch != nil {
 				t.Errorf("PATCH was sent: %v", f.patch)
