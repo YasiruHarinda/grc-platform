@@ -214,7 +214,7 @@ func (h *DepartureHub) Notify(ctx context.Context, adminUserID int, departures [
 	if len(departures) == 0 {
 		return nil
 	}
-	email, err := directorysync.DeliverableEmail(ctx, adminUserID,
+	email, _, err := directorysync.DeliverableEmail(ctx, adminUserID,
 		func(ctx context.Context, id int) (*directorysync.Recipient, error) {
 			u, err := h.users.GetByID(ctx, id)
 			if err != nil || u == nil {

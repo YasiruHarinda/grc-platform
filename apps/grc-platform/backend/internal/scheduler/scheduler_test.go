@@ -35,30 +35,30 @@ func TestDurationUntilNextTargetHour(t *testing.T) {
 	}{
 		{
 			name: "before target hour today",
-			now:  time.Date(2026, 3, 5, 3, 0, 0, 0, time.UTC),
-			want: 5 * time.Hour,
+			now:  time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC),
+			want: 2*time.Hour + 30*time.Minute,
 		},
 		{
 			name: "after target hour today rolls to tomorrow",
 			now:  time.Date(2026, 3, 5, 14, 0, 0, 0, time.UTC),
-			want: 18 * time.Hour,
+			want: 12*time.Hour + 30*time.Minute,
 		},
 		{
 			name: "exactly at target hour rolls to tomorrow, not zero",
-			now:  time.Date(2026, 3, 5, 8, 0, 0, 0, time.UTC),
+			now:  time.Date(2026, 3, 5, 2, 30, 0, 0, time.UTC),
 			want: 24 * time.Hour,
 		},
 		{
 			name: "crosses a UTC day/month boundary",
 			now:  time.Date(2026, 2, 28, 23, 0, 0, 0, time.UTC),
-			want: 9 * time.Hour,
+			want: 3*time.Hour + 30*time.Minute,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := durationUntilNext(8, tt.now)
+			got := durationUntilNext(2, 30, tt.now)
 			if got != tt.want {
-				t.Errorf("durationUntilNext(8, %v) = %v, want %v", tt.now, got, tt.want)
+				t.Errorf("durationUntilNext(2, 30, %v) = %v, want %v", tt.now, got, tt.want)
 			}
 		})
 	}
@@ -67,7 +67,7 @@ func TestDurationUntilNextTargetHour(t *testing.T) {
 // fire runs every registered sweep once.
 func TestFireRunsEverySweep(t *testing.T) {
 	var a, b atomic.Int32
-	s := New(SweepHourUTC,
+	s := New(SweepHourUTC, SweepMinuteUTC,
 		Sweep{Name: "a", Run: func(context.Context) error { a.Add(1); return nil }},
 		Sweep{Name: "b", Run: func(context.Context) error { b.Add(1); return nil }},
 	)
@@ -81,7 +81,7 @@ func TestFireRunsEverySweep(t *testing.T) {
 // return normally.
 func TestFireContinuesPastAnErroringSweep(t *testing.T) {
 	var ran atomic.Int32
-	s := New(SweepHourUTC,
+	s := New(SweepHourUTC, SweepMinuteUTC,
 		Sweep{Name: "boom", Run: func(context.Context) error { return errors.New("nope") }},
 		Sweep{Name: "ok", Run: func(context.Context) error { ran.Add(1); return nil }},
 	)
@@ -94,7 +94,7 @@ func TestFireContinuesPastAnErroringSweep(t *testing.T) {
 // A panicking sweep is recovered: the other sweeps still run and fire returns.
 func TestFireRecoversFromAPanickingSweep(t *testing.T) {
 	var ran atomic.Int32
-	s := New(SweepHourUTC,
+	s := New(SweepHourUTC, SweepMinuteUTC,
 		Sweep{Name: "panic", Run: func(context.Context) error { panic("kaboom") }},
 		Sweep{Name: "ok", Run: func(context.Context) error { ran.Add(1); return nil }},
 	)
@@ -122,7 +122,7 @@ func TestFireRunsSweepsConcurrently(t *testing.T) {
 		wg.Wait() // returns only once both sweeps have entered
 		return nil
 	}
-	s := New(SweepHourUTC,
+	s := New(SweepHourUTC, SweepMinuteUTC,
 		Sweep{Name: "a", Run: block},
 		Sweep{Name: "b", Run: block},
 	)
@@ -139,7 +139,7 @@ func TestFireRunsSweepsConcurrently(t *testing.T) {
 // cancelled.
 func TestRunDoesNotFireAtStartupAndStopsOnCancel(t *testing.T) {
 	var ran atomic.Int32
-	s := New(SweepHourUTC,
+	s := New(SweepHourUTC, SweepMinuteUTC,
 		Sweep{Name: "a", Run: func(context.Context) error { ran.Add(1); return nil }},
 	)
 	ctx, cancel := context.WithCancel(context.Background())

@@ -199,8 +199,9 @@ type EmailConfig struct {
 	FrontendBaseURL string
 	// OneWSO2WebappURL is One WSO2's public origin (ONE_WSO2_WEBAPP_URL). The
 	// Risk Hub UI lives there now, not in this repo's webapp, so every risk
-	// email link is built from it. FrontendBaseURL still serves audit links,
-	// because external auditors stay on the grc-platform webapp.
+	// email link is built from it, as are audit links for internal recipients.
+	// FrontendBaseURL serves audit links for external auditors, who stay on the
+	// grc-platform webapp.
 	OneWSO2WebappURL string
 	ClientID         string
 	ClientSecret     string

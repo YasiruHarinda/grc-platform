@@ -221,7 +221,7 @@ func main() {
 		TriggerDirectorySync: triggerDirectorySync,
 	})
 
-	// Background sweeps, both fired daily at a fixed 08:00 UTC by one shared
+	// Background sweeps, both fired daily at a fixed 02:30 UTC (08:00 Sri Lanka) by one shared
 	// scheduler (internal/scheduler) so a single switch — SCHEDULER_ENABLED —
 	// turns them on or off together. Both jobs (escalationJob above,
 	// reminderJob above) are constructed regardless of this switch, so their
@@ -245,7 +245,7 @@ func main() {
 			// today's snapshot rather than yesterday's.
 			sweeps = append(sweeps, scheduler.Sweep{Name: "directory-status-sync", Run: runDirectorySync})
 		}
-		go scheduler.New(scheduler.SweepHourUTC, sweeps...).Run(jobCtx)
+		go scheduler.New(scheduler.SweepHourUTC, scheduler.SweepMinuteUTC, sweeps...).Run(jobCtx)
 	} else {
 		slog.Warn("background scheduler disabled (SCHEDULER_ENABLED=false); " +
 			"overdue-risk escalation, audit due-date reminders and the directory status sync " +

@@ -22,6 +22,7 @@ import (
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/response"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/applink"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/auth"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
@@ -183,7 +184,7 @@ func (h *evidenceHandler) submitSample(w http.ResponseWriter, r *http.Request) {
 		h.notify.notifyAuditEvent(emailer.AuditEventSampleSubmitted, *control.OwnerID, emailer.AuditEventInfo{
 			AuditName: h.notify.auditName(r.Context(), auditID),
 			Actor:     h.notify.describeActor(r.Context(), actor),
-			DetailURL: h.notify.controlDetailURL(auditID, control.ID),
+			DetailURL: applink.ControlPath(auditID, control.ID),
 			Items: []emailer.AuditEventItem{{
 				ControlNumber: control.ControlNumber,
 				Description:   control.Description,

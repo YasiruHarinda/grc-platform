@@ -27,6 +27,7 @@ import (
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/hrentity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/adminactivity"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/aiagent"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/applink"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/entityclient"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/file"
@@ -102,13 +103,13 @@ func buildAuditDeps(fileSvc *file.Service, ec *entityclient.Client, aiCfg config
 		AIAgent:      aiAgent,
 		// Reuses the same email-service credentials already loaded for risk —
 		// one email-service client for the whole backend, no new env vars.
-		Email:           emailer.New(emailCfg.ServiceURL, emailCfg.FromAddress, emailCfg.TokenURL, emailCfg.ClientID, emailCfg.ClientSecret, emailCfg.Enabled),
-		Users:           userRepo,
-		Directory:       dirSvc,
-		Grants:          grantRepo,
-		FrontendBaseURL: emailCfg.FrontendBaseURL,
-		HR:              hrClient,
-		ActivityLog:     activityLog,
+		Email:       emailer.New(emailCfg.ServiceURL, emailCfg.FromAddress, emailCfg.TokenURL, emailCfg.ClientID, emailCfg.ClientSecret, emailCfg.Enabled),
+		Users:       userRepo,
+		Directory:   dirSvc,
+		Grants:      grantRepo,
+		Links:       applink.New(emailCfg.FrontendBaseURL, emailCfg.OneWSO2WebappURL),
+		HR:          hrClient,
+		ActivityLog: activityLog,
 		// Review, Assignment are wired here as their implementations are added.
 	}
 }

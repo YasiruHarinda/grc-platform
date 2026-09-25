@@ -35,12 +35,16 @@ import (
 	"time"
 )
 
-// SweepHourUTC is the hour (UTC) every registered sweep fires at. UTC to match
+// SweepHourUTC and SweepMinuteUTC are the time of day (UTC) every registered
+// sweep fires at: 02:30 UTC, i.e. 08:00 in Sri Lanka (UTC+5:30, no DST). UTC to match
 // how the database's own DATETIME columns are pinned (see internal/db), and a
 // fixed wall-clock hour rather than an interval so time-sensitive output — the
 // audit digest email above all — lands at the same time regardless of when the
 // server last restarted.
-const SweepHourUTC = 8
+const (
+	SweepHourUTC   = 2
+	SweepMinuteUTC = 30
+)
 
 // Sweep is one unit of scheduled work.
 type Sweep struct {
@@ -53,24 +57,25 @@ type Sweep struct {
 	Run func(ctx context.Context) error
 }
 
-// Scheduler fires a fixed set of sweeps once per day at hourUTC:00 UTC.
+// Scheduler fires a fixed set of sweeps once per day at hourUTC:minuteUTC UTC.
 type Scheduler struct {
-	hourUTC int
-	sweeps  []Sweep
+	hourUTC   int
+	minuteUTC int
+	sweeps    []Sweep
 }
 
-// New builds a Scheduler that fires every sweep daily at hourUTC:00 UTC.
-func New(hourUTC int, sweeps ...Sweep) *Scheduler {
-	return &Scheduler{hourUTC: hourUTC, sweeps: sweeps}
+// New builds a Scheduler that fires every sweep daily at hourUTC:minuteUTC UTC.
+func New(hourUTC, minuteUTC int, sweeps ...Sweep) *Scheduler {
+	return &Scheduler{hourUTC: hourUTC, minuteUTC: minuteUTC, sweeps: sweeps}
 }
 
 // Run blocks until ctx is cancelled, firing every sweep once per day at
-// hourUTC:00 UTC. It does not run a sweep at startup: the first fire is at the
+// hourUTC:minuteUTC UTC. It does not run a sweep at startup: the first fire is at the
 // next occurrence of the target hour. Intended to be launched in its own
 // goroutine from main.
 func (s *Scheduler) Run(ctx context.Context) {
 	for {
-		timer := time.NewTimer(durationUntilNext(s.hourUTC, time.Now().UTC()))
+		timer := time.NewTimer(durationUntilNext(s.hourUTC, s.minuteUTC, time.Now().UTC()))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -111,11 +116,11 @@ func (s *Scheduler) fire(ctx context.Context) {
 	wg.Wait()
 }
 
-// durationUntilNext returns the wait until the next occurrence of hour:00 UTC —
+// durationUntilNext returns the wait until the next occurrence of hour:minute UTC —
 // today's if it hasn't passed yet, tomorrow's otherwise. A pure function of
-// (hour, now) so it's unit-testable without mocking time.Now.
-func durationUntilNext(hour int, now time.Time) time.Duration {
-	next := time.Date(now.Year(), now.Month(), now.Day(), hour, 0, 0, 0, time.UTC)
+// (hour, minute, now) so it's unit-testable without mocking time.Now.
+func durationUntilNext(hour, minute int, now time.Time) time.Duration {
+	next := time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, time.UTC)
 	if !next.After(now) {
 		next = next.AddDate(0, 0, 1)
 	}

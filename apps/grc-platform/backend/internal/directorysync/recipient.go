@@ -31,7 +31,9 @@ type Recipient struct {
 	Status   string
 }
 
-// DeliverableEmail resolves a digest recipient to an email address. Every step
+// DeliverableEmail resolves a digest recipient to an email address, and returns
+// the Recipient it resolved so a caller needing more than the address (the user
+// type, to pick a link a recipient can open) reads it from here. Every step
 // that fails returns an error rather than an empty string: a hub's digest send
 // is gated on reaching someone, so an unresolvable recipient must read as a
 // failure and never as a silent skip — otherwise a status gets written against a
@@ -46,23 +48,23 @@ func DeliverableEmail(
 	userID int,
 	getUser func(ctx context.Context, id int) (*Recipient, error),
 	lookupEmail func(ctx context.Context, uuid, userType string) (string, bool),
-) (string, error) {
+) (string, Recipient, error) {
 	if userID <= 0 {
-		return "", fmt.Errorf("invalid recipient id %d", userID)
+		return "", Recipient{}, fmt.Errorf("invalid recipient id %d", userID)
 	}
 	u, err := getUser(ctx, userID)
 	if err != nil {
-		return "", fmt.Errorf("resolve recipient %d: %w", userID, err)
+		return "", Recipient{}, fmt.Errorf("resolve recipient %d: %w", userID, err)
 	}
 	if u == nil {
-		return "", fmt.Errorf("recipient %d has no user row", userID)
+		return "", Recipient{}, fmt.Errorf("recipient %d has no user row", userID)
 	}
 	if u.Status != "" && u.Status != user.StatusActive {
-		return "", fmt.Errorf("recipient %d is not active", userID)
+		return "", Recipient{}, fmt.Errorf("recipient %d is not active", userID)
 	}
 	email, ok := lookupEmail(ctx, u.UUID, u.UserType)
 	if !ok || email == "" {
-		return "", fmt.Errorf("recipient %d has no email on file", userID)
+		return "", Recipient{}, fmt.Errorf("recipient %d has no email on file", userID)
 	}
-	return email, nil
+	return email, *u, nil
 }

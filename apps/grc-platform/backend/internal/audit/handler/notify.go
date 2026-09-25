@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/audit/model"
+	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/applink"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/emailer"
 	"github.com/wso2-open-operations/grc-tools/apps/grc-platform/backend/internal/shared/privilege"
 )
@@ -139,6 +140,8 @@ func (d *Deps) sendAuditEvent(ctx context.Context, ev emailer.AuditEvent, ownerU
 		return nil
 	}
 
+	// DetailURLs are app-relative until now: the host depends on who is reading.
+	info = d.Links.ResolveInfo(u.UserType, info)
 	if err := d.Email.SendAuditEvent(ctx, ev, person.Email, info); err != nil {
 		slog.Warn("audit notification: send failed", "event", ev, "ownerId", ownerUserID, "err", err)
 		return fmt.Errorf("send: %w", err)
@@ -193,22 +196,6 @@ func (d *Deps) describeActor(ctx context.Context, uuid string) string {
 		return uuid
 	}
 	return fmt.Sprintf("%s (%s)", strings.TrimSpace(person.DisplayName), person.Email)
-}
-
-// detailURL builds the "View in Audit Hub" link for auditID alone — used only
-// where no single control applies (the reminder digest, which can span many
-// controls across many audits). Every other notification is about one
-// control and should use controlDetailURL instead.
-func (d *Deps) detailURL(auditID int) string {
-	return fmt.Sprintf("%s/audit/audits/%d", d.FrontendBaseURL, auditID)
-}
-
-// controlDetailURL builds a "View in Audit Hub" link that deep-links straight
-// to one control's drawer, via the ?control= query param the audit detail
-// page already reads on load (AuditDetailPage.tsx — the same param
-// WorkQueue/BlockerList use to jump from the dashboard).
-func (d *Deps) controlDetailURL(auditID, controlID int) string {
-	return fmt.Sprintf("%s/audit/audits/%d?control=%d", d.FrontendBaseURL, auditID, controlID)
 }
 
 // singleControlID returns the one control ID in ids and true, only when ids
@@ -296,7 +283,7 @@ func (d *Deps) SendReminderDigestSync(ctx context.Context, ownerUserID int, item
 	// confined to a single audit), so this links to the dashboard rather than
 	// any one audit's detail page.
 	info := emailer.AuditEventInfo{
-		DetailURL: d.FrontendBaseURL + "/audit/dashboard",
+		DetailURL: applink.DashboardPath,
 		Items:     emailItems,
 		// Only this digest mixes tiers in one email (an owner's due-in-10,
 		// due-in-5, and overdue items all together) — Status is the only
@@ -355,7 +342,7 @@ func (d *Deps) SendOverdueAdminDigestSync(ctx context.Context, adminUserID int, 
 			Description:     it.Description,
 			DueDate:         it.DueDate,
 			RequirementType: it.RequirementType,
-			DetailURL:       d.controlDetailURL(it.AuditID, it.LinkControlID),
+			DetailURL:       applink.ControlPath(it.AuditID, it.LinkControlID),
 			// Pre-resolved by the job (once per sweep, not per item) — see
 			// ResolveOwnerNames.
 			Owner: it.OwnerName,
@@ -363,7 +350,7 @@ func (d *Deps) SendOverdueAdminDigestSync(ctx context.Context, adminUserID int, 
 	}
 	info := emailer.AuditEventInfo{
 		AuditName: items[0].AuditName,
-		DetailURL: d.detailURL(items[0].AuditID),
+		DetailURL: applink.AuditPath(items[0].AuditID),
 		Items:     emailItems,
 		ShowOwner: true,
 	}
@@ -550,7 +537,7 @@ func (d *Deps) notifyResubmission(ctx context.Context, control *model.AuditContr
 		AuditName: d.auditName(ctx, control.AuditID),
 		Actor:     d.describeActor(ctx, actor),
 		Comment:   commentText,
-		DetailURL: d.controlDetailURL(control.AuditID, control.ID),
+		DetailURL: applink.ControlPath(control.AuditID, control.ID),
 		Items: []emailer.AuditEventItem{{
 			ControlNumber:   control.ControlNumber,
 			Description:     control.Description,
@@ -603,7 +590,7 @@ func (d *Deps) controlEventInfo(ctx context.Context, control *model.AuditControl
 	return emailer.AuditEventInfo{
 		AuditName: d.auditName(ctx, control.AuditID),
 		Actor:     d.describeActor(ctx, actor),
-		DetailURL: d.controlDetailURL(control.AuditID, control.ID),
+		DetailURL: applink.ControlPath(control.AuditID, control.ID),
 		Items: []emailer.AuditEventItem{{
 			ControlNumber:   control.ControlNumber,
 			Description:     control.Description,
