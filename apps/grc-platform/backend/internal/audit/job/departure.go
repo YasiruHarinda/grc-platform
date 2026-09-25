@@ -159,14 +159,12 @@ func (h *DepartureHub) Notify(ctx context.Context, adminUserID int, departures [
 	if len(departures) == 0 {
 		return nil
 	}
-	var recipientType string
-	email, err := directorysync.DeliverableEmail(ctx, adminUserID,
+	email, recipient, err := directorysync.DeliverableEmail(ctx, adminUserID,
 		func(ctx context.Context, id int) (*directorysync.Recipient, error) {
 			u, err := h.users.GetByID(ctx, id)
 			if err != nil || u == nil {
 				return nil, err
 			}
-			recipientType = u.UserType
 			return &directorysync.Recipient{UUID: u.UUID, UserType: u.UserType, Status: u.Status}, nil
 		},
 		func(ctx context.Context, uuid, userType string) (string, bool) {
@@ -203,7 +201,7 @@ func (h *DepartureHub) Notify(ctx context.Context, adminUserID int, departures [
 		ShowAudit: true,
 		ShowRole:  true,
 	}
-	info = h.links.ResolveInfo(recipientType, info)
+	info = h.links.ResolveInfo(recipient.UserType, info)
 	if err := h.email.SendAuditEvent(ctx, emailer.AuditEventDepartureDigest, email, info); err != nil {
 		slog.WarnContext(ctx, "audit departure digest: send failed", "adminId", adminUserID, "err", err)
 		return fmt.Errorf("send: %w", err)
